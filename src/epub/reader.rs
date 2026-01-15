@@ -1,0 +1,334 @@
+use std::io::{Read, Seek};
+use std::path::Path;
+use quick_xml::events::Event;
+use quick_xml::Reader;
+use zip::ZipArchive;
+
+use crate::book::{Book, Metadata, TocEntry};
+use crate::error::{Error, Result};
+
+/// Read an EPUB file into a Book
+pub fn read_epub<P: AsRef<Path>>(path: P) -> Result<Book> {
+    let file = std::fs::File::open(path)?;
+    read_epub_from_reader(file)
+}
+
+/// Read an EPUB from any Read + Seek source
+pub fn read_epub_from_reader<R: Read + Seek>(reader: R) -> Result<Book> {
+    let mut archive = ZipArchive::new(reader)?;
+
+    // 1. Find the OPF file path from container.xml
+    let opf_path = find_opf_path(&mut archive)?;
+    let opf_dir = Path::new(&opf_path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // 2. Parse the OPF file
+    let opf_content = read_archive_file(&mut archive, &opf_path)?;
+    let (metadata, manifest, spine_ids, ncx_href) = parse_opf(&opf_content, &opf_dir)?;
+
+    // 3. Build the Book structure
+    let mut book = Book::new();
+    book.metadata = metadata;
+
+    // 4. Load all resources from manifest
+    for (_id, (href, media_type)) in &manifest {
+        let full_path = resolve_path(&opf_dir, href);
+        if let Ok(data) = read_archive_file_bytes(&mut archive, &full_path) {
+            book.add_resource(href.clone(), data, media_type.clone());
+        }
+    }
+
+    // 5. Build spine from spine IDs
+    for id in spine_ids {
+        if let Some((href, media_type)) = manifest.get(&id) {
+            book.add_spine_item(&id, href.clone(), media_type.clone());
+        }
+    }
+
+    // 6. Parse NCX for table of contents (if present)
+    if let Some(ncx_href) = ncx_href {
+        let ncx_path = resolve_path(&opf_dir, &ncx_href);
+        if let Ok(ncx_content) = read_archive_file(&mut archive, &ncx_path) {
+            book.toc = parse_ncx(&ncx_content)?;
+        }
+    }
+
+    Ok(book)
+}
+
+fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String> {
+    let container = read_archive_file(archive, "META-INF/container.xml")?;
+
+    let mut reader = Reader::from_str(&container);
+    reader.config_mut().trim_text(true);
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
+                for attr in e.attributes().flatten() {
+                    if attr.key.as_ref() == b"full-path" {
+                        return Ok(String::from_utf8(attr.value.to_vec())?);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(Error::Xml(e)),
+            _ => {}
+        }
+    }
+
+    Err(Error::InvalidEpub("No rootfile found in container.xml".into()))
+}
+
+fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collections::HashMap<String, (String, String)>, Vec<String>, Option<String>)> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    let mut metadata = Metadata::default();
+    let mut manifest: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut spine_ids: Vec<String> = Vec::new();
+    let mut ncx_href: Option<String> = None;
+    let mut toc_id: Option<String> = None;
+
+    let mut in_metadata = false;
+    let mut current_element: Option<String> = None;
+    let mut buf_text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = e.name();
+                let local_name = local_name(name.as_ref());
+
+                match local_name {
+                    b"metadata" => in_metadata = true,
+                    b"title" | b"creator" | b"language" | b"identifier" |
+                    b"publisher" | b"description" | b"subject" | b"date" | b"rights" => {
+                        if in_metadata {
+                            current_element = Some(String::from_utf8_lossy(local_name).to_string());
+                            buf_text.clear();
+                        }
+                    }
+                    b"spine" => {
+                        // Get toc attribute for NCX reference
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"toc" {
+                                toc_id = Some(String::from_utf8(attr.value.to_vec())?);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = e.name();
+                let local_name = local_name(name.as_ref());
+
+                match local_name {
+                    b"item" => {
+                        let mut id = String::new();
+                        let mut href = String::new();
+                        let mut media_type = String::new();
+
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"id" => id = String::from_utf8(attr.value.to_vec())?,
+                                b"href" => href = String::from_utf8(attr.value.to_vec())?,
+                                b"media-type" => media_type = String::from_utf8(attr.value.to_vec())?,
+                                _ => {}
+                            }
+                        }
+
+                        if !id.is_empty() {
+                            manifest.insert(id, (href, media_type));
+                        }
+                    }
+                    b"itemref" => {
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"idref" {
+                                spine_ids.push(String::from_utf8(attr.value.to_vec())?);
+                            }
+                        }
+                    }
+                    b"meta" => {
+                        // Handle cover image meta
+                        let mut is_cover = false;
+                        let mut cover_id = String::new();
+
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"name" if attr.value.as_ref() == b"cover" => is_cover = true,
+                                b"content" => cover_id = String::from_utf8(attr.value.to_vec())?,
+                                _ => {}
+                            }
+                        }
+
+                        if is_cover && !cover_id.is_empty() {
+                            if let Some((href, _)) = manifest.get(&cover_id) {
+                                metadata.cover_image = Some(href.clone());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if current_element.is_some() {
+                    buf_text.push_str(&e.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = e.name();
+                let local_name = local_name(name.as_ref());
+
+                if local_name == b"metadata" {
+                    in_metadata = false;
+                }
+
+                if let Some(ref elem) = current_element {
+                    match elem.as_str() {
+                        "title" => metadata.title = buf_text.clone(),
+                        "creator" => metadata.authors.push(buf_text.clone()),
+                        "language" => metadata.language = buf_text.clone(),
+                        "identifier" => {
+                            if metadata.identifier.is_empty() {
+                                metadata.identifier = buf_text.clone();
+                            }
+                        }
+                        "publisher" => metadata.publisher = Some(buf_text.clone()),
+                        "description" => metadata.description = Some(buf_text.clone()),
+                        "subject" => metadata.subjects.push(buf_text.clone()),
+                        "date" => metadata.date = Some(buf_text.clone()),
+                        "rights" => metadata.rights = Some(buf_text.clone()),
+                        _ => {}
+                    }
+                    current_element = None;
+                    buf_text.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(Error::Xml(e)),
+            _ => {}
+        }
+    }
+
+    // Resolve NCX href from toc_id
+    if let Some(toc_id) = toc_id {
+        if let Some((href, _)) = manifest.get(&toc_id) {
+            ncx_href = Some(href.clone());
+        }
+    }
+
+    Ok((metadata, manifest, spine_ids, ncx_href))
+}
+
+fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    let mut stack: Vec<Vec<TocEntry>> = vec![Vec::new()];
+    let mut current_text: Option<String> = None;
+    let mut current_src: Option<String> = None;
+    let mut in_text = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = e.name();
+                let name_bytes = name.as_ref();
+                let local = local_name(name_bytes);
+                match local {
+                    b"navPoint" => {
+                        stack.push(Vec::new());
+                    }
+                    b"text" => in_text = true,
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = e.name();
+                let name_bytes = name.as_ref();
+                let local = local_name(name_bytes);
+                if local == b"content" {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"src" {
+                            current_src = Some(String::from_utf8(attr.value.to_vec())?);
+                        }
+                    }
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_text {
+                    current_text = Some(e.unescape().unwrap_or_default().to_string());
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = e.name();
+                let name_bytes = name.as_ref();
+                let local = local_name(name_bytes);
+                match local {
+                    b"text" => in_text = false,
+                    b"navPoint" => {
+                        if let (Some(text), Some(src)) = (current_text.take(), current_src.take()) {
+                            let children = stack.pop().unwrap_or_default();
+                            let mut entry = TocEntry::new(text, src);
+                            entry.children = children;
+
+                            if let Some(parent) = stack.last_mut() {
+                                parent.push(entry);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(Error::Xml(e)),
+            _ => {}
+        }
+    }
+
+    Ok(stack.pop().unwrap_or_default())
+}
+
+fn read_archive_file<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<String> {
+    let bytes = read_archive_file_bytes(archive, path)?;
+    Ok(String::from_utf8(bytes)?)
+}
+
+fn read_archive_file_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>> {
+    let mut file = archive.by_name(path)?;
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)?;
+    Ok(contents)
+}
+
+fn resolve_path(base: &str, href: &str) -> String {
+    if base.is_empty() {
+        href.to_string()
+    } else {
+        format!("{}/{}", base, href)
+    }
+}
+
+/// Extract local name from potentially namespaced XML name
+fn local_name(name: &[u8]) -> &[u8] {
+    name.iter()
+        .rposition(|&b| b == b':')
+        .map(|i| &name[i + 1..])
+        .unwrap_or(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_local_name() {
+        assert_eq!(local_name(b"dc:title"), b"title");
+        assert_eq!(local_name(b"title"), b"title");
+        assert_eq!(local_name(b"opf:meta"), b"meta");
+    }
+}

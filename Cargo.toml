@@ -1,0 +1,23 @@
+[package]
+name = "ebookconvert"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"
+license = "MIT"
+
+[dependencies]
+quick-xml = "0.37"
+zip = "2.2"
+flate2 = "1.0"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+chardetng = "0.1"
+thiserror = "2.0"
+
+# HTML/CSS parsing (Servo crates, all 0.36.x)
+html5ever = "0.36"
+markup5ever_rcdom = "0.36"
+cssparser = "0.36"
+regex-lite = "0.1"
+
+[dev-dependencies]
+tempfile = "3.14"
