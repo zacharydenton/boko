@@ -1,4 +1,4 @@
-use ebookconvert::{read_mobi, write_epub, write_mobi};
+use boko::{read_mobi, write_epub, write_mobi};
 use tempfile::NamedTempFile;
 
 const TEST_AZW3: &str = "/srv/books/Vernor Vinge/True Names (34)/True Names - Vernor Vinge.azw3";
@@ -27,7 +27,7 @@ fn test_azw3_to_epub_conversion() {
     write_epub(&book, temp_file.path()).expect("Failed to write EPUB");
 
     // Read it back as EPUB
-    let book2 = ebookconvert::read_epub(temp_file.path()).expect("Failed to read converted EPUB");
+    let book2 = boko::read_epub(temp_file.path()).expect("Failed to read converted EPUB");
 
     // Verify metadata preserved
     assert_eq!(book2.metadata.title, "True Names");
@@ -84,7 +84,7 @@ fn test_epub_to_mobi_roundtrip() {
     write_epub(&book, epub_file.path()).expect("Failed to write EPUB");
 
     // Read EPUB back
-    let book2 = ebookconvert::read_epub(epub_file.path()).expect("Failed to read EPUB");
+    let book2 = boko::read_epub(epub_file.path()).expect("Failed to read EPUB");
 
     // Write to MOBI
     let mobi_file = NamedTempFile::with_suffix(".azw3").expect("Failed to create temp file");

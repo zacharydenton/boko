@@ -1,5 +1,5 @@
 [package]
-name = "ebookconvert"
+name = "boko"
 version = "0.1.0"
 edition = "2024"
 description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"

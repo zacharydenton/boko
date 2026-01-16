@@ -3,7 +3,7 @@
 use std::env;
 use std::path::Path;
 
-use ebookconvert::{read_epub, read_mobi, write_epub, write_mobi};
+use boko::{read_epub, read_mobi, write_epub, write_mobi};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

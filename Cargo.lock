@@ -50,6 +50,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "boko"
+version = "0.1.0"
+dependencies = [
+ "chardetng",
+ "cssparser",
+ "flate2",
+ "html5ever",
+ "image",
+ "markup5ever_rcdom",
+ "palmdoc-compression",
+ "quick-xml",
+ "regex-lite",
+ "tempfile",
+ "thiserror 2.0.17",
+ "zip",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -276,24 +294,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87"
 dependencies = [
  "dtoa",
-]
-
-[[package]]
-name = "ebookconvert"
-version = "0.1.0"
-dependencies = [
- "chardetng",
- "cssparser",
- "flate2",
- "html5ever",
- "image",
- "markup5ever_rcdom",
- "palmdoc-compression",
- "quick-xml",
- "regex-lite",
- "tempfile",
- "thiserror 2.0.17",
- "zip",
 ]
 
 [[package]]

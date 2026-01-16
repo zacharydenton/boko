@@ -1,4 +1,4 @@
-use ebookconvert::{read_epub, write_mobi};
+use boko::{read_epub, write_mobi};
 use std::env;
 
 fn main() {
@@ -35,7 +35,7 @@ fn main() {
 
     // Try to read it back
     println!("\nReading back AZW3...");
-    let book2 = ebookconvert::read_mobi(&output).expect("Failed to read AZW3");
+    let book2 = boko::read_mobi(&output).expect("Failed to read AZW3");
     println!("  Title: {}", book2.metadata.title);
     println!("  Authors: {:?}", book2.metadata.authors);
     println!("  Spine items: {}", book2.spine.len());

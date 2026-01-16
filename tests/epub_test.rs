@@ -1,4 +1,4 @@
-use ebookconvert::{read_epub, write_epub, Book, Metadata, TocEntry};
+use boko::{read_epub, write_epub, Book, Metadata, TocEntry};
 use tempfile::NamedTempFile;
 
 const TEST_EPUB: &str = "/srv/books/Anne Bronte/Agnes Grey (669)/Agnes Grey - Anne Bronte.epub";

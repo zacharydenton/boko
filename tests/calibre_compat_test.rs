@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use ebookconvert::{read_epub, read_mobi, write_epub, write_mobi, Book};
+use boko::{read_epub, read_mobi, write_epub, write_mobi, Book};
 use tempfile::TempDir;
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");

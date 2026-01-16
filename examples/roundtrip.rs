@@ -1,4 +1,4 @@
-use ebookconvert::{read_epub, read_mobi, write_epub};
+use boko::{read_epub, read_mobi, write_epub};
 
 fn main() {
     // Test EPUB
@@ -34,7 +34,7 @@ fn main() {
     }
 }
 
-fn print_book_info(book: &ebookconvert::Book) {
+fn print_book_info(book: &boko::Book) {
     println!("Title: {}", book.metadata.title);
     println!("Authors: {:?}", book.metadata.authors);
     println!("Resources: {}", book.resources.len());

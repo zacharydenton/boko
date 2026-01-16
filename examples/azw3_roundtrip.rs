@@ -1,4 +1,4 @@
-use ebookconvert::{read_mobi, write_epub, read_epub, write_mobi};
+use boko::{read_mobi, write_epub, read_epub, write_mobi};
 
 fn main() {
     let original = "/srv/books/Jack London/Martin Eden (448)/Martin Eden - Jack London.azw3";
