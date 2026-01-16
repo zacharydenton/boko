@@ -89,6 +89,7 @@ dependencies = [
 name = "boko"
 version = "0.1.0"
 dependencies = [
+ "bstr",
  "chardetng",
  "criterion",
  "cssparser",
@@ -96,6 +97,7 @@ dependencies = [
  "html5ever",
  "image",
  "markup5ever_rcdom",
+ "memchr",
  "palmdoc-compression",
  "percent-encoding",
  "proptest",
@@ -104,6 +106,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "zip",
+]
+
+[[package]]
+name = "bstr"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+dependencies = [
+ "memchr",
+ "regex-automata",
+ "serde",
 ]
 
 [[package]]

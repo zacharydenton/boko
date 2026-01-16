@@ -4,6 +4,7 @@ mod index;
 mod patterns;
 mod reader;
 mod skeleton;
+mod transform;
 mod writer;
 
 pub use reader::{read_mobi, read_mobi_from_reader};

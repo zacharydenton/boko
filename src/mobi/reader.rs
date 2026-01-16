@@ -539,39 +539,62 @@ fn wrap_html_content(
     raw_text: &[u8],
     file_starts: &[(u32, u32)],
 ) -> String {
-    let content_str = String::from_utf8_lossy(content);
+    use super::transform::{strip_kindle_attributes_fast, transform_kindle_refs};
 
-    // Strip encoding declarations but keep structure
-    let cleaned = strip_encoding_declarations(&content_str);
+    // Step 1: Strip encoding declarations (quick byte scan)
+    let cleaned = strip_encoding_declarations_fast(content);
 
-    // Convert kindle: references to proper paths
-    let result = clean_kindle_references(&cleaned, elems, raw_text, file_starts);
+    // Step 2: Transform kindle: references (single pass with SIMD search)
+    let transformed = transform_kindle_refs(&cleaned, elems, raw_text, file_starts);
 
-    // Strip Amazon-specific attributes (aid, data-AmznRemoved, etc.)
-    let stripped = strip_kindle_attributes(&result);
+    // Step 3: Strip Amazon attributes (single pass)
+    let stripped = strip_kindle_attributes_fast(&transformed);
 
-    // Ensure it has proper XHTML structure
-
-    ensure_xhtml_structure(&stripped, part_num)
+    // Step 4: Ensure proper XHTML structure
+    let stripped_str = String::from_utf8_lossy(&stripped);
+    ensure_xhtml_structure(&stripped_str, part_num)
 }
 
-/// Strip XML/encoding declarations but keep the HTML structure
-fn strip_encoding_declarations(html: &str) -> String {
-    let mut result = html.to_string();
+/// Fast byte-level encoding declaration stripping
+fn strip_encoding_declarations_fast(html: &[u8]) -> Vec<u8> {
+    use memchr::memmem;
 
-    // Remove XML declarations
-    while let Some(start) = result.find("<?xml") {
-        if let Some(end) = result[start..].find("?>") {
-            result = format!("{}{}", &result[..start], &result[start + end + 2..]);
+    let mut result = Vec::with_capacity(html.len());
+    let mut pos = 0;
+
+    // Remove <?xml ... ?> declarations
+    let xml_finder = memmem::Finder::new(b"<?xml");
+    let xml_end_finder = memmem::Finder::new(b"?>");
+
+    while let Some(start) = xml_finder.find(&html[pos..]) {
+        let abs_start = pos + start;
+        result.extend_from_slice(&html[pos..abs_start]);
+
+        if let Some(end) = xml_end_finder.find(&html[abs_start..]) {
+            pos = abs_start + end + 2;
         } else {
+            pos = abs_start;
             break;
         }
     }
 
-    // Clean up double << that might occur from skeleton placeholder issues
-    result = result.replace("<<", "<");
+    result.extend_from_slice(&html[pos..]);
 
-    result
+    // Clean up double << that might occur from skeleton placeholder issues
+    // Do this efficiently by scanning for << and replacing with <
+    let mut final_result = Vec::with_capacity(result.len());
+    let mut i = 0;
+    while i < result.len() {
+        if i + 1 < result.len() && result[i] == b'<' && result[i + 1] == b'<' {
+            final_result.push(b'<');
+            i += 2;
+        } else {
+            final_result.push(result[i]);
+            i += 1;
+        }
+    }
+
+    final_result
 }
 
 /// Strip Amazon-specific attributes and fix XHTML compliance issues

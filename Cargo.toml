@@ -20,6 +20,10 @@ markup5ever_rcdom = "0.36"
 cssparser = "0.36"
 regex-lite = "0.1"
 
+# High-performance byte operations (SIMD-accelerated)
+memchr = "2.7"
+bstr = "1.11"
+
 # PalmDOC compression (fast LZ77 with hash chains)
 palmdoc-compression = "0.3"
 
