@@ -564,24 +564,20 @@ fn strip_encoding_declarations(html: &str) -> String {
 
 /// Strip Amazon-specific attributes and fix XHTML compliance issues
 fn strip_kindle_attributes(html: &str) -> String {
-    use regex_lite::Regex;
+    use super::patterns::{AID_ATTR_RE, AMZN_REMOVED_RE, AMZN_PAGE_RE, IMG_TAG_RE, META_CHARSET_RE};
 
     // Strip aid="..." and aid='...' attributes (Amazon IDs)
-    let aid_re = Regex::new(r#"\s+aid\s*=\s*["'][^"']*["']"#).unwrap();
-    let result = aid_re.replace_all(html, "");
+    let result = AID_ATTR_RE.replace_all(html, "");
 
     // Strip data-AmznRemoved and data-AmznRemoved-M8="..." attributes
-    let amzn_removed_re = Regex::new(r#"\s+data-AmznRemoved[^=]*\s*=\s*["'][^"']*["']"#).unwrap();
-    let result2 = amzn_removed_re.replace_all(&result, "");
+    let result2 = AMZN_REMOVED_RE.replace_all(&result, "");
 
     // Strip data-AmznPageBreak="..." attributes
-    let amzn_page_re = Regex::new(r#"\s+data-AmznPageBreak\s*=\s*["'][^"']*["']"#).unwrap();
-    let result2 = amzn_page_re.replace_all(&result2, "");
+    let result2 = AMZN_PAGE_RE.replace_all(&result2, "");
 
     // Add alt="" to img tags that don't have alt attribute
     // Match <img that doesn't already have alt= and add alt="" before the closing
-    let img_re = Regex::new(r#"<img\s+([^>]*?)(\s*/?>)"#).unwrap();
-    let result3 = img_re.replace_all(&result2, |caps: &regex_lite::Captures| {
+    let result3 = IMG_TAG_RE.replace_all(&result2, |caps: &regex_lite::Captures| {
         let attrs = &caps[1];
         let close = &caps[2];
         if attrs.contains("alt=") {
@@ -593,8 +589,7 @@ fn strip_kindle_attributes(html: &str) -> String {
 
     // Replace HTML5 <meta charset="..."/> with EPUB2-compatible version
     // Also handle variants like <meta charset="UTF-8"/> (no spaces)
-    let meta_re = Regex::new(r#"<meta\s*charset\s*=\s*["']([^"']+)["']\s*/?\s*>"#).unwrap();
-    let result4 = meta_re.replace_all(&result3, r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#);
+    let result4 = META_CHARSET_RE.replace_all(&result3, r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#);
 
     result4.to_string()
 }
@@ -1090,20 +1085,16 @@ fn detect_image_type(data: &[u8]) -> Option<&'static str> {
 /// Resolve kindle:embed:XXXX references in CSS to actual resource paths
 /// Also strips invalid @font-face declarations with placeholder URLs
 fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> String {
-    use regex_lite::Regex;
+    use super::patterns::{FONTFACE_PLACEHOLDER_RE, KINDLE_EMBED_RE};
 
     let mut result = css.to_string();
 
     // First, strip @font-face declarations with XXXXXXXXXXXXXXXX placeholder URLs
     // These are Amazon placeholders when fonts aren't actually embedded
-    let fontface_re = Regex::new(r#"@font-face\s*\{[^}]*url\s*\(\s*X{10,}\s*\)[^}]*\}"#).unwrap();
-    result = fontface_re.replace_all(&result, "").to_string();
+    result = FONTFACE_PLACEHOLDER_RE.replace_all(&result, "").to_string();
 
-    // Pattern for kindle:embed:XXXX where XXXX is base32 encoded (1-indexed)
-    let embed_re = Regex::new(r#"kindle:embed:([0-9A-V]+)(\?[^"')]*)?["']?"#).unwrap();
-
-    // Replace all matches
-    for cap in embed_re.captures_iter(css) {
+    // Replace all kindle:embed:XXXX matches
+    for cap in KINDLE_EMBED_RE.captures_iter(css) {
         let full_match = cap.get(0).unwrap().as_str();
         let base32_str = cap.get(1).unwrap().as_str();
 
@@ -1251,14 +1242,11 @@ fn strip_html_structure(content: &str) -> String {
 /// Find the nearest id= attribute at or after a given position in the raw text
 /// The kindle:pos:fid links point to positions that are at or just before the target element
 fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> Option<String> {
-    use regex_lite::Regex;
+    use super::patterns::ID_ATTR_RE;
 
     if pos >= raw_text.len() {
         return None;
     }
-
-    // Look for id="..." or ID="..." attributes
-    let id_re = Regex::new(r#"<[^>]+\s(?:id|ID)\s*=\s*['"]([^'"]+)['"]"#).unwrap();
 
     // Search forward from pos to find the next tag with an id= attribute
     // Limit search to a reasonable window (e.g., 2000 bytes forward)
@@ -1267,7 +1255,7 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
     let search_str = String::from_utf8_lossy(search_text);
 
     // Find the first id= in the forward search
-    if let Some(caps) = id_re.captures(&search_str) {
+    if let Some(caps) = ID_ATTR_RE.captures(&search_str) {
         if let Some(m) = caps.get(1) {
             return Some(m.as_str().to_string());
         }
@@ -1278,7 +1266,7 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
     let search_back = &raw_text[start_pos..pos];
     for tag in reverse_tag_iter(search_back) {
         let tag_str = String::from_utf8_lossy(tag);
-        if let Some(caps) = id_re.captures(&tag_str) {
+        if let Some(caps) = ID_ATTR_RE.captures(&tag_str) {
             if let Some(m) = caps.get(1) {
                 return Some(m.as_str().to_string());
             }

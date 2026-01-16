@@ -2,6 +2,7 @@ mod palmdoc;
 mod huffcdic;
 mod headers;
 mod index;
+mod patterns;
 mod reader;
 mod skeleton;
 mod writer;

@@ -210,15 +210,13 @@ impl Chunker {
         text: &[u8],
         chunk_table: &[ChunkEntry],
     ) -> HashMap<String, (usize, usize, usize)> {
-        use regex_lite::Regex;
+        use super::patterns::AID_VALUE_RE;
 
         let mut aid_offset_map = HashMap::new();
         let text_str = String::from_utf8_lossy(text);
 
         // Find all aid="..." attributes
-        let aid_re = Regex::new(r#"\said=['"]([\dA-V]+)['"]"#).unwrap();
-
-        for cap in aid_re.captures_iter(&text_str) {
+        for cap in AID_VALUE_RE.captures_iter(&text_str) {
             let aid = cap[1].to_string();
             let offset = cap.get(0).unwrap().start();
 
@@ -274,21 +272,13 @@ impl Chunker {
 
     /// Add aid attributes to aidable tags and record id->aid mappings
     fn add_aid_attributes(&mut self, file_href: &str, html: &str) -> String {
-        use regex_lite::Regex;
-
-        // Pattern to find opening tags of aidable elements
-        let tag_pattern = format!(
-            r"<({})\b([^>]*)>",
-            AID_ABLE_TAGS.join("|")
-        );
-        let re = Regex::new(&tag_pattern).unwrap();
-        let id_re = Regex::new(r#"\bid=['"]([\w\-:\.]+)['"]"#).unwrap();
+        use super::patterns::{AIDABLE_TAGS_RE, TAG_ID_RE};
 
         let file_href_owned = file_href.to_string();
 
-        re.replace_all(html, |caps: &regex_lite::Captures| {
+        AIDABLE_TAGS_RE.replace_all(html, |caps: &regex_lite::Captures| {
             let tag = &caps[1];
-            let attrs = &caps[2];
+            let attrs = caps.get(2).map(|m| m.as_str()).unwrap_or("");
 
             // Skip if already has aid
             if attrs.contains("aid=") {
@@ -298,7 +288,7 @@ impl Chunker {
             let aid = self.next_aid();
 
             // If this element has an id attribute, record the mapping
-            if let Some(id_cap) = id_re.captures(attrs) {
+            if let Some(id_cap) = TAG_ID_RE.captures(attrs) {
                 let id = id_cap[1].to_string();
                 self.id_map.insert((file_href_owned.clone(), id), aid.clone());
             }

@@ -278,7 +278,7 @@ impl<'a> MobiBuilder<'a> {
         html_href: &str,
         css_flow_map: &HashMap<String, usize>,
     ) -> String {
-        use regex_lite::Regex;
+        use super::patterns::{LINK_HREF_RE, IMG_SRC_RE, ANCHOR_HREF_RE};
 
         let mut result = html.to_string();
 
@@ -289,8 +289,7 @@ impl<'a> MobiBuilder<'a> {
             .unwrap_or_default();
 
         // Rewrite <link href="..."> to kindle:flow references
-        let link_re = Regex::new(r#"<link\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>"#).unwrap();
-        result = link_re
+        result = LINK_HREF_RE
             .replace_all(&result, |caps: &regex_lite::Captures| {
                 let href = &caps[1];
                 let full_tag = &caps[0];
@@ -308,8 +307,7 @@ impl<'a> MobiBuilder<'a> {
             .to_string();
 
         // Rewrite <img src="..."> to kindle:embed references
-        let img_re = Regex::new(r#"<img\s+[^>]*src\s*=\s*["']([^"']+)["']"#).unwrap();
-        result = img_re
+        result = IMG_SRC_RE
             .replace_all(&result, |caps: &regex_lite::Captures| {
                 let src = &caps[1];
                 let full_match = &caps[0];
@@ -335,7 +333,6 @@ impl<'a> MobiBuilder<'a> {
 
         // Rewrite <a href="..."> internal links to kindle:pos:fid placeholders
         // These will be resolved after chunking when we know anchor positions
-        let anchor_re = Regex::new(r#"<a\s+([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>"#).unwrap();
 
         // Collect spine hrefs for checking if links are internal
         let spine_hrefs: std::collections::HashSet<_> = self.book.spine.iter().map(|s| s.href.as_str()).collect();
@@ -348,7 +345,7 @@ impl<'a> MobiBuilder<'a> {
         let base_dir_owned = base_dir.clone();
         let html_href_owned = html_href.to_string();
 
-        result = anchor_re
+        result = ANCHOR_HREF_RE
             .replace_all(&result, |caps: &regex_lite::Captures| {
                 let full_match = &caps[0];
                 let before = &caps[1];
@@ -400,68 +397,93 @@ impl<'a> MobiBuilder<'a> {
 
     /// Resolve link placeholders after chunking
     /// Replaces kindle:pos:fid:0000:off:XXXXXXXXXX with actual positions
+    /// Optimized to build result in single pass instead of repeated replacen calls
+    /// Uses simple string search instead of regex for the fixed prefix pattern
     fn resolve_link_placeholders(
         &self,
         text: &[u8],
         id_map: &HashMap<(String, String), String>,
         aid_offset_map: &HashMap<String, (usize, usize, usize)>,
     ) -> Vec<u8> {
-        use regex_lite::Regex;
+        const PREFIX: &str = "kindle:pos:fid:0000:off:";
+        const PLACEHOLDER_LEN: usize = 33; // PREFIX (23) + base32 value (10)
 
         let text_str = String::from_utf8_lossy(text);
-        let mut result = text_str.to_string();
 
-        // Pattern to match placeholder links: kindle:pos:fid:0000:off:XXXXXXXXXX
-        let placeholder_re = Regex::new(r"kindle:pos:fid:0000:off:([0-9A-V]{10})").unwrap();
+        // Collect all replacements with their positions: (start, end, replacement)
+        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
-        // Build replacement map
-        let mut replacements: Vec<(String, String)> = Vec::new();
+        // Find all placeholders using simple string search
+        let mut search_start = 0;
+        while let Some(pos) = text_str[search_start..].find(PREFIX) {
+            let start = search_start + pos;
+            let end = start + PLACEHOLDER_LEN;
 
-        for caps in placeholder_re.captures_iter(&text_str) {
-            let full_match = caps[0].to_string();
+            // Validate we have enough characters and they're valid base32
+            if end <= text_str.len() {
+                let placeholder = &text_str[start..end];
 
-            // Look up this placeholder in link_map to get target
-            if let Some((target_file, fragment)) = self.link_map.get(&full_match) {
-                // Look up the target in id_map to get the aid
-                let key = (target_file.clone(), fragment.clone());
-                let aid = id_map.get(&key)
-                    .or_else(|| {
-                        // Fall back to file body (empty fragment)
-                        id_map.get(&(target_file.clone(), String::new()))
-                    });
+                // Look up this placeholder in link_map to get target
+                if let Some((target_file, fragment)) = self.link_map.get(placeholder) {
+                    // Look up the target in id_map to get the aid
+                    let key = (target_file.clone(), fragment.clone());
+                    let aid = id_map.get(&key)
+                        .or_else(|| {
+                            // Fall back to file body (empty fragment)
+                            id_map.get(&(target_file.clone(), String::new()))
+                        });
 
-                if let Some(aid) = aid {
-                    // Look up the aid in aid_offset_map to get position
-                    if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) = aid_offset_map.get(aid) {
-                        // Create the final link: kindle:pos:fid:NNNN:off:OOOOOOOOOO
-                        let replacement = format!(
-                            "kindle:pos:fid:{}:off:{}",
-                            to_base32(seq_num),
-                            to_base32_10(offset_in_chunk)
-                        );
-                        replacements.push((full_match, replacement));
+                    if let Some(aid) = aid {
+                        // Look up the aid in aid_offset_map to get position
+                        if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) = aid_offset_map.get(aid) {
+                            // Create the final link: kindle:pos:fid:NNNN:off:OOOOOOOOOO
+                            let replacement = format!(
+                                "kindle:pos:fid:{}:off:{}",
+                                to_base32(seq_num),
+                                to_base32_10(offset_in_chunk)
+                            );
+                            replacements.push((start, end, replacement));
+                        }
                     }
                 }
             }
+            search_start = start + 1; // Move past this match to find next
         }
 
-        // Apply replacements
-        for (from, to) in replacements {
-            result = result.replacen(&from, &to, 1);
+        // If no replacements, return original
+        if replacements.is_empty() {
+            return text.to_vec();
         }
 
-        result.into_bytes()
+        // Sort by position (should already be sorted, but ensure it)
+        replacements.sort_by_key(|(start, _, _)| *start);
+
+        // Build result in single pass
+        let text_bytes = text_str.as_bytes();
+        let mut result = Vec::with_capacity(text_bytes.len());
+        let mut last_end = 0;
+
+        for (start, end, replacement) in replacements {
+            // Copy text before this replacement
+            result.extend_from_slice(&text_bytes[last_end..start]);
+            // Add replacement
+            result.extend_from_slice(replacement.as_bytes());
+            last_end = end;
+        }
+        // Copy remaining text after last replacement
+        result.extend_from_slice(&text_bytes[last_end..]);
+
+        result
     }
 
     /// Rewrite CSS url() references to kindle:embed
     fn rewrite_css_references(&self, css: &str) -> String {
-        use regex_lite::Regex;
+        use super::patterns::CSS_URL_RE;
 
         let mut result = css.to_string();
 
         // Rewrite url(...) references
-        let url_re = Regex::new(r#"url\s*\(\s*["']?([^"')]+)["']?\s*\)"#).unwrap();
-        result = url_re
+        result = CSS_URL_RE
             .replace_all(&result, |caps: &regex_lite::Captures| {
                 let url = &caps[1];
 
