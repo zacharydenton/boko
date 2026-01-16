@@ -339,6 +339,23 @@ fn to_base32(mut n: u32) -> String {
     String::from_utf8(result).unwrap()
 }
 
+/// Parse Kindle base32 encoding back to number
+/// Kindle uses custom base32: 0-9 (0-9), A-V (10-31)
+fn from_base32(s: &str) -> u32 {
+    let mut result = 0u32;
+    for c in s.chars() {
+        result = result.saturating_mul(32);
+        let val = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            'A'..='V' => c as u32 - 'A' as u32 + 10,
+            'a'..='v' => c as u32 - 'a' as u32 + 10,
+            _ => continue,
+        };
+        result = result.saturating_add(val);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,11 +369,61 @@ mod tests {
     }
 
     #[test]
+    fn test_from_base32() {
+        assert_eq!(from_base32("0000"), 0);
+        assert_eq!(from_base32("0001"), 1);
+        assert_eq!(from_base32("000V"), 31);
+        assert_eq!(from_base32("0010"), 32);
+    }
+
+    #[test]
+    fn test_base32_roundtrip() {
+        for n in [0, 1, 31, 32, 100, 1000, 32767, 65535, 1048575] {
+            assert_eq!(from_base32(&to_base32(n)), n);
+        }
+    }
+
+    #[test]
     fn test_add_aids() {
         let mut chunker = Chunker::new();
         let html = "<html><body><p>Hello</p><div>World</div></body></html>";
         let result = chunker.add_aid_attributes("test.xhtml", html);
         assert!(result.contains("aid=\"0000\""));
         assert!(result.contains("aid=\"0001\""));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: to_base32 then from_base32 yields original value
+        #[test]
+        fn base32_roundtrip(n in 0u32..=0xFFFFFF) {
+            let encoded = to_base32(n);
+            let decoded = from_base32(&encoded);
+            prop_assert_eq!(decoded, n);
+        }
+
+        /// Property: base32 encoding produces only valid characters
+        #[test]
+        fn base32_valid_chars(n in any::<u32>()) {
+            let encoded = to_base32(n);
+            for c in encoded.chars() {
+                prop_assert!(
+                    c.is_ascii_digit() || ('A'..='V').contains(&c),
+                    "Invalid character in base32: {}", c
+                );
+            }
+        }
+
+        /// Property: base32 encoding is at least 4 characters (padded)
+        #[test]
+        fn base32_min_length(n in any::<u32>()) {
+            let encoded = to_base32(n);
+            prop_assert!(encoded.len() >= 4);
+        }
     }
 }

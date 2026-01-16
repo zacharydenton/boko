@@ -101,3 +101,38 @@ mod tests {
         assert_eq!(decompressed, original);
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: compress then decompress yields original data
+        #[test]
+        fn roundtrip_compression(data in prop::collection::vec(any::<u8>(), 0..4096)) {
+            let compressed = compress(&data);
+            let decompressed = decompress(&compressed);
+            prop_assert_eq!(decompressed, data);
+        }
+
+        /// Property: compression should not expand small data too much
+        /// (worst case for PalmDoc is ~1.125x expansion)
+        #[test]
+        fn compression_reasonable_size(data in prop::collection::vec(any::<u8>(), 1..1024)) {
+            let compressed = compress(&data);
+            // PalmDoc worst case: each byte becomes escape + literal = 2 bytes
+            // But in practice, it should rarely exceed 2x original size
+            prop_assert!(compressed.len() <= data.len() * 2 + 16);
+        }
+
+        /// Property: empty input produces empty output
+        #[test]
+        fn empty_roundtrip(_seed in any::<u64>()) {
+            let data: Vec<u8> = vec![];
+            let compressed = compress(&data);
+            let decompressed = decompress(&compressed);
+            prop_assert_eq!(decompressed, data);
+        }
+    }
+}

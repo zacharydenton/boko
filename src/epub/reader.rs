@@ -82,15 +82,23 @@ fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String> 
     Err(Error::InvalidEpub("No rootfile found in container.xml".into()))
 }
 
+/// Manifest item with properties (for EPUB3 cover-image detection)
+struct ManifestItem {
+    href: String,
+    media_type: String,
+    properties: Option<String>,
+}
+
 fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collections::HashMap<String, (String, String)>, Vec<String>, Option<String>)> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
     let mut metadata = Metadata::default();
-    let mut manifest: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+    let mut manifest_items: std::collections::HashMap<String, ManifestItem> = std::collections::HashMap::new();
     let mut spine_ids: Vec<String> = Vec::new();
     let mut ncx_href: Option<String> = None;
     let mut toc_id: Option<String> = None;
+    let mut epub2_cover_id: Option<String> = None;
 
     let mut in_metadata = false;
     let mut current_element: Option<String> = None;
@@ -131,18 +139,20 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
                         let mut id = String::new();
                         let mut href = String::new();
                         let mut media_type = String::new();
+                        let mut properties: Option<String> = None;
 
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"id" => id = String::from_utf8(attr.value.to_vec())?,
                                 b"href" => href = String::from_utf8(attr.value.to_vec())?,
                                 b"media-type" => media_type = String::from_utf8(attr.value.to_vec())?,
+                                b"properties" => properties = Some(String::from_utf8(attr.value.to_vec())?),
                                 _ => {}
                             }
                         }
 
                         if !id.is_empty() {
-                            manifest.insert(id, (href, media_type));
+                            manifest_items.insert(id, ManifestItem { href, media_type, properties });
                         }
                     }
                     b"itemref" => {
@@ -153,7 +163,7 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
                         }
                     }
                     b"meta" => {
-                        // Handle cover image meta
+                        // Handle EPUB2 cover image meta
                         let mut is_cover = false;
                         let mut cover_id = String::new();
 
@@ -166,9 +176,7 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
                         }
 
                         if is_cover && !cover_id.is_empty() {
-                            if let Some((href, _)) = manifest.get(&cover_id) {
-                                metadata.cover_image = Some(href.clone());
-                            }
+                            epub2_cover_id = Some(cover_id);
                         }
                     }
                     _ => {}
@@ -214,6 +222,29 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
         }
     }
 
+    // Detect cover image: EPUB3 "cover-image" property takes priority over EPUB2 meta
+    // EPUB3: <item properties="cover-image" .../>
+    let epub3_cover = manifest_items.values().find(|item| {
+        item.properties.as_ref().map_or(false, |props| {
+            props.split_ascii_whitespace().any(|p| p == "cover-image")
+        })
+    });
+
+    if let Some(cover_item) = epub3_cover {
+        metadata.cover_image = Some(cover_item.href.clone());
+    } else if let Some(cover_id) = epub2_cover_id {
+        // EPUB2 fallback: <meta name="cover" content="cover-image-id"/>
+        if let Some(item) = manifest_items.get(&cover_id) {
+            metadata.cover_image = Some(item.href.clone());
+        }
+    }
+
+    // Convert manifest_items to simple (href, media_type) map for backward compatibility
+    let manifest: std::collections::HashMap<String, (String, String)> = manifest_items
+        .into_iter()
+        .map(|(id, item)| (id, (item.href, item.media_type)))
+        .collect();
+
     // Resolve NCX href from toc_id
     if let Some(toc_id) = toc_id {
         if let Some((href, _)) = manifest.get(&toc_id) {
@@ -231,6 +262,7 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
     let mut stack: Vec<Vec<TocEntry>> = vec![Vec::new()];
     let mut current_text: Option<String> = None;
     let mut current_src: Option<String> = None;
+    let mut current_play_order: Option<usize> = None;
     let mut in_text = false;
 
     loop {
@@ -242,6 +274,14 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 match local {
                     b"navPoint" => {
                         stack.push(Vec::new());
+                        // Extract playOrder attribute
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"playOrder" {
+                                if let Ok(order_str) = String::from_utf8(attr.value.to_vec()) {
+                                    current_play_order = order_str.parse().ok();
+                                }
+                            }
+                        }
                     }
                     b"text" => in_text = true,
                     _ => {}
@@ -275,6 +315,7 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                             let children = stack.pop().unwrap_or_default();
                             let mut entry = TocEntry::new(text, src);
                             entry.children = children;
+                            entry.play_order = current_play_order.take();
 
                             if let Some(parent) = stack.last_mut() {
                                 parent.push(entry);
@@ -295,14 +336,42 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
 
 fn read_archive_file<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<String> {
     let bytes = read_archive_file_bytes(archive, path)?;
-    Ok(String::from_utf8(bytes)?)
+    // Strip UTF-8 BOM if present
+    let bytes = strip_bom(&bytes);
+    Ok(String::from_utf8(bytes.to_vec())?)
 }
 
 fn read_archive_file_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>> {
-    let mut file = archive.by_name(path)?;
+    // Try direct lookup first
+    match archive.by_name(path) {
+        Ok(mut file) => {
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents)?;
+            return Ok(contents);
+        }
+        Err(zip::result::ZipError::FileNotFound) => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    // Fallback: try percent-decoded path (handles malformed EPUBs)
+    let decoded = percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .map_err(|_| Error::InvalidEpub(format!("Invalid UTF-8 in path: {}", path)))?;
+
+    let mut file = archive.by_name(&decoded)?;
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)?;
     Ok(contents)
+}
+
+/// Strip UTF-8 BOM (byte order mark) if present
+fn strip_bom(data: &[u8]) -> &[u8] {
+    // UTF-8 BOM: EF BB BF
+    if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &data[3..]
+    } else {
+        data
+    }
 }
 
 fn resolve_path(base: &str, href: &str) -> String {

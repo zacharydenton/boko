@@ -35,11 +35,25 @@ pub struct SpineItem {
 }
 
 /// A table of contents entry (hierarchical)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TocEntry {
     pub title: String,
     pub href: String,
     pub children: Vec<TocEntry>,
+    /// Play order for sorting (from NCX playOrder attribute)
+    pub play_order: Option<usize>,
+}
+
+impl Ord for TocEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.play_order.cmp(&other.play_order)
+    }
+}
+
+impl PartialOrd for TocEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// A resource (content document, image, CSS, font, etc.)
@@ -108,11 +122,17 @@ impl TocEntry {
             title: title.into(),
             href: href.into(),
             children: Vec::new(),
+            play_order: None,
         }
     }
 
     pub fn with_child(mut self, child: TocEntry) -> Self {
         self.children.push(child);
+        self
+    }
+
+    pub fn with_play_order(mut self, order: usize) -> Self {
+        self.play_order = Some(order);
         self
     }
 }
