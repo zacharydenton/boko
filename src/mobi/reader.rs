@@ -659,39 +659,10 @@ fn strip_encoding_declarations_fast(html: &[u8]) -> Vec<u8> {
 
 /// Strip Amazon-specific attributes and fix XHTML compliance issues
 fn strip_kindle_attributes(html: &str) -> String {
-    use super::patterns::{
-        AID_ATTR_RE, AMZN_PAGE_RE, AMZN_REMOVED_RE, IMG_TAG_RE, META_CHARSET_RE,
-    };
-
-    // Strip aid="..." and aid='...' attributes (Amazon IDs)
-    let result = AID_ATTR_RE.replace_all(html, "");
-
-    // Strip data-AmznRemoved and data-AmznRemoved-M8="..." attributes
-    let result2 = AMZN_REMOVED_RE.replace_all(&result, "");
-
-    // Strip data-AmznPageBreak="..." attributes
-    let result2 = AMZN_PAGE_RE.replace_all(&result2, "");
-
-    // Add alt="" to img tags that don't have alt attribute
-    // Match <img that doesn't already have alt= and add alt="" before the closing
-    let result3 = IMG_TAG_RE.replace_all(&result2, |caps: &regex_lite::Captures| {
-        let attrs = &caps[1];
-        let close = &caps[2];
-        if attrs.contains("alt=") {
-            format!("<img {}{}", attrs, close)
-        } else {
-            format!("<img {} alt=\"\"{}", attrs, close)
-        }
-    });
-
-    // Replace HTML5 <meta charset="..."/> with EPUB2-compatible version
-    // Also handle variants like <meta charset="UTF-8"/> (no spaces)
-    let result4 = META_CHARSET_RE.replace_all(
-        &result3,
-        r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#,
-    );
-
-    result4.to_string()
+    use super::transform::strip_kindle_attributes_fast;
+    let bytes = html.as_bytes();
+    let stripped = strip_kindle_attributes_fast(bytes);
+    String::from_utf8_lossy(&stripped).into_owned()
 }
 
 /// Ensure content has proper XHTML structure
@@ -1209,45 +1180,99 @@ fn detect_image_type(data: &[u8]) -> Option<&'static str> {
 /// Resolve kindle:embed:XXXX references in CSS to actual resource paths
 /// Also strips invalid @font-face declarations with placeholder URLs
 fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> String {
-    use super::patterns::{FONTFACE_PLACEHOLDER_RE, KINDLE_EMBED_RE};
+    use bstr::ByteSlice;
+    use memchr::memmem;
 
-    let mut result = css.to_string();
+    let css_bytes = css.as_bytes();
+    let mut output = Vec::with_capacity(css_bytes.len());
+    let mut pos = 0;
 
-    // First, strip @font-face declarations with XXXXXXXXXXXXXXXX placeholder URLs
-    // These are Amazon placeholders when fonts aren't actually embedded
-    result = FONTFACE_PLACEHOLDER_RE.replace_all(&result, "").to_string();
+    // Finders for patterns
+    let fontface_finder = memmem::Finder::new(b"@font-face");
+    let embed_finder = memmem::Finder::new(b"kindle:embed:");
 
-    // Replace all kindle:embed:XXXX matches
-    for cap in KINDLE_EMBED_RE.captures_iter(css) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let base32_str = cap.get(1).unwrap().as_str();
+    // First pass: strip @font-face blocks with placeholder URLs (XXXX patterns)
+    while let Some(ff_start) = fontface_finder.find(&css_bytes[pos..]) {
+        let abs_start = pos + ff_start;
 
-        // Parse base32 index (1-indexed, so subtract 1)
-        let idx = parse_kindle_base32(base32_str);
-        let resource_idx = if idx > 0 { idx - 1 } else { 0 };
+        // Find the opening brace
+        if let Some(brace_start) = css_bytes[abs_start..].find_byte(b'{') {
+            let abs_brace = abs_start + brace_start;
+            // Find the closing brace
+            if let Some(brace_end) = css_bytes[abs_brace..].find_byte(b'}') {
+                let abs_end = abs_brace + brace_end + 1;
+                let block = &css_bytes[abs_start..abs_end];
 
-        // Look up resource path
-        let replacement = if let Some(Some(href)) = resource_map.get(resource_idx) {
-            // Use relative path from styles/ directory
-            format!("../{}", href)
-        } else {
-            // Fallback: keep a placeholder that won't break CSS parsing
-            "missing-resource".to_string()
-        };
-
-        // Replace in result, handling the full match including quotes
-        let new_value = if full_match.ends_with('"') {
-            format!("{}\"", replacement)
-        } else if full_match.ends_with('\'') {
-            format!("{}'", replacement)
-        } else {
-            replacement
-        };
-
-        result = result.replacen(full_match, &new_value, 1);
+                // Check if this block has placeholder URL (10+ X's)
+                if block.find(b"XXXXXXXXXX").is_some() {
+                    // Skip this @font-face block
+                    output.extend_from_slice(&css_bytes[pos..abs_start]);
+                    pos = abs_end;
+                    continue;
+                }
+            }
+        }
+        // Not a placeholder block, include it and move past @font-face
+        output.extend_from_slice(&css_bytes[pos..abs_start + 10]);
+        pos = abs_start + 10;
     }
+    output.extend_from_slice(&css_bytes[pos..]);
 
-    result
+    // Second pass: replace kindle:embed:XXXX references
+    let result = output;
+    let mut output = Vec::with_capacity(result.len());
+    pos = 0;
+
+    while let Some(embed_start) = embed_finder.find(&result[pos..]) {
+        let abs_start = pos + embed_start;
+        output.extend_from_slice(&result[pos..abs_start]);
+
+        // Parse the base32 value after "kindle:embed:"
+        let after_prefix = &result[abs_start + 13..];
+        let mut base32_end = 0;
+        for &b in after_prefix {
+            if b.is_ascii_alphanumeric() {
+                base32_end += 1;
+            } else {
+                break;
+            }
+        }
+
+        if base32_end > 0 {
+            let base32_str = &after_prefix[..base32_end];
+            let idx = parse_kindle_base32(&String::from_utf8_lossy(base32_str));
+            let resource_idx = if idx > 0 { idx - 1 } else { 0 };
+
+            // Look up resource path
+            let replacement = if let Some(Some(href)) = resource_map.get(resource_idx) {
+                format!("../{}", href)
+            } else {
+                "missing-resource".to_string()
+            };
+
+            output.extend_from_slice(replacement.as_bytes());
+
+            // Skip past the kindle:embed:XXXX and optional ?mime=... part
+            let mut skip_end = 13 + base32_end;
+            if after_prefix.get(base32_end) == Some(&b'?') {
+                // Skip ?mime=... until quote or paren
+                for &b in &after_prefix[base32_end..] {
+                    if b == b'"' || b == b'\'' || b == b')' {
+                        break;
+                    }
+                    skip_end += 1;
+                }
+            }
+            pos = abs_start + skip_end;
+        } else {
+            // No valid base32, copy as-is
+            output.extend_from_slice(b"kindle:embed:");
+            pos = abs_start + 13;
+        }
+    }
+    output.extend_from_slice(&result[pos..]);
+
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn build_html(text: &[u8], mobi: &MobiHeader) -> String {
@@ -1360,68 +1385,62 @@ fn strip_html_structure(content: &str) -> String {
 /// Find the nearest id= attribute at or after a given position in the raw text
 /// The kindle:pos:fid links point to positions that are at or just before the target element
 fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> Option<String> {
-    use super::patterns::ID_ATTR_RE;
+    use bstr::ByteSlice;
+    use memchr::memmem;
 
     if pos >= raw_text.len() {
         return None;
     }
 
     // Search forward from pos to find the next tag with an id= attribute
-    // Limit search to a reasonable window (e.g., 2000 bytes forward)
     let end_pos = (pos + 2000).min(raw_text.len());
-    let search_text = &raw_text[pos..end_pos];
-    let search_str = String::from_utf8_lossy(search_text);
+    let search_window = &raw_text[pos..end_pos];
 
-    // Find the first id= in the forward search
-    if let Some(caps) = ID_ATTR_RE.captures(&search_str)
-        && let Some(m) = caps.get(1)
-    {
-        return Some(m.as_str().to_string());
+    // Use memchr to find potential id= patterns
+    let id_finder = memmem::Finder::new(b"id=\"");
+    let id_finder_single = memmem::Finder::new(b"id='");
+
+    let id_pos = id_finder
+        .find(search_window)
+        .or_else(|| id_finder_single.find(search_window));
+
+    if let Some(rel_pos) = id_pos {
+        let quote_char = search_window[rel_pos + 3];
+        let value_start = rel_pos + 4;
+        if let Some(value_end) = search_window[value_start..].find_byte(quote_char) {
+            let id_bytes = &search_window[value_start..value_start + value_end];
+            // Validate it's ASCII alphanumeric with allowed punctuation
+            if id_bytes.iter().all(|&b| {
+                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
+            }) {
+                return Some(String::from_utf8_lossy(id_bytes).into_owned());
+            }
+        }
     }
 
     // If no ID found forward, try searching backwards as fallback
     let start_pos = pos.saturating_sub(500);
-    let search_back = &raw_text[start_pos..pos];
-    for tag in reverse_tag_iter(search_back) {
-        let tag_str = String::from_utf8_lossy(tag);
-        if let Some(caps) = ID_ATTR_RE.captures(&tag_str)
-            && let Some(m) = caps.get(1)
-        {
-            return Some(m.as_str().to_string());
+    let back_window = &raw_text[start_pos..pos];
+
+    // Search for last id= in backwards window
+    let mut last_id = None;
+    let mut search_pos = 0;
+    while let Some(rel_pos) = id_finder.find(&back_window[search_pos..]) {
+        let abs_pos = search_pos + rel_pos;
+        let quote_char = back_window.get(abs_pos + 3).copied().unwrap_or(b'"');
+        let value_start = abs_pos + 4;
+        if let Some(value_end) = back_window[value_start..].find_byte(quote_char) {
+            let id_bytes = &back_window[value_start..value_start + value_end];
+            if id_bytes.iter().all(|&b| {
+                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
+            }) {
+                last_id = Some(String::from_utf8_lossy(id_bytes).into_owned());
+            }
         }
+        search_pos = abs_pos + 1;
     }
 
-    None
-}
-
-/// Iterate over all tags in a byte slice in reverse order (last tag to first tag)
-/// This is a Rust port of Calibre's reverse_tag_iter function
-fn reverse_tag_iter(block: &[u8]) -> ReverseTagIterator<'_> {
-    ReverseTagIterator {
-        block,
-        end: block.len(),
-    }
-}
-
-struct ReverseTagIterator<'a> {
-    block: &'a [u8],
-    end: usize,
-}
-
-impl<'a> Iterator for ReverseTagIterator<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Find the last '>' before end
-        let pgt = self.block[..self.end].iter().rposition(|&b| b == b'>')?;
-        // Find the last '<' before the '>'
-        let plt = self.block[..pgt].iter().rposition(|&b| b == b'<')?;
-        // Extract the tag
-        let tag = &self.block[plt..=pgt];
-        // Update end for next iteration
-        self.end = plt;
-        Some(tag)
-    }
+    last_id
 }
 
 fn clean_kindle_references(

@@ -1,7 +1,6 @@
 mod headers;
 mod huffcdic;
 mod index;
-mod patterns;
 mod reader;
 mod skeleton;
 mod transform;
