@@ -371,17 +371,17 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 if local == b"content" {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src"
-                            && let Some(state) = stack.last_mut() {
-                                state.src = Some(String::from_utf8(attr.value.to_vec())?);
-                            }
+                            && let Some(state) = stack.last_mut()
+                        {
+                            state.src = Some(String::from_utf8(attr.value.to_vec())?);
+                        }
                     }
                 }
             }
             Ok(Event::Text(e)) => {
-                if in_text
-                    && let Some(state) = stack.last_mut() {
-                        state.text = Some(e.unescape().unwrap_or_default().to_string());
-                    }
+                if in_text && let Some(state) = stack.last_mut() {
+                    state.text = Some(e.unescape().unwrap_or_default().to_string());
+                }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
@@ -391,15 +391,16 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                     b"text" => in_text = false,
                     b"navPoint" => {
                         if let Some(state) = stack.pop()
-                            && let (Some(text), Some(src)) = (state.text, state.src) {
-                                let mut entry = TocEntry::new(text, src);
-                                entry.children = state.children;
-                                entry.play_order = state.play_order;
+                            && let (Some(text), Some(src)) = (state.text, state.src)
+                        {
+                            let mut entry = TocEntry::new(text, src);
+                            entry.children = state.children;
+                            entry.play_order = state.play_order;
 
-                                if let Some(parent) = stack.last_mut() {
-                                    parent.children.push(entry);
-                                }
+                            if let Some(parent) = stack.last_mut() {
+                                parent.children.push(entry);
                             }
+                        }
                     }
                     _ => {}
                 }

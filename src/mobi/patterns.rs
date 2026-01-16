@@ -41,5 +41,3 @@ pub static ID_ATTR_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<[^>]+\s(?:id|ID)\s*=\s*['"]([^'"]+)['"]"#).unwrap());
 
 // === Skeleton patterns ===
-
-

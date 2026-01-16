@@ -358,11 +358,14 @@ mod tests {
         use crate::mobi::writer_transform::add_aid_attributes_fast;
         let mut chunker = Chunker::new();
         let html = b"<html><body><p>Hello</p><div>World</div></body></html>";
-        let result = add_aid_attributes_fast(html, "test.xhtml", &mut chunker.aid_counter, &mut chunker.id_map);
+        let result = add_aid_attributes_fast(
+            html,
+            "test.xhtml",
+            &mut chunker.aid_counter,
+            &mut chunker.id_map,
+        );
         let result_str = String::from_utf8_lossy(&result);
         assert!(result_str.contains("aid=\"0000\""));
         assert!(result_str.contains("aid=\"0001\""));
     }
 }
-
-
