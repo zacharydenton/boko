@@ -6,9 +6,10 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::book::Book;
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 use super::palmdoc;
+use super::skeleton::{Chunker, ChunkerResult};
 
 // Constants
 const RECORD_SIZE: usize = 4096;
@@ -33,6 +34,9 @@ struct MobiBuilder<'a> {
     text_length: usize,
     last_text_record: u16,
     first_resource_record: u32,
+    skel_index: u32,
+    frag_index: u32,
+    chunker_result: Option<ChunkerResult>,
 }
 
 impl<'a> MobiBuilder<'a> {
@@ -43,10 +47,14 @@ impl<'a> MobiBuilder<'a> {
             text_length: 0,
             last_text_record: 0,
             first_resource_record: NULL_INDEX,
+            skel_index: NULL_INDEX,
+            frag_index: NULL_INDEX,
+            chunker_result: None,
         };
 
         builder.build_text_records()?;
         builder.build_resource_records()?;
+        builder.build_kf8_indices()?;
         builder.build_fdst_record()?;
         builder.build_flis_fcis_eof()?;
         builder.build_record0()?;
@@ -55,21 +63,31 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_text_records(&mut self) -> Result<()> {
-        // Combine all spine items into a single HTML document
-        let html = self.generate_html();
-        let html_bytes = html.as_bytes();
-        self.text_length = html_bytes.len();
+        // Collect HTML files from spine
+        let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
+        for spine_item in &self.book.spine {
+            if let Some(resource) = self.book.resources.get(&spine_item.href) {
+                if resource.media_type == "application/xhtml+xml" {
+                    html_files.push((spine_item.href.clone(), resource.data.clone()));
+                }
+            }
+        }
+
+        // Process with chunker (adds aids, prepares for KF8)
+        let mut chunker = Chunker::new();
+        let chunker_result = chunker.process(&html_files);
+        self.text_length = chunker_result.text.len();
 
         // Split into records and compress
         let mut pos = 0;
-        while pos < html_bytes.len() {
-            let end = (pos + RECORD_SIZE).min(html_bytes.len());
-            let chunk = &html_bytes[pos..end];
+        while pos < chunker_result.text.len() {
+            let end = (pos + RECORD_SIZE).min(chunker_result.text.len());
+            let chunk = &chunker_result.text[pos..end];
 
             // Compress with PalmDOC
             let compressed = palmdoc::compress(chunk);
 
-            // Add trailing byte (overlap byte, we use 0 for simplicity)
+            // Add trailing byte (overlap byte for multibyte chars)
             let mut record = compressed;
             record.push(0);
 
@@ -78,6 +96,20 @@ impl<'a> MobiBuilder<'a> {
         }
 
         self.last_text_record = (self.records.len() - 1) as u16;
+        self.chunker_result = Some(chunker_result);
+        Ok(())
+    }
+
+    fn build_kf8_indices(&mut self) -> Result<()> {
+        // Build SKEL and Fragment INDX records
+        // For now, just set indices - proper INDX generation is complex
+        if self.chunker_result.is_some() {
+            // Will be set when we add actual INDX record generation
+            // self.skel_index = self.records.len() as u32;
+            // self.records.push(build_skel_indx(...));
+            // self.frag_index = self.records.len() as u32;
+            // self.records.push(build_frag_indx(...));
+        }
         Ok(())
     }
 
