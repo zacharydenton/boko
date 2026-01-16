@@ -15,7 +15,7 @@ use super::index::{
 };
 use super::skeleton::{Chunker, ChunkerResult};
 use super::writer_transform::{
-    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_10, write_base32_4,
+    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_4, write_base32_10,
 };
 
 use flate2::Compression;
@@ -958,7 +958,15 @@ fn flatten_toc(
         }
     }
 
-    flatten_recursive(entries, 0, -1, text_length, id_map, aid_offset_map, &mut result);
+    flatten_recursive(
+        entries,
+        0,
+        -1,
+        text_length,
+        id_map,
+        aid_offset_map,
+        &mut result,
+    );
 
     // Convert to NcxBuildEntry with first_child/last_child
     result

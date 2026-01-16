@@ -78,10 +78,7 @@ pub fn rewrite_html_references_fast(
         let next_a = a_finder.find(&html[pos..]).map(|p| p + pos);
 
         // Find the earliest match
-        let next_match = [next_link, next_img, next_a]
-            .into_iter()
-            .flatten()
-            .min();
+        let next_match = [next_link, next_img, next_a].into_iter().flatten().min();
 
         if let Some(tag_start) = next_match {
             // Copy content before this tag
@@ -124,7 +121,10 @@ pub fn rewrite_html_references_fast(
         }
     }
 
-    RewriteResult { html: output, links }
+    RewriteResult {
+        html: output,
+        links,
+    }
 }
 
 /// Process <link> tag, rewriting CSS href to kindle:flow
@@ -248,7 +248,10 @@ fn process_anchor_tag(
         let href_str = String::from_utf8_lossy(href_value);
 
         // Skip external links
-        if href_str.starts_with("http") || href_str.starts_with("mailto:") || href_str.starts_with("kindle:") {
+        if href_str.starts_with("http")
+            || href_str.starts_with("mailto:")
+            || href_str.starts_with("kindle:")
+        {
             output.extend_from_slice(tag);
             return;
         }
@@ -339,7 +342,8 @@ impl<'a> Iterator for AttributeIter<'a> {
             self.pos += 1;
         }
 
-        if self.pos >= self.data.len() || self.data[self.pos] == b'>' || self.data[self.pos] == b'/' {
+        if self.pos >= self.data.len() || self.data[self.pos] == b'>' || self.data[self.pos] == b'/'
+        {
             return None;
         }
 
@@ -360,7 +364,9 @@ impl<'a> Iterator for AttributeIter<'a> {
             self.pos += 1; // Skip '='
 
             // Get quote character
-            if self.pos < self.data.len() && (self.data[self.pos] == b'"' || self.data[self.pos] == b'\'') {
+            if self.pos < self.data.len()
+                && (self.data[self.pos] == b'"' || self.data[self.pos] == b'\'')
+            {
                 let quote = self.data[self.pos];
                 self.pos += 1;
                 let value_start = self.pos;
@@ -410,10 +416,7 @@ fn resolve_href(base_dir: &str, href: &str) -> String {
 }
 
 /// Single-pass CSS url() rewriting
-pub fn rewrite_css_references_fast(
-    css: &[u8],
-    resource_map: &HashMap<String, usize>,
-) -> Vec<u8> {
+pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, usize>) -> Vec<u8> {
     let mut output = Vec::with_capacity(css.len());
     let mut pos = 0;
 
@@ -431,8 +434,7 @@ pub fn rewrite_css_references_fast(
             let url_content = &css[content_start..content_start + paren_end];
 
             // Strip quotes if present
-            let url = url_content
-                .trim_with(|c| c == '"' || c == '\'' || c == ' ');
+            let url = url_content.trim_with(|c| c == '"' || c == '\'' || c == ' ');
 
             // Skip data: and http: URLs
             if url.starts_with(b"data:") || url.starts_with(b"http") {
@@ -620,7 +622,10 @@ mod tests {
 
     #[test]
     fn test_resolve_href() {
-        assert_eq!(resolve_href("chapter", "../images/test.jpg"), "images/test.jpg");
+        assert_eq!(
+            resolve_href("chapter", "../images/test.jpg"),
+            "images/test.jpg"
+        );
         assert_eq!(resolve_href("", "test.html"), "test.html");
     }
 }
