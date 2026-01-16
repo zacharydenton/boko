@@ -46,10 +46,8 @@
 
 pub mod book;
 pub mod epub;
-pub mod error;
 pub mod mobi;
 
 pub use book::{Book, Metadata, Resource, SpineItem, TocEntry};
 pub use epub::{read_epub, write_epub};
-pub use error::{Error, Result};
 pub use mobi::{read_mobi, write_mobi};

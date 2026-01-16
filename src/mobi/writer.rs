@@ -7,7 +7,6 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::book::Book;
-use crate::error::Result;
 
 use super::index::{
     NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
@@ -100,9 +99,9 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
 ///
 /// let book = read_epub("input.epub")?;
 /// write_mobi(&book, "output.azw3")?;
-/// # Ok::<(), boko::Error>(())
+/// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
+pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> io::Result<()> {
     let file = std::fs::File::create(path)?;
     let mut writer = io::BufWriter::new(file);
     write_mobi_to_writer(book, &mut writer)
@@ -111,7 +110,7 @@ pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
 /// Write a [`Book`] to any [`Write`] destination.
 ///
 /// Useful for writing to memory buffers or network streams.
-pub fn write_mobi_to_writer<W: Write>(book: &Book, writer: &mut W) -> Result<()> {
+pub fn write_mobi_to_writer<W: Write>(book: &Book, writer: &mut W) -> io::Result<()> {
     let mobi = MobiBuilder::new(book)?;
     mobi.write(writer)
 }
@@ -143,7 +142,7 @@ struct MobiBuilder<'a> {
 }
 
 impl<'a> MobiBuilder<'a> {
-    fn new(book: &'a Book) -> Result<Self> {
+    fn new(book: &'a Book) -> io::Result<Self> {
         let mut builder = Self {
             book,
             records: vec![Vec::new()], // Placeholder for record 0
@@ -174,7 +173,7 @@ impl<'a> MobiBuilder<'a> {
         Ok(builder)
     }
 
-    fn build_text_records(&mut self) -> Result<()> {
+    fn build_text_records(&mut self) -> io::Result<()> {
         // Build CSS href -> flow index map (flow 0 is text, CSS starts at 1)
         // MUST be sorted to match the order in collect_resources() / css_flows
         let mut css_hrefs: Vec<_> = self
@@ -377,7 +376,7 @@ impl<'a> MobiBuilder<'a> {
         result
     }
 
-    fn build_kf8_indices(&mut self) -> Result<()> {
+    fn build_kf8_indices(&mut self) -> io::Result<()> {
         // Build SKEL and Fragment INDX records
         if let Some(ref chunker_result) = self.chunker_result {
             // Build SKEL index
@@ -442,7 +441,7 @@ impl<'a> MobiBuilder<'a> {
 
     /// Phase 1: Collect resources and build resource_map (before text records)
     /// This populates resource_map for kindle:embed reference rewriting
-    fn collect_resources(&mut self) -> Result<()> {
+    fn collect_resources(&mut self) -> io::Result<()> {
         // Collect images
         self.image_hrefs = self
             .book
@@ -507,7 +506,7 @@ impl<'a> MobiBuilder<'a> {
     }
 
     /// Phase 2: Write resource records (after text records)
-    fn write_resource_records(&mut self) -> Result<()> {
+    fn write_resource_records(&mut self) -> io::Result<()> {
         // Set first resource record (now that text records are written)
         if !self.image_hrefs.is_empty() || !self.font_hrefs.is_empty() {
             self.first_resource_record = self.records.len() as u32;
@@ -531,7 +530,7 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    fn build_fdst_record(&mut self) -> Result<()> {
+    fn build_fdst_record(&mut self) -> io::Result<()> {
         // FDST (Flow Descriptor Table) - supports multiple flows
         // Flow 0: text content
         // Flows 1+: CSS stylesheets
@@ -561,7 +560,7 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    fn build_flis_fcis_eof(&mut self) -> Result<()> {
+    fn build_flis_fcis_eof(&mut self) -> io::Result<()> {
         // FLIS record
         let flis = b"FLIS\0\0\0\x08\0\x41\0\0\0\0\0\0\xff\xff\xff\xff\0\x01\0\x03\0\0\0\x03\0\0\0\x01\xff\xff\xff\xff";
         self.records.push(flis.to_vec());
@@ -582,7 +581,7 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    fn build_record0(&mut self) -> Result<()> {
+    fn build_record0(&mut self) -> io::Result<()> {
         let title = &self.book.metadata.title;
         let title_bytes = title.as_bytes();
 
@@ -799,7 +798,7 @@ impl<'a> MobiBuilder<'a> {
         exth
     }
 
-    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+    fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         // Calculate record offsets
         let mut offsets = Vec::new();
         let pdb_header_size = 78 + 8 * self.records.len() + 2;

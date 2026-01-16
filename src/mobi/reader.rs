@@ -1,8 +1,7 @@
-use std::io::{Read, Seek};
+use std::io::{self, Read, Seek};
 use std::path::Path;
 
 use crate::book::{Book, Metadata, TocEntry};
-use crate::error::{Error, Result};
 
 use super::headers::{Compression, Encoding, ExthHeader, MobiHeader, NULL_INDEX, PdbHeader};
 use super::huffcdic::HuffCdicReader;
@@ -34,9 +33,9 @@ struct ExtractedResources {
 /// let book = read_mobi("path/to/book.azw3")?;
 /// println!("Title: {}", book.metadata.title);
 /// println!("Chapters: {}", book.toc.len());
-/// # Ok::<(), boko::Error>(())
+/// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn read_mobi<P: AsRef<Path>>(path: P) -> Result<Book> {
+pub fn read_mobi<P: AsRef<Path>>(path: P) -> io::Result<Book> {
     let file = std::fs::File::open(path)?;
     read_mobi_from_reader(file)
 }
@@ -44,12 +43,12 @@ pub fn read_mobi<P: AsRef<Path>>(path: P) -> Result<Book> {
 /// Read a MOBI/AZW3 from any [`Read`] + [`Seek`] source.
 ///
 /// Useful for reading from memory buffers or network streams.
-pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
+pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> {
     // 1. Parse PDB header
     let pdb = PdbHeader::read(&mut reader)?;
 
     if pdb.num_records < 2 {
-        return Err(Error::InvalidMobi("Not enough records".into()));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not enough records"));
     }
 
     // 2. Read and parse MOBI header (record 0 - might be MOBI6 for combo files)
@@ -58,9 +57,8 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
 
     // 3. Check for encryption
     if mobi6_header.encryption != 0 {
-        return Err(Error::InvalidMobi(
-            "Encrypted MOBI files are not supported".into(),
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            "Encrypted MOBI files are not supported"));
     }
 
     // 4. Parse EXTH if present
@@ -266,7 +264,7 @@ fn parse_kf8<R: Read + Seek>(
     text: &[u8],
     codec: &str,
     record_offset: usize, // Offset for combo MOBI6+KF8 files
-) -> Result<Kf8Result> {
+) -> io::Result<Kf8Result> {
     // Parse FDST for flow boundaries (FDST index needs offset too)
     let flow_table = parse_fdst(reader, pdb, mobi, record_offset)?;
 
@@ -288,7 +286,7 @@ fn parse_kf8<R: Read + Seek>(
     }
 
     // Create record reader closure with offset for combo files
-    let mut read_record = |idx: usize| -> Result<Vec<u8>> {
+    let mut read_record = |idx: usize| -> io::Result<Vec<u8>> {
         let actual_idx = idx + record_offset;
         pdb.read_record(reader, actual_idx)
     };
@@ -335,7 +333,7 @@ fn parse_fdst<R: Read + Seek>(
     pdb: &PdbHeader,
     mobi: &MobiHeader,
     record_offset: usize,
-) -> Result<Vec<(usize, usize)>> {
+) -> io::Result<Vec<(usize, usize)>> {
     if mobi.fdst_index == NULL_INDEX {
         return Ok(Vec::new());
     }
@@ -390,7 +388,7 @@ fn build_parts(
     text: &[u8],
     files: &[SkeletonFile],
     elems: &[DivElement],
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> io::Result<Vec<(String, Vec<u8>)>> {
     let mut parts = Vec::new();
     let mut div_ptr = 0;
 
@@ -865,7 +863,7 @@ fn extract_text<R: Read + Seek>(
     pdb: &PdbHeader,
     mobi: &MobiHeader,
     record_offset: usize, // Offset for combo MOBI6+KF8 files
-) -> Result<Vec<u8>> {
+) -> io::Result<Vec<u8>> {
     // Pre-allocate based on expected text length (count * size per record)
     let estimated_size = mobi.text_record_count as usize * mobi.text_record_size as usize;
     let mut text = Vec::with_capacity(estimated_size);
@@ -894,20 +892,19 @@ fn extract_text<R: Read + Seek>(
 
         let decompressed = match mobi.compression {
             Compression::PalmDoc => palmdoc_compression::decompress(record).map_err(|e| {
-                Error::UnsupportedFormat(format!("PalmDoc decompression failed: {:?}", e))
+                io::Error::new(io::ErrorKind::Unsupported, format!("PalmDoc decompression failed: {:?}", e))
             })?,
             Compression::None => record.to_vec(),
             Compression::Huffman => {
                 if let Some(ref mut hr) = huff_reader {
                     hr.decompress(record)?
                 } else {
-                    return Err(Error::UnsupportedFormat(
-                        "Huffman reader not initialized".into(),
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::Unsupported,
+                        "Huffman reader not initialized"));
                 }
             }
             Compression::Unknown(n) => {
-                return Err(Error::UnsupportedFormat(format!(
+                return Err(io::Error::new(io::ErrorKind::Unsupported, format!(
                     "Unknown compression type: {}",
                     n
                 )));
@@ -934,11 +931,10 @@ fn load_huffcdic<R: Read + Seek>(
     pdb: &PdbHeader,
     mobi: &MobiHeader,
     record_offset: usize, // Offset for combo MOBI6+KF8 files
-) -> Result<HuffCdicReader> {
+) -> io::Result<HuffCdicReader> {
     if mobi.huff_record_index == NULL_INDEX || mobi.huff_record_count == 0 {
-        return Err(Error::InvalidMobi(
-            "Huffman compression but no HUFF/CDIC records".into(),
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData,
+            "Huffman compression but no HUFF/CDIC records"));
     }
 
     // Apply record offset for combo files
@@ -1012,7 +1008,7 @@ fn extract_resources<R: Read + Seek>(
     reader: &mut R,
     pdb: &PdbHeader,
     mobi: &MobiHeader,
-) -> Result<ExtractedResources> {
+) -> io::Result<ExtractedResources> {
     let mut images = Vec::new();
     let mut fonts = Vec::new();
     let mut resource_map: Vec<Option<String>> = Vec::new();

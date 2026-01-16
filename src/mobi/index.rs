@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use crate::error::{Error, Result};
+use std::io;
 
 /// Variable-width integer decoding (forward)
 /// Each byte uses 7 bits for data, high bit indicates continuation
@@ -63,9 +63,9 @@ pub struct IndxHeader {
 }
 
 impl IndxHeader {
-    pub fn parse(data: &[u8]) -> Result<Self> {
+    pub fn parse(data: &[u8]) -> io::Result<Self> {
         if data.len() < 192 || &data[0..4] != b"INDX" {
-            return Err(Error::InvalidMobi("Invalid INDX header".into()));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid INDX header"));
         }
 
         let u32_at = |offset: usize| -> u32 {
@@ -93,9 +93,9 @@ impl IndxHeader {
 }
 
 /// Parse TAGX section from index header
-pub fn parse_tagx(data: &[u8]) -> Result<(u32, Vec<TagXEntry>)> {
+pub fn parse_tagx(data: &[u8]) -> io::Result<(u32, Vec<TagXEntry>)> {
     if data.len() < 12 || &data[0..4] != b"TAGX" {
-        return Err(Error::InvalidMobi("Invalid TAGX section".into()));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid TAGX section"));
     }
 
     let first_entry_offset = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
@@ -282,10 +282,10 @@ pub struct IndexEntry {
 
 /// Read a complete index table
 pub fn read_index(
-    read_record: &mut dyn FnMut(usize) -> Result<Vec<u8>>,
+    read_record: &mut dyn FnMut(usize) -> io::Result<Vec<u8>>,
     index_record: usize,
     codec: &str,
-) -> Result<(Vec<IndexEntry>, Cncx)> {
+) -> io::Result<(Vec<IndexEntry>, Cncx)> {
     let header_data = read_record(index_record)?;
     let header = IndxHeader::parse(&header_data)?;
 
@@ -297,7 +297,7 @@ pub fn read_index(
         header_data
             .windows(4)
             .position(|w| w == b"TAGX")
-            .ok_or_else(|| Error::InvalidMobi("TAGX not found".into()))?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "TAGX not found"))?
     };
 
     let (control_byte_count, tagx) = parse_tagx(&header_data[tagx_start..])?;

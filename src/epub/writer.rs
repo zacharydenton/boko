@@ -1,10 +1,9 @@
-use std::io::{Seek, Write};
+use std::io::{self, Seek, Write};
 use std::path::Path;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::book::{Book, TocEntry};
-use crate::error::Result;
 
 /// Write a [`Book`] to an EPUB file on disk.
 ///
@@ -19,9 +18,9 @@ use crate::error::Result;
 /// let mut book = Book::new();
 /// book.metadata = Metadata::new("My Book").with_author("Me");
 /// write_epub(&book, "output.epub")?;
-/// # Ok::<(), boko::Error>(())
+/// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn write_epub<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
+pub fn write_epub<P: AsRef<Path>>(book: &Book, path: P) -> io::Result<()> {
     let file = std::fs::File::create(path)?;
     write_epub_to_writer(book, file)
 }
@@ -29,7 +28,7 @@ pub fn write_epub<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
 /// Write a [`Book`] to any [`Write`] + [`Seek`] destination.
 ///
 /// Useful for writing to memory buffers or network streams.
-pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
+pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Result<()> {
     let mut zip = ZipWriter::new(writer);
 
     // 1. Write mimetype (must be first, uncompressed)
