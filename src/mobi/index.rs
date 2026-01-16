@@ -1208,4 +1208,176 @@ mod tests {
         assert_eq!(count_set_bits(0b1010), 2);
         assert_eq!(count_set_bits(0xFF), 8);
     }
+
+    #[test]
+    fn test_cncx_roundtrip() {
+        // Test with strings containing special characters
+        let labels = vec![
+            "What's in This Book?".to_string(), // curly apostrophe
+            "Don't Stop".to_string(),           // straight apostrophe
+            "Simple Text".to_string(),
+        ];
+
+        // Build CNCX
+        let cncx_bytes = build_cncx(&labels);
+        let offsets = calculate_cncx_offsets(&labels);
+
+        println!("CNCX bytes: {:?}", cncx_bytes);
+        println!("Offsets: {:?}", offsets);
+
+        // Parse it back
+        let parsed = Cncx::parse(&[cncx_bytes], "utf-8");
+
+        println!("Parsed strings: {:?}", parsed.strings);
+
+        // Check each label can be retrieved
+        for (i, label) in labels.iter().enumerate() {
+            let offset = offsets[i];
+            let retrieved = parsed.get(offset);
+            println!(
+                "Label {}: offset={}, expected='{}', got={:?}",
+                i, offset, label, retrieved
+            );
+            assert_eq!(
+                retrieved,
+                Some(label),
+                "Label '{}' at offset {} not found correctly",
+                label,
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn test_ncx_index_roundtrip() {
+        // Build NCX entries with special characters
+        let entries = vec![
+            NcxBuildEntry {
+                pos: 0,
+                length: 1000,
+                label: "What's in This Book?".to_string(),
+                depth: 0,
+                parent: -1,
+                first_child: -1,
+                last_child: -1,
+            },
+            NcxBuildEntry {
+                pos: 1000,
+                length: 500,
+                label: "Don't Stop".to_string(),
+                depth: 0,
+                parent: -1,
+                first_child: -1,
+                last_child: -1,
+            },
+        ];
+
+        // Build the index
+        let (ncx_records, ncx_cncx) = build_ncx_indx(&entries);
+
+        println!(
+            "Built {} NCX records + CNCX ({} bytes)",
+            ncx_records.len(),
+            ncx_cncx.len()
+        );
+
+        // We should have 2 records: header + data
+        assert_eq!(ncx_records.len(), 2, "Should have header + data record");
+
+        // Parse the header to get TAGX
+        let header = IndxHeader::parse(&ncx_records[0]).expect("Failed to parse header");
+        println!(
+            "Header: entry_count={}, num_cncx={}",
+            header.entry_count, header.num_cncx
+        );
+
+        // Find TAGX in header record
+        let tagx_start = header.tagx_offset as usize;
+        let (control_byte_count, tagx) =
+            parse_tagx(&ncx_records[0][tagx_start..]).expect("Failed to parse TAGX");
+        println!(
+            "TAGX: {} control bytes, {} tags",
+            control_byte_count,
+            tagx.len()
+        );
+
+        // Parse CNCX
+        let cncx = Cncx::parse(&[ncx_cncx], "utf-8");
+        println!("CNCX strings: {:?}", cncx.strings);
+
+        // Parse the data record
+        let data_record = &ncx_records[1];
+        let data_header = IndxHeader::parse(data_record).expect("Failed to parse data header");
+
+        // Find IDXT
+        let idxt_pos = data_header.idxt_start as usize;
+        assert_eq!(
+            &data_record[idxt_pos..idxt_pos + 4],
+            b"IDXT",
+            "IDXT not found"
+        );
+
+        // Read entry positions
+        let mut positions: Vec<usize> = Vec::new();
+        for j in 0..data_header.entry_count as usize {
+            let off = idxt_pos + 4 + j * 2;
+            let pos = u16::from_be_bytes([data_record[off], data_record[off + 1]]) as usize;
+            positions.push(pos);
+        }
+        positions.push(idxt_pos);
+
+        println!("Entry positions: {:?}", positions);
+
+        // Parse each entry
+        let mut index_entries = Vec::new();
+        for j in 0..positions.len().saturating_sub(1) {
+            let start = positions[j];
+            let end = positions[j + 1];
+            let entry_data = &data_record[start..end];
+
+            println!(
+                "Entry {} raw data ({} bytes): {:02x?}",
+                j,
+                entry_data.len(),
+                entry_data
+            );
+
+            let (name, consumed) = decode_string(entry_data, "utf-8");
+            let tag_data = &entry_data[consumed..];
+
+            println!(
+                "  Name: '{}', tag_data ({} bytes): {:02x?}",
+                name,
+                tag_data.len(),
+                tag_data
+            );
+
+            let tags = get_tag_map(control_byte_count, &tagx, tag_data);
+            println!("  Tags: {:?}", tags);
+
+            index_entries.push(IndexEntry { name, tags });
+        }
+
+        // Now parse as NCX entries
+        let ncx_entries = parse_ncx_index(&index_entries, &cncx);
+
+        // Verify labels
+        println!("\nParsed NCX entries:");
+        for (i, ncx) in ncx_entries.iter().enumerate() {
+            println!(
+                "  {}: text='{}', pos={}, length={}",
+                i, ncx.text, ncx.pos, ncx.length
+            );
+        }
+
+        assert_eq!(ncx_entries.len(), 2, "Should have 2 NCX entries");
+        assert_eq!(
+            ncx_entries[0].text, "What's in This Book?",
+            "First label should match"
+        );
+        assert_eq!(
+            ncx_entries[1].text, "Don't Stop",
+            "Second label should match"
+        );
+    }
 }

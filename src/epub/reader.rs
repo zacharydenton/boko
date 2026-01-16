@@ -238,7 +238,17 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
             }
             Ok(Event::Text(e)) => {
                 if current_element.is_some() {
-                    buf_text.push_str(&e.xml10_content().unwrap_or_default());
+                    let raw = String::from_utf8_lossy(e.as_ref());
+                    buf_text.push_str(&raw);
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                // Handle entity references like &apos; &lt; and numeric refs like &#x2019;
+                if current_element.is_some() {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    if let Some(resolved) = resolve_entity(&entity) {
+                        buf_text.push_str(&resolved);
+                    }
                 }
             }
             Ok(Event::End(e)) => {
@@ -380,7 +390,23 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
             }
             Ok(Event::Text(e)) => {
                 if in_text && let Some(state) = stack.last_mut() {
-                    state.text = Some(e.xml10_content().unwrap_or_default().to_string());
+                    let raw = String::from_utf8_lossy(e.as_ref());
+                    match &mut state.text {
+                        Some(existing) => existing.push_str(&raw),
+                        None => state.text = Some(raw.into_owned()),
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                // Handle entity references like &apos; &lt; and numeric refs like &#x2019;
+                if in_text && let Some(state) = stack.last_mut() {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    if let Some(resolved) = resolve_entity(&entity) {
+                        match &mut state.text {
+                            Some(existing) => existing.push_str(&resolved),
+                            None => state.text = Some(resolved),
+                        }
+                    }
                 }
             }
             Ok(Event::End(e)) => {
@@ -465,6 +491,38 @@ fn resolve_path(base: &str, href: &str) -> String {
     }
 }
 
+/// Resolve XML entity references (named and numeric)
+/// Named: apos, quot, lt, gt, amp
+/// Numeric: #x2019 (hex), #8217 (decimal)
+fn resolve_entity(entity: &str) -> Option<String> {
+    // Named entities
+    match entity {
+        "apos" => return Some("'".to_string()),
+        "quot" => return Some("\"".to_string()),
+        "lt" => return Some("<".to_string()),
+        "gt" => return Some(">".to_string()),
+        "amp" => return Some("&".to_string()),
+        _ => {}
+    }
+
+    // Numeric character references
+    if let Some(hex) = entity.strip_prefix("#x") {
+        // Hexadecimal: &#x2019;
+        if let Ok(code) = u32::from_str_radix(hex, 16)
+            && let Some(c) = char::from_u32(code) {
+                return Some(c.to_string());
+            }
+    } else if let Some(dec) = entity.strip_prefix('#') {
+        // Decimal: &#8217;
+        if let Ok(code) = dec.parse::<u32>()
+            && let Some(c) = char::from_u32(code) {
+                return Some(c.to_string());
+            }
+    }
+
+    None
+}
+
 /// Extract local name from potentially namespaced XML name
 fn local_name(name: &[u8]) -> &[u8] {
     name.iter()
@@ -482,5 +540,60 @@ mod tests {
         assert_eq!(local_name(b"dc:title"), b"title");
         assert_eq!(local_name(b"title"), b"title");
         assert_eq!(local_name(b"opf:meta"), b"meta");
+    }
+
+    #[test]
+    fn test_xml_entity_parsing() {
+        // Test named entity &apos;
+        let xml = r#"<text>Don&apos;t Stop</text>"#;
+        let mut reader = Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut full_text = String::new();
+        loop {
+            match reader.read_event() {
+                Ok(Event::Text(e)) => {
+                    let raw = String::from_utf8_lossy(e.as_ref());
+                    full_text.push_str(&raw);
+                }
+                Ok(Event::GeneralRef(e)) => {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    if let Some(resolved) = resolve_entity(&entity) {
+                        full_text.push_str(&resolved);
+                    }
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+        }
+        assert_eq!(full_text, "Don't Stop");
+    }
+
+    #[test]
+    fn test_xml_numeric_entity_parsing() {
+        // Test numeric entity &#x2019; (curly apostrophe)
+        let xml = r#"<text>What&#x2019;s in This Book?</text>"#;
+        let mut reader = Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut full_text = String::new();
+        loop {
+            match reader.read_event() {
+                Ok(Event::Text(e)) => {
+                    let raw = String::from_utf8_lossy(e.as_ref());
+                    full_text.push_str(&raw);
+                }
+                Ok(Event::GeneralRef(e)) => {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    if let Some(resolved) = resolve_entity(&entity) {
+                        full_text.push_str(&resolved);
+                    }
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+        }
+        // U+2019 is the curly apostrophe '
+        assert_eq!(full_text, "What\u{2019}s in This Book?");
     }
 }
