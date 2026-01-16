@@ -1,8 +1,6 @@
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use quick_xml::escape::unescape;
-
 use crate::book::{Book, Metadata, TocEntry};
 use crate::error::{Error, Result};
 
@@ -187,30 +185,8 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
                 book.add_spine_item(format!("part{:04}", i), filename, "application/xhtml+xml");
             }
 
-            // Add TOC entries from NCX
-            for ncx_entry in &kf8_result.ncx {
-                // Map NCX entry to filename
-                // pos_fid is (elem_idx, offset) - need to look up elem's file_number
-                let href = if let Some((elem_idx, _offset)) = ncx_entry.pos_fid {
-                    // Look up the elem to get its file_number
-                    if let Some(elem) = kf8_result.elems.get(elem_idx as usize) {
-                        format!("part{:04}.html", elem.file_number)
-                    } else {
-                        format!("part{:04}.html", 0)
-                    }
-                } else {
-                    // Fallback: use position to find file
-                    let pos = ncx_entry.pos;
-                    find_file_for_position(&kf8_result.files, pos)
-                        .map(|f| format!("part{:04}.html", f.file_number))
-                        .unwrap_or_else(|| "part0000.html".to_string())
-                };
-
-                let title = unescape(&ncx_entry.text)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_else(|_| ncx_entry.text.clone());
-                book.toc.push(TocEntry::new(&title, &href));
-            }
+            // Add TOC entries from NCX, reconstructing hierarchy from parent indices
+            book.toc = build_toc_from_ncx(&kf8_result.ncx, &kf8_result.elems, &kf8_result.files);
 
             // Add CSS with resolved kindle:embed references
             for (i, css) in kf8_result.css_flows.iter().enumerate() {
@@ -528,6 +504,90 @@ fn find_file_for_position(files: &[SkeletonFile], pos: u32) -> Option<&SkeletonF
     }
     // Fallback: return first file
     files.first()
+}
+
+/// Build hierarchical TOC from flat NCX entries using parent indices
+fn build_toc_from_ncx(
+    ncx: &[NcxEntry],
+    elems: &[DivElement],
+    files: &[SkeletonFile],
+) -> Vec<TocEntry> {
+    use quick_xml::escape::unescape;
+
+    // First pass: create TocEntry for each NCX entry
+    let entries: Vec<TocEntry> = ncx
+        .iter()
+        .map(|ncx_entry| {
+            // Map NCX entry to filename
+            let href = if let Some((elem_idx, _offset)) = ncx_entry.pos_fid {
+                if let Some(elem) = elems.get(elem_idx as usize) {
+                    format!("part{:04}.html", elem.file_number)
+                } else {
+                    format!("part{:04}.html", 0)
+                }
+            } else {
+                find_file_for_position(files, ncx_entry.pos)
+                    .map(|f| format!("part{:04}.html", f.file_number))
+                    .unwrap_or_else(|| "part0000.html".to_string())
+            };
+
+            let title = unescape(&ncx_entry.text)
+                .map(|s| s.into_owned())
+                .unwrap_or_else(|_| ncx_entry.text.clone());
+
+            TocEntry::new(&title, &href)
+        })
+        .collect();
+
+    // If no hierarchy info, return flat list
+    if ncx.iter().all(|e| e.parent < 0) {
+        return entries;
+    }
+
+    // Second pass: build hierarchy using parent indices
+    // We need to own entries so we can move them into children
+    let mut entries: Vec<Option<TocEntry>> = entries.into_iter().map(Some).collect();
+    let mut roots: Vec<usize> = Vec::new();
+
+    // Identify roots and collect children by parent
+    let mut children_map: std::collections::HashMap<usize, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    for (i, ncx_entry) in ncx.iter().enumerate() {
+        if ncx_entry.parent < 0 {
+            roots.push(i);
+        } else {
+            children_map
+                .entry(ncx_entry.parent as usize)
+                .or_default()
+                .push(i);
+        }
+    }
+
+    // Recursively build tree, taking entries out of the Option vec
+    fn take_with_children(
+        idx: usize,
+        entries: &mut [Option<TocEntry>],
+        children_map: &std::collections::HashMap<usize, Vec<usize>>,
+    ) -> Option<TocEntry> {
+        let mut entry = entries[idx].take()?;
+
+        if let Some(children_indices) = children_map.get(&idx) {
+            for &child_idx in children_indices {
+                if let Some(child) = take_with_children(child_idx, entries, children_map) {
+                    entry.children.push(child);
+                }
+            }
+        }
+
+        Some(entry)
+    }
+
+    // Build result from roots
+    roots
+        .into_iter()
+        .filter_map(|idx| take_with_children(idx, &mut entries, &children_map))
+        .collect()
 }
 
 /// Process KF8 content: clean up declarations and convert kindle: references

@@ -417,10 +417,9 @@ impl<'a> MobiBuilder<'a> {
         if !self.book.toc.is_empty()
             && let Some(ref chunker_result) = self.chunker_result
         {
-            // Flatten TOC entries (including children) into a list with depth
+            // Flatten TOC entries (including children) into a list with hierarchy
             let ncx_entries = flatten_toc(
                 &self.book.toc,
-                0,
                 self.text_length as u32,
                 &chunker_result.id_map,
                 &chunker_result.aid_offset_map,
@@ -881,53 +880,99 @@ fn sanitize_title(title: &str) -> String {
         .replace(' ', "_")
 }
 
-/// Flatten a hierarchical TOC into a linear list with depth info
+/// Flatten a hierarchical TOC into a linear list with parent/child indices
 fn flatten_toc(
     entries: &[crate::book::TocEntry],
-    depth: u32,
     text_length: u32,
     id_map: &HashMap<(String, String), String>,
     aid_offset_map: &HashMap<String, (usize, usize, usize)>,
 ) -> Vec<NcxBuildEntry> {
-    let mut result = Vec::new();
-
-    for entry in entries {
-        // Parse the href to get file and fragment
-        let (file, fragment) = if let Some(hash_pos) = entry.href.find('#') {
-            (
-                entry.href[..hash_pos].to_string(),
-                entry.href[hash_pos + 1..].to_string(),
-            )
-        } else {
-            (entry.href.clone(), String::new())
-        };
-
-        // Look up position: href -> aid -> offset_in_text
-        let pos = id_map
-            .get(&(file.clone(), fragment.clone()))
-            .or_else(|| id_map.get(&(file, String::new()))) // Fall back to file body
-            .and_then(|aid| aid_offset_map.get(aid))
-            .map(|&(_seq, _off_chunk, off_text)| off_text as u32)
-            .unwrap_or(0);
-
-        result.push(NcxBuildEntry {
-            pos,
-            length: text_length.saturating_sub(pos),
-            label: entry.title.clone(),
-            depth,
-        });
-
-        // Recursively add children
-        result.extend(flatten_toc(
-            &entry.children,
-            depth + 1,
-            text_length,
-            id_map,
-            aid_offset_map,
-        ));
+    // Intermediate entry with mutable child tracking
+    struct TempEntry {
+        pos: u32,
+        length: u32,
+        label: String,
+        depth: u32,
+        parent: i32,
+        children: Vec<usize>, // Indices of children
     }
 
+    let mut result: Vec<TempEntry> = Vec::new();
+
+    // Recursive helper to flatten depth-first
+    fn flatten_recursive(
+        entries: &[crate::book::TocEntry],
+        depth: u32,
+        parent_idx: i32,
+        text_length: u32,
+        id_map: &HashMap<(String, String), String>,
+        aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+        result: &mut Vec<TempEntry>,
+    ) {
+        for entry in entries {
+            let current_idx = result.len();
+
+            // Parse the href to get file and fragment
+            let (file, fragment) = if let Some(hash_pos) = entry.href.find('#') {
+                (
+                    entry.href[..hash_pos].to_string(),
+                    entry.href[hash_pos + 1..].to_string(),
+                )
+            } else {
+                (entry.href.clone(), String::new())
+            };
+
+            // Look up position: href -> aid -> offset_in_text
+            let pos = id_map
+                .get(&(file.clone(), fragment.clone()))
+                .or_else(|| id_map.get(&(file, String::new())))
+                .and_then(|aid| aid_offset_map.get(aid))
+                .map(|&(_seq, _off_chunk, off_text)| off_text as u32)
+                .unwrap_or(0);
+
+            // Add this entry
+            result.push(TempEntry {
+                pos,
+                length: text_length.saturating_sub(pos),
+                label: entry.title.clone(),
+                depth,
+                parent: parent_idx,
+                children: Vec::new(),
+            });
+
+            // Track this entry as a child of its parent
+            if parent_idx >= 0 {
+                result[parent_idx as usize].children.push(current_idx);
+            }
+
+            // Recursively add children
+            flatten_recursive(
+                &entry.children,
+                depth + 1,
+                current_idx as i32,
+                text_length,
+                id_map,
+                aid_offset_map,
+                result,
+            );
+        }
+    }
+
+    flatten_recursive(entries, 0, -1, text_length, id_map, aid_offset_map, &mut result);
+
+    // Convert to NcxBuildEntry with first_child/last_child
     result
+        .into_iter()
+        .map(|e| NcxBuildEntry {
+            pos: e.pos,
+            length: e.length,
+            label: e.label,
+            depth: e.depth,
+            parent: e.parent,
+            first_child: e.children.first().map(|&i| i as i32).unwrap_or(-1),
+            last_child: e.children.last().map(|&i| i as i32).unwrap_or(-1),
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -1080,6 +1080,12 @@ pub struct NcxBuildEntry {
     pub label: String,
     /// Depth level (0 = top level)
     pub depth: u32,
+    /// Index of parent entry (-1 for root entries)
+    pub parent: i32,
+    /// Index of first child (-1 if no children)
+    pub first_child: i32,
+    /// Index of last child (-1 if no children)
+    pub last_child: i32,
 }
 
 /// Build NCX index for table of contents
@@ -1106,13 +1112,30 @@ pub fn build_ncx_indx(entries: &[NcxBuildEntry]) -> (Vec<Vec<u8>>, Vec<u8>) {
         builder.set_cncx_count(1);
     }
 
-    // Calculate parent/child relationships
-    // For simplicity, we assume a flat structure (no nesting)
+    // Build entries with hierarchy information
     for (i, entry) in entries.iter().enumerate() {
-        // Control bytes: we use offset, length, label, depth
-        // Control byte 1: bits for tags 1-8 (offset, length, label, depth)
-        // Control byte 2: bits for tags 21-23, 6 (parent, first_child, last_child, pos_fid)
-        let mut tag_data = vec![0x0F, 0x00]; // Tags 1-4 present, no hierarchy tags
+        // Control byte 0 encodes which tags are present via bitmasks:
+        // offset=0x01, length=0x02, label=0x04, depth=0x08,
+        // parent=0x10, first_child=0x20, last_child=0x40, pos_fid=0x80
+        let mut ctrl: u8 = 0x0F; // Tags 1-4 (offset, length, label, depth) always present
+
+        // Check which hierarchy tags are present and set their bits
+        let has_parent = entry.parent >= 0;
+        let has_first_child = entry.first_child >= 0;
+        let has_last_child = entry.last_child >= 0;
+
+        if has_parent {
+            ctrl |= 0x10; // Tag 21 (parent)
+        }
+        if has_first_child {
+            ctrl |= 0x20; // Tag 22 (first_child)
+        }
+        if has_last_child {
+            ctrl |= 0x40; // Tag 23 (last_child)
+        }
+
+        // Control byte 1 is unused (0x00) since all our tags fit in byte 0
+        let mut tag_data = vec![ctrl, 0x00];
 
         // Offset (tag 1)
         tag_data.extend(encint(entry.pos));
@@ -1126,6 +1149,21 @@ pub fn build_ncx_indx(entries: &[NcxBuildEntry]) -> (Vec<Vec<u8>>, Vec<u8>) {
 
         // Depth (tag 4)
         tag_data.extend(encint(entry.depth));
+
+        // Parent (tag 21) - if present
+        if has_parent {
+            tag_data.extend(encint(entry.parent as u32));
+        }
+
+        // First child (tag 22) - if present
+        if has_first_child {
+            tag_data.extend(encint(entry.first_child as u32));
+        }
+
+        // Last child (tag 23) - if present
+        if has_last_child {
+            tag_data.extend(encint(entry.last_child as u32));
+        }
 
         // Entry name is a 4-digit zero-padded index
         let name = format!("{:04}", i);
