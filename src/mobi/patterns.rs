@@ -6,24 +6,6 @@
 use regex_lite::Regex;
 use std::sync::LazyLock;
 
-// === Writer patterns ===
-
-/// Matches <link ... href="..." ...> tags
-pub static LINK_HREF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<link\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>"#).unwrap());
-
-/// Matches <img ... src="..." ...> tags
-pub static IMG_SRC_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<img\s+[^>]*src\s*=\s*["']([^"']+)["']"#).unwrap());
-
-/// Matches <a ... href="..." ...> tags
-pub static ANCHOR_HREF_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"<a\s+([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>"#).unwrap());
-
-/// Matches url(...) in CSS
-pub static CSS_URL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"url\s*\(\s*["']?([^"')]+)["']?\s*\)"#).unwrap());
-
 // === Reader patterns ===
 
 /// Matches aid="..." attributes for removal

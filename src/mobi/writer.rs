@@ -2,6 +2,7 @@
 //!
 //! Creates KF8 (MOBI version 8) files from Book structures.
 
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -13,10 +14,12 @@ use super::index::{
     calculate_cncx_offsets,
 };
 use super::skeleton::{Chunker, ChunkerResult};
+use super::writer_transform::{
+    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_10, write_base32_4,
+};
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
-use std::collections::HashMap;
 
 // Constants
 const RECORD_SIZE: usize = 4096;
@@ -83,39 +86,6 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
     record.extend_from_slice(&compressed);
 
     record
-}
-
-/// Convert a number to base32 with specified minimum digits (0-9A-V)
-fn to_base32_with_digits(mut num: usize, min_digits: usize) -> String {
-    const DIGITS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
-    let mut result = Vec::new();
-
-    if num == 0 {
-        result.push(b'0');
-    } else {
-        while num > 0 {
-            result.push(DIGITS[num % 32]);
-            num /= 32;
-        }
-    }
-
-    // Pad to minimum digits
-    while result.len() < min_digits {
-        result.push(b'0');
-    }
-
-    result.reverse();
-    String::from_utf8(result).unwrap()
-}
-
-/// Convert a number to base32 with minimum 4 digits (0-9A-V)
-fn to_base32(num: usize) -> String {
-    to_base32_with_digits(num, 4)
-}
-
-/// Convert a number to base32 with 10 digits for link offsets
-fn to_base32_10(num: usize) -> String {
-    to_base32_with_digits(num, 10)
 }
 
 /// Write a [`Book`] to a MOBI/AZW3 file on disk.
@@ -221,25 +191,52 @@ impl<'a> MobiBuilder<'a> {
             css_flow_map.insert(href.clone(), i + 1); // Flows are 1-indexed (0 is text)
         }
 
-        // Collect and process HTML files from spine
+        // Build spine hrefs set for internal link detection
+        let spine_hrefs: HashSet<&str> = self.book.spine.iter().map(|s| s.href.as_str()).collect();
+
+        // Collect and process HTML files from spine using optimized single-pass rewriting
         let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut link_counter = 0usize;
+
         for spine_item in &self.book.spine {
             if let Some(resource) = self.book.resources.get(&spine_item.href)
                 && resource.media_type == "application/xhtml+xml"
             {
-                // Rewrite HTML to use kindle: references
-                let html = String::from_utf8_lossy(&resource.data);
-                let rewritten =
-                    self.rewrite_html_references(&html, &spine_item.href, &css_flow_map);
-                html_files.push((spine_item.href.clone(), rewritten.into_bytes()));
+                // Single-pass HTML rewriting with byte-level operations
+                let result = rewrite_html_references_fast(
+                    &resource.data,
+                    &spine_item.href,
+                    &css_flow_map,
+                    &self.resource_map,
+                    &spine_hrefs,
+                    &self.book.resources,
+                    link_counter,
+                );
+
+                // Collect links for later resolution
+                for link in result.links {
+                    // Build placeholder string for link_map lookup
+                    let mut base32_buf = [0u8; 10];
+                    write_base32_10(link_counter + 1, &mut base32_buf);
+                    let placeholder = format!(
+                        "kindle:pos:fid:0000:off:{}",
+                        std::str::from_utf8(&base32_buf).unwrap()
+                    );
+                    self.link_map
+                        .insert(placeholder, (link.target_file, link.fragment));
+                    link_counter += 1;
+                }
+
+                html_files.push((spine_item.href.clone(), result.html));
             }
         }
+        self.link_counter = link_counter;
 
-        // Rewrite CSS to use kindle:embed references for fonts/images
-        let rewritten_css: Vec<String> = self
+        // Rewrite CSS using optimized single-pass byte operations
+        let rewritten_css: Vec<Vec<u8>> = self
             .css_flows
             .iter()
-            .map(|css| self.rewrite_css_references(css))
+            .map(|css| rewrite_css_references_fast(css.as_bytes(), &self.resource_map))
             .collect();
 
         // Process HTML with chunker (adds aids, prepares for KF8)
@@ -257,7 +254,7 @@ impl<'a> MobiBuilder<'a> {
         // Build combined flow data: text (flow 0) + CSS flows (1+)
         let mut all_flows = resolved_text;
         for css in &rewritten_css {
-            all_flows.extend_from_slice(css.as_bytes());
+            all_flows.extend_from_slice(css);
         }
         self.flows_length = all_flows.len();
 
@@ -281,174 +278,46 @@ impl<'a> MobiBuilder<'a> {
         self.last_text_record = (self.records.len() - 1) as u16;
         self.chunker_result = Some(chunker_result);
 
-        // Store flow boundaries for FDST
+        // Store flow boundaries for FDST (convert to String for compatibility)
         // Flow 0: text (0 to text_length)
         // Flow 1+: CSS flows
-        self.css_flows = rewritten_css;
+        self.css_flows = rewritten_css
+            .into_iter()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect();
 
         Ok(())
-    }
-
-    /// Rewrite HTML references to use kindle: URLs
-    fn rewrite_html_references(
-        &mut self,
-        html: &str,
-        html_href: &str,
-        css_flow_map: &HashMap<String, usize>,
-    ) -> String {
-        use super::patterns::{ANCHOR_HREF_RE, IMG_SRC_RE, LINK_HREF_RE};
-
-        let mut result = html.to_string();
-
-        // Get the directory of this HTML file for resolving relative paths
-        let base_dir = std::path::Path::new(html_href)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        // Rewrite <link href="..."> to kindle:flow references
-        result = LINK_HREF_RE
-            .replace_all(&result, |caps: &regex_lite::Captures| {
-                let href = &caps[1];
-                let full_tag = &caps[0];
-
-                // Resolve relative path
-                let resolved = resolve_href(&base_dir, href);
-
-                if let Some(&flow_idx) = css_flow_map.get(&resolved) {
-                    let flow_ref = to_base32(flow_idx);
-                    full_tag.replace(href, &format!("kindle:flow:{}?mime=text/css", flow_ref))
-                } else {
-                    full_tag.to_string()
-                }
-            })
-            .to_string();
-
-        // Rewrite <img src="..."> to kindle:embed references
-        result = IMG_SRC_RE
-            .replace_all(&result, |caps: &regex_lite::Captures| {
-                let src = &caps[1];
-                let full_match = &caps[0];
-
-                // Resolve relative path
-                let resolved = resolve_href(&base_dir, src);
-
-                if let Some(&res_idx) = self.resource_map.get(&resolved) {
-                    let embed_ref = to_base32(res_idx);
-                    // Get MIME type
-                    let mime = self
-                        .book
-                        .resources
-                        .get(&resolved)
-                        .map(|r| r.media_type.as_str())
-                        .unwrap_or("image/jpeg");
-                    full_match.replace(src, &format!("kindle:embed:{}?mime={}", embed_ref, mime))
-                } else {
-                    full_match.to_string()
-                }
-            })
-            .to_string();
-
-        // Rewrite <a href="..."> internal links to kindle:pos:fid placeholders
-        // These will be resolved after chunking when we know anchor positions
-
-        // Collect spine hrefs for checking if links are internal
-        let spine_hrefs: std::collections::HashSet<_> =
-            self.book.spine.iter().map(|s| s.href.as_str()).collect();
-
-        // Use a RefCell to allow mutation inside closure
-        use std::cell::RefCell;
-        let link_counter = RefCell::new(self.link_counter);
-        let link_map: RefCell<Vec<(String, String, String)>> = RefCell::new(Vec::new());
-
-        let base_dir_owned = base_dir.clone();
-        let html_href_owned = html_href.to_string();
-
-        result = ANCHOR_HREF_RE
-            .replace_all(&result, |caps: &regex_lite::Captures| {
-                let full_match = &caps[0];
-                let before = &caps[1];
-                let href = &caps[2];
-                let after = &caps[3];
-
-                // Skip external links and kindle: links
-                if href.starts_with("http")
-                    || href.starts_with("mailto:")
-                    || href.starts_with("kindle:")
-                {
-                    return full_match.to_string();
-                }
-
-                // Resolve the href to get target file and fragment
-                let (target_file, fragment) = if let Some(hash_pos) = href.find('#') {
-                    let file_part = &href[..hash_pos];
-                    let frag_part = &href[hash_pos + 1..];
-                    if file_part.is_empty() {
-                        // Fragment-only link like #anchor - resolve to current file
-                        (html_href_owned.clone(), frag_part.to_string())
-                    } else {
-                        (
-                            resolve_href(&base_dir_owned, file_part),
-                            frag_part.to_string(),
-                        )
-                    }
-                } else {
-                    // Link to file without fragment
-                    (resolve_href(&base_dir_owned, href), String::new())
-                };
-
-                // Only create placeholders for internal links
-                if spine_hrefs.contains(target_file.as_str()) {
-                    let mut counter = link_counter.borrow_mut();
-                    *counter += 1;
-                    let placeholder = format!("kindle:pos:fid:0000:off:{}", to_base32_10(*counter));
-                    link_map
-                        .borrow_mut()
-                        .push((placeholder.clone(), target_file, fragment));
-                    format!("<a {}href=\"{}\"{}>", before, placeholder, after)
-                } else {
-                    // Keep non-internal links as-is
-                    full_match.to_string()
-                }
-            })
-            .to_string();
-
-        // Update self with the collected data
-        self.link_counter = *link_counter.borrow();
-        for (placeholder, target_file, fragment) in link_map.into_inner() {
-            self.link_map.insert(placeholder, (target_file, fragment));
-        }
-
-        result
     }
 
     /// Resolve link placeholders after chunking
     /// Replaces kindle:pos:fid:0000:off:XXXXXXXXXX with actual positions
     /// Optimized to build result in single pass instead of repeated replacen calls
-    /// Uses simple string search instead of regex for the fixed prefix pattern
+    /// Uses SIMD-accelerated byte search instead of string operations
     fn resolve_link_placeholders(
         &self,
         text: &[u8],
         id_map: &HashMap<(String, String), String>,
         aid_offset_map: &HashMap<String, (usize, usize, usize)>,
     ) -> Vec<u8> {
-        const PREFIX: &str = "kindle:pos:fid:0000:off:";
-        const PLACEHOLDER_LEN: usize = 33; // PREFIX (23) + base32 value (10)
+        use memchr::memmem;
 
-        let text_str = String::from_utf8_lossy(text);
+        const PREFIX: &[u8] = b"kindle:pos:fid:0000:off:";
+        const PLACEHOLDER_LEN: usize = 34; // PREFIX (24) + base32 value (10)
 
-        // Collect all replacements with their positions: (start, end, replacement)
-        let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+        let finder = memmem::Finder::new(PREFIX);
 
-        // Find all placeholders using simple string search
+        // Collect all replacements with their positions: (start, end, replacement_bytes)
+        let mut replacements: Vec<(usize, usize, [u8; 34])> = Vec::new();
+
+        // Find all placeholders using SIMD-accelerated search
         let mut search_start = 0;
-        while let Some(pos) = text_str[search_start..].find(PREFIX) {
+        while let Some(pos) = finder.find(&text[search_start..]) {
             let start = search_start + pos;
             let end = start + PLACEHOLDER_LEN;
 
-            // Validate we have enough characters and they're valid base32
-            if end <= text_str.len() {
-                let placeholder = &text_str[start..end];
+            // Validate we have enough bytes
+            if end <= text.len() {
+                let placeholder = std::str::from_utf8(&text[start..end]).unwrap_or("");
 
                 // Look up this placeholder in link_map to get target
                 if let Some((target_file, fragment)) = self.link_map.get(placeholder) {
@@ -464,12 +333,17 @@ impl<'a> MobiBuilder<'a> {
                         if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) =
                             aid_offset_map.get(aid)
                         {
-                            // Create the final link: kindle:pos:fid:NNNN:off:OOOOOOOOOO
-                            let replacement = format!(
-                                "kindle:pos:fid:{}:off:{}",
-                                to_base32(seq_num),
-                                to_base32_10(offset_in_chunk)
-                            );
+                            // Build replacement directly into fixed buffer (no allocation)
+                            // Format: "kindle:pos:fid:XXXX:off:YYYYYYYYYY" (34 bytes)
+                            let mut replacement = [0u8; 34];
+                            replacement[..15].copy_from_slice(b"kindle:pos:fid:");
+                            let mut fid_buf = [0u8; 4];
+                            write_base32_4(seq_num, &mut fid_buf);
+                            replacement[15..19].copy_from_slice(&fid_buf);
+                            replacement[19..24].copy_from_slice(b":off:");
+                            let mut off_buf = [0u8; 10];
+                            write_base32_10(offset_in_chunk, &mut off_buf);
+                            replacement[24..34].copy_from_slice(&off_buf);
                             replacements.push((start, end, replacement));
                         }
                     }
@@ -487,56 +361,18 @@ impl<'a> MobiBuilder<'a> {
         replacements.sort_by_key(|(start, _, _)| *start);
 
         // Build result in single pass
-        let text_bytes = text_str.as_bytes();
-        let mut result = Vec::with_capacity(text_bytes.len());
+        let mut result = Vec::with_capacity(text.len());
         let mut last_end = 0;
 
         for (start, end, replacement) in replacements {
             // Copy text before this replacement
-            result.extend_from_slice(&text_bytes[last_end..start]);
+            result.extend_from_slice(&text[last_end..start]);
             // Add replacement
-            result.extend_from_slice(replacement.as_bytes());
+            result.extend_from_slice(&replacement);
             last_end = end;
         }
         // Copy remaining text after last replacement
-        result.extend_from_slice(&text_bytes[last_end..]);
-
-        result
-    }
-
-    /// Rewrite CSS url() references to kindle:embed
-    fn rewrite_css_references(&self, css: &str) -> String {
-        use super::patterns::CSS_URL_RE;
-
-        let mut result = css.to_string();
-
-        // Rewrite url(...) references
-        result = CSS_URL_RE
-            .replace_all(&result, |caps: &regex_lite::Captures| {
-                let url = &caps[1];
-
-                // Skip data: URLs and external URLs
-                if url.starts_with("data:") || url.starts_with("http") {
-                    return caps[0].to_string();
-                }
-
-                // Try to find the resource
-                // CSS files might reference ../fonts/foo.ttf or similar
-                let normalized = url.trim_start_matches("../").trim_start_matches("./");
-
-                // Try different path patterns
-                for href in self.resource_map.keys() {
-                    if href.ends_with(normalized) || href == normalized {
-                        let res_idx = self.resource_map[href];
-                        let embed_ref = to_base32(res_idx);
-                        return format!("url(kindle:embed:{})", embed_ref);
-                    }
-                }
-
-                // Not found, keep original
-                caps[0].to_string()
-            })
-            .to_string();
+        result.extend_from_slice(&text[last_end..]);
 
         result
     }
@@ -1043,33 +879,6 @@ fn sanitize_title(title: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
         .collect::<String>()
         .replace(' ', "_")
-}
-
-/// Resolve a relative href against a base directory
-fn resolve_href(base_dir: &str, href: &str) -> String {
-    // Handle absolute paths
-    if href.starts_with('/') {
-        return href.trim_start_matches('/').to_string();
-    }
-
-    // Handle ../ paths
-    let mut parts: Vec<&str> = if base_dir.is_empty() {
-        Vec::new()
-    } else {
-        base_dir.split('/').collect()
-    };
-
-    for segment in href.split('/') {
-        match segment {
-            ".." => {
-                parts.pop();
-            }
-            "." | "" => {}
-            s => parts.push(s),
-        }
-    }
-
-    parts.join("/")
 }
 
 /// Flatten a hierarchical TOC into a linear list with depth info
