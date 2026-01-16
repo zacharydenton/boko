@@ -29,13 +29,20 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> Result<(
     zip.start_file("META-INF/container.xml", options_deflate)?;
     zip.write_all(CONTAINER_XML.as_bytes())?;
 
+    // Generate identifier once for consistency between OPF and NCX
+    let identifier = if book.metadata.identifier.is_empty() {
+        format!("urn:uuid:{}", uuid_v4())
+    } else {
+        book.metadata.identifier.clone()
+    };
+
     // 3. Write content.opf
-    let opf = generate_opf(book);
+    let opf = generate_opf(book, &identifier);
     zip.start_file("OEBPS/content.opf", options_deflate)?;
     zip.write_all(opf.as_bytes())?;
 
     // 4. Write toc.ncx
-    let ncx = generate_ncx(book);
+    let ncx = generate_ncx(book, &identifier);
     zip.start_file("OEBPS/toc.ncx", options_deflate)?;
     zip.write_all(ncx.as_bytes())?;
 
@@ -61,7 +68,7 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   </rootfiles>
 </container>"#;
 
-fn generate_opf(book: &Book) -> String {
+fn generate_opf(book: &Book, identifier: &str) -> String {
     let mut opf = String::new();
 
     opf.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -75,14 +82,9 @@ fn generate_opf(book: &Book) -> String {
         escape_xml(&book.metadata.title)
     ));
 
-    let identifier = if book.metadata.identifier.is_empty() {
-        format!("urn:uuid:{}", uuid_v4())
-    } else {
-        book.metadata.identifier.clone()
-    };
     opf.push_str(&format!(
         "    <dc:identifier id=\"BookId\">{}</dc:identifier>\n",
-        escape_xml(&identifier)
+        escape_xml(identifier)
     ));
 
     let language = if book.metadata.language.is_empty() {
@@ -169,7 +171,7 @@ fn generate_opf(book: &Book) -> String {
     opf
 }
 
-fn generate_ncx(book: &Book) -> String {
+fn generate_ncx(book: &Book, identifier: &str) -> String {
     let mut ncx = String::new();
 
     ncx.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -178,11 +180,6 @@ fn generate_ncx(book: &Book) -> String {
   <head>
     <meta name="dtb:uid" content=""#);
 
-    let identifier = if book.metadata.identifier.is_empty() {
-        "unknown"
-    } else {
-        &book.metadata.identifier
-    };
     ncx.push_str(&escape_xml(identifier));
     ncx.push_str(r#""/>
     <meta name="dtb:depth" content="1"/>

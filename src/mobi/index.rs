@@ -418,7 +418,7 @@ pub fn parse_div_index(entries: &[IndexEntry], cncx: &Cncx) -> Vec<DivElement> {
 
     for entry in entries {
         // Parse insert_pos from entry name (it's the numeric identifier)
-        let insert_pos = entry.name.parse().unwrap_or(0);
+        let insert_pos: u32 = entry.name.parse().unwrap_or(0);
 
         // Tag 2 = cncx offset for toc text
         let toc_text = entry

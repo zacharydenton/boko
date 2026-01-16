@@ -29,22 +29,22 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
         return Err(Error::InvalidMobi("Not enough records".into()));
     }
 
-    // 2. Read and parse MOBI header (record 0)
+    // 2. Read and parse MOBI header (record 0 - might be MOBI6 for combo files)
     let record0 = pdb.read_record(&mut reader, 0)?;
-    let mobi = MobiHeader::parse(&record0)?;
+    let mobi6_header = MobiHeader::parse(&record0)?;
 
     // 3. Check for encryption
-    if mobi.encryption != 0 {
+    if mobi6_header.encryption != 0 {
         return Err(Error::InvalidMobi(
             "Encrypted MOBI files are not supported".into(),
         ));
     }
 
     // 4. Parse EXTH if present
-    let exth = if mobi.has_exth() && mobi.header_length > 0 {
-        let exth_start = 16 + mobi.header_length as usize;
+    let exth = if mobi6_header.has_exth() && mobi6_header.header_length > 0 {
+        let exth_start = 16 + mobi6_header.header_length as usize;
         if exth_start < record0.len() {
-            ExthHeader::parse(&record0[exth_start..], mobi.encoding).ok()
+            ExthHeader::parse(&record0[exth_start..], mobi6_header.encoding).ok()
         } else {
             None
         }
@@ -52,14 +52,39 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
         None
     };
 
-    // Debug: Check for KF8 boundary
-    if let Some(ref exth) = exth {
-        if let Some(boundary) = exth.kf8_boundary {
-            eprintln!("DEBUG: kf8_boundary = {}", boundary);
+    // 5. For combo MOBI6+KF8 files, we need to find the KF8 header
+    // This is indicated by a BOUNDARY marker record followed by a KF8 header
+    // EXTH 121 MIGHT point to the KF8 header, but only if there's a BOUNDARY marker before it
+    let (mobi, kf8_record_offset) = {
+        // First check if record 0 header is already KF8 (pure KF8 file)
+        if mobi6_header.mobi_version == 8 {
+            (mobi6_header, 0)
+        } else if let Some(kf8_header_idx) = exth.as_ref().and_then(|e| e.kf8_boundary) {
+            // Verify BOUNDARY marker exists at kf8_header_idx - 1
+            if kf8_header_idx > 0 && (kf8_header_idx as usize) < pdb.num_records as usize {
+                let boundary_record = pdb.read_record(&mut reader, kf8_header_idx as usize - 1)?;
+                if boundary_record.starts_with(b"BOUNDARY") {
+                    // Read KF8 header from kf8_header_idx
+                    let kf8_record = pdb.read_record(&mut reader, kf8_header_idx as usize)?;
+                    match MobiHeader::parse(&kf8_record) {
+                        Ok(kf8_mobi) => {
+                            // KF8 indices are relative to (kf8_header_idx - 1) as the base
+                            (kf8_mobi, (kf8_header_idx as usize).saturating_sub(1))
+                        }
+                        Err(_) => {
+                            (mobi6_header, 0)
+                        }
+                    }
+                } else {
+                    (mobi6_header, 0)
+                }
+            } else {
+                (mobi6_header, 0)
+            }
+        } else {
+            (mobi6_header, 0)
         }
-    }
-    eprintln!("DEBUG: mobi.is_kf8() = {}, skel_index = {}, div_index = {}",
-              mobi.is_kf8(), mobi.skel_index, mobi.div_index);
+    };
 
     // 5. Build metadata
     let mut metadata = Metadata::default();
@@ -90,8 +115,8 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
         }
     }
 
-    // 6. Extract text content
-    let text = extract_text(&mut reader, &pdb, &mobi)?;
+    // 6. Extract text content (use kf8_record_offset for combo files)
+    let text = extract_text(&mut reader, &pdb, &mobi, kf8_record_offset)?;
 
     // 7. Extract images
     let images = extract_images(&mut reader, &pdb, &mobi)?;
@@ -107,14 +132,6 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     };
 
     // Try KF8 parsing for proper chapters
-    // For combo MOBI6+KF8 files, we need to offset index reads by (kf8_boundary - 1)
-    let kf8_record_offset = exth
-        .as_ref()
-        .and_then(|e| e.kf8_boundary)
-        .map(|b| (b as usize).saturating_sub(1))
-        .unwrap_or(0);
-    eprintln!("DEBUG: kf8_record_offset = {}", kf8_record_offset);
-
     if mobi.is_kf8() {
         if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, kf8_record_offset) {
             // Add chapter HTML files
@@ -218,18 +235,14 @@ fn parse_kf8<R: Read + Seek>(
     codec: &str,
     record_offset: usize,  // Offset for combo MOBI6+KF8 files
 ) -> Result<Kf8Result> {
-    eprintln!("DEBUG: parse_kf8 with record_offset = {}", record_offset);
 
     // Parse FDST for flow boundaries (FDST index needs offset too)
     let flow_table = parse_fdst(reader, pdb, mobi, record_offset)?;
-    eprintln!("DEBUG: flow_table = {:?}", flow_table);
-    eprintln!("DEBUG: text.len() = {}", text.len());
 
     // Get HTML content (flow 0) - everything else is CSS/SVG
     // Calibre: text = flows[0] = raw_ml[start:end] for first flow
     let (html_start, html_end) = flow_table.first().copied().unwrap_or((0, text.len()));
     let html_text = &text[html_start..html_end.min(text.len())];
-    eprintln!("DEBUG: html_text range = {}..{}, len = {}", html_start, html_end.min(text.len()), html_text.len());
 
     // Extract CSS flows (flows 1+)
     let mut css_flows = Vec::new();
@@ -250,7 +263,6 @@ fn parse_kf8<R: Read + Seek>(
     // Create record reader closure with offset for combo files
     let mut read_record = |idx: usize| -> Result<Vec<u8>> {
         let actual_idx = idx + record_offset;
-        eprintln!("DEBUG: read_record {} -> {} (offset {})", idx, actual_idx, record_offset);
         pdb.read_record(reader, actual_idx)
     };
 
@@ -302,8 +314,6 @@ fn parse_fdst<R: Read + Seek>(
     }
 
     let actual_idx = mobi.fdst_index as usize + record_offset;
-    eprintln!("DEBUG: parse_fdst reading record {} (fdst_index {} + offset {})",
-              actual_idx, mobi.fdst_index, record_offset);
     let fdst_record = pdb.read_record(reader, actual_idx)?;
 
     if fdst_record.len() < 12 || &fdst_record[0..4] != b"FDST" {
@@ -351,13 +361,10 @@ fn build_parts(
     let mut parts = Vec::new();
     let mut div_ptr = 0;
 
-    eprintln!("DEBUG: build_parts - {} files, {} elems, text len {}", files.len(), elems.len(), text.len());
 
     for file in files {
         let skel_start = file.start_pos as usize;
         let skel_end = skel_start + file.length as usize;
-        eprintln!("DEBUG: file {} - skel_start={}, skel_end={}, div_count={}",
-                  file.file_number, skel_start, skel_end, file.div_count);
 
         if skel_end > text.len() {
             continue;
@@ -368,10 +375,9 @@ fn build_parts(
         let mut baseptr = skel_end;
 
         // Insert div elements into skeleton
-        // NOTE: Calibre's algorithm uses insertpos - skelpos directly without cumulative
-        // adjustment. This works because the KF8 format's insertpos values are designed
-        // to be applied to the original skeleton structure.
-        for i in 0..file.div_count {
+        // The insert positions in the index are CUMULATIVE - they account for
+        // previously inserted content. So we apply them directly without adjustment.
+        for _i in 0..file.div_count {
             if div_ptr >= elems.len() {
                 break;
             }
@@ -379,39 +385,16 @@ fn build_parts(
             let elem = &elems[div_ptr];
             let part_len = elem.length as usize;
 
-            // Verify elem belongs to this file
-            if elem.file_number as usize != file.file_number {
-                eprintln!("DEBUG:   WARNING: elem {} has file_number {} but processing file {}!",
-                          div_ptr, elem.file_number, file.file_number);
-            }
-
-            eprintln!("DEBUG:   div {} - insert_pos={}, length={}, file_number={}, baseptr={}, startpos={}",
-                      div_ptr, elem.insert_pos, elem.length, elem.file_number, baseptr, elem.start_pos);
-
             if baseptr + part_len > text.len() {
-                eprintln!("DEBUG:   SKIP - baseptr + part_len > text.len()");
                 div_ptr += 1;
                 continue;
             }
 
             let part = &text[baseptr..baseptr + part_len];
-            let part_preview: String = String::from_utf8_lossy(&part[..part.len().min(80)]).to_string();
-            eprintln!("DEBUG:   part preview: {:?}", part_preview);
-
-            // Show skeleton context around insert point
-            let rel_insert = (elem.insert_pos as usize).saturating_sub(skel_start);
-            if rel_insert <= skeleton.len() {
-                let ctx_start = rel_insert.saturating_sub(30);
-                let ctx_end = (rel_insert + 30).min(skeleton.len());
-                let before: String = String::from_utf8_lossy(&skeleton[ctx_start..rel_insert]).to_string();
-                let after: String = String::from_utf8_lossy(&skeleton[rel_insert..ctx_end]).to_string();
-                eprintln!("DEBUG:   skeleton context: ...{:?}|INSERT|{:?}...", before, after);
-            }
 
             // Insert position is relative to skeleton start position
-            // Like Calibre, we use the raw insertpos - skelpos without cumulative adjustment
-            let mut insert_pos = (elem.insert_pos as usize).saturating_sub(skel_start);
-            eprintln!("DEBUG:   insert_pos relative to skeleton: {}", insert_pos);
+            // The positions in the index are cumulative (account for previous insertions)
+            let insert_pos = (elem.insert_pos as usize).saturating_sub(skel_start);
 
             // Calibre check: verify insert_pos doesn't split a tag
             // If head ends with incomplete tag or tail starts with incomplete tag, fix it
@@ -441,24 +424,12 @@ fn build_parts(
                     }
                 };
 
+                // Note: KF8 intentionally splits tags like "a" + "id=" = "aid="
+                // across skeleton and div content. This is NOT an error - don't "fix" it.
+                // Calibre warns but uses a different correction method involving
+                // locate_beg_end_of_tag() which we don't implement.
+                // For now, trust the insert positions from the div table.
                 if head_incomplete || tail_incomplete {
-                    // Try to find a safe insert position using aid attribute from first elem
-                    if i == 0 {
-                        if let Some(aid) = extract_aid_from_elem(elem) {
-                            if let Some(new_pos) = find_tag_end_by_aid(&skeleton, &aid) {
-                                insert_pos = new_pos;
-                            }
-                        }
-                    }
-                    // If still problematic, try to find nearest tag boundary
-                    if insert_pos <= skeleton.len() {
-                        let test_head = &skeleton[..insert_pos];
-                        let last_gt = test_head.iter().rposition(|&b| b == b'>');
-                        if let Some(gt_pos) = last_gt {
-                            // Move insert position to after the last complete tag
-                            insert_pos = gt_pos + 1;
-                        }
-                    }
                 }
             }
 
@@ -540,7 +511,7 @@ fn find_file_for_position(files: &[SkeletonFile], pos: u32) -> Option<&SkeletonF
 }
 
 /// Process KF8 content: clean up declarations and convert kindle: references
-fn wrap_html_content(content: &[u8], _title: &str, _part_num: usize, elems: &[DivElement]) -> String {
+fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[DivElement]) -> String {
     let content_str = String::from_utf8_lossy(content);
 
     // Strip encoding declarations but keep structure
@@ -549,8 +520,12 @@ fn wrap_html_content(content: &[u8], _title: &str, _part_num: usize, elems: &[Di
     // Convert kindle: references to proper paths
     let result = clean_kindle_references(&cleaned, elems);
 
+    // Strip Amazon-specific attributes (aid, data-AmznRemoved, etc.)
+    let stripped = strip_kindle_attributes(&result);
+
     // Ensure it has proper XHTML structure
-    ensure_xhtml_structure(&result)
+    let final_result = ensure_xhtml_structure(&stripped, part_num);
+    final_result
 }
 
 /// Strip XML/encoding declarations but keep the HTML structure
@@ -572,8 +547,41 @@ fn strip_encoding_declarations(html: &str) -> String {
     result
 }
 
+/// Strip Amazon-specific attributes and fix XHTML compliance issues
+fn strip_kindle_attributes(html: &str) -> String {
+    use regex_lite::Regex;
+
+    // Strip aid="..." and aid='...' attributes (Amazon IDs)
+    let aid_re = Regex::new(r#"\s+aid\s*=\s*["'][^"']*["']"#).unwrap();
+    let result = aid_re.replace_all(html, "");
+
+    // Strip data-AmznRemoved-M8="..." attributes
+    let amzn_re = Regex::new(r#"\s+data-AmznRemoved-[^=]+\s*=\s*["'][^"']*["']"#).unwrap();
+    let result2 = amzn_re.replace_all(&result, "");
+
+    // Add alt="" to img tags that don't have alt attribute
+    // Match <img that doesn't already have alt= and add alt="" before the closing
+    let img_re = Regex::new(r#"<img\s+([^>]*?)(\s*/?>)"#).unwrap();
+    let result3 = img_re.replace_all(&result2, |caps: &regex_lite::Captures| {
+        let attrs = &caps[1];
+        let close = &caps[2];
+        if attrs.contains("alt=") {
+            format!("<img {}{}", attrs, close)
+        } else {
+            format!("<img {} alt=\"\"{}", attrs, close)
+        }
+    });
+
+    // Replace HTML5 <meta charset="..."/> with EPUB2-compatible version
+    // Also handle variants like <meta charset="UTF-8"/> (no spaces)
+    let meta_re = Regex::new(r#"<meta\s*charset\s*=\s*["']([^"']+)["']\s*/?\s*>"#).unwrap();
+    let result4 = meta_re.replace_all(&result3, r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#);
+
+    result4.to_string()
+}
+
 /// Ensure content has proper XHTML structure
-fn ensure_xhtml_structure(html: &str) -> String {
+fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
     let mut result = html.trim().to_string();
 
     // Check if structure is valid: should start with <?xml or <!DOCTYPE or <html
@@ -603,8 +611,39 @@ fn ensure_xhtml_structure(html: &str) -> String {
     };
 
     if needs_wrapping || !has_valid_html_structure {
-        // Extract just the body content - strip any partial HTML tags at start
-        let body_content = extract_body_content_safe(&result);
+        // For KF8 content that doesn't start with proper structure,
+        // try to find existing body content or just wrap the whole thing
+        let body_pos = result.find("<body");
+        // Only use body extraction if body tag is near the beginning (first 10%)
+        let body_content = if let Some(pos) = body_pos {
+            let threshold = result.len() / 10;
+            if pos < threshold {
+                extract_body_content_safe(&result)
+            } else {
+                // Body tag is late in content - probably from next file's structure
+                // Keep the full content
+                result.clone()
+            }
+        } else if result.contains("<html") {
+            // Has html but no body - extract after html opening tag
+            if let Some(html_pos) = result.find("<html") {
+                let threshold = result.len() / 10;
+                if html_pos < threshold {
+                    if let Some(end) = result[html_pos..].find('>') {
+                        result[html_pos + end + 1..].to_string()
+                    } else {
+                        result.clone()
+                    }
+                } else {
+                    result.clone()
+                }
+            } else {
+                result.clone()
+            }
+        } else {
+            // No proper structure - use the content as-is (KF8 skeleton fragment)
+            result.clone()
+        };
 
         result = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -634,12 +673,12 @@ fn ensure_xhtml_structure(html: &str) -> String {
             }
         }
 
-        // Add meta charset after <head> if not present
+        // Add meta charset after <head> if not present (use EPUB2-compatible format)
         if let Some(head_pos) = result.find("<head>") {
             let after_head = head_pos + 6;
             if !result[after_head..].starts_with("<meta charset") && !result[after_head..].starts_with("<meta http-equiv") {
                 result = format!(
-                    "{}<meta charset=\"UTF-8\"/>{}",
+                    "{}<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>{}",
                     &result[..after_head],
                     &result[after_head..]
                 );
@@ -718,23 +757,28 @@ fn extract_text<R: Read + Seek>(
     reader: &mut R,
     pdb: &PdbHeader,
     mobi: &MobiHeader,
+    record_offset: usize, // Offset for combo MOBI6+KF8 files
 ) -> Result<Vec<u8>> {
     let mut text = Vec::new();
     let text_end = mobi.text_record_count as usize + 1;
 
     // For Huffman compression, we need to load HUFF/CDIC records first
     let mut huff_reader = if mobi.compression == Compression::Huffman {
-        Some(load_huffcdic(reader, pdb, mobi)?)
+        Some(load_huffcdic(reader, pdb, mobi, record_offset)?)
     } else {
         None
     };
 
+    // Extract text from records 1 to text_end-1
+
     for i in 1..text_end {
-        if i >= pdb.record_offsets.len() {
+        // Apply record offset for combo files (KF8 text starts after BOUNDARY marker)
+        let actual_idx = i + record_offset;
+        if actual_idx >= pdb.record_offsets.len() {
             break;
         }
 
-        let record = pdb.read_record(reader, i)?;
+        let record = pdb.read_record(reader, actual_idx)?;
 
         // Strip trailing bytes if extra_data_flags is set
         let record = strip_trailing_data(&record, mobi.extra_data_flags);
@@ -778,6 +822,7 @@ fn load_huffcdic<R: Read + Seek>(
     reader: &mut R,
     pdb: &PdbHeader,
     mobi: &MobiHeader,
+    record_offset: usize, // Offset for combo MOBI6+KF8 files
 ) -> Result<HuffCdicReader> {
     if mobi.huff_record_index == NULL_INDEX || mobi.huff_record_count == 0 {
         return Err(Error::InvalidMobi(
@@ -785,7 +830,8 @@ fn load_huffcdic<R: Read + Seek>(
         ));
     }
 
-    let huff_start = mobi.huff_record_index as usize;
+    // Apply record offset for combo files
+    let huff_start = mobi.huff_record_index as usize + record_offset;
     let huff_count = mobi.huff_record_count as usize;
 
     // First record is HUFF
@@ -811,16 +857,21 @@ fn strip_trailing_data(record: &[u8], flags: u16) -> &[u8] {
 
     let mut end = record.len();
 
-    // Count trailing data entries based on flags
-    for i in 0..16 {
-        if flags & (1 << i) != 0 {
+    // Count trailing data entries based on flags (skip bit 0, it's handled separately)
+    // Calibre does: flags >> 1, then loops checking each bit
+    let mut shifted_flags = flags >> 1;
+    while shifted_flags != 0 {
+        if shifted_flags & 1 != 0 {
             if end == 0 {
                 break;
             }
+            // Read variable-length size from end of record
             let mut size = 0usize;
             let mut shift = 0;
-            for j in (0..end).rev() {
-                let byte = record[j];
+            let mut pos = end;
+            while pos > 0 {
+                pos -= 1;
+                let byte = record[pos];
                 size |= ((byte & 0x7F) as usize) << shift;
                 shift += 7;
                 if byte & 0x80 != 0 || shift >= 28 {
@@ -831,9 +882,10 @@ fn strip_trailing_data(record: &[u8], flags: u16) -> &[u8] {
                 end -= size;
             }
         }
+        shifted_flags >>= 1;
     }
 
-    // Handle multibyte overlap flag (bit 0)
+    // Handle multibyte overlap flag (bit 0) - this is processed LAST
     if flags & 1 != 0 && end > 0 {
         let overlap = (record[end - 1] & 3) as usize + 1;
         if overlap <= end {
