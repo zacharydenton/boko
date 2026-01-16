@@ -6,8 +6,8 @@ description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"
 license = "MIT"
 
 [dependencies]
-quick-xml = "0.37"
-zip = "2.2"
+quick-xml = "0.39"
+zip = "7.1"
 flate2 = "1.0"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
 chardetng = "0.1"
@@ -15,7 +15,7 @@ thiserror = "2.0"
 percent-encoding = "2.3"
 
 # HTML/CSS parsing (Servo crates, all 0.36.x)
-html5ever = "0.36"
+html5ever = "0.37"
 markup5ever_rcdom = "0.36"
 cssparser = "0.36"
 regex-lite = "0.1"
@@ -30,7 +30,7 @@ palmdoc-compression = "0.3"
 [dev-dependencies]
 tempfile = "3.14"
 proptest = "1.6"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "conversion"

@@ -238,7 +238,7 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
             }
             Ok(Event::Text(e)) => {
                 if current_element.is_some() {
-                    buf_text.push_str(&e.unescape().unwrap_or_default());
+                    buf_text.push_str(&e.xml10_content().unwrap_or_default());
                 }
             }
             Ok(Event::End(e)) => {
@@ -380,7 +380,7 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
             }
             Ok(Event::Text(e)) => {
                 if in_text && let Some(state) = stack.last_mut() {
-                    state.text = Some(e.unescape().unwrap_or_default().to_string());
+                    state.text = Some(e.xml10_content().unwrap_or_default().to_string());
                 }
             }
             Ok(Event::End(e)) => {
