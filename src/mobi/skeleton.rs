@@ -178,13 +178,6 @@ impl Chunker {
         }
     }
 
-    /// Generate a unique aid value
-    fn next_aid(&mut self) -> String {
-        let aid = to_base32(self.aid_counter);
-        self.aid_counter += 1;
-        aid
-    }
-
     /// Process multiple HTML files into skeletons and chunks
     pub fn process(&mut self, html_files: &[(String, Vec<u8>)]) -> ChunkerResult {
         let mut skeletons = Vec::new();
@@ -253,39 +246,51 @@ impl Chunker {
         text: &[u8],
         chunk_table: &[ChunkEntry],
     ) -> HashMap<String, (usize, usize, usize)> {
-        use super::patterns::AID_VALUE_RE;
+        use memchr::memmem;
 
         let mut aid_offset_map = HashMap::new();
-        let text_str = String::from_utf8_lossy(text);
+        let finder = memmem::Finder::new(b" aid=\"");
+        let mut search_pos = 0;
 
-        // Find all aid="..." attributes
-        for cap in AID_VALUE_RE.captures_iter(&text_str) {
-            let aid = cap[1].to_string();
-            let offset = cap.get(0).unwrap().start();
+        while let Some(rel_pos) = finder.find(&text[search_pos..]) {
+            let offset = search_pos + rel_pos;
+            let val_start = offset + 6; // len(" aid=\"") is 6
 
-            // Find which chunk this offset is in
-            // Since we don't do real chunking yet, use a simple approach:
-            // sequence_number = 0 for first skeleton, offset_in_chunk = offset
-            let (seq_num, offset_in_chunk) = if chunk_table.is_empty() {
-                // No chunks, treat whole text as one chunk
-                (0usize, offset)
-            } else {
-                // Find the chunk containing this offset
-                let mut found_seq = 0usize;
-                let mut found_offset = offset;
-                for chunk in chunk_table {
-                    let chunk_start = chunk.insert_pos;
-                    let chunk_end = chunk_start + chunk.length;
-                    if offset >= chunk_start && offset < chunk_end {
-                        found_seq = chunk.sequence_number;
-                        found_offset = offset - chunk_start;
-                        break;
-                    }
+            // Validate we have enough bytes for 4-char ID + quote
+            if val_start + 5 <= text.len() {
+                // Extract 4-byte aid
+                let aid_bytes = &text[val_start..val_start + 4];
+                let quote = text[val_start + 4];
+
+                if quote == b'"' {
+                    let aid = String::from_utf8_lossy(aid_bytes).to_string();
+
+                    // Find which chunk this offset is in
+                    // Since we don't do real chunking yet, use a simple approach:
+                    // sequence_number = 0 for first skeleton, offset_in_chunk = offset
+                    let (seq_num, offset_in_chunk) = if chunk_table.is_empty() {
+                        // No chunks, treat whole text as one chunk
+                        (0usize, offset)
+                    } else {
+                        // Find the chunk containing this offset
+                        let mut found_seq = 0usize;
+                        let mut found_offset = offset;
+                        for chunk in chunk_table {
+                            let chunk_start = chunk.insert_pos;
+                            let chunk_end = chunk_start + chunk.length;
+                            if offset >= chunk_start && offset < chunk_end {
+                                found_seq = chunk.sequence_number;
+                                found_offset = offset - chunk_start;
+                                break;
+                            }
+                        }
+                        (found_seq, found_offset)
+                    };
+
+                    aid_offset_map.insert(aid, (seq_num, offset_in_chunk, offset));
                 }
-                (found_seq, found_offset)
-            };
-
-            aid_offset_map.insert(aid, (seq_num, offset_in_chunk, offset));
+            }
+            search_pos = val_start;
         }
 
         aid_offset_map
@@ -302,80 +307,21 @@ impl Chunker {
         // Simple implementation: add aids, no actual chunking
         // Full HTML goes to skeleton, chunks are empty (content stays in skeleton)
 
-        let html_str = String::from_utf8_lossy(html);
-        let result = self.add_aid_attributes(file_href, &html_str);
-
-        let skeleton_bytes = result.as_bytes().to_vec();
+        // Use fast path from writer_transform
+        let result = super::writer_transform::add_aid_attributes_fast(
+            html,
+            file_href,
+            &mut self.aid_counter,
+            &mut self.id_map,
+        );
 
         Skeleton {
             file_number,
-            skeleton: skeleton_bytes,
+            skeleton: result,
             chunks: Vec::new(), // No chunking - content stays in skeleton
             start_pos,
         }
     }
-
-    /// Add aid attributes to aidable tags and record id->aid mappings
-    fn add_aid_attributes(&mut self, file_href: &str, html: &str) -> String {
-        use super::patterns::{AIDABLE_TAGS_RE, TAG_ID_RE};
-
-        let file_href_owned = file_href.to_string();
-
-        AIDABLE_TAGS_RE
-            .replace_all(html, |caps: &regex_lite::Captures| {
-                let tag = &caps[1];
-                let attrs = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-
-                // Skip if already has aid
-                if attrs.contains("aid=") {
-                    return format!("<{}{}>", tag, attrs);
-                }
-
-                let aid = self.next_aid();
-
-                // If this element has an id attribute, record the mapping
-                if let Some(id_cap) = TAG_ID_RE.captures(attrs) {
-                    let id = id_cap[1].to_string();
-                    self.id_map
-                        .insert((file_href_owned.clone(), id), aid.clone());
-                }
-
-                // For body tag, also map empty string to this aid (links to file without fragment)
-                if tag == "body" {
-                    self.id_map
-                        .insert((file_href_owned.clone(), String::new()), aid.clone());
-                }
-
-                if attrs.is_empty() {
-                    format!("<{} aid=\"{}\">", tag, aid)
-                } else {
-                    format!("<{}{} aid=\"{}\">", tag, attrs, aid)
-                }
-            })
-            .to_string()
-    }
-}
-
-/// Convert number to base32 (using Kindle's encoding)
-fn to_base32(mut n: u32) -> String {
-    const CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
-    if n == 0 {
-        return "0000".to_string();
-    }
-
-    let mut result = Vec::new();
-    while n > 0 {
-        result.push(CHARS[(n % 32) as usize]);
-        n /= 32;
-    }
-
-    // Pad to at least 4 characters
-    while result.len() < 4 {
-        result.push(b'0');
-    }
-
-    result.reverse();
-    String::from_utf8(result).unwrap()
 }
 
 #[cfg(test)]
@@ -400,14 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn test_to_base32() {
-        assert_eq!(to_base32(0), "0000");
-        assert_eq!(to_base32(1), "0001");
-        assert_eq!(to_base32(31), "000V");
-        assert_eq!(to_base32(32), "0010");
-    }
-
-    #[test]
     fn test_from_base32() {
         assert_eq!(from_base32("0000"), 0);
         assert_eq!(from_base32("0001"), 1);
@@ -416,54 +354,15 @@ mod tests {
     }
 
     #[test]
-    fn test_base32_roundtrip() {
-        for n in [0, 1, 31, 32, 100, 1000, 32767, 65535, 1048575] {
-            assert_eq!(from_base32(&to_base32(n)), n);
-        }
-    }
-
-    #[test]
     fn test_add_aids() {
+        use crate::mobi::writer_transform::add_aid_attributes_fast;
         let mut chunker = Chunker::new();
-        let html = "<html><body><p>Hello</p><div>World</div></body></html>";
-        let result = chunker.add_aid_attributes("test.xhtml", html);
-        assert!(result.contains("aid=\"0000\""));
-        assert!(result.contains("aid=\"0001\""));
+        let html = b"<html><body><p>Hello</p><div>World</div></body></html>";
+        let result = add_aid_attributes_fast(html, "test.xhtml", &mut chunker.aid_counter, &mut chunker.id_map);
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(result_str.contains("aid=\"0000\""));
+        assert!(result_str.contains("aid=\"0001\""));
     }
 }
 
-#[cfg(test)]
-mod proptests {
-    use super::tests::from_base32;
-    use super::*;
-    use proptest::prelude::*;
 
-    proptest! {
-        /// Property: to_base32 then from_base32 yields original value
-        #[test]
-        fn base32_roundtrip(n in 0u32..=0xFFFFFF) {
-            let encoded = to_base32(n);
-            let decoded = from_base32(&encoded);
-            prop_assert_eq!(decoded, n);
-        }
-
-        /// Property: base32 encoding produces only valid characters
-        #[test]
-        fn base32_valid_chars(n in any::<u32>()) {
-            let encoded = to_base32(n);
-            for c in encoded.chars() {
-                prop_assert!(
-                    c.is_ascii_digit() || ('A'..='V').contains(&c),
-                    "Invalid character in base32: {}", c
-                );
-            }
-        }
-
-        /// Property: base32 encoding is at least 4 characters (padded)
-        #[test]
-        fn base32_min_length(n in any::<u32>()) {
-            let encoded = to_base32(n);
-            prop_assert!(encoded.len() >= 4);
-        }
-    }
-}

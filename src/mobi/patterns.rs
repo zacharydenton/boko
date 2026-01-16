@@ -42,18 +42,4 @@ pub static ID_ATTR_RE: LazyLock<Regex> =
 
 // === Skeleton patterns ===
 
-/// Matches aid="..." attributes for offset mapping
-pub static AID_VALUE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\said=['"]([\dA-V]+)['"]"#).unwrap());
 
-/// Matches id="..." attributes in tags
-pub static TAG_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\bid=['"]([\w\-:\.]+)['"]"#).unwrap());
-
-/// Creates a regex for matching aidable HTML tags.
-/// This one needs to be dynamic based on tag list, so we cache the compiled version.
-pub static AIDABLE_TAGS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    use super::skeleton::AID_ABLE_TAGS;
-    let tag_pattern = format!(r"<({})(\s[^>]*)?>", AID_ABLE_TAGS.join("|"));
-    Regex::new(&tag_pattern).unwrap()
-});

@@ -518,6 +518,10 @@ pub fn add_aid_attributes_fast(
             let mut name_end = tag_start + 1;
             while name_end < html.len()
                 && html[name_end] != b' '
+                && html[name_end] != b'\t'
+                && html[name_end] != b'\n'
+                && html[name_end] != b'\r'
+                && html[name_end] != b'\x0c'
                 && html[name_end] != b'>'
                 && html[name_end] != b'/'
             {
@@ -559,11 +563,15 @@ pub fn add_aid_attributes_fast(
                     output.push(b'<');
                     output.extend_from_slice(tag_name);
 
-                    // Check if there's a space after tag name
-                    if name_end < tag_end - 1 && html[name_end] == b' ' {
+                    // Check if there are attributes or whitespace after tag name
+                    // tag_end points to the character AFTER '>', so tag_end - 1 is '>'
+                    if name_end < tag_end - 1 {
+                        // Copy existing attributes/whitespace, preserving format
+                        // This handles <div class="..."> and <div\nclass="...">
                         output.extend_from_slice(&html[name_end..tag_end - 1]);
                         output.extend_from_slice(b" aid=\"");
                     } else {
+                        // No attributes, just add aid
                         output.extend_from_slice(b" aid=\"");
                     }
                     output.extend_from_slice(&aid_buf);
