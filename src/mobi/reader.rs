@@ -118,8 +118,8 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     // 6. Extract text content (use kf8_record_offset for combo files)
     let text = extract_text(&mut reader, &pdb, &mobi, kf8_record_offset)?;
 
-    // 7. Extract images
-    let images = extract_images(&mut reader, &pdb, &mobi)?;
+    // 7. Extract resources (images and fonts)
+    let (images, fonts, resource_map) = extract_resources(&mut reader, &pdb, &mobi)?;
 
     // 8. Build Book
     let mut book = Book::new();
@@ -175,10 +175,12 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
                 book.toc.push(TocEntry::new(&title, &href));
             }
 
-            // Add CSS if present
+            // Add CSS with resolved kindle:embed references
             for (i, css) in kf8_result.css_flows.iter().enumerate() {
+                let css_str = String::from_utf8_lossy(css);
+                let resolved_css = resolve_css_kindle_embeds(&css_str, &resource_map);
                 let filename = format!("styles/style{:04}.css", i);
-                book.add_resource(&filename, css.clone(), "text/css");
+                book.add_resource(&filename, resolved_css.into_bytes(), "text/css");
             }
         } else {
             // Fallback to single-file mode
@@ -206,6 +208,18 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
                 book.metadata.cover_image = Some(href.clone());
             }
         }
+    }
+
+    // Add fonts
+    for (i, (data, ext)) in fonts.into_iter().enumerate() {
+        let media_type = match ext.as_str() {
+            "ttf" => "application/x-font-truetype",
+            "otf" => "application/vnd.ms-opentype",
+            "woff" => "application/font-woff",
+            _ => "application/octet-stream",
+        };
+        let href = format!("fonts/font_{:04}.{}", i, ext);
+        book.add_resource(&href, data, media_type);
     }
 
     // Ensure at least one TOC entry
@@ -251,17 +265,13 @@ fn parse_kf8<R: Read + Seek>(
 
     // Extract CSS flows (flows 1+)
     let mut css_flows = Vec::new();
-    for (i, (start, end)) in flow_table.iter().enumerate().skip(1) {
+    for (_i, (start, end)) in flow_table.iter().enumerate().skip(1) {
         if *start < text.len() && *end <= text.len() {
             let flow_data = text[*start..*end].to_vec();
-            // Check if it looks like CSS
+            // Check if it looks like CSS (or SVG)
             if is_css_like(&flow_data) {
                 css_flows.push(flow_data);
             }
-        }
-        // Only get first few CSS flows
-        if i > 5 {
-            break;
         }
     }
 
@@ -905,31 +915,151 @@ fn strip_trailing_data(record: &[u8], flags: u16) -> &[u8] {
     &record[..end]
 }
 
+/// Resource type extracted from MOBI
+#[derive(Debug, Clone)]
+pub enum ResourceType {
+    Image { data: Vec<u8>, media_type: String },
+    Font { data: Vec<u8>, ext: String },
+}
+
+/// Extract all resources (images and fonts) from the MOBI file
+/// Returns a vector of resources and a resource_map for CSS reference resolution
+fn extract_resources<R: Read + Seek>(
+    reader: &mut R,
+    pdb: &PdbHeader,
+    mobi: &MobiHeader,
+) -> Result<(Vec<(Vec<u8>, String)>, Vec<(Vec<u8>, String)>, Vec<Option<String>>)> {
+    let mut images = Vec::new();
+    let mut fonts = Vec::new();
+    let mut resource_map: Vec<Option<String>> = Vec::new();
+
+    let first_image = mobi.first_image_index as usize;
+    if first_image == NULL_INDEX as usize {
+        return Ok((images, fonts, resource_map));
+    }
+
+    let mut image_idx = 0usize;
+    let mut font_idx = 0usize;
+
+    for i in first_image..pdb.record_offsets.len() {
+        let record = pdb.read_record(reader, i)?;
+
+        // Check for FONT record
+        if record.starts_with(b"FONT") {
+            if let Some((font_data, ext)) = read_font_record(&record) {
+                let href = format!("fonts/font_{:04}.{}", font_idx, ext);
+                resource_map.push(Some(href.clone()));
+                fonts.push((font_data, ext));
+                font_idx += 1;
+            } else {
+                resource_map.push(None);
+            }
+            continue;
+        }
+
+        // Skip metadata records
+        if record.starts_with(b"FLIS") || record.starts_with(b"FCIS") ||
+           record.starts_with(b"SRCS") || record.starts_with(b"BOUN") ||
+           record.starts_with(b"FDST") || record.starts_with(b"DATP") ||
+           record.starts_with(b"AUDI") || record.starts_with(b"VIDE") ||
+           record.starts_with(b"RESC") || record.starts_with(b"CMET") ||
+           record.starts_with(b"PAGE") || record.starts_with(b"CONT") ||
+           record.starts_with(b"CRES") || record.starts_with(b"BOUNDARY") {
+            resource_map.push(None);
+            continue;
+        }
+
+        // Check for image
+        let media_type = detect_image_type(&record);
+        if let Some(mt) = media_type {
+            let ext = match mt {
+                "image/jpeg" => "jpg",
+                "image/png" => "png",
+                "image/gif" => "gif",
+                "image/bmp" => "bmp",
+                _ => "bin",
+            };
+            let href = format!("images/image_{:04}.{}", image_idx, ext);
+            resource_map.push(Some(href));
+            images.push((record, mt.to_string()));
+            image_idx += 1;
+        } else {
+            resource_map.push(None);
+        }
+    }
+
+    Ok((images, fonts, resource_map))
+}
+
+/// Read and decode a FONT record from MOBI
+/// Returns (font_data, extension) or None if failed
+fn read_font_record(data: &[u8]) -> Option<(Vec<u8>, String)> {
+    use flate2::read::ZlibDecoder;
+    use std::io::Read;
+
+    if data.len() < 24 || !data.starts_with(b"FONT") {
+        return None;
+    }
+
+    // Parse header (big-endian)
+    let usize_val = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+    let flags = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+    let dstart = u32::from_be_bytes([data[12], data[13], data[14], data[15]]) as usize;
+    let xor_len = u32::from_be_bytes([data[16], data[17], data[18], data[19]]) as usize;
+    let xor_start = u32::from_be_bytes([data[20], data[21], data[22], data[23]]) as usize;
+
+    if dstart >= data.len() {
+        return None;
+    }
+
+    let mut font_data = data[dstart..].to_vec();
+
+    // XOR obfuscation (flag bit 1)
+    if flags & 0b10 != 0 && xor_len > 0 && xor_start + xor_len <= data.len() {
+        let key = &data[xor_start..xor_start + xor_len];
+        let extent = 1040.min(font_data.len());
+        for n in 0..extent {
+            font_data[n] ^= key[n % xor_len];
+        }
+    }
+
+    // Zlib compression (flag bit 0)
+    if flags & 0b1 != 0 {
+        let mut decoder = ZlibDecoder::new(&font_data[..]);
+        let mut decompressed = Vec::with_capacity(usize_val);
+        if decoder.read_to_end(&mut decompressed).is_ok() {
+            font_data = decompressed;
+        } else {
+            return None;
+        }
+    }
+
+    // Detect font type
+    let ext = if font_data.len() >= 4 {
+        let sig = &font_data[..4];
+        if sig == b"\x00\x01\x00\x00" || sig == b"true" || sig == b"ttcf" {
+            "ttf"
+        } else if sig == b"OTTO" {
+            "otf"
+        } else if sig == b"wOFF" {
+            "woff"
+        } else {
+            "dat"
+        }
+    } else {
+        "dat"
+    };
+
+    Some((font_data, ext.to_string()))
+}
+
+// Keep old function for compatibility but redirect to new one
 fn extract_images<R: Read + Seek>(
     reader: &mut R,
     pdb: &PdbHeader,
     mobi: &MobiHeader,
 ) -> Result<Vec<(Vec<u8>, String)>> {
-    let mut images = Vec::new();
-
-    let first_image = mobi.first_image_index as usize;
-    if first_image == NULL_INDEX as usize {
-        return Ok(images);
-    }
-
-    for i in first_image..pdb.record_offsets.len() {
-        let record = pdb.read_record(reader, i)?;
-
-        let media_type = detect_image_type(&record);
-        if let Some(mt) = media_type {
-            images.push((record, mt.to_string()));
-        } else {
-            if record.starts_with(b"FONT") || record.starts_with(b"BOUNDARY") {
-                break;
-            }
-        }
-    }
-
+    let (images, _fonts, _resource_map) = extract_resources(reader, pdb, mobi)?;
     Ok(images)
 }
 
@@ -955,6 +1085,60 @@ fn detect_image_type(data: &[u8]) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Resolve kindle:embed:XXXX references in CSS to actual resource paths
+/// Also strips invalid @font-face declarations with placeholder URLs
+fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> String {
+    use regex_lite::Regex;
+
+    let mut result = css.to_string();
+
+    // First, strip @font-face declarations with XXXXXXXXXXXXXXXX placeholder URLs
+    // These are Amazon placeholders when fonts aren't actually embedded
+    let fontface_re = Regex::new(r#"@font-face\s*\{[^}]*url\s*\(\s*X{10,}\s*\)[^}]*\}"#).unwrap();
+    result = fontface_re.replace_all(&result, "").to_string();
+
+    // Pattern for kindle:embed:XXXX where XXXX is base32 encoded (1-indexed)
+    let embed_re = Regex::new(r#"kindle:embed:([0-9A-V]+)(\?[^"')]*)?["']?"#).unwrap();
+
+    // Replace all matches
+    for cap in embed_re.captures_iter(css) {
+        let full_match = cap.get(0).unwrap().as_str();
+        let base32_str = cap.get(1).unwrap().as_str();
+
+        // Parse base32 index (1-indexed, so subtract 1)
+        let idx = parse_kindle_base32(base32_str);
+        let resource_idx = if idx > 0 { idx - 1 } else { 0 };
+
+        // Look up resource path
+        let replacement = if let Some(Some(href)) = resource_map.get(resource_idx) {
+            // Use relative path from styles/ directory
+            format!("../{}", href)
+        } else {
+            // Fallback: keep a placeholder that won't break CSS parsing
+            "missing-resource".to_string()
+        };
+
+        // Replace in result, handling the full match including quotes
+        let old_pattern = if full_match.ends_with('"') || full_match.ends_with('\'') {
+            full_match.to_string()
+        } else {
+            full_match.to_string()
+        };
+
+        let new_value = if old_pattern.ends_with('"') {
+            format!("{}\"", replacement)
+        } else if old_pattern.ends_with('\'') {
+            format!("{}'", replacement)
+        } else {
+            replacement
+        };
+
+        result = result.replacen(&old_pattern, &new_value, 1);
+    }
+
+    result
 }
 
 fn build_html(text: &[u8], mobi: &MobiHeader) -> String {
