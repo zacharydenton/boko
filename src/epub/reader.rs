@@ -33,7 +33,7 @@ pub fn read_epub_from_reader<R: Read + Seek>(reader: R) -> Result<Book> {
     book.metadata = metadata;
 
     // 4. Load all resources from manifest
-    for (_id, (href, media_type)) in &manifest {
+    for (href, media_type) in manifest.values() {
         let full_path = resolve_path(&opf_dir, href);
         if let Ok(data) = read_archive_file_bytes(&mut archive, &full_path) {
             book.add_resource(href.clone(), data, media_type.clone());
@@ -225,7 +225,7 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
     // Detect cover image: EPUB3 "cover-image" property takes priority over EPUB2 meta
     // EPUB3: <item properties="cover-image" .../>
     let epub3_cover = manifest_items.values().find(|item| {
-        item.properties.as_ref().map_or(false, |props| {
+        item.properties.as_ref().is_some_and(|props| {
             props.split_ascii_whitespace().any(|p| p == "cover-image")
         })
     });
@@ -246,11 +246,10 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
         .collect();
 
     // Resolve NCX href from toc_id
-    if let Some(toc_id) = toc_id {
-        if let Some((href, _)) = manifest.get(&toc_id) {
+    if let Some(toc_id) = toc_id
+        && let Some((href, _)) = manifest.get(&toc_id) {
             ncx_href = Some(href.clone());
         }
-    }
 
     Ok((metadata, manifest, spine_ids, ncx_href))
 }
@@ -276,11 +275,10 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                         stack.push(Vec::new());
                         // Extract playOrder attribute
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"playOrder" {
-                                if let Ok(order_str) = String::from_utf8(attr.value.to_vec()) {
+                            if attr.key.as_ref() == b"playOrder"
+                                && let Ok(order_str) = String::from_utf8(attr.value.to_vec()) {
                                     current_play_order = order_str.parse().ok();
                                 }
-                            }
                         }
                     }
                     b"text" => in_text = true,

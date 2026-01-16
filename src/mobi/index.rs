@@ -48,6 +48,7 @@ pub struct TagXEntry {
 
 /// Parsed INDX header
 #[derive(Debug)]
+#[allow(dead_code)] // Fields are part of MOBI format spec
 pub struct IndxHeader {
     pub header_type: u32,
     pub idxt_start: u32,
@@ -356,6 +357,7 @@ pub fn read_index(
 
 /// Skeleton file entry from skel index
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields are part of MOBI format spec
 pub struct SkeletonFile {
     pub file_number: usize,
     pub name: String,
@@ -366,6 +368,7 @@ pub struct SkeletonFile {
 
 /// Div element entry from div index
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields are part of MOBI format spec
 pub struct DivElement {
     pub insert_pos: u32,
     pub toc_text: Option<String>,
@@ -377,6 +380,7 @@ pub struct DivElement {
 
 /// NCX entry for table of contents
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields are part of MOBI format spec
 pub struct NcxEntry {
     pub name: String,
     pub text: String,
@@ -397,7 +401,7 @@ pub fn parse_skel_index(entries: &[IndexEntry]) -> Vec<SkeletonFile> {
         let (start_pos, length) = entry
             .tags
             .get(&6)
-            .map(|v| (v.get(0).copied().unwrap_or(0), v.get(1).copied().unwrap_or(0)))
+            .map(|v| (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0)))
             .unwrap_or((0, 0));
 
         files.push(SkeletonFile {
@@ -437,7 +441,7 @@ pub fn parse_div_index(entries: &[IndexEntry], cncx: &Cncx) -> Vec<DivElement> {
         let (start_pos, length) = entry
             .tags
             .get(&6)
-            .map(|v| (v.get(0).copied().unwrap_or(0), v.get(1).copied().unwrap_or(0)))
+            .map(|v| (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0)))
             .unwrap_or((0, 0));
 
         elems.push(DivElement {
@@ -482,7 +486,7 @@ pub fn parse_ncx_index(entries: &[IndexEntry], cncx: &Cncx) -> Vec<NcxEntry> {
 
         // Tag 6 = pos_fid (file index, offset)
         let pos_fid = entry.tags.get(&6).map(|v| {
-            (v.get(0).copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
+            (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
         });
 
         // Tag 21 = parent index

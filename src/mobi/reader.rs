@@ -12,7 +12,6 @@ use super::index::{
     parse_div_index, parse_ncx_index, parse_skel_index, read_index, Cncx, DivElement, NcxEntry,
     SkeletonFile,
 };
-use super::palmdoc;
 
 /// Read a MOBI/AZW3 file into a Book
 pub fn read_mobi<P: AsRef<Path>>(path: P) -> Result<Book> {
@@ -144,7 +143,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
                 let html = wrap_html_content(content, &mobi.title, i, &kf8_result.elems, &text, &file_starts);
                 book.add_resource(filename, html.into_bytes(), "application/xhtml+xml");
                 book.add_spine_item(
-                    &format!("part{:04}", i),
+                    format!("part{:04}", i),
                     filename,
                     "application/xhtml+xml",
                 );
@@ -203,11 +202,10 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
         book.add_resource(&href, data, &media_type);
 
         // Check if this is the cover
-        if let Some(ref exth) = exth {
-            if exth.cover_offset == Some(i as u32) {
+        if let Some(ref exth) = exth
+            && exth.cover_offset == Some(i as u32) {
                 book.metadata.cover_image = Some(href.clone());
             }
-        }
     }
 
     // Add fonts
@@ -473,41 +471,6 @@ fn build_parts(
     Ok(parts)
 }
 
-/// Extract aid attribute value from elem's toc_text if available
-fn extract_aid_from_elem(elem: &DivElement) -> Option<Vec<u8>> {
-    // The toc_text often contains the aid reference
-    elem.toc_text.as_ref().and_then(|text| {
-        // Extract aid from format like "aid:XXXXX" or just use first few chars
-        if text.len() >= 4 {
-            Some(text[..text.len().min(10)].as_bytes().to_vec())
-        } else {
-            None
-        }
-    })
-}
-
-/// Find the end position of a tag with specific aid attribute
-fn find_tag_end_by_aid(skeleton: &[u8], aid: &[u8]) -> Option<usize> {
-    // Search for aid="XXX" or aid='XXX' in skeleton
-    let aid_patterns = [
-        format!("aid=\"{}\"", String::from_utf8_lossy(aid)),
-        format!("aid='{}'", String::from_utf8_lossy(aid)),
-    ];
-
-    for pattern in &aid_patterns {
-        if let Some(pos) = skeleton
-            .windows(pattern.len())
-            .position(|w| w == pattern.as_bytes())
-        {
-            // Find the end of this tag (next '>')
-            if let Some(gt_pos) = skeleton[pos..].iter().position(|&b| b == b'>') {
-                return Some(pos + gt_pos + 1);
-            }
-        }
-    }
-    None
-}
-
 /// Check if data looks like CSS
 fn is_css_like(data: &[u8]) -> bool {
     let s = String::from_utf8_lossy(data);
@@ -539,8 +502,8 @@ fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[Div
     let stripped = strip_kindle_attributes(&result);
 
     // Ensure it has proper XHTML structure
-    let final_result = ensure_xhtml_structure(&stripped, part_num);
-    final_result
+    
+    ensure_xhtml_structure(&stripped, part_num)
 }
 
 /// Strip XML/encoding declarations but keep the HTML structure
@@ -677,15 +640,14 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
         }
 
         // Add xmlns to html tag if missing
-        if let Some(start) = result.find("<html") {
-            if let Some(end) = result[start..].find('>') {
+        if let Some(start) = result.find("<html")
+            && let Some(end) = result[start..].find('>') {
                 let html_tag = &result[start..start + end + 1];
                 if !html_tag.contains("xmlns") {
                     let new_tag = html_tag.replace("<html", "<html xmlns=\"http://www.w3.org/1999/xhtml\"");
                     result = format!("{}{}{}", &result[..start], new_tag, &result[start + end + 1..]);
                 }
             }
-        }
 
         // Add meta charset after <head> if not present (use EPUB2-compatible format)
         if let Some(head_pos) = result.find("<head>") {
@@ -706,8 +668,8 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
 /// Safely extract body content, handling corrupted HTML
 fn extract_body_content_safe(html: &str) -> String {
     // Try to find <body> tag
-    if let Some(body_start) = html.find("<body") {
-        if let Some(body_tag_end) = html[body_start..].find('>') {
+    if let Some(body_start) = html.find("<body")
+        && let Some(body_tag_end) = html[body_start..].find('>') {
             let content_start = body_start + body_tag_end + 1;
             if let Some(body_end) = html[content_start..].rfind("</body>") {
                 return html[content_start..content_start + body_end].to_string();
@@ -715,18 +677,16 @@ fn extract_body_content_safe(html: &str) -> String {
             // No closing body, take everything after body tag
             return html[content_start..].to_string();
         }
-    }
 
     // No body tag - try to extract content after </head> or after <html...>
     if let Some(head_end) = html.find("</head>") {
         let after_head = head_end + 7;
         // Skip any <body> tag if present
         let content = &html[after_head..];
-        if let Some(body_start) = content.find("<body") {
-            if let Some(body_tag_end) = content[body_start..].find('>') {
+        if let Some(body_start) = content.find("<body")
+            && let Some(body_tag_end) = content[body_start..].find('>') {
                 return content[body_start + body_tag_end + 1..].to_string();
             }
-        }
         return content.to_string();
     }
 
@@ -739,8 +699,8 @@ fn extract_body_content_safe(html: &str) -> String {
     }
 
     // If still starts with partial text (not a tag), find first complete tag
-    if !result.starts_with('<') {
-        if let Some(first_tag) = result.find('<') {
+    if !result.starts_with('<')
+        && let Some(first_tag) = result.find('<') {
             // Check if this is a real tag start or just a < in text
             let tag_content = &result[first_tag..];
             if tag_content.starts_with("<div") || tag_content.starts_with("<p") ||
@@ -749,7 +709,6 @@ fn extract_body_content_safe(html: &str) -> String {
                 result = result[first_tag..].to_string();
             }
         }
-    }
 
     result
 }
@@ -798,11 +757,12 @@ fn extract_text<R: Read + Seek>(
         let record = strip_trailing_data(&record, mobi.extra_data_flags);
 
         let decompressed = match mobi.compression {
-            Compression::PalmDoc => palmdoc::decompress(&record),
+            Compression::PalmDoc => palmdoc_compression::decompress(record)
+                .map_err(|e| Error::UnsupportedFormat(format!("PalmDoc decompression failed: {:?}", e)))?,
             Compression::None => record.to_vec(),
             Compression::Huffman => {
                 if let Some(ref mut hr) = huff_reader {
-                    hr.decompress(&record)?
+                    hr.decompress(record)?
                 } else {
                     return Err(Error::UnsupportedFormat(
                         "Huffman reader not initialized".into(),
@@ -908,13 +868,6 @@ fn strip_trailing_data(record: &[u8], flags: u16) -> &[u8] {
     }
 
     &record[..end]
-}
-
-/// Resource type extracted from MOBI
-#[derive(Debug, Clone)]
-pub enum ResourceType {
-    Image { data: Vec<u8>, media_type: String },
-    Font { data: Vec<u8>, ext: String },
 }
 
 /// Extract all resources (images and fonts) from the MOBI file
@@ -1048,16 +1001,6 @@ fn read_font_record(data: &[u8]) -> Option<(Vec<u8>, String)> {
     Some((font_data, ext.to_string()))
 }
 
-// Keep old function for compatibility but redirect to new one
-fn extract_images<R: Read + Seek>(
-    reader: &mut R,
-    pdb: &PdbHeader,
-    mobi: &MobiHeader,
-) -> Result<Vec<(Vec<u8>, String)>> {
-    let (images, _fonts, _resource_map) = extract_resources(reader, pdb, mobi)?;
-    Ok(images)
-}
-
 fn detect_image_type(data: &[u8]) -> Option<&'static str> {
     if data.len() < 4 {
         return None;
@@ -1174,14 +1117,13 @@ fn extract_body_content(html: &str) -> String {
     }
 
     // Fallback: try to extract from body
-    if let Some(body_start) = html.find("<body") {
-        if let Some(body_tag_end) = html[body_start..].find('>') {
+    if let Some(body_start) = html.find("<body")
+        && let Some(body_tag_end) = html[body_start..].find('>') {
             let after_body = body_start + body_tag_end + 1;
             if let Some(body_end) = html[after_body..].find("</body>") {
                 return html[after_body..after_body + body_end].to_string();
             }
         }
-    }
 
     html.to_string()
 }
@@ -1255,22 +1197,20 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
     let search_str = String::from_utf8_lossy(search_text);
 
     // Find the first id= in the forward search
-    if let Some(caps) = ID_ATTR_RE.captures(&search_str) {
-        if let Some(m) = caps.get(1) {
+    if let Some(caps) = ID_ATTR_RE.captures(&search_str)
+        && let Some(m) = caps.get(1) {
             return Some(m.as_str().to_string());
         }
-    }
 
     // If no ID found forward, try searching backwards as fallback
     let start_pos = pos.saturating_sub(500);
     let search_back = &raw_text[start_pos..pos];
     for tag in reverse_tag_iter(search_back) {
         let tag_str = String::from_utf8_lossy(tag);
-        if let Some(caps) = ID_ATTR_RE.captures(&tag_str) {
-            if let Some(m) = caps.get(1) {
+        if let Some(caps) = ID_ATTR_RE.captures(&tag_str)
+            && let Some(m) = caps.get(1) {
                 return Some(m.as_str().to_string());
             }
-        }
     }
 
     None
@@ -1342,7 +1282,7 @@ fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], fi
 
                 // Look up the element to get its file_number and position
                 let (file_num, target_pos) = if let Some(elem) = elems.get(elem_idx) {
-                    (elem.file_number as usize, elem.insert_pos as u32 + offset as u32)
+                    (elem.file_number as usize, elem.insert_pos + offset as u32)
                 } else {
                     (0, 0u32)
                 };
@@ -1377,7 +1317,7 @@ fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], fi
     // Format: kindle:embed:XXXX?mime=image/jpeg
     // XXXX is 1-indexed base32, so embed:0001 is image 0
     while let Some(start) = result.find("kindle:embed:") {
-        if let Some(end) = result[start..].find(|c| c == '"' || c == '\'' || c == ')') {
+        if let Some(end) = result[start..].find(['"', '\'', ')']) {
             let ref_str = &result[start..start + end];
             // Extract the base32 ID
             let id_end = ref_str[13..].find('?').map(|p| 13 + p).unwrap_or(ref_str.len());
@@ -1432,7 +1372,7 @@ fn clean_malformed_kindle_refs(html: &str) -> String {
             .unwrap_or(after.len());
 
         // Check if this is inside an href="" or src=""
-        let before_start = if start > 30 { start - 30 } else { 0 };
+        let before_start = start.saturating_sub(30);
         let before = &result[before_start..start];
 
         if before.contains("href=\"") || before.contains("src=\"") {

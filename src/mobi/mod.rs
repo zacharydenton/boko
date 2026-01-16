@@ -1,4 +1,3 @@
-mod palmdoc;
 mod huffcdic;
 mod headers;
 mod index;

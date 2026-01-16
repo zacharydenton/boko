@@ -8,9 +8,6 @@
 
 use std::collections::HashMap;
 
-/// Maximum size of a chunk in bytes
-pub const CHUNK_SIZE: usize = 8192;
-
 /// Tags that can receive aid attributes (based on Calibre's list)
 pub const AID_ABLE_TAGS: &[&str] = &[
     "a", "abbr", "address", "article", "aside", "audio", "b", "bdo", "blockquote",
@@ -24,6 +21,7 @@ pub const AID_ABLE_TAGS: &[&str] = &[
 
 /// A chunk of content extracted from the skeleton
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields prepared for full chunking implementation
 pub struct Chunk {
     /// The raw bytes of this chunk
     pub raw: Vec<u8>,
@@ -54,8 +52,6 @@ pub struct Skeleton {
     pub chunks: Vec<Chunk>,
     /// Start position of this skeleton in the combined text
     pub start_pos: usize,
-    /// Position of <body> tag in skeleton
-    pub body_offset: usize,
 }
 
 impl Skeleton {
@@ -72,23 +68,11 @@ impl Skeleton {
         }
         result
     }
-
-    /// Rebuild the original HTML by inserting chunks at their positions
-    pub fn rebuild(&self) -> Vec<u8> {
-        let mut result = self.skeleton.clone();
-        // Insert chunks in reverse order to preserve positions
-        for chunk in self.chunks.iter().rev() {
-            let pos = chunk.insert_pos.saturating_sub(self.start_pos);
-            if pos <= result.len() {
-                result.splice(pos..pos, chunk.raw.iter().cloned());
-            }
-        }
-        result
-    }
 }
 
 /// SKEL table entry (for INDX record)
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields prepared for full chunking implementation
 pub struct SkelEntry {
     pub file_number: usize,
     pub name: String,
@@ -109,6 +93,7 @@ pub struct ChunkEntry {
 }
 
 /// Result of chunking operation
+#[allow(dead_code)] // skeletons field prepared for full chunking implementation
 pub struct ChunkerResult {
     pub skeletons: Vec<Skeleton>,
     pub skel_table: Vec<SkelEntry>,
@@ -177,7 +162,7 @@ impl Chunker {
             if skel_len > 0 {
                 chunk_table.push(ChunkEntry {
                     insert_pos: text_offset,
-                    selector: format!("P-//*[@aid='0000']"),
+                    selector: "P-//*[@aid='0000']".to_string(),
                     file_number: skel.file_number,
                     sequence_number: seq_num,
                     start_pos: 0,
@@ -256,9 +241,6 @@ impl Chunker {
         let html_str = String::from_utf8_lossy(html);
         let result = self.add_aid_attributes(file_href, &html_str);
 
-        // Find body offset
-        let body_offset = result.find("<body").unwrap_or(0);
-
         let skeleton_bytes = result.as_bytes().to_vec();
 
         Skeleton {
@@ -266,7 +248,6 @@ impl Chunker {
             skeleton: skeleton_bytes,
             chunks: Vec::new(), // No chunking - content stays in skeleton
             start_pos,
-            body_offset,
         }
     }
 
@@ -329,26 +310,26 @@ fn to_base32(mut n: u32) -> String {
     String::from_utf8(result).unwrap()
 }
 
-/// Parse Kindle base32 encoding back to number
-/// Kindle uses custom base32: 0-9 (0-9), A-V (10-31)
-fn from_base32(s: &str) -> u32 {
-    let mut result = 0u32;
-    for c in s.chars() {
-        result = result.saturating_mul(32);
-        let val = match c {
-            '0'..='9' => c as u32 - '0' as u32,
-            'A'..='V' => c as u32 - 'A' as u32 + 10,
-            'a'..='v' => c as u32 - 'a' as u32 + 10,
-            _ => continue,
-        };
-        result = result.saturating_add(val);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse Kindle base32 encoding back to number
+    /// Kindle uses custom base32: 0-9 (0-9), A-V (10-31)
+    pub(super) fn from_base32(s: &str) -> u32 {
+        let mut result = 0u32;
+        for c in s.chars() {
+            result = result.saturating_mul(32);
+            let val = match c {
+                '0'..='9' => c as u32 - '0' as u32,
+                'A'..='V' => c as u32 - 'A' as u32 + 10,
+                'a'..='v' => c as u32 - 'a' as u32 + 10,
+                _ => continue,
+            };
+            result = result.saturating_add(val);
+        }
+        result
+    }
 
     #[test]
     fn test_to_base32() {
@@ -386,6 +367,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use super::tests::from_base32;
     use proptest::prelude::*;
 
     proptest! {

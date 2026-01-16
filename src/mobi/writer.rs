@@ -9,7 +9,6 @@ use crate::book::Book;
 use crate::error::Result;
 
 use super::index::{build_skel_indx, build_chunk_indx, build_cncx, calculate_cncx_offsets, build_ncx_indx, NcxBuildEntry};
-use super::palmdoc;
 use super::skeleton::{Chunker, ChunkerResult};
 
 use flate2::Compression;
@@ -207,14 +206,13 @@ impl<'a> MobiBuilder<'a> {
         // Collect and process HTML files from spine
         let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
         for spine_item in &self.book.spine {
-            if let Some(resource) = self.book.resources.get(&spine_item.href) {
-                if resource.media_type == "application/xhtml+xml" {
+            if let Some(resource) = self.book.resources.get(&spine_item.href)
+                && resource.media_type == "application/xhtml+xml" {
                     // Rewrite HTML to use kindle: references
                     let html = String::from_utf8_lossy(&resource.data);
                     let rewritten = self.rewrite_html_references(&html, &spine_item.href, &css_flow_map);
                     html_files.push((spine_item.href.clone(), rewritten.into_bytes()));
                 }
-            }
         }
 
         // Rewrite CSS to use kindle:embed references for fonts/images
@@ -250,7 +248,7 @@ impl<'a> MobiBuilder<'a> {
             let chunk = &all_flows[pos..end];
 
             // Compress with PalmDOC
-            let compressed = palmdoc::compress(chunk);
+            let compressed = palmdoc_compression::compress(chunk);
 
             // Add trailing byte (overlap byte for multibyte chars)
             let mut record = compressed;
@@ -549,8 +547,8 @@ impl<'a> MobiBuilder<'a> {
         }
 
         // Build NCX index for table of contents
-        if !self.book.toc.is_empty() {
-            if let Some(ref chunker_result) = self.chunker_result {
+        if !self.book.toc.is_empty()
+            && let Some(ref chunker_result) = self.chunker_result {
                 // Flatten TOC entries (including children) into a list with depth
                 let ncx_entries = flatten_toc(
                     &self.book.toc,
@@ -571,7 +569,6 @@ impl<'a> MobiBuilder<'a> {
                     }
                 }
             }
-        }
 
         Ok(())
     }
@@ -933,49 +930,6 @@ impl<'a> MobiBuilder<'a> {
         exth
     }
 
-    fn generate_html(&self) -> String {
-        let mut html = String::new();
-
-        html.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        html.push_str("<!DOCTYPE html>\n");
-        html.push_str("<html xmlns=\"http://www.w3.org/1999/xhtml\">\n");
-        html.push_str("<head>\n");
-        html.push_str(&format!(
-            "<title>{}</title>\n",
-            escape_xml(&self.book.metadata.title)
-        ));
-        html.push_str("<style type=\"text/css\">\n");
-        html.push_str("body { font-family: serif; }\n");
-        html.push_str("</style>\n");
-        html.push_str("</head>\n");
-        html.push_str("<body>\n");
-
-        // Add each spine item's content
-        for spine_item in &self.book.spine {
-            if let Some(resource) = self.book.resources.get(&spine_item.href) {
-                if resource.media_type == "application/xhtml+xml" {
-                    let content = String::from_utf8_lossy(&resource.data);
-                    // Extract body content
-                    if let Some(body_start) = content.find("<body") {
-                        if let Some(body_tag_end) = content[body_start..].find('>') {
-                            let after_body = body_start + body_tag_end + 1;
-                            if let Some(body_end) = content[after_body..].rfind("</body>") {
-                                let body_content = &content[after_body..after_body + body_end];
-                                html.push_str(body_content);
-                                html.push_str("\n");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        html.push_str("</body>\n");
-        html.push_str("</html>\n");
-
-        html
-    }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         // Calculate record offsets
         let mut offsets = Vec::new();
@@ -1055,13 +1009,6 @@ fn sanitize_title(title: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '_' || *c == '-')
         .collect::<String>()
         .replace(' ', "_")
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 /// Resolve a relative href against a base directory

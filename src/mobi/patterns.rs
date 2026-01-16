@@ -23,11 +23,6 @@ pub static ANCHOR_HREF_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<a\s+([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>"#).unwrap()
 });
 
-/// Matches kindle:pos:fid placeholder links for resolution
-pub static KINDLE_POS_FID_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"kindle:pos:fid:0000:off:([0-9A-V]{10})").unwrap()
-});
-
 /// Matches url(...) in CSS
 pub static CSS_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"url\s*\(\s*["']?([^"')]+)["']?\s*\)"#).unwrap()

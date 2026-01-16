@@ -22,7 +22,7 @@ impl PdbHeader {
 
         // Bytes 60-67: Type/Creator should be "BOOKMOBI" or "TEXtREAd"
         let ident = &buf[60..68];
-        if ident != b"BOOKMOBI" && ident.to_ascii_uppercase() != b"TEXTREAD" {
+        if ident != b"BOOKMOBI" && !ident.eq_ignore_ascii_case(b"TEXTREAD") {
             return Err(Error::InvalidMobi(format!(
                 "Unknown book type: {:?}",
                 String::from_utf8_lossy(ident)
@@ -69,6 +69,7 @@ impl PdbHeader {
 
 /// MOBI Header (Record 0)
 #[derive(Debug)]
+#[allow(dead_code)] // Fields are part of MOBI format spec, useful for debugging
 pub struct MobiHeader {
     pub compression: Compression,
     pub text_record_count: u16,
