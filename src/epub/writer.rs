@@ -34,8 +34,10 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Resu
     // 1. Write mimetype (must be first, uncompressed)
     let options_stored =
         SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    let options_deflate =
-        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    // Use compression level 1 (fastest) - level 6 default is 10x slower with minimal size benefit
+    let options_deflate = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(1));
 
     zip.start_file("mimetype", options_stored)?;
     zip.write_all(b"application/epub+zip")?;
@@ -68,12 +70,30 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Resu
             continue;
         }
         let path = format!("OEBPS/{}", href);
-        zip.start_file(&path, options_deflate)?;
+        // Use STORED for already-compressed formats (images, fonts)
+        let opts = if is_precompressed(&resource.media_type) {
+            options_stored
+        } else {
+            options_deflate
+        };
+        zip.start_file(&path, opts)?;
         zip.write_all(&resource.data)?;
     }
 
     zip.finish()?;
     Ok(())
+}
+
+/// Check if a media type is already compressed (no benefit from deflate)
+#[inline]
+fn is_precompressed(media_type: &str) -> bool {
+    matches!(
+        media_type,
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" |
+        "audio/mpeg" | "audio/mp4" | "video/mp4" |
+        "application/font-woff" | "application/font-woff2" |
+        "font/woff" | "font/woff2"
+    )
 }
 
 const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>

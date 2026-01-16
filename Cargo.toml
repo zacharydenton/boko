@@ -6,6 +6,7 @@ description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"
 license = "MIT"
 
 [dependencies]
+walkdir = "2"
 quick-xml = "0.39"
 zip = { version = "7.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }

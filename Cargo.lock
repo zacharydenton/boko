@@ -78,6 +78,7 @@ dependencies = [
  "proptest",
  "quick-xml",
  "tempfile",
+ "walkdir",
  "zip",
 ]
 

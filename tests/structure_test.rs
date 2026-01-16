@@ -274,6 +274,128 @@ fn test_cover_preservation() {
 // TOC Text Preservation Tests
 // ============================================================================
 
+// ============================================================================
+// MOBI Tests (Legacy format)
+// ============================================================================
+
+#[test]
+fn test_read_mobi() {
+    let book = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    assert!(!book.metadata.title.is_empty(), "MOBI should have title");
+    assert!(!book.resources.is_empty(), "MOBI should have resources");
+    assert!(!book.spine.is_empty(), "MOBI should have spine");
+
+    println!("MOBI Title: {}", book.metadata.title);
+    println!("MOBI Resources: {}", book.resources.len());
+    println!("MOBI Spine: {}", book.spine.len());
+}
+
+#[test]
+fn test_mobi_metadata() {
+    let book = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    println!("MOBI Title: {}", book.metadata.title);
+    println!("MOBI Authors: {:?}", book.metadata.authors);
+
+    assert_eq!(book.metadata.title, "Short Works");
+    assert!(
+        book.metadata.authors.iter().any(|a| a.contains("Epictetus")),
+        "Should have Epictetus as author"
+    );
+}
+
+#[test]
+fn test_mobi_has_content() {
+    let book = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    // MOBI6 produces a single HTML file
+    let html_resources: Vec<_> = book
+        .resources
+        .iter()
+        .filter(|(_, r)| {
+            r.media_type == "application/xhtml+xml" || r.media_type == "text/html"
+        })
+        .collect();
+
+    assert!(!html_resources.is_empty(), "MOBI should have HTML content");
+
+    // Check content has actual text
+    for (href, res) in &html_resources {
+        let content = String::from_utf8_lossy(&res.data);
+        assert!(content.len() > 100, "HTML {} should have content", href);
+        assert!(
+            content.contains("<body") || content.contains("<html"),
+            "HTML {} should be valid markup",
+            href
+        );
+    }
+}
+
+#[test]
+fn test_mobi_to_epub_conversion() {
+    let mobi = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let epub_path = temp_dir.path().join("converted.epub");
+
+    boko::write_epub(&mobi, &epub_path).expect("Failed to write EPUB");
+
+    let epub = read_epub(&epub_path).expect("Failed to read converted EPUB");
+
+    // Metadata should be preserved
+    assert_eq!(mobi.metadata.title, epub.metadata.title);
+    assert_eq!(mobi.metadata.authors, epub.metadata.authors);
+
+    // Should have content
+    assert!(!epub.spine.is_empty(), "Converted EPUB should have spine");
+    assert!(!epub.resources.is_empty(), "Converted EPUB should have resources");
+}
+
+#[test]
+fn test_mobi_epub_azw3_roundtrip() {
+    // MOBI -> EPUB -> AZW3 -> EPUB
+    let mobi = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // MOBI -> EPUB
+    let epub1_path = temp_dir.path().join("step1.epub");
+    boko::write_epub(&mobi, &epub1_path).expect("Failed to write EPUB");
+    let epub1 = read_epub(&epub1_path).expect("Failed to read EPUB");
+
+    // EPUB -> AZW3
+    let azw3_path = temp_dir.path().join("step2.azw3");
+    boko::write_mobi(&epub1, &azw3_path).expect("Failed to write AZW3");
+    let azw3 = read_mobi(&azw3_path).expect("Failed to read AZW3");
+
+    // AZW3 -> EPUB
+    let epub2_path = temp_dir.path().join("step3.epub");
+    boko::write_epub(&azw3, &epub2_path).expect("Failed to write final EPUB");
+    let epub2 = read_epub(&epub2_path).expect("Failed to read final EPUB");
+
+    // Title should survive the roundtrip
+    assert_eq!(mobi.metadata.title, epub2.metadata.title);
+}
+
+#[test]
+fn test_mobi_vs_azw3_same_source() {
+    // Both files are from the same EPUB source
+    let mobi = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+    let azw3 = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+
+    // Metadata should match
+    assert_eq!(mobi.metadata.title, azw3.metadata.title);
+    assert_eq!(mobi.metadata.authors, azw3.metadata.authors);
+
+    println!("MOBI: {} resources, {} spine items", mobi.resources.len(), mobi.spine.len());
+    println!("AZW3: {} resources, {} spine items", azw3.resources.len(), azw3.spine.len());
+}
+
+// ============================================================================
+// TOC Text Preservation Tests
+// ============================================================================
+
 /// Test that TOC entries with special characters survive EPUB -> AZW3 -> EPUB roundtrip
 #[test]
 fn test_toc_text_preservation_roundtrip() {

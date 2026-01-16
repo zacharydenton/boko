@@ -70,7 +70,7 @@ impl PdbHeader {
 }
 
 /// MOBI Header (Record 0)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields are part of MOBI format spec, useful for debugging
 pub struct MobiHeader {
     pub compression: Compression,
@@ -277,10 +277,6 @@ impl MobiHeader {
 
     pub fn has_exth(&self) -> bool {
         self.exth_flags & 0x40 != 0
-    }
-
-    pub fn is_kf8(&self) -> bool {
-        self.mobi_version == 8 && self.skel_index != NULL_INDEX
     }
 }
 

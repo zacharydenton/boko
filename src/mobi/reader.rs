@@ -10,6 +10,31 @@ use super::index::{
     read_index,
 };
 
+/// Detected MOBI format variant
+enum MobiFormat {
+    /// Pure KF8 (AZW3) - version 8, skeleton/div structure
+    Kf8 { record_offset: usize },
+    /// Combo file with both MOBI6 and KF8 sections
+    Combo { kf8_record_offset: usize },
+    /// Legacy MOBI6 - single HTML stream
+    Mobi6,
+}
+
+impl MobiFormat {
+    /// Record offset for text extraction (0 for pure files, >0 for combo KF8)
+    fn record_offset(&self) -> usize {
+        match self {
+            MobiFormat::Kf8 { record_offset } => *record_offset,
+            MobiFormat::Combo { kf8_record_offset } => *kf8_record_offset,
+            MobiFormat::Mobi6 => 0,
+        }
+    }
+
+    fn is_kf8(&self) -> bool {
+        matches!(self, MobiFormat::Kf8 { .. } | MobiFormat::Combo { .. })
+    }
+}
+
 /// Extracted resources from MOBI file
 struct ExtractedResources {
     /// Images as (data, media_type)
@@ -44,68 +69,30 @@ pub fn read_mobi<P: AsRef<Path>>(path: P) -> io::Result<Book> {
 ///
 /// Useful for reading from memory buffers or network streams.
 pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> {
-    // 1. Parse PDB header
     let pdb = PdbHeader::read(&mut reader)?;
-
     if pdb.num_records < 2 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "Not enough records"));
     }
 
-    // 2. Read and parse MOBI header (record 0 - might be MOBI6 for combo files)
+    // Parse record 0 header (may be MOBI6 header for combo files)
     let record0 = pdb.read_record(&mut reader, 0)?;
-    let mobi6_header = MobiHeader::parse(&record0)?;
+    let header0 = MobiHeader::parse(&record0)?;
 
-    // 3. Check for encryption
-    if mobi6_header.encryption != 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData,
-            "Encrypted MOBI files are not supported"));
+    if header0.encryption != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Encrypted MOBI files are not supported",
+        ));
     }
 
-    // 4. Parse EXTH if present
-    let exth = if mobi6_header.has_exth() && mobi6_header.header_length > 0 {
-        let exth_start = 16 + mobi6_header.header_length as usize;
-        if exth_start < record0.len() {
-            ExthHeader::parse(&record0[exth_start..], mobi6_header.encoding).ok()
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    // Parse EXTH metadata
+    let exth = parse_exth(&record0, &header0);
 
-    // 5. For combo MOBI6+KF8 files, we need to find the KF8 header
-    // This is indicated by a BOUNDARY marker record followed by a KF8 header
-    // EXTH 121 MIGHT point to the KF8 header, but only if there's a BOUNDARY marker before it
-    let (mobi, kf8_record_offset) = {
-        // First check if record 0 header is already KF8 (pure KF8 file)
-        if mobi6_header.mobi_version == 8 {
-            (mobi6_header, 0)
-        } else if let Some(kf8_header_idx) = exth.as_ref().and_then(|e| e.kf8_boundary) {
-            // Verify BOUNDARY marker exists at kf8_header_idx - 1
-            if kf8_header_idx > 0 && (kf8_header_idx as usize) < pdb.num_records as usize {
-                let boundary_record = pdb.read_record(&mut reader, kf8_header_idx as usize - 1)?;
-                if boundary_record.starts_with(b"BOUNDARY") {
-                    // Read KF8 header from kf8_header_idx
-                    let kf8_record = pdb.read_record(&mut reader, kf8_header_idx as usize)?;
-                    match MobiHeader::parse(&kf8_record) {
-                        Ok(kf8_mobi) => {
-                            // KF8 indices are relative to (kf8_header_idx - 1) as the base
-                            (kf8_mobi, (kf8_header_idx as usize).saturating_sub(1))
-                        }
-                        Err(_) => (mobi6_header, 0),
-                    }
-                } else {
-                    (mobi6_header, 0)
-                }
-            } else {
-                (mobi6_header, 0)
-            }
-        } else {
-            (mobi6_header, 0)
-        }
-    };
+    // Detect format and get the appropriate header
+    // For combo files, resource_header uses MOBI6's first_image_index (shared resources)
+    let (format, mobi, resource_header) = detect_format(&mut reader, &pdb, header0, &exth)?;
 
-    // 5. Build metadata
+    // Build metadata
     // Title priority: EXTH 503 > MOBI header > PDB name
     let title = exth
         .as_ref()
@@ -138,29 +125,30 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
         }
     };
 
-    // 6. Extract text content (use kf8_record_offset for combo files)
-    let text = extract_text(&mut reader, &pdb, &mobi, kf8_record_offset)?;
+    // Extract text content
+    let record_offset = format.record_offset();
+    let text = extract_text(&mut reader, &pdb, &mobi, record_offset)?;
 
-    // 7. Extract resources (images and fonts)
+    // Extract resources (images and fonts)
+    // For combo files, use resource_header which has the correct first_image_index
     let ExtractedResources {
         images,
         fonts,
         resource_map,
-    } = extract_resources(&mut reader, &pdb, &mobi)?;
+    } = extract_resources(&mut reader, &pdb, &resource_header)?;
 
-    // 8. Build Book
+    // Build Book
     let mut book = Book::new();
     book.metadata = metadata;
 
-    // Determine codec string
     let codec = match mobi.encoding {
         Encoding::Utf8 => "utf-8",
         _ => "cp1252",
     };
 
-    // Try KF8 parsing for proper chapters
-    if mobi.is_kf8() {
-        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, kf8_record_offset)
+    // KF8 format: use skeleton/div structure for proper chapters
+    if format.is_kf8() {
+        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, record_offset)
         {
             // Build file_starts array: (start_pos, file_number) for ID lookup
             let file_starts: Vec<(u32, u32)> = kf8_result
@@ -187,18 +175,21 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
             book.toc = build_toc_from_ncx(&kf8_result.ncx, &kf8_result.elems, &kf8_result.files);
 
             // Add CSS with resolved kindle:embed references
-            for (i, css) in kf8_result.css_flows.iter().enumerate() {
+            // Use original flow index for filename to match kindle:flow:N references
+            // kindle:flow:N maps to styles/style{N-1:04}.css in transform.rs
+            for (flow_idx, css) in kf8_result.css_flows.iter() {
                 let css_str = String::from_utf8_lossy(css);
                 let resolved_css = resolve_css_kindle_embeds(&css_str, &resource_map);
-                let filename = format!("styles/style{:04}.css", i);
+                // flow_idx is 1-based (flow 0 is HTML), so style index = flow_idx - 1
+                let filename = format!("styles/style{:04}.css", flow_idx - 1);
                 book.add_resource(&filename, resolved_css.into_bytes(), "text/css");
             }
         } else {
-            // Fallback to single-file mode
+            // KF8 index parsing failed, fall back to single file
             add_single_file_content(&mut book, &text, &mobi);
         }
     } else {
-        // Non-KF8 (MOBI6) - single file
+        // MOBI6: single HTML stream
         add_single_file_content(&mut book, &text, &mobi);
     }
 
@@ -247,11 +238,66 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
     Ok(book)
 }
 
+/// Parse EXTH header if present
+fn parse_exth(record0: &[u8], header: &MobiHeader) -> Option<ExthHeader> {
+    if header.has_exth() && header.header_length > 0 {
+        let exth_start = 16 + header.header_length as usize;
+        if exth_start < record0.len() {
+            return ExthHeader::parse(&record0[exth_start..], header.encoding).ok();
+        }
+    }
+    None
+}
+
+/// Detect MOBI format variant and return appropriate headers
+/// Returns: (format, content_header, resource_header)
+/// - content_header: used for text extraction (KF8 for combo/pure KF8, MOBI6 for legacy)
+/// - resource_header: used for resource extraction (MOBI6 for combo since resources are shared)
+fn detect_format<R: Read + Seek>(
+    reader: &mut R,
+    pdb: &PdbHeader,
+    header0: MobiHeader,
+    exth: &Option<ExthHeader>,
+) -> io::Result<(MobiFormat, MobiHeader, MobiHeader)> {
+    // Pure KF8: record 0 is already version 8
+    if header0.mobi_version == 8 {
+        return Ok((
+            MobiFormat::Kf8 { record_offset: 0 },
+            header0.clone(),
+            header0,
+        ));
+    }
+
+    // Check for combo file: EXTH 121 points to KF8 section after BOUNDARY marker
+    if let Some(kf8_idx) = exth.as_ref().and_then(|e| e.kf8_boundary) {
+        let kf8_idx = kf8_idx as usize;
+        if kf8_idx > 0 && kf8_idx < pdb.num_records as usize {
+            // Verify BOUNDARY marker exists
+            let boundary = pdb.read_record(reader, kf8_idx - 1)?;
+            if boundary.starts_with(b"BOUNDARY") {
+                // Parse KF8 header
+                if let Ok(kf8_header) = MobiHeader::parse(&pdb.read_record(reader, kf8_idx)?) {
+                    return Ok((
+                        MobiFormat::Combo {
+                            kf8_record_offset: kf8_idx,
+                        },
+                        kf8_header,
+                        header0, // Use MOBI6 header for resources (shared resources)
+                    ));
+                }
+            }
+        }
+    }
+
+    // Legacy MOBI6
+    Ok((MobiFormat::Mobi6, header0.clone(), header0))
+}
+
 /// KF8 parsing result
 struct Kf8Result {
     parts: Vec<(String, Vec<u8>)>, // (filename, content)
     ncx: Vec<NcxEntry>,
-    css_flows: Vec<Vec<u8>>,
+    css_flows: Vec<(usize, Vec<u8>)>, // (flow_index, content) - preserves original indices
     files: Vec<SkeletonFile>,
     elems: Vec<DivElement>,
 }
@@ -273,14 +319,15 @@ fn parse_kf8<R: Read + Seek>(
     let (html_start, html_end) = flow_table.first().copied().unwrap_or((0, text.len()));
     let html_text = &text[html_start..html_end.min(text.len())];
 
-    // Extract CSS flows (flows 1+)
+    // Extract CSS flows (flows 1+), preserving original flow indices
+    // kindle:flow:N references flow N (1-based), where flow 0 is HTML
     let mut css_flows = Vec::new();
-    for (_i, (start, end)) in flow_table.iter().enumerate().skip(1) {
+    for (i, (start, end)) in flow_table.iter().enumerate().skip(1) {
         if *start < text.len() && *end <= text.len() {
             let flow_data = text[*start..*end].to_vec();
             // Check if it looks like CSS (or SVG)
             if is_css_like(&flow_data) {
-                css_flows.push(flow_data);
+                css_flows.push((i, flow_data)); // Store original flow index
             }
         }
     }
@@ -847,7 +894,8 @@ fn extract_body_content_safe(html: &str) -> String {
 
 /// Add content as a single file (fallback mode)
 fn add_single_file_content(book: &mut Book, text: &[u8], mobi: &MobiHeader) {
-    let html_content = build_html(text, mobi);
+    let first_image_index = mobi.first_image_index as usize;
+    let html_content = build_html(text, mobi, first_image_index);
     book.add_resource(
         "content.html",
         html_content.into_bytes(),
@@ -877,7 +925,6 @@ fn extract_text<R: Read + Seek>(
     };
 
     // Extract text from records 1 to text_end-1
-
     for i in 1..text_end {
         // Apply record offset for combo files (KF8 text starts after BOUNDARY marker)
         let actual_idx = i + record_offset;
@@ -892,7 +939,7 @@ fn extract_text<R: Read + Seek>(
 
         let decompressed = match mobi.compression {
             Compression::PalmDoc => palmdoc_compression::decompress(record).map_err(|e| {
-                io::Error::new(io::ErrorKind::Unsupported, format!("PalmDoc decompression failed: {:?}", e))
+                io::Error::new(io::ErrorKind::InvalidData, format!("PalmDoc decompression failed: {:?}", e))
             })?,
             Compression::None => record.to_vec(),
             Compression::Huffman => {
@@ -1271,15 +1318,15 @@ fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> Stri
     String::from_utf8_lossy(&output).into_owned()
 }
 
-fn build_html(text: &[u8], mobi: &MobiHeader) -> String {
+fn build_html(text: &[u8], mobi: &MobiHeader, first_image_index: usize) -> String {
     let content = match mobi.encoding {
         Encoding::Utf8 => String::from_utf8_lossy(text).to_string(),
         _ => String::from_utf8_lossy(text).to_string(),
     };
 
     let body_content = extract_body_content(&content);
-    // For MOBI6, we don't have KF8 structures for ID lookup, pass empty slices
-    let body_content = clean_kindle_references(&body_content, &[], text, &[]);
+    // Process MOBI6-specific markup (recindex, filepos, mbp:pagebreak)
+    let body_content = process_mobi6_markup(&body_content, text, first_image_index);
     // Strip Amazon-specific attributes (aid, data-AmznRemoved, etc.)
     let body_content = strip_kindle_attributes(&body_content);
 
@@ -1300,6 +1347,211 @@ body {{ font-family: serif; }}
         escape_xml_text(&mobi.title),
         body_content
     )
+}
+
+/// Process MOBI6-specific markup
+/// - Convert recindex="N" to actual image paths
+/// - Convert filepos="N" links to #fileposN anchors
+/// - Insert anchors at filepos positions
+/// - Convert mbp:pagebreak tags
+fn process_mobi6_markup(html: &str, raw_text: &[u8], first_image_index: usize) -> String {
+    use std::collections::HashSet;
+
+    let mut result = html.to_string();
+
+    // Step 1: Collect all filepos targets that are linked to
+    let mut filepos_targets: HashSet<usize> = HashSet::new();
+    let mut search_pos = 0;
+    while let Some(pos) = result[search_pos..].find("filepos=") {
+        let abs_pos = search_pos + pos;
+        let after = &result[abs_pos + 8..];
+        // Parse the filepos value (may be quoted or unquoted)
+        let (value_str, _) = parse_attribute_value(after);
+        if let Ok(filepos) = value_str.parse::<usize>() {
+            filepos_targets.insert(filepos);
+        }
+        search_pos = abs_pos + 8;
+    }
+
+    // Step 2: Insert anchors at filepos positions in the raw text
+    // We need to map byte positions to positions in the processed HTML
+    // For now, we add anchors inline where tags would naturally occur
+    result = insert_filepos_anchors(&result, raw_text, &filepos_targets);
+
+    // Step 3: Convert filepos="N" to href="#fileposN"
+    result = convert_filepos_links(&result);
+
+    // Step 4: Convert recindex="N" to actual image paths
+    result = convert_recindex_images(&result, first_image_index);
+
+    // Step 5: Convert mbp:pagebreak tags
+    result = convert_mbp_pagebreaks(&result);
+
+    result
+}
+
+/// Parse an attribute value (handles quoted and unquoted)
+fn parse_attribute_value(s: &str) -> (&str, usize) {
+    let s = s.trim_start();
+    if s.starts_with('"') {
+        if let Some(end) = s[1..].find('"') {
+            return (&s[1..1 + end], 1 + end + 1);
+        }
+    } else if s.starts_with('\'') {
+        if let Some(end) = s[1..].find('\'') {
+            return (&s[1..1 + end], 1 + end + 1);
+        }
+    } else {
+        // Unquoted - ends at whitespace or >
+        let end = s
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(s.len());
+        return (&s[..end], end);
+    }
+    ("", 0)
+}
+
+/// Insert anchors at filepos positions
+fn insert_filepos_anchors(html: &str, _raw_text: &[u8], targets: &std::collections::HashSet<usize>) -> String {
+    if targets.is_empty() {
+        return html.to_string();
+    }
+
+    // For MOBI6, filepos values are byte positions in the raw text
+    // We need to insert <a id="fileposN"></a> anchors at those positions
+    // Since we're working with processed HTML, we approximate by inserting
+    // anchors at the start of paragraphs/divs near those positions
+
+    let mut result = String::with_capacity(html.len() + targets.len() * 30);
+    let mut sorted_targets: Vec<usize> = targets.iter().copied().collect();
+    sorted_targets.sort();
+
+    let bytes = html.as_bytes();
+    let mut pos = 0;
+    let mut target_idx = 0;
+
+    while pos < bytes.len() {
+        // Look for tag starts that could be good anchor points
+        if bytes[pos] == b'<' {
+            // Check if this is a block element that could be an anchor point
+            let remaining = &html[pos..];
+            let is_block_start = remaining.starts_with("<p")
+                || remaining.starts_with("<div")
+                || remaining.starts_with("<h1")
+                || remaining.starts_with("<h2")
+                || remaining.starts_with("<h3")
+                || remaining.starts_with("<h4")
+                || remaining.starts_with("<h5")
+                || remaining.starts_with("<h6")
+                || remaining.starts_with("<section")
+                || remaining.starts_with("<article");
+
+            // Insert any pending anchors for positions we've passed
+            while target_idx < sorted_targets.len() && sorted_targets[target_idx] <= pos {
+                let target = sorted_targets[target_idx];
+                result.push_str(&format!("<a id=\"filepos{}\"></a>", target));
+                target_idx += 1;
+            }
+
+            if is_block_start && target_idx < sorted_targets.len() {
+                // Check if next target is close to current position
+                let next_target = sorted_targets[target_idx];
+                if next_target <= pos + 100 {
+                    result.push_str(&format!("<a id=\"filepos{}\"></a>", next_target));
+                    target_idx += 1;
+                }
+            }
+        }
+
+        result.push(bytes[pos] as char);
+        pos += 1;
+    }
+
+    // Insert any remaining anchors at the end
+    while target_idx < sorted_targets.len() {
+        let target = sorted_targets[target_idx];
+        result.push_str(&format!("<a id=\"filepos{}\"></a>", target));
+        target_idx += 1;
+    }
+
+    result
+}
+
+/// Convert filepos="N" links to href="#fileposN"
+fn convert_filepos_links(html: &str) -> String {
+    use memchr::memmem;
+
+    let finder = memmem::Finder::new(b"filepos=");
+    let bytes = html.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut pos = 0;
+
+    while let Some(found) = finder.find(&bytes[pos..]) {
+        let abs_pos = pos + found;
+        result.extend_from_slice(&bytes[pos..abs_pos]);
+
+        // Parse the filepos value
+        let after = &html[abs_pos + 8..];
+        let (value_str, consumed) = parse_attribute_value(after);
+
+        if let Ok(filepos) = value_str.parse::<usize>() {
+            // Replace with href="#fileposN"
+            result.extend_from_slice(format!("href=\"#filepos{}\"", filepos).as_bytes());
+        } else {
+            // Keep original if can't parse
+            result.extend_from_slice(b"filepos=");
+            result.extend_from_slice(after[..consumed].as_bytes());
+        }
+
+        pos = abs_pos + 8 + consumed;
+    }
+
+    result.extend_from_slice(&bytes[pos..]);
+    String::from_utf8_lossy(&result).into_owned()
+}
+
+/// Convert recindex="N" to actual image paths
+/// In MOBI6, recindex is 1-based from the first image record
+fn convert_recindex_images(html: &str, _first_image_index: usize) -> String {
+    use memchr::memmem;
+
+    let finder = memmem::Finder::new(b"recindex=");
+    let bytes = html.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut pos = 0;
+
+    while let Some(found) = finder.find(&bytes[pos..]) {
+        let abs_pos = pos + found;
+        result.extend_from_slice(&bytes[pos..abs_pos]);
+
+        // Parse the recindex value
+        let after = &html[abs_pos + 9..];
+        let (value_str, consumed) = parse_attribute_value(after);
+
+        if let Ok(recindex) = value_str.parse::<usize>() {
+            // recindex is 1-based, so subtract 1 for 0-based image index
+            // Our images are named image_NNNN.ext starting from 0
+            let img_idx = recindex.saturating_sub(1);
+            result.extend_from_slice(format!("src=\"images/image_{:04}.jpg\"", img_idx).as_bytes());
+        } else {
+            // Keep original if can't parse
+            result.extend_from_slice(b"recindex=");
+            result.extend_from_slice(after[..consumed].as_bytes());
+        }
+
+        pos = abs_pos + 9 + consumed;
+    }
+
+    result.extend_from_slice(&bytes[pos..]);
+    String::from_utf8_lossy(&result).into_owned()
+}
+
+/// Convert mbp:pagebreak tags to div elements
+fn convert_mbp_pagebreaks(html: &str) -> String {
+    html.replace("<mbp:pagebreak/>", "<div class=\"pagebreak\"></div>")
+        .replace("<mbp:pagebreak />", "<div class=\"pagebreak\"></div>")
+        .replace("<mbp:pagebreak>", "<div class=\"pagebreak\">")
+        .replace("</mbp:pagebreak>", "</div>")
 }
 
 fn extract_body_content(html: &str) -> String {
@@ -1374,248 +1626,6 @@ fn strip_html_structure(content: &str) -> String {
         }
     }
     result = result.replace("</body>", "");
-
-    result
-}
-
-/// Find the nearest id= attribute at or after a given position in the raw text
-/// The kindle:pos:fid links point to positions that are at or just before the target element
-fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> Option<String> {
-    use bstr::ByteSlice;
-    use memchr::memmem;
-
-    if pos >= raw_text.len() {
-        return None;
-    }
-
-    // Search forward from pos to find the next tag with an id= attribute
-    let end_pos = (pos + 2000).min(raw_text.len());
-    let search_window = &raw_text[pos..end_pos];
-
-    // Use memchr to find potential id= patterns
-    let id_finder = memmem::Finder::new(b"id=\"");
-    let id_finder_single = memmem::Finder::new(b"id='");
-
-    let id_pos = id_finder
-        .find(search_window)
-        .or_else(|| id_finder_single.find(search_window));
-
-    if let Some(rel_pos) = id_pos {
-        let quote_char = search_window[rel_pos + 3];
-        let value_start = rel_pos + 4;
-        if let Some(value_end) = search_window[value_start..].find_byte(quote_char) {
-            let id_bytes = &search_window[value_start..value_start + value_end];
-            // Validate it's ASCII alphanumeric with allowed punctuation
-            if id_bytes.iter().all(|&b| {
-                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
-            }) {
-                return Some(String::from_utf8_lossy(id_bytes).into_owned());
-            }
-        }
-    }
-
-    // If no ID found forward, try searching backwards as fallback
-    let start_pos = pos.saturating_sub(500);
-    let back_window = &raw_text[start_pos..pos];
-
-    // Search for last id= in backwards window
-    let mut last_id = None;
-    let mut search_pos = 0;
-    while let Some(rel_pos) = id_finder.find(&back_window[search_pos..]) {
-        let abs_pos = search_pos + rel_pos;
-        let quote_char = back_window.get(abs_pos + 3).copied().unwrap_or(b'"');
-        let value_start = abs_pos + 4;
-        if let Some(value_end) = back_window[value_start..].find_byte(quote_char) {
-            let id_bytes = &back_window[value_start..value_start + value_end];
-            if id_bytes.iter().all(|&b| {
-                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
-            }) {
-                last_id = Some(String::from_utf8_lossy(id_bytes).into_owned());
-            }
-        }
-        search_pos = abs_pos + 1;
-    }
-
-    last_id
-}
-
-fn clean_kindle_references(
-    html: &str,
-    elems: &[DivElement],
-    raw_text: &[u8],
-    file_starts: &[(u32, u32)],
-) -> String {
-    let mut result = html.to_string();
-
-    // Replace kindle:flow references (e.g., kindle:flow:0001?mime=text/css)
-    // Flow index is base32 encoded, flow 0 is HTML content, flow 1+ are CSS/SVG
-    while let Some(start) = result.find("kindle:flow:") {
-        if let Some(end) = result[start..].find('"') {
-            // Extract flow ID (base32 encoded)
-            let ref_str = &result[start..start + end];
-            let flow_id_end = ref_str.find('?').unwrap_or(ref_str.len());
-            let flow_id_str = &ref_str[12..flow_id_end]; // After "kindle:flow:"
-
-            let flow_num = parse_kindle_base32(flow_id_str);
-            // Flow 1 becomes style0000.css, flow 2 becomes style0001.css, etc.
-            let css_idx = if flow_num > 0 { flow_num - 1 } else { 0 };
-            let replacement = format!("styles/style{:04}.css", css_idx);
-            result = format!(
-                "{}{}{}",
-                &result[..start],
-                replacement,
-                &result[start + end..]
-            );
-        } else {
-            break;
-        }
-    }
-
-    // Replace kindle:pos:fid:XXXX:off:YYYY links with file references + anchors
-    // XXXX is div table index (base32) - index into elems array
-    // YYYY is offset (base32) - offset within the element
-    while let Some(start) = result.find("kindle:pos:fid:") {
-        if let Some(end) = result[start..].find('"') {
-            // Extract fid (base32 encoded after "kindle:pos:fid:")
-            let ref_str = &result[start..start + end];
-            // Format: kindle:pos:fid:XXXX:off:YYYY
-            let parts: Vec<&str> = ref_str.split(':').collect();
-            if parts.len() >= 6 && parts[4] == "off" {
-                let fid_str = parts[3]; // The XXXX part (elem index)
-                let off_str = parts[5]; // The YYYY part (offset)
-                let elem_idx = parse_kindle_base32(fid_str);
-                let offset = parse_kindle_base32(off_str);
-
-                // Look up the element to get its file_number and position
-                let (file_num, target_pos) = if let Some(elem) = elems.get(elem_idx) {
-                    (elem.file_number as usize, elem.insert_pos + offset as u32)
-                } else {
-                    (0, 0u32)
-                };
-
-                // Search backwards in the raw text to find the nearest id= attribute
-                // Like Calibre's get_id_tag() function
-                let anchor = find_nearest_id(raw_text, target_pos as usize, file_starts);
-
-                let replacement = if let Some(id) = anchor {
-                    format!("part{:04}.html#{}", file_num, id)
-                } else {
-                    format!("part{:04}.html", file_num)
-                };
-                result = format!(
-                    "{}{}{}",
-                    &result[..start],
-                    replacement,
-                    &result[start + end..]
-                );
-            } else if parts.len() >= 4 {
-                // Old format without offset
-                let fid_str = parts[3];
-                let elem_idx = parse_kindle_base32(fid_str);
-                let file_num = elems
-                    .get(elem_idx)
-                    .map(|e| e.file_number as usize)
-                    .unwrap_or(0);
-                let replacement = format!("part{:04}.html", file_num);
-                result = format!(
-                    "{}{}{}",
-                    &result[..start],
-                    replacement,
-                    &result[start + end..]
-                );
-            } else {
-                // Can't parse, replace with placeholder
-                result = format!(
-                    "{}part0000.html{}",
-                    &result[..start],
-                    &result[start + end..]
-                );
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Replace kindle:embed image references
-    // Format: kindle:embed:XXXX?mime=image/jpeg
-    // XXXX is 1-indexed base32, so embed:0001 is image 0
-    while let Some(start) = result.find("kindle:embed:") {
-        if let Some(end) = result[start..].find(['"', '\'', ')']) {
-            let ref_str = &result[start..start + end];
-            // Extract the base32 ID
-            let id_end = ref_str[13..]
-                .find('?')
-                .map(|p| 13 + p)
-                .unwrap_or(ref_str.len());
-            let embed_id = &ref_str[13..id_end]; // After "kindle:embed:"
-
-            let img_num = parse_kindle_base32(embed_id);
-            // Calibre uses 1-indexed, so subtract 1
-            let img_idx = if img_num > 0 { img_num - 1 } else { 0 };
-
-            let ext = if ref_str.contains("image/png") {
-                "png"
-            } else if ref_str.contains("image/gif") {
-                "gif"
-            } else {
-                "jpg" // Default to jpeg
-            };
-
-            let img_path = format!("images/image_{:04}.{}", img_idx, ext);
-            result = format!("{}{}{}", &result[..start], img_path, &result[start + end..]);
-        } else {
-            break;
-        }
-    }
-
-    // Clean up any remaining malformed kindle: references
-    // These can occur from corrupted skeleton reconstruction
-    result = clean_malformed_kindle_refs(&result);
-
-    result
-}
-
-/// Remove any malformed kindle: references that weren't properly converted
-fn clean_malformed_kindle_refs(html: &str) -> String {
-    let mut result = html.to_string();
-    let mut iterations = 0;
-    const MAX_ITERATIONS: usize = 1000; // Prevent infinite loops
-
-    // Remove standalone "kindle:" fragments that got corrupted
-    // Match patterns like kindle:xxx that don't have proper structure
-    while let Some(start) = result.find("kindle:") {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            break;
-        }
-
-        // Find the extent of this malformed reference
-        let after = &result[start..];
-
-        // Find the end of this kindle reference
-        let end = after
-            .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"' || c == '\'')
-            .unwrap_or(after.len());
-
-        // Check if this is inside an href="" or src=""
-        let before_start = start.saturating_sub(30);
-        let before = &result[before_start..start];
-
-        if before.contains("href=\"") || before.contains("src=\"") {
-            // Inside a properly quoted attribute - replace with safe placeholder
-            result = format!("{}#{}", &result[..start], &result[start + end..]);
-        } else if before.contains("href=") || before.contains("src=") {
-            // Attribute without proper quotes - still replace
-            result = format!("{}#{}", &result[..start], &result[start + end..]);
-        } else {
-            // Not in an attribute - just remove the kindle: text
-            result = format!("{}{}", &result[..start], &result[start + end..]);
-        }
-    }
-
-    // Also clean up any malformed tags that have kindle references embedded
-    // Pattern: style<a href= or similar corrupted structures
-    result = result.replace("style<a", "style=\"\"><a");
 
     result
 }

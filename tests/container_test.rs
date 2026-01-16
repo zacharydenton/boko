@@ -345,6 +345,104 @@ fn test_full_roundtrip_epub_azw3_epub() {
     assert_eq!(original.metadata.authors, final_epub.metadata.authors);
 }
 
+#[test]
+fn test_mobi_to_azw3_conversion() {
+    let mobi = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let azw3_path = temp_dir.path().join("converted.azw3");
+
+    write_mobi(&mobi, &azw3_path).expect("Failed to write AZW3");
+    let azw3 = read_mobi(&azw3_path).expect("Failed to read converted AZW3");
+
+    assert_eq!(mobi.metadata.title, azw3.metadata.title);
+    assert_eq!(mobi.metadata.authors, azw3.metadata.authors);
+    assert!(!azw3.spine.is_empty());
+}
+
+#[test]
+fn test_azw3_roundtrip() {
+    // AZW3 → AZW3
+    let original = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let azw3_path = temp_dir.path().join("roundtrip.azw3");
+
+    write_mobi(&original, &azw3_path).expect("Failed to write AZW3");
+    let roundtrip = read_mobi(&azw3_path).expect("Failed to read roundtrip AZW3");
+
+    assert_eq!(original.metadata.title, roundtrip.metadata.title);
+    assert_eq!(original.metadata.authors, roundtrip.metadata.authors);
+    assert!(!roundtrip.spine.is_empty());
+}
+
+#[test]
+fn test_full_roundtrip_mobi_azw3_epub() {
+    // MOBI → AZW3 → EPUB
+    let mobi = read_mobi(fixture_path("epictetus.mobi")).expect("Failed to read MOBI");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // MOBI → AZW3
+    let azw3_path = temp_dir.path().join("step1.azw3");
+    write_mobi(&mobi, &azw3_path).expect("Failed to write AZW3");
+    let azw3 = read_mobi(&azw3_path).expect("Failed to read AZW3");
+
+    // AZW3 → EPUB
+    let epub_path = temp_dir.path().join("step2.epub");
+    write_epub(&azw3, &epub_path).expect("Failed to write EPUB");
+    let epub = read_epub(&epub_path).expect("Failed to read EPUB");
+
+    assert_eq!(mobi.metadata.title, epub.metadata.title);
+}
+
+/// Test all format conversion combinations
+#[test]
+fn test_conversion_matrix() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Load all source formats
+    let epub_src = read_epub(fixture_path("epictetus.epub")).expect("read epub");
+    let azw3_src = read_mobi(fixture_path("epictetus.azw3")).expect("read azw3");
+    let mobi_src = read_mobi(fixture_path("epictetus.mobi")).expect("read mobi");
+
+    // EPUB → EPUB
+    let p = temp_dir.path().join("epub_epub.epub");
+    write_epub(&epub_src, &p).unwrap();
+    let b = read_epub(&p).unwrap();
+    assert_eq!(epub_src.metadata.title, b.metadata.title);
+
+    // EPUB → AZW3
+    let p = temp_dir.path().join("epub_azw3.azw3");
+    write_mobi(&epub_src, &p).unwrap();
+    let b = read_mobi(&p).unwrap();
+    assert_eq!(epub_src.metadata.title, b.metadata.title);
+
+    // AZW3 → EPUB
+    let p = temp_dir.path().join("azw3_epub.epub");
+    write_epub(&azw3_src, &p).unwrap();
+    let b = read_epub(&p).unwrap();
+    assert_eq!(azw3_src.metadata.title, b.metadata.title);
+
+    // AZW3 → AZW3
+    let p = temp_dir.path().join("azw3_azw3.azw3");
+    write_mobi(&azw3_src, &p).unwrap();
+    let b = read_mobi(&p).unwrap();
+    assert_eq!(azw3_src.metadata.title, b.metadata.title);
+
+    // MOBI → EPUB
+    let p = temp_dir.path().join("mobi_epub.epub");
+    write_epub(&mobi_src, &p).unwrap();
+    let b = read_epub(&p).unwrap();
+    assert_eq!(mobi_src.metadata.title, b.metadata.title);
+
+    // MOBI → AZW3
+    let p = temp_dir.path().join("mobi_azw3.azw3");
+    write_mobi(&mobi_src, &p).unwrap();
+    let b = read_mobi(&p).unwrap();
+    assert_eq!(mobi_src.metadata.title, b.metadata.title);
+}
+
 // ============================================================================
 // Content Verification Tests
 // ============================================================================
