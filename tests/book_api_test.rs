@@ -39,7 +39,11 @@ fn test_metadata_builder() {
 fn test_add_resource() {
     let mut book = Book::new();
 
-    book.add_resource("chapter1.xhtml", b"<html><body>Chapter 1</body></html>".to_vec(), "application/xhtml+xml");
+    book.add_resource(
+        "chapter1.xhtml",
+        b"<html><body>Chapter 1</body></html>".to_vec(),
+        "application/xhtml+xml",
+    );
     book.add_resource("style.css", b"body { color: black; }".to_vec(), "text/css");
 
     assert_eq!(book.resources.len(), 2);
@@ -54,8 +58,16 @@ fn test_add_resource() {
 fn test_add_spine_item() {
     let mut book = Book::new();
 
-    book.add_resource("chapter1.xhtml", b"<html></html>".to_vec(), "application/xhtml+xml");
-    book.add_resource("chapter2.xhtml", b"<html></html>".to_vec(), "application/xhtml+xml");
+    book.add_resource(
+        "chapter1.xhtml",
+        b"<html></html>".to_vec(),
+        "application/xhtml+xml",
+    );
+    book.add_resource(
+        "chapter2.xhtml",
+        b"<html></html>".to_vec(),
+        "application/xhtml+xml",
+    );
 
     book.add_spine_item("ch1", "chapter1.xhtml", "application/xhtml+xml");
     book.add_spine_item("ch2", "chapter2.xhtml", "application/xhtml+xml");
@@ -96,7 +108,11 @@ fn test_create_and_write_minimal_book() {
 <body><h1>Hello World</h1><p>This is a test.</p></body>
 </html>"#;
 
-    book.add_resource("chapter1.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+    book.add_resource(
+        "chapter1.xhtml",
+        content.as_bytes().to_vec(),
+        "application/xhtml+xml",
+    );
     book.add_spine_item("ch1", "chapter1.xhtml", "application/xhtml+xml");
     book.toc.push(TocEntry::new("Chapter 1", "chapter1.xhtml"));
 
@@ -127,16 +143,18 @@ fn test_create_book_with_nested_toc() {
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <body><h1>Chapter {}</h1></body>
-</html>"#, i);
+</html>"#,
+            i
+        );
         book.add_resource(
             format!("chapter{}.xhtml", i),
             content.as_bytes().to_vec(),
-            "application/xhtml+xml"
+            "application/xhtml+xml",
         );
         book.add_spine_item(
             format!("ch{}", i),
             format!("chapter{}.xhtml", i),
-            "application/xhtml+xml"
+            "application/xhtml+xml",
         );
     }
 
@@ -161,16 +179,28 @@ fn test_create_book_with_nested_toc() {
 
     // Count total entries (nested parsing may flatten or preserve)
     fn count_toc_entries(entries: &[TocEntry]) -> usize {
-        entries.iter().map(|e| 1 + count_toc_entries(&e.children)).sum()
+        entries
+            .iter()
+            .map(|e| 1 + count_toc_entries(&e.children))
+            .sum()
     }
 
     let original_count = count_toc_entries(&book.toc);
     let read_count = count_toc_entries(&read_book.toc);
 
-    println!("Original TOC entries: {}, Read TOC entries: {}", original_count, read_count);
+    println!(
+        "Original TOC entries: {}, Read TOC entries: {}",
+        original_count, read_count
+    );
     println!("Read TOC structure:");
     for (i, entry) in read_book.toc.iter().enumerate() {
-        println!("  [{}] {} -> {} (children: {})", i, entry.title, entry.href, entry.children.len());
+        println!(
+            "  [{}] {} -> {} (children: {})",
+            i,
+            entry.title,
+            entry.href,
+            entry.children.len()
+        );
     }
 
     // At minimum, we should have the same number of total entries
@@ -198,7 +228,11 @@ fn test_create_book_with_css() {
 <body><h1>Styled Content</h1></body>
 </html>"#;
 
-    book.add_resource("chapter1.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+    book.add_resource(
+        "chapter1.xhtml",
+        content.as_bytes().to_vec(),
+        "application/xhtml+xml",
+    );
     book.add_spine_item("ch1", "chapter1.xhtml", "application/xhtml+xml");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -219,9 +253,11 @@ fn test_create_book_with_css() {
 
 #[test]
 fn test_modify_metadata_roundtrip() {
-    let original = boko::read_epub(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/epictetus.epub")
-    ).expect("Failed to read EPUB");
+    let original = boko::read_epub(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/epictetus.epub"
+    ))
+    .expect("Failed to read EPUB");
 
     // Modify metadata
     let mut modified = original.clone();
@@ -243,18 +279,16 @@ fn test_modify_metadata_roundtrip() {
 
 #[test]
 fn test_add_resource_to_existing_book() {
-    let mut book = boko::read_epub(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/epictetus.epub")
-    ).expect("Failed to read EPUB");
+    let mut book = boko::read_epub(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/epictetus.epub"
+    ))
+    .expect("Failed to read EPUB");
 
     let original_count = book.resources.len();
 
     // Add a new resource
-    book.add_resource(
-        "extra.css",
-        b".extra { color: red; }".to_vec(),
-        "text/css"
-    );
+    book.add_resource("extra.css", b".extra { color: red; }".to_vec(), "text/css");
 
     assert_eq!(book.resources.len(), original_count + 1);
     assert!(book.resources.contains_key("extra.css"));
@@ -275,9 +309,11 @@ fn test_add_resource_to_existing_book() {
 
 #[test]
 fn test_modify_and_convert_epub_to_azw3() {
-    let mut book = boko::read_epub(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/epictetus.epub")
-    ).expect("Failed to read EPUB");
+    let mut book = boko::read_epub(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/epictetus.epub"
+    ))
+    .expect("Failed to read EPUB");
 
     // Modify
     book.metadata.title = "Modified for Kindle".to_string();

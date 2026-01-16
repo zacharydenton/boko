@@ -1,8 +1,8 @@
+use quick_xml::Reader;
+use quick_xml::events::Event;
 use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::Path;
-use quick_xml::events::Event;
-use quick_xml::Reader;
 use zip::ZipArchive;
 
 use crate::book::{Book, Metadata, TocEntry};
@@ -17,13 +17,39 @@ struct OpfData {
     ncx_href: Option<String>,
 }
 
-/// Read an EPUB file into a Book
+/// Read an EPUB file from disk into a [`Book`].
+///
+/// Supports EPUB 2 and EPUB 3 formats. Extracts metadata, spine, table of contents,
+/// and all resources (content documents, images, CSS, fonts).
+///
+/// # Example
+///
+/// ```no_run
+/// use boko::read_epub;
+///
+/// let book = read_epub("path/to/book.epub")?;
+/// println!("Title: {}", book.metadata.title);
+/// # Ok::<(), boko::Error>(())
+/// ```
 pub fn read_epub<P: AsRef<Path>>(path: P) -> Result<Book> {
     let file = std::fs::File::open(path)?;
     read_epub_from_reader(file)
 }
 
-/// Read an EPUB from any Read + Seek source
+/// Read an EPUB from any [`Read`] + [`Seek`] source.
+///
+/// Useful for reading from memory buffers or network streams.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::io::Cursor;
+/// use boko::epub::read_epub_from_reader;
+///
+/// let epub_data: Vec<u8> = std::fs::read("book.epub")?;
+/// let book = read_epub_from_reader(Cursor::new(epub_data))?;
+/// # Ok::<(), boko::Error>(())
+/// ```
 pub fn read_epub_from_reader<R: Read + Seek>(reader: R) -> Result<Book> {
     let mut archive = ZipArchive::new(reader)?;
 
@@ -36,7 +62,12 @@ pub fn read_epub_from_reader<R: Read + Seek>(reader: R) -> Result<Book> {
 
     // 2. Parse the OPF file
     let opf_content = read_archive_file(&mut archive, &opf_path)?;
-    let OpfData { metadata, manifest, spine_ids, ncx_href } = parse_opf(&opf_content, &opf_dir)?;
+    let OpfData {
+        metadata,
+        manifest,
+        spine_ids,
+        ncx_href,
+    } = parse_opf(&opf_content, &opf_dir)?;
 
     // 3. Build the Book structure
     let mut book = Book::new();
@@ -89,7 +120,9 @@ fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<String> 
         }
     }
 
-    Err(Error::InvalidEpub("No rootfile found in container.xml".into()))
+    Err(Error::InvalidEpub(
+        "No rootfile found in container.xml".into(),
+    ))
 }
 
 /// Manifest item with properties (for EPUB3 cover-image detection)
@@ -122,8 +155,8 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
 
                 match local_name {
                     b"metadata" => in_metadata = true,
-                    b"title" | b"creator" | b"language" | b"identifier" |
-                    b"publisher" | b"description" | b"subject" | b"date" | b"rights" => {
+                    b"title" | b"creator" | b"language" | b"identifier" | b"publisher"
+                    | b"description" | b"subject" | b"date" | b"rights" => {
                         if in_metadata {
                             current_element = Some(String::from_utf8_lossy(local_name).to_string());
                             buf_text.clear();
@@ -155,14 +188,25 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
                             match attr.key.as_ref() {
                                 b"id" => id = String::from_utf8(attr.value.to_vec())?,
                                 b"href" => href = String::from_utf8(attr.value.to_vec())?,
-                                b"media-type" => media_type = String::from_utf8(attr.value.to_vec())?,
-                                b"properties" => properties = Some(String::from_utf8(attr.value.to_vec())?),
+                                b"media-type" => {
+                                    media_type = String::from_utf8(attr.value.to_vec())?
+                                }
+                                b"properties" => {
+                                    properties = Some(String::from_utf8(attr.value.to_vec())?)
+                                }
                                 _ => {}
                             }
                         }
 
                         if !id.is_empty() {
-                            manifest_items.insert(id, ManifestItem { href, media_type, properties });
+                            manifest_items.insert(
+                                id,
+                                ManifestItem {
+                                    href,
+                                    media_type,
+                                    properties,
+                                },
+                            );
                         }
                     }
                     b"itemref" => {
@@ -235,9 +279,9 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
     // Detect cover image: EPUB3 "cover-image" property takes priority over EPUB2 meta
     // EPUB3: <item properties="cover-image" .../>
     let epub3_cover = manifest_items.values().find(|item| {
-        item.properties.as_ref().is_some_and(|props| {
-            props.split_ascii_whitespace().any(|p| p == "cover-image")
-        })
+        item.properties
+            .as_ref()
+            .is_some_and(|props| props.split_ascii_whitespace().any(|p| p == "cover-image"))
     });
 
     if let Some(cover_item) = epub3_cover {
@@ -257,11 +301,17 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
 
     // Resolve NCX href from toc_id
     if let Some(toc_id) = toc_id
-        && let Some((href, _)) = manifest.get(&toc_id) {
-            ncx_href = Some(href.clone());
-        }
+        && let Some((href, _)) = manifest.get(&toc_id)
+    {
+        ncx_href = Some(href.clone());
+    }
 
-    Ok(OpfData { metadata, manifest, spine_ids, ncx_href })
+    Ok(OpfData {
+        metadata,
+        manifest,
+        spine_ids,
+        ncx_href,
+    })
 }
 
 fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
@@ -286,9 +336,10 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                         // Extract playOrder attribute
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"playOrder"
-                                && let Ok(order_str) = String::from_utf8(attr.value.to_vec()) {
-                                    current_play_order = order_str.parse().ok();
-                                }
+                                && let Ok(order_str) = String::from_utf8(attr.value.to_vec())
+                            {
+                                current_play_order = order_str.parse().ok();
+                            }
                         }
                     }
                     b"text" => in_text = true,
@@ -349,7 +400,10 @@ fn read_archive_file<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) ->
     Ok(String::from_utf8(bytes.to_vec())?)
 }
 
-fn read_archive_file_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<Vec<u8>> {
+fn read_archive_file_bytes<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    path: &str,
+) -> Result<Vec<u8>> {
     // Try direct lookup first
     match archive.by_name(path) {
         Ok(mut file) => {

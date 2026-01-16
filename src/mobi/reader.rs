@@ -6,11 +6,11 @@ use quick_xml::escape::unescape;
 use crate::book::{Book, Metadata, TocEntry};
 use crate::error::{Error, Result};
 
-use super::headers::{Compression, Encoding, ExthHeader, MobiHeader, PdbHeader, NULL_INDEX};
+use super::headers::{Compression, Encoding, ExthHeader, MobiHeader, NULL_INDEX, PdbHeader};
 use super::huffcdic::HuffCdicReader;
 use super::index::{
-    parse_div_index, parse_ncx_index, parse_skel_index, read_index, Cncx, DivElement, NcxEntry,
-    SkeletonFile,
+    Cncx, DivElement, NcxEntry, SkeletonFile, parse_div_index, parse_ncx_index, parse_skel_index,
+    read_index,
 };
 
 /// Extracted resources from MOBI file
@@ -23,13 +23,29 @@ struct ExtractedResources {
     resource_map: Vec<Option<String>>,
 }
 
-/// Read a MOBI/AZW3 file into a Book
+/// Read a MOBI or AZW3 file from disk into a [`Book`].
+///
+/// Supports both MOBI (KF7) and AZW3 (KF8) formats, including combo files.
+/// Extracts metadata, spine, table of contents, images, fonts, and CSS.
+///
+/// # Example
+///
+/// ```no_run
+/// use boko::read_mobi;
+///
+/// let book = read_mobi("path/to/book.azw3")?;
+/// println!("Title: {}", book.metadata.title);
+/// println!("Chapters: {}", book.toc.len());
+/// # Ok::<(), boko::Error>(())
+/// ```
 pub fn read_mobi<P: AsRef<Path>>(path: P) -> Result<Book> {
     let file = std::fs::File::open(path)?;
     read_mobi_from_reader(file)
 }
 
-/// Read a MOBI from any Read + Seek source
+/// Read a MOBI/AZW3 from any [`Read`] + [`Seek`] source.
+///
+/// Useful for reading from memory buffers or network streams.
 pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     // 1. Parse PDB header
     let pdb = PdbHeader::read(&mut reader)?;
@@ -80,9 +96,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
                             // KF8 indices are relative to (kf8_header_idx - 1) as the base
                             (kf8_mobi, (kf8_header_idx as usize).saturating_sub(1))
                         }
-                        Err(_) => {
-                            (mobi6_header, 0)
-                        }
+                        Err(_) => (mobi6_header, 0),
                     }
                 } else {
                     (mobi6_header, 0)
@@ -132,7 +146,11 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     let text = extract_text(&mut reader, &pdb, &mobi, kf8_record_offset)?;
 
     // 7. Extract resources (images and fonts)
-    let ExtractedResources { images, fonts, resource_map } = extract_resources(&mut reader, &pdb, &mobi)?;
+    let ExtractedResources {
+        images,
+        fonts,
+        resource_map,
+    } = extract_resources(&mut reader, &pdb, &mobi)?;
 
     // 8. Build Book
     let mut book = Book::new();
@@ -146,21 +164,27 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
 
     // Try KF8 parsing for proper chapters
     if mobi.is_kf8() {
-        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, kf8_record_offset) {
+        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, kf8_record_offset)
+        {
             // Build file_starts array: (start_pos, file_number) for ID lookup
-            let file_starts: Vec<(u32, u32)> = kf8_result.files.iter()
+            let file_starts: Vec<(u32, u32)> = kf8_result
+                .files
+                .iter()
                 .map(|f| (f.start_pos, f.file_number as u32))
                 .collect();
 
             // Add chapter HTML files
             for (i, (filename, content)) in kf8_result.parts.iter().enumerate() {
-                let html = wrap_html_content(content, &mobi.title, i, &kf8_result.elems, &text, &file_starts);
-                book.add_resource(filename, html.into_bytes(), "application/xhtml+xml");
-                book.add_spine_item(
-                    format!("part{:04}", i),
-                    filename,
-                    "application/xhtml+xml",
+                let html = wrap_html_content(
+                    content,
+                    &mobi.title,
+                    i,
+                    &kf8_result.elems,
+                    &text,
+                    &file_starts,
                 );
+                book.add_resource(filename, html.into_bytes(), "application/xhtml+xml");
+                book.add_spine_item(format!("part{:04}", i), filename, "application/xhtml+xml");
             }
 
             // Add TOC entries from NCX
@@ -217,9 +241,10 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
 
         // Check if this is the cover
         if let Some(ref exth) = exth
-            && exth.cover_offset == Some(i as u32) {
-                book.metadata.cover_image = Some(href.clone());
-            }
+            && exth.cover_offset == Some(i as u32)
+        {
+            book.metadata.cover_image = Some(href.clone());
+        }
     }
 
     // Add fonts
@@ -264,9 +289,8 @@ fn parse_kf8<R: Read + Seek>(
     mobi: &MobiHeader,
     text: &[u8],
     codec: &str,
-    record_offset: usize,  // Offset for combo MOBI6+KF8 files
+    record_offset: usize, // Offset for combo MOBI6+KF8 files
 ) -> Result<Kf8Result> {
-
     // Parse FDST for flow boundaries (FDST index needs offset too)
     let flow_table = parse_fdst(reader, pdb, mobi, record_offset)?;
 
@@ -347,12 +371,18 @@ fn parse_fdst<R: Read + Seek>(
         return Ok(Vec::new());
     }
 
-    let sec_start =
-        u32::from_be_bytes([fdst_record[4], fdst_record[5], fdst_record[6], fdst_record[7]])
-            as usize;
-    let num_sections =
-        u32::from_be_bytes([fdst_record[8], fdst_record[9], fdst_record[10], fdst_record[11]])
-            as usize;
+    let sec_start = u32::from_be_bytes([
+        fdst_record[4],
+        fdst_record[5],
+        fdst_record[6],
+        fdst_record[7],
+    ]) as usize;
+    let num_sections = u32::from_be_bytes([
+        fdst_record[8],
+        fdst_record[9],
+        fdst_record[10],
+        fdst_record[11],
+    ]) as usize;
 
     let mut flows = Vec::with_capacity(num_sections);
     for i in 0..num_sections {
@@ -387,7 +417,6 @@ fn build_parts(
 ) -> Result<Vec<(String, Vec<u8>)>> {
     let mut parts = Vec::new();
     let mut div_ptr = 0;
-
 
     for file in files {
         let skel_start = file.start_pos as usize;
@@ -434,8 +463,8 @@ fn build_parts(
                     let last_lt = head.iter().rposition(|&b| b == b'<');
                     let last_gt = head.iter().rposition(|&b| b == b'>');
                     match (last_lt, last_gt) {
-                        (Some(lt), Some(gt)) => lt > gt,  // '<' after '>' means unclosed tag
-                        (Some(_), None) => true,  // '<' with no '>' means unclosed tag
+                        (Some(lt), Some(gt)) => lt > gt, // '<' after '>' means unclosed tag
+                        (Some(_), None) => true,         // '<' with no '>' means unclosed tag
                         _ => false,
                     }
                 };
@@ -445,8 +474,8 @@ fn build_parts(
                     let first_lt = tail.iter().position(|&b| b == b'<');
                     let first_gt = tail.iter().position(|&b| b == b'>');
                     match (first_lt, first_gt) {
-                        (Some(lt), Some(gt)) => gt < lt,  // '>' before '<' means we're inside a tag
-                        (None, Some(_)) => true,  // '>' with no '<' means we're inside a tag
+                        (Some(lt), Some(gt)) => gt < lt, // '>' before '<' means we're inside a tag
+                        (None, Some(_)) => true,         // '>' with no '<' means we're inside a tag
                         _ => false,
                     }
                 };
@@ -456,8 +485,7 @@ fn build_parts(
                 // Calibre warns but uses a different correction method involving
                 // locate_beg_end_of_tag() which we don't implement.
                 // For now, trust the insert positions from the div table.
-                if head_incomplete || tail_incomplete {
-                }
+                if head_incomplete || tail_incomplete {}
             }
 
             // Insert part into skeleton at insert_pos
@@ -503,7 +531,14 @@ fn find_file_for_position(files: &[SkeletonFile], pos: u32) -> Option<&SkeletonF
 }
 
 /// Process KF8 content: clean up declarations and convert kindle: references
-fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[DivElement], raw_text: &[u8], file_starts: &[(u32, u32)]) -> String {
+fn wrap_html_content(
+    content: &[u8],
+    _title: &str,
+    part_num: usize,
+    elems: &[DivElement],
+    raw_text: &[u8],
+    file_starts: &[(u32, u32)],
+) -> String {
     let content_str = String::from_utf8_lossy(content);
 
     // Strip encoding declarations but keep structure
@@ -516,7 +551,7 @@ fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[Div
     let stripped = strip_kindle_attributes(&result);
 
     // Ensure it has proper XHTML structure
-    
+
     ensure_xhtml_structure(&stripped, part_num)
 }
 
@@ -541,7 +576,9 @@ fn strip_encoding_declarations(html: &str) -> String {
 
 /// Strip Amazon-specific attributes and fix XHTML compliance issues
 fn strip_kindle_attributes(html: &str) -> String {
-    use super::patterns::{AID_ATTR_RE, AMZN_REMOVED_RE, AMZN_PAGE_RE, IMG_TAG_RE, META_CHARSET_RE};
+    use super::patterns::{
+        AID_ATTR_RE, AMZN_PAGE_RE, AMZN_REMOVED_RE, IMG_TAG_RE, META_CHARSET_RE,
+    };
 
     // Strip aid="..." and aid='...' attributes (Amazon IDs)
     let result = AID_ATTR_RE.replace_all(html, "");
@@ -566,7 +603,10 @@ fn strip_kindle_attributes(html: &str) -> String {
 
     // Replace HTML5 <meta charset="..."/> with EPUB2-compatible version
     // Also handle variants like <meta charset="UTF-8"/> (no spaces)
-    let result4 = META_CHARSET_RE.replace_all(&result3, r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#);
+    let result4 = META_CHARSET_RE.replace_all(
+        &result3,
+        r#"<meta http-equiv="Content-Type" content="text/html; charset=$1"/>"#,
+    );
 
     result4.to_string()
 }
@@ -593,9 +633,19 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
         Some(pos) => {
             // Check if content between start and <html> is only xml declaration/doctype/whitespace
             let before_html = &result[..pos];
-            let stripped = before_html
-                .trim()
-                .trim_start_matches(|c: char| c == '<' || c == '?' || c == '!' || c.is_alphanumeric() || c == '"' || c == '=' || c == '/' || c == '>' || c == '-' || c == '.' || c.is_whitespace());
+            let stripped = before_html.trim().trim_start_matches(|c: char| {
+                c == '<'
+                    || c == '?'
+                    || c == '!'
+                    || c.is_alphanumeric()
+                    || c == '"'
+                    || c == '='
+                    || c == '/'
+                    || c == '>'
+                    || c == '-'
+                    || c == '.'
+                    || c.is_whitespace()
+            });
             stripped.is_empty() || pos < 500
         }
         None => false,
@@ -655,18 +705,27 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
 
         // Add xmlns to html tag if missing
         if let Some(start) = result.find("<html")
-            && let Some(end) = result[start..].find('>') {
-                let html_tag = &result[start..start + end + 1];
-                if !html_tag.contains("xmlns") {
-                    let new_tag = html_tag.replace("<html", "<html xmlns=\"http://www.w3.org/1999/xhtml\"");
-                    result = format!("{}{}{}", &result[..start], new_tag, &result[start + end + 1..]);
-                }
+            && let Some(end) = result[start..].find('>')
+        {
+            let html_tag = &result[start..start + end + 1];
+            if !html_tag.contains("xmlns") {
+                let new_tag =
+                    html_tag.replace("<html", "<html xmlns=\"http://www.w3.org/1999/xhtml\"");
+                result = format!(
+                    "{}{}{}",
+                    &result[..start],
+                    new_tag,
+                    &result[start + end + 1..]
+                );
             }
+        }
 
         // Add meta charset after <head> if not present (use EPUB2-compatible format)
         if let Some(head_pos) = result.find("<head>") {
             let after_head = head_pos + 6;
-            if !result[after_head..].starts_with("<meta charset") && !result[after_head..].starts_with("<meta http-equiv") {
+            if !result[after_head..].starts_with("<meta charset")
+                && !result[after_head..].starts_with("<meta http-equiv")
+            {
                 result = format!(
                     "{}<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>{}",
                     &result[..after_head],
@@ -683,14 +742,15 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
 fn extract_body_content_safe(html: &str) -> String {
     // Try to find <body> tag
     if let Some(body_start) = html.find("<body")
-        && let Some(body_tag_end) = html[body_start..].find('>') {
-            let content_start = body_start + body_tag_end + 1;
-            if let Some(body_end) = html[content_start..].rfind("</body>") {
-                return html[content_start..content_start + body_end].to_string();
-            }
-            // No closing body, take everything after body tag
-            return html[content_start..].to_string();
+        && let Some(body_tag_end) = html[body_start..].find('>')
+    {
+        let content_start = body_start + body_tag_end + 1;
+        if let Some(body_end) = html[content_start..].rfind("</body>") {
+            return html[content_start..content_start + body_end].to_string();
         }
+        // No closing body, take everything after body tag
+        return html[content_start..].to_string();
+    }
 
     // No body tag - try to extract content after </head> or after <html...>
     if let Some(head_end) = html.find("</head>") {
@@ -698,9 +758,10 @@ fn extract_body_content_safe(html: &str) -> String {
         // Skip any <body> tag if present
         let content = &html[after_head..];
         if let Some(body_start) = content.find("<body")
-            && let Some(body_tag_end) = content[body_start..].find('>') {
-                return content[body_start + body_tag_end + 1..].to_string();
-            }
+            && let Some(body_tag_end) = content[body_start..].find('>')
+        {
+            return content[body_start + body_tag_end + 1..].to_string();
+        }
         return content.to_string();
     }
 
@@ -714,15 +775,20 @@ fn extract_body_content_safe(html: &str) -> String {
 
     // If still starts with partial text (not a tag), find first complete tag
     if !result.starts_with('<')
-        && let Some(first_tag) = result.find('<') {
-            // Check if this is a real tag start or just a < in text
-            let tag_content = &result[first_tag..];
-            if tag_content.starts_with("<div") || tag_content.starts_with("<p") ||
-               tag_content.starts_with("<h") || tag_content.starts_with("<span") ||
-               tag_content.starts_with("<a") || tag_content.starts_with("<img") {
-                result = result[first_tag..].to_string();
-            }
+        && let Some(first_tag) = result.find('<')
+    {
+        // Check if this is a real tag start or just a < in text
+        let tag_content = &result[first_tag..];
+        if tag_content.starts_with("<div")
+            || tag_content.starts_with("<p")
+            || tag_content.starts_with("<h")
+            || tag_content.starts_with("<span")
+            || tag_content.starts_with("<a")
+            || tag_content.starts_with("<img")
+        {
+            result = result[first_tag..].to_string();
         }
+    }
 
     result
 }
@@ -746,7 +812,9 @@ fn extract_text<R: Read + Seek>(
     mobi: &MobiHeader,
     record_offset: usize, // Offset for combo MOBI6+KF8 files
 ) -> Result<Vec<u8>> {
-    let mut text = Vec::new();
+    // Pre-allocate based on expected text length (count * size per record)
+    let estimated_size = mobi.text_record_count as usize * mobi.text_record_size as usize;
+    let mut text = Vec::with_capacity(estimated_size);
     let text_end = mobi.text_record_count as usize + 1;
 
     // For Huffman compression, we need to load HUFF/CDIC records first
@@ -771,8 +839,9 @@ fn extract_text<R: Read + Seek>(
         let record = strip_trailing_data(&record, mobi.extra_data_flags);
 
         let decompressed = match mobi.compression {
-            Compression::PalmDoc => palmdoc_compression::decompress(record)
-                .map_err(|e| Error::UnsupportedFormat(format!("PalmDoc decompression failed: {:?}", e)))?,
+            Compression::PalmDoc => palmdoc_compression::decompress(record).map_err(|e| {
+                Error::UnsupportedFormat(format!("PalmDoc decompression failed: {:?}", e))
+            })?,
             Compression::None => record.to_vec(),
             Compression::Huffman => {
                 if let Some(ref mut hr) = huff_reader {
@@ -896,7 +965,11 @@ fn extract_resources<R: Read + Seek>(
 
     let first_image = mobi.first_image_index as usize;
     if first_image == NULL_INDEX as usize {
-        return Ok(ExtractedResources { images, fonts, resource_map });
+        return Ok(ExtractedResources {
+            images,
+            fonts,
+            resource_map,
+        });
     }
 
     let mut image_idx = 0usize;
@@ -919,13 +992,21 @@ fn extract_resources<R: Read + Seek>(
         }
 
         // Skip metadata records
-        if record.starts_with(b"FLIS") || record.starts_with(b"FCIS") ||
-           record.starts_with(b"SRCS") || record.starts_with(b"BOUN") ||
-           record.starts_with(b"FDST") || record.starts_with(b"DATP") ||
-           record.starts_with(b"AUDI") || record.starts_with(b"VIDE") ||
-           record.starts_with(b"RESC") || record.starts_with(b"CMET") ||
-           record.starts_with(b"PAGE") || record.starts_with(b"CONT") ||
-           record.starts_with(b"CRES") || record.starts_with(b"BOUNDARY") {
+        if record.starts_with(b"FLIS")
+            || record.starts_with(b"FCIS")
+            || record.starts_with(b"SRCS")
+            || record.starts_with(b"BOUN")
+            || record.starts_with(b"FDST")
+            || record.starts_with(b"DATP")
+            || record.starts_with(b"AUDI")
+            || record.starts_with(b"VIDE")
+            || record.starts_with(b"RESC")
+            || record.starts_with(b"CMET")
+            || record.starts_with(b"PAGE")
+            || record.starts_with(b"CONT")
+            || record.starts_with(b"CRES")
+            || record.starts_with(b"BOUNDARY")
+        {
             resource_map.push(None);
             continue;
         }
@@ -949,7 +1030,11 @@ fn extract_resources<R: Read + Seek>(
         }
     }
 
-    Ok(ExtractedResources { images, fonts, resource_map })
+    Ok(ExtractedResources {
+        images,
+        fonts,
+        resource_map,
+    })
 }
 
 /// Read and decode a FONT record from MOBI
@@ -1125,12 +1210,13 @@ fn extract_body_content(html: &str) -> String {
 
     // Fallback: try to extract from body
     if let Some(body_start) = html.find("<body")
-        && let Some(body_tag_end) = html[body_start..].find('>') {
-            let after_body = body_start + body_tag_end + 1;
-            if let Some(body_end) = html[after_body..].find("</body>") {
-                return html[after_body..after_body + body_end].to_string();
-            }
+        && let Some(body_tag_end) = html[body_start..].find('>')
+    {
+        let after_body = body_start + body_tag_end + 1;
+        if let Some(body_end) = html[after_body..].find("</body>") {
+            return html[after_body..after_body + body_end].to_string();
         }
+    }
 
     html.to_string()
 }
@@ -1205,9 +1291,10 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
 
     // Find the first id= in the forward search
     if let Some(caps) = ID_ATTR_RE.captures(&search_str)
-        && let Some(m) = caps.get(1) {
-            return Some(m.as_str().to_string());
-        }
+        && let Some(m) = caps.get(1)
+    {
+        return Some(m.as_str().to_string());
+    }
 
     // If no ID found forward, try searching backwards as fallback
     let start_pos = pos.saturating_sub(500);
@@ -1215,9 +1302,10 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
     for tag in reverse_tag_iter(search_back) {
         let tag_str = String::from_utf8_lossy(tag);
         if let Some(caps) = ID_ATTR_RE.captures(&tag_str)
-            && let Some(m) = caps.get(1) {
-                return Some(m.as_str().to_string());
-            }
+            && let Some(m) = caps.get(1)
+        {
+            return Some(m.as_str().to_string());
+        }
     }
 
     None
@@ -1226,7 +1314,10 @@ fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> 
 /// Iterate over all tags in a byte slice in reverse order (last tag to first tag)
 /// This is a Rust port of Calibre's reverse_tag_iter function
 fn reverse_tag_iter(block: &[u8]) -> ReverseTagIterator<'_> {
-    ReverseTagIterator { block, end: block.len() }
+    ReverseTagIterator {
+        block,
+        end: block.len(),
+    }
 }
 
 struct ReverseTagIterator<'a> {
@@ -1250,7 +1341,12 @@ impl<'a> Iterator for ReverseTagIterator<'a> {
     }
 }
 
-fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], file_starts: &[(u32, u32)]) -> String {
+fn clean_kindle_references(
+    html: &str,
+    elems: &[DivElement],
+    raw_text: &[u8],
+    file_starts: &[(u32, u32)],
+) -> String {
     let mut result = html.to_string();
 
     // Replace kindle:flow references (e.g., kindle:flow:0001?mime=text/css)
@@ -1266,7 +1362,12 @@ fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], fi
             // Flow 1 becomes style0000.css, flow 2 becomes style0001.css, etc.
             let css_idx = if flow_num > 0 { flow_num - 1 } else { 0 };
             let replacement = format!("styles/style{:04}.css", css_idx);
-            result = format!("{}{}{}", &result[..start], replacement, &result[start + end..]);
+            result = format!(
+                "{}{}{}",
+                &result[..start],
+                replacement,
+                &result[start + end..]
+            );
         } else {
             break;
         }
@@ -1303,17 +1404,34 @@ fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], fi
                 } else {
                     format!("part{:04}.html", file_num)
                 };
-                result = format!("{}{}{}", &result[..start], replacement, &result[start + end..]);
+                result = format!(
+                    "{}{}{}",
+                    &result[..start],
+                    replacement,
+                    &result[start + end..]
+                );
             } else if parts.len() >= 4 {
                 // Old format without offset
                 let fid_str = parts[3];
                 let elem_idx = parse_kindle_base32(fid_str);
-                let file_num = elems.get(elem_idx).map(|e| e.file_number as usize).unwrap_or(0);
+                let file_num = elems
+                    .get(elem_idx)
+                    .map(|e| e.file_number as usize)
+                    .unwrap_or(0);
                 let replacement = format!("part{:04}.html", file_num);
-                result = format!("{}{}{}", &result[..start], replacement, &result[start + end..]);
+                result = format!(
+                    "{}{}{}",
+                    &result[..start],
+                    replacement,
+                    &result[start + end..]
+                );
             } else {
                 // Can't parse, replace with placeholder
-                result = format!("{}part0000.html{}", &result[..start], &result[start + end..]);
+                result = format!(
+                    "{}part0000.html{}",
+                    &result[..start],
+                    &result[start + end..]
+                );
             }
         } else {
             break;
@@ -1327,7 +1445,10 @@ fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], fi
         if let Some(end) = result[start..].find(['"', '\'', ')']) {
             let ref_str = &result[start..start + end];
             // Extract the base32 ID
-            let id_end = ref_str[13..].find('?').map(|p| 13 + p).unwrap_or(ref_str.len());
+            let id_end = ref_str[13..]
+                .find('?')
+                .map(|p| 13 + p)
+                .unwrap_or(ref_str.len());
             let embed_id = &ref_str[13..id_end]; // After "kindle:embed:"
 
             let img_num = parse_kindle_base32(embed_id);
@@ -1424,7 +1545,6 @@ fn parse_kindle_base32(s: &str) -> usize {
     }
     result
 }
-
 
 #[cfg(test)]
 mod tests {

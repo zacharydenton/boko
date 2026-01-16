@@ -1,5 +1,8 @@
+//! Error types for boko operations.
+
 use thiserror::Error;
 
+/// Errors that can occur during ebook reading or writing.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("I/O error: {0}")]

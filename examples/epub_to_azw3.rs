@@ -8,7 +8,10 @@ fn main() {
         (args[1].clone(), args[2].clone())
     } else {
         // Default paths for testing
-        ("/tmp/martin_eden_kf8.epub".to_string(), "/tmp/martin_eden_roundtrip.azw3".to_string())
+        (
+            "/tmp/martin_eden_kf8.epub".to_string(),
+            "/tmp/martin_eden_roundtrip.azw3".to_string(),
+        )
     };
 
     println!("Reading EPUB: {}", input);

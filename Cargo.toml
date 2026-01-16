@@ -26,3 +26,8 @@ palmdoc-compression = "0.3"
 [dev-dependencies]
 tempfile = "3.14"
 proptest = "1.6"
+criterion = "0.5"
+
+[[bench]]
+name = "conversion"
+harness = false

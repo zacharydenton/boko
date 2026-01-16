@@ -12,7 +12,7 @@ fn main() {
     println!("Resources: {}", book.resources.len());
     println!("Spine items: {}", book.spine.len());
     println!("TOC entries: {}", book.toc.len());
-    
+
     for entry in &book.toc {
         println!("  - {}", entry.title);
     }

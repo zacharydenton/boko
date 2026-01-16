@@ -1,26 +1,42 @@
 use std::io::{Seek, Write};
 use std::path::Path;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::book::{Book, TocEntry};
 use crate::error::Result;
 
-/// Write a Book to an EPUB file
+/// Write a [`Book`] to an EPUB file on disk.
+///
+/// Creates a valid EPUB 2 file with OPF package document, NCX table of contents,
+/// and all resources properly packaged.
+///
+/// # Example
+///
+/// ```no_run
+/// use boko::{Book, Metadata, write_epub};
+///
+/// let mut book = Book::new();
+/// book.metadata = Metadata::new("My Book").with_author("Me");
+/// write_epub(&book, "output.epub")?;
+/// # Ok::<(), boko::Error>(())
+/// ```
 pub fn write_epub<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
     let file = std::fs::File::create(path)?;
     write_epub_to_writer(book, file)
 }
 
-/// Write a Book to any Write + Seek destination
+/// Write a [`Book`] to any [`Write`] + [`Seek`] destination.
+///
+/// Useful for writing to memory buffers or network streams.
 pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> Result<()> {
     let mut zip = ZipWriter::new(writer);
 
     // 1. Write mimetype (must be first, uncompressed)
-    let options_stored = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
-    let options_deflate = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options_stored =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options_deflate =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     zip.start_file("mimetype", options_stored)?;
     zip.write_all(b"application/epub+zip")?;
@@ -71,10 +87,12 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn generate_opf(book: &Book, identifier: &str) -> String {
     let mut opf = String::new();
 
-    opf.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    opf.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-"#);
+"#,
+    );
 
     // Dublin Core metadata
     opf.push_str(&format!(
@@ -141,7 +159,9 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
     opf.push_str("  </metadata>\n  <manifest>\n");
 
     // NCX item
-    opf.push_str("    <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n");
+    opf.push_str(
+        "    <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n",
+    );
 
     // Manifest items
     for (href, resource) in &book.resources {
@@ -174,25 +194,31 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
 fn generate_ncx(book: &Book, identifier: &str) -> String {
     let mut ncx = String::new();
 
-    ncx.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    ncx.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content=""#);
+    <meta name="dtb:uid" content=""#,
+    );
 
     ncx.push_str(&escape_xml(identifier));
-    ncx.push_str(r#""/>
+    ncx.push_str(
+        r#""/>
     <meta name="dtb:depth" content="1"/>
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
   <docTitle>
-    <text>"#);
+    <text>"#,
+    );
     ncx.push_str(&escape_xml(&book.metadata.title));
-    ncx.push_str(r#"</text>
+    ncx.push_str(
+        r#"</text>
   </docTitle>
   <navMap>
-"#);
+"#,
+    );
 
     // Generate navPoints
     let mut play_order = 1;
@@ -268,10 +294,21 @@ fn uuid_v4() -> String {
 
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        bytes[6], bytes[7],
-        bytes[8], bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
     )
 }

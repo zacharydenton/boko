@@ -1,5 +1,5 @@
-use std::io::{Read, Seek, SeekFrom};
 use crate::error::{Error, Result};
+use std::io::{Read, Seek, SeekFrom};
 
 pub const NULL_INDEX: u32 = 0xFFFFFFFF;
 
@@ -50,7 +50,10 @@ impl PdbHeader {
 
     pub fn read_record<R: Read + Seek>(&self, reader: &mut R, index: usize) -> Result<Vec<u8>> {
         if index >= self.record_offsets.len() {
-            return Err(Error::InvalidMobi(format!("Record index {} out of bounds", index)));
+            return Err(Error::InvalidMobi(format!(
+                "Record index {} out of bounds",
+                index
+            )));
         }
 
         let start = self.record_offsets[index] as u64;
@@ -168,10 +171,13 @@ impl MobiHeader {
 
         // Title offset and length at 0x54-0x5C
         let title = if data.len() >= 0x5C {
-            let title_offset = u32::from_be_bytes([data[0x54], data[0x55], data[0x56], data[0x57]]) as usize;
-            let title_length = u32::from_be_bytes([data[0x58], data[0x59], data[0x5A], data[0x5B]]) as usize;
+            let title_offset =
+                u32::from_be_bytes([data[0x54], data[0x55], data[0x56], data[0x57]]) as usize;
+            let title_length =
+                u32::from_be_bytes([data[0x58], data[0x59], data[0x5A], data[0x5B]]) as usize;
             if title_offset + title_length <= data.len() {
-                String::from_utf8_lossy(&data[title_offset..title_offset + title_length]).to_string()
+                String::from_utf8_lossy(&data[title_offset..title_offset + title_length])
+                    .to_string()
             } else {
                 String::new()
             }
@@ -327,8 +333,11 @@ impl ExthHeader {
                 break;
             }
 
-            let record_type = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-            let record_len = u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]) as usize;
+            let record_type =
+                u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            let record_len =
+                u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                    as usize;
 
             if pos + record_len > data.len() {
                 break;
@@ -353,7 +362,8 @@ impl ExthHeader {
                 109 => exth.rights = Some(decode(content).trim().to_string()),
                 121 => {
                     if content.len() >= 4 {
-                        let val = u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
+                        let val =
+                            u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
                         if val != NULL_INDEX {
                             exth.kf8_boundary = Some(val);
                         }
@@ -361,7 +371,8 @@ impl ExthHeader {
                 }
                 201 => {
                     if content.len() >= 4 {
-                        let val = u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
+                        let val =
+                            u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
                         if val != NULL_INDEX {
                             exth.cover_offset = Some(val);
                         }
@@ -369,7 +380,8 @@ impl ExthHeader {
                 }
                 202 => {
                     if content.len() >= 4 {
-                        let val = u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
+                        let val =
+                            u32::from_be_bytes([content[0], content[1], content[2], content[3]]);
                         if val != NULL_INDEX {
                             exth.thumbnail_offset = Some(val);
                         }

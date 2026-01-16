@@ -15,7 +15,11 @@ fn main() {
 
     println!("\n--- Spine ---");
     for (i, item) in book.spine.iter().enumerate() {
-        let size = book.resources.get(&item.href).map(|r| r.data.len()).unwrap_or(0);
+        let size = book
+            .resources
+            .get(&item.href)
+            .map(|r| r.data.len())
+            .unwrap_or(0);
         println!("  {:3}. {} ({} bytes)", i, item.href, size);
     }
 

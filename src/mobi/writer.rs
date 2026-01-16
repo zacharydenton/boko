@@ -8,7 +8,10 @@ use std::path::Path;
 use crate::book::Book;
 use crate::error::Result;
 
-use super::index::{build_skel_indx, build_chunk_indx, build_cncx, calculate_cncx_offsets, build_ncx_indx, NcxBuildEntry};
+use super::index::{
+    NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
+    calculate_cncx_offsets,
+};
 use super::skeleton::{Chunker, ChunkerResult};
 
 use flate2::Compression;
@@ -28,8 +31,8 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
     let usize_val = data.len() as u32;
     let mut flags: u32 = 0;
 
-    // Step 1: Zlib compress the data
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+    // Step 1: Zlib compress the data (level 6 is default, good balance of speed/size)
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(6));
     encoder.write_all(data).unwrap();
     let mut compressed = encoder.finish().unwrap();
     flags |= 0b01; // Compression flag
@@ -115,14 +118,29 @@ fn to_base32_10(num: usize) -> String {
     to_base32_with_digits(num, 10)
 }
 
-/// Write a Book to a MOBI/AZW3 file
+/// Write a [`Book`] to a MOBI/AZW3 file on disk.
+///
+/// Creates a KF8 (Kindle Format 8) file compatible with modern Kindle devices.
+/// Includes proper INDX records for navigation, embedded fonts, and images.
+///
+/// # Example
+///
+/// ```no_run
+/// use boko::{read_epub, write_mobi};
+///
+/// let book = read_epub("input.epub")?;
+/// write_mobi(&book, "output.azw3")?;
+/// # Ok::<(), boko::Error>(())
+/// ```
 pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut writer = io::BufWriter::new(file);
     write_mobi_to_writer(book, &mut writer)
 }
 
-/// Write a Book to any Write destination
+/// Write a [`Book`] to any [`Write`] destination.
+///
+/// Useful for writing to memory buffers or network streams.
 pub fn write_mobi_to_writer<W: Write>(book: &Book, writer: &mut W) -> Result<()> {
     let mobi = MobiBuilder::new(book)?;
     mobi.write(writer)
@@ -175,8 +193,8 @@ impl<'a> MobiBuilder<'a> {
             link_map: HashMap::new(),
         };
 
-        builder.collect_resources()?;      // Build resource_map (no records yet)
-        builder.build_text_records()?;     // Text records 1-N (uses resource_map)
+        builder.collect_resources()?; // Build resource_map (no records yet)
+        builder.build_text_records()?; // Text records 1-N (uses resource_map)
         builder.write_resource_records()?; // Resource records after text
         builder.build_kf8_indices()?;
         builder.build_fdst_record()?;
@@ -207,12 +225,14 @@ impl<'a> MobiBuilder<'a> {
         let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
         for spine_item in &self.book.spine {
             if let Some(resource) = self.book.resources.get(&spine_item.href)
-                && resource.media_type == "application/xhtml+xml" {
-                    // Rewrite HTML to use kindle: references
-                    let html = String::from_utf8_lossy(&resource.data);
-                    let rewritten = self.rewrite_html_references(&html, &spine_item.href, &css_flow_map);
-                    html_files.push((spine_item.href.clone(), rewritten.into_bytes()));
-                }
+                && resource.media_type == "application/xhtml+xml"
+            {
+                // Rewrite HTML to use kindle: references
+                let html = String::from_utf8_lossy(&resource.data);
+                let rewritten =
+                    self.rewrite_html_references(&html, &spine_item.href, &css_flow_map);
+                html_files.push((spine_item.href.clone(), rewritten.into_bytes()));
+            }
         }
 
         // Rewrite CSS to use kindle:embed references for fonts/images
@@ -276,7 +296,7 @@ impl<'a> MobiBuilder<'a> {
         html_href: &str,
         css_flow_map: &HashMap<String, usize>,
     ) -> String {
-        use super::patterns::{LINK_HREF_RE, IMG_SRC_RE, ANCHOR_HREF_RE};
+        use super::patterns::{ANCHOR_HREF_RE, IMG_SRC_RE, LINK_HREF_RE};
 
         let mut result = html.to_string();
 
@@ -333,7 +353,8 @@ impl<'a> MobiBuilder<'a> {
         // These will be resolved after chunking when we know anchor positions
 
         // Collect spine hrefs for checking if links are internal
-        let spine_hrefs: std::collections::HashSet<_> = self.book.spine.iter().map(|s| s.href.as_str()).collect();
+        let spine_hrefs: std::collections::HashSet<_> =
+            self.book.spine.iter().map(|s| s.href.as_str()).collect();
 
         // Use a RefCell to allow mutation inside closure
         use std::cell::RefCell;
@@ -351,7 +372,10 @@ impl<'a> MobiBuilder<'a> {
                 let after = &caps[3];
 
                 // Skip external links and kindle: links
-                if href.starts_with("http") || href.starts_with("mailto:") || href.starts_with("kindle:") {
+                if href.starts_with("http")
+                    || href.starts_with("mailto:")
+                    || href.starts_with("kindle:")
+                {
                     return full_match.to_string();
                 }
 
@@ -363,7 +387,10 @@ impl<'a> MobiBuilder<'a> {
                         // Fragment-only link like #anchor - resolve to current file
                         (html_href_owned.clone(), frag_part.to_string())
                     } else {
-                        (resolve_href(&base_dir_owned, file_part), frag_part.to_string())
+                        (
+                            resolve_href(&base_dir_owned, file_part),
+                            frag_part.to_string(),
+                        )
                     }
                 } else {
                     // Link to file without fragment
@@ -375,7 +402,9 @@ impl<'a> MobiBuilder<'a> {
                     let mut counter = link_counter.borrow_mut();
                     *counter += 1;
                     let placeholder = format!("kindle:pos:fid:0000:off:{}", to_base32_10(*counter));
-                    link_map.borrow_mut().push((placeholder.clone(), target_file, fragment));
+                    link_map
+                        .borrow_mut()
+                        .push((placeholder.clone(), target_file, fragment));
                     format!("<a {}href=\"{}\"{}>", before, placeholder, after)
                 } else {
                     // Keep non-internal links as-is
@@ -425,15 +454,16 @@ impl<'a> MobiBuilder<'a> {
                 if let Some((target_file, fragment)) = self.link_map.get(placeholder) {
                     // Look up the target in id_map to get the aid
                     let key = (target_file.clone(), fragment.clone());
-                    let aid = id_map.get(&key)
-                        .or_else(|| {
-                            // Fall back to file body (empty fragment)
-                            id_map.get(&(target_file.clone(), String::new()))
-                        });
+                    let aid = id_map.get(&key).or_else(|| {
+                        // Fall back to file body (empty fragment)
+                        id_map.get(&(target_file.clone(), String::new()))
+                    });
 
                     if let Some(aid) = aid {
                         // Look up the aid in aid_offset_map to get position
-                        if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) = aid_offset_map.get(aid) {
+                        if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) =
+                            aid_offset_map.get(aid)
+                        {
                             // Create the final link: kindle:pos:fid:NNNN:off:OOOOOOOOOO
                             let replacement = format!(
                                 "kindle:pos:fid:{}:off:{}",
@@ -526,7 +556,8 @@ impl<'a> MobiBuilder<'a> {
             // Build Fragment/Chunk index
             if !chunker_result.chunk_table.is_empty() {
                 // Build CNCX for chunk selectors
-                let selectors: Vec<String> = chunker_result.chunk_table
+                let selectors: Vec<String> = chunker_result
+                    .chunk_table
                     .iter()
                     .map(|c| c.selector.clone())
                     .collect();
@@ -548,27 +579,28 @@ impl<'a> MobiBuilder<'a> {
 
         // Build NCX index for table of contents
         if !self.book.toc.is_empty()
-            && let Some(ref chunker_result) = self.chunker_result {
-                // Flatten TOC entries (including children) into a list with depth
-                let ncx_entries = flatten_toc(
-                    &self.book.toc,
-                    0,
-                    self.text_length as u32,
-                    &chunker_result.id_map,
-                    &chunker_result.aid_offset_map,
-                );
+            && let Some(ref chunker_result) = self.chunker_result
+        {
+            // Flatten TOC entries (including children) into a list with depth
+            let ncx_entries = flatten_toc(
+                &self.book.toc,
+                0,
+                self.text_length as u32,
+                &chunker_result.id_map,
+                &chunker_result.aid_offset_map,
+            );
 
-                if !ncx_entries.is_empty() {
-                    self.ncx_index = self.records.len() as u32;
-                    let (ncx_records, ncx_cncx) = build_ncx_indx(&ncx_entries);
-                    for record in ncx_records {
-                        self.records.push(record);
-                    }
-                    if !ncx_cncx.is_empty() {
-                        self.records.push(ncx_cncx);
-                    }
+            if !ncx_entries.is_empty() {
+                self.ncx_index = self.records.len() as u32;
+                let (ncx_records, ncx_cncx) = build_ncx_indx(&ncx_entries);
+                for record in ncx_records {
+                    self.records.push(record);
+                }
+                if !ncx_cncx.is_empty() {
+                    self.records.push(ncx_cncx);
                 }
             }
+        }
 
         Ok(())
     }
@@ -701,7 +733,9 @@ impl<'a> MobiBuilder<'a> {
 
         // FCIS record
         let mut fcis = Vec::new();
-        fcis.extend_from_slice(b"FCIS\x00\x00\x00\x14\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x00");
+        fcis.extend_from_slice(
+            b"FCIS\x00\x00\x00\x14\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x00",
+        );
         fcis.extend_from_slice(&(self.text_length as u32).to_be_bytes());
         fcis.extend_from_slice(b"\x00\x00\x00\x00\x00\x00\x00\x28\x00\x00\x00\x00\x00\x00\x00");
         fcis.extend_from_slice(b"\x28\x00\x00\x00\x08\x00\x01\x00\x01\x00\x00\x00\x00");
@@ -1051,7 +1085,10 @@ fn flatten_toc(
     for entry in entries {
         // Parse the href to get file and fragment
         let (file, fragment) = if let Some(hash_pos) = entry.href.find('#') {
-            (entry.href[..hash_pos].to_string(), entry.href[hash_pos + 1..].to_string())
+            (
+                entry.href[..hash_pos].to_string(),
+                entry.href[hash_pos + 1..].to_string(),
+            )
         } else {
             (entry.href.clone(), String::new())
         };
@@ -1072,7 +1109,13 @@ fn flatten_toc(
         });
 
         // Recursively add children
-        result.extend(flatten_toc(&entry.children, depth + 1, text_length, id_map, aid_offset_map));
+        result.extend(flatten_toc(
+            &entry.children,
+            depth + 1,
+            text_length,
+            id_map,
+            aid_offset_map,
+        ));
     }
 
     result

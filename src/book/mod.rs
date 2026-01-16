@@ -1,3 +1,8 @@
+//! Core data types for representing ebooks.
+//!
+//! This module provides format-agnostic types that serve as the intermediate
+//! representation between different ebook formats (EPUB, MOBI, AZW3).
+
 use std::collections::HashMap;
 
 /// Intermediate representation of an ebook.
@@ -69,11 +74,19 @@ impl Book {
     }
 
     /// Add a resource to the book
-    pub fn add_resource(&mut self, href: impl Into<String>, data: Vec<u8>, media_type: impl Into<String>) {
-        self.resources.insert(href.into(), Resource {
-            data,
-            media_type: media_type.into(),
-        });
+    pub fn add_resource(
+        &mut self,
+        href: impl Into<String>,
+        data: Vec<u8>,
+        media_type: impl Into<String>,
+    ) {
+        self.resources.insert(
+            href.into(),
+            Resource {
+                data,
+                media_type: media_type.into(),
+            },
+        );
     }
 
     /// Get a resource by href
@@ -82,7 +95,12 @@ impl Book {
     }
 
     /// Add a spine item
-    pub fn add_spine_item(&mut self, id: impl Into<String>, href: impl Into<String>, media_type: impl Into<String>) {
+    pub fn add_spine_item(
+        &mut self,
+        id: impl Into<String>,
+        href: impl Into<String>,
+        media_type: impl Into<String>,
+    ) {
         self.spine.push(SpineItem {
             id: id.into(),
             href: href.into(),

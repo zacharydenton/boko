@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use boko::{read_epub, read_mobi, write_epub, write_mobi, Book};
+use boko::{Book, read_epub, read_mobi, write_epub, write_mobi};
 use tempfile::TempDir;
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
@@ -30,7 +30,11 @@ fn check_links(book: &Book) -> Vec<String> {
     }
 
     // Check TOC references
-    fn check_toc_entry(entry: &boko::TocEntry, resources: &HashSet<String>, errors: &mut Vec<String>) {
+    fn check_toc_entry(
+        entry: &boko::TocEntry,
+        resources: &HashSet<String>,
+        errors: &mut Vec<String>,
+    ) {
         let href_base = entry.href.split('#').next().unwrap_or(&entry.href);
         if !href_base.is_empty() {
             let found = resources.iter().any(|r| {
@@ -40,7 +44,10 @@ fn check_links(book: &Book) -> Vec<String> {
                 }
             });
             if !found {
-                errors.push(format!("TOC entry '{}' ({}) not found in resources", entry.title, entry.href));
+                errors.push(format!(
+                    "TOC entry '{}' ({}) not found in resources",
+                    entry.title, entry.href
+                ));
             }
         }
         for child in &entry.children {
@@ -67,8 +74,14 @@ fn test_read_epub() {
 
     // Verify metadata was extracted
     assert!(!book.metadata.title.is_empty(), "Title should not be empty");
-    assert!(!book.metadata.authors.is_empty(), "Authors should not be empty");
-    assert!(!book.metadata.language.is_empty(), "Language should not be empty");
+    assert!(
+        !book.metadata.authors.is_empty(),
+        "Authors should not be empty"
+    );
+    assert!(
+        !book.metadata.language.is_empty(),
+        "Language should not be empty"
+    );
 
     // Verify structure
     assert!(!book.spine.is_empty(), "Spine should not be empty");
@@ -96,26 +109,31 @@ fn test_read_epub_toc() {
 
 #[test]
 fn test_epub_links_valid() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
     let errors = check_links(&book);
     assert!(errors.is_empty(), "Link validation errors: {:?}", errors);
 }
 
 #[test]
 fn test_epub_resources() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Verify resource types
-    let has_xhtml = book.resources.values().any(|r| {
-        r.media_type == "application/xhtml+xml" || r.media_type == "text/html"
-    });
+    let has_xhtml = book
+        .resources
+        .values()
+        .any(|r| r.media_type == "application/xhtml+xml" || r.media_type == "text/html");
     assert!(has_xhtml, "Should have XHTML content documents");
 
     let has_css = book.resources.values().any(|r| r.media_type == "text/css");
     assert!(has_css, "Standard Ebooks include CSS stylesheets");
 
     // Print resource summary
-    let types: HashSet<_> = book.resources.values().map(|r| r.media_type.as_str()).collect();
+    let types: HashSet<_> = book
+        .resources
+        .values()
+        .map(|r| r.media_type.as_str())
+        .collect();
     println!("Resource types: {:?}", types);
     println!("Total resources: {}", book.resources.len());
 }
@@ -131,7 +149,10 @@ fn test_read_azw3() {
 
     // Verify metadata was extracted
     assert!(!book.metadata.title.is_empty(), "Title should not be empty");
-    assert!(!book.metadata.authors.is_empty(), "Authors should not be empty");
+    assert!(
+        !book.metadata.authors.is_empty(),
+        "Authors should not be empty"
+    );
 
     // Verify structure
     assert!(!book.spine.is_empty(), "Spine should not be empty");
@@ -149,7 +170,7 @@ fn test_read_azw3_toc() {
 
 #[test]
 fn test_azw3_links_valid() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
     let errors = check_links(&book);
     assert!(errors.is_empty(), "Link validation errors: {:?}", errors);
 }
@@ -161,7 +182,7 @@ fn test_azw3_links_valid() {
 
 #[test]
 fn test_clone_epub() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Clone by writing and reading back
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -183,7 +204,7 @@ fn test_clone_epub() {
 
 #[test]
 fn test_clone_azw3() {
-    let original = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let original = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let clone_path = temp_dir.path().join("clone.azw3");
@@ -206,7 +227,7 @@ fn test_clone_azw3() {
 
 #[test]
 fn test_epub_roundtrip() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.epub");
@@ -234,9 +255,9 @@ fn test_epub_multiple_roundtrips() {
 
     // Read and write 3 times
     for i in 0..3 {
-        let book = read_epub(&path).expect(&format!("Failed to read iteration {}", i));
+        let book = read_epub(&path).unwrap_or_else(|_| panic!("Failed to read iteration {}", i));
         let new_path = temp_dir.path().join(format!("iter_{}.epub", i));
-        write_epub(&book, &new_path).expect(&format!("Failed to write iteration {}", i));
+        write_epub(&book, &new_path).unwrap_or_else(|_| panic!("Failed to write iteration {}", i));
         path = new_path.to_string_lossy().to_string();
     }
 
@@ -244,7 +265,11 @@ fn test_epub_multiple_roundtrips() {
     let final_book = read_epub(&path).expect("Failed to read final iteration");
     assert!(!final_book.metadata.title.is_empty());
     let errors = check_links(&final_book);
-    assert!(errors.is_empty(), "Final iteration link errors: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "Final iteration link errors: {:?}",
+        errors
+    );
 }
 
 // ============================================================================
@@ -253,8 +278,8 @@ fn test_epub_multiple_roundtrips() {
 
 #[test]
 fn test_epub_azw3_metadata_equivalence() {
-    let epub = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
-    let azw3 = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let epub = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let azw3 = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     // Metadata should match (both from same Standard Ebooks source)
     assert_eq!(epub.metadata.title, azw3.metadata.title);
@@ -263,7 +288,7 @@ fn test_epub_azw3_metadata_equivalence() {
 
 #[test]
 fn test_epub_to_azw3_conversion() {
-    let epub = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let epub = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let azw3_path = temp_dir.path().join("converted.azw3");
@@ -281,7 +306,7 @@ fn test_epub_to_azw3_conversion() {
 
 #[test]
 fn test_azw3_to_epub_conversion() {
-    let azw3 = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let azw3 = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let epub_path = temp_dir.path().join("converted.epub");
@@ -301,7 +326,7 @@ fn test_azw3_to_epub_conversion() {
 #[test]
 fn test_full_roundtrip_epub_azw3_epub() {
     // EPUB → AZW3 → EPUB
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read original EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read original EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
@@ -326,7 +351,7 @@ fn test_full_roundtrip_epub_azw3_epub() {
 
 #[test]
 fn test_epub_content_extraction() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Get all text content
     let mut total_text = String::new();
@@ -339,14 +364,16 @@ fn test_epub_content_extraction() {
 
     // Epictetus's works should contain philosophical content
     assert!(
-        total_text.contains("Epictetus") || total_text.contains("philosophy") || total_text.contains("Stoic"),
+        total_text.contains("Epictetus")
+            || total_text.contains("philosophy")
+            || total_text.contains("Stoic"),
         "Expected Epictetus content not found"
     );
 }
 
 #[test]
 fn test_azw3_content_extraction() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     // Get all text content
     let mut total_text = String::new();
@@ -358,5 +385,8 @@ fn test_azw3_content_extraction() {
     }
 
     // Should have actual content
-    assert!(!total_text.is_empty(), "AZW3 should have extractable content");
+    assert!(
+        !total_text.is_empty(),
+        "AZW3 should have extractable content"
+    );
 }

@@ -88,12 +88,8 @@ impl HuffCdicReader {
             let pos = off2 + i * 8;
             let mincode_raw =
                 u32::from_be_bytes([huff[pos], huff[pos + 1], huff[pos + 2], huff[pos + 3]]);
-            let maxcode_raw = u32::from_be_bytes([
-                huff[pos + 4],
-                huff[pos + 5],
-                huff[pos + 6],
-                huff[pos + 7],
-            ]);
+            let maxcode_raw =
+                u32::from_be_bytes([huff[pos + 4], huff[pos + 5], huff[pos + 6], huff[pos + 7]]);
 
             let codelen = i + 1;
             self.mincode.push(mincode_raw << (32 - codelen));

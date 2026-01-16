@@ -20,7 +20,7 @@ fn fixture_path(name: &str) -> String {
 
 #[test]
 fn test_epub_xhtml_wellformed() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // All XHTML resources should be parseable
     for (href, resource) in &book.resources {
@@ -44,25 +44,21 @@ fn test_epub_xhtml_wellformed() {
 
 #[test]
 fn test_epub_xhtml_encoding() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Content should be valid UTF-8 (we already read it successfully)
     for (href, resource) in &book.resources {
         if resource.media_type == "application/xhtml+xml" {
             // Should be valid UTF-8
             let result = String::from_utf8(resource.data.clone());
-            assert!(
-                result.is_ok(),
-                "XHTML {} should be valid UTF-8",
-                href
-            );
+            assert!(result.is_ok(), "XHTML {} should be valid UTF-8", href);
         }
     }
 }
 
 #[test]
 fn test_epub_namespaces() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Standard Ebooks use proper XHTML namespaces
     for (href, resource) in &book.resources {
@@ -72,8 +68,8 @@ fn test_epub_namespaces() {
             // XHTML namespace should be present
             if content.contains("xmlns") {
                 assert!(
-                    content.contains("http://www.w3.org/1999/xhtml") ||
-                    content.contains("w3.org/1999/xhtml"),
+                    content.contains("http://www.w3.org/1999/xhtml")
+                        || content.contains("w3.org/1999/xhtml"),
                     "XHTML {} should have XHTML namespace",
                     href
                 );
@@ -89,7 +85,7 @@ fn test_epub_namespaces() {
 
 #[test]
 fn test_epub_entities() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Get all text content
     let mut all_content = String::new();
@@ -115,7 +111,7 @@ fn test_epub_entities() {
 
 #[test]
 fn test_epub_content_integrity() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Each XHTML document should have proper structure
     for (href, resource) in &book.resources {
@@ -125,26 +121,18 @@ fn test_epub_content_integrity() {
             // Should have matching tags (basic check)
             let open_html = content.matches("<html").count() + content.matches("<HTML").count();
             let close_html = content.matches("</html").count() + content.matches("</HTML").count();
-            assert_eq!(
-                open_html, close_html,
-                "Mismatched html tags in {}",
-                href
-            );
+            assert_eq!(open_html, close_html, "Mismatched html tags in {}", href);
 
             let open_body = content.matches("<body").count() + content.matches("<BODY").count();
             let close_body = content.matches("</body").count() + content.matches("</BODY").count();
-            assert_eq!(
-                open_body, close_body,
-                "Mismatched body tags in {}",
-                href
-            );
+            assert_eq!(open_body, close_body, "Mismatched body tags in {}", href);
         }
     }
 }
 
 #[test]
 fn test_azw3_content_integrity() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     // AZW3 extracted content should be valid HTML
     for (href, resource) in &book.resources {
@@ -153,8 +141,10 @@ fn test_azw3_content_integrity() {
 
             // Should have body content
             assert!(
-                content.contains("<body") || content.contains("<BODY") ||
-                content.contains("<div") || content.contains("<p"),
+                content.contains("<body")
+                    || content.contains("<BODY")
+                    || content.contains("<div")
+                    || content.contains("<p"),
                 "AZW3 content {} should have body elements",
                 href
             );
@@ -168,7 +158,7 @@ fn test_azw3_content_integrity() {
 
 #[test]
 fn test_epub_css_present() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let css_resources: Vec<_> = book
         .resources
@@ -193,7 +183,7 @@ fn test_epub_css_present() {
 
 #[test]
 fn test_epub_css_references() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Find CSS references in XHTML files
     let mut css_refs = Vec::new();
@@ -219,7 +209,7 @@ fn test_epub_css_references() {
 fn test_epub_roundtrip_preserves_content() {
     use tempfile::TempDir;
 
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.epub");
@@ -229,22 +219,22 @@ fn test_epub_roundtrip_preserves_content() {
 
     // Compare XHTML content
     for (href, orig_resource) in &original.resources {
-        if orig_resource.media_type == "application/xhtml+xml" {
-            if let Some(rt_resource) = roundtrip.resources.get(href) {
-                // Content should be similar (might have minor serialization differences)
-                let orig_len = orig_resource.data.len();
-                let rt_len = rt_resource.data.len();
+        if orig_resource.media_type == "application/xhtml+xml"
+            && let Some(rt_resource) = roundtrip.resources.get(href)
+        {
+            // Content should be similar (might have minor serialization differences)
+            let orig_len = orig_resource.data.len();
+            let rt_len = rt_resource.data.len();
 
-                // Allow some variance in size due to serialization
-                let size_ratio = (rt_len as f64) / (orig_len as f64);
-                assert!(
-                    size_ratio > 0.8 && size_ratio < 1.2,
-                    "Content size changed significantly for {}: {} -> {}",
-                    href,
-                    orig_len,
-                    rt_len
-                );
-            }
+            // Allow some variance in size due to serialization
+            let size_ratio = (rt_len as f64) / (orig_len as f64);
+            assert!(
+                size_ratio > 0.8 && size_ratio < 1.2,
+                "Content size changed significantly for {}: {} -> {}",
+                href,
+                orig_len,
+                rt_len
+            );
         }
     }
 }
@@ -253,7 +243,7 @@ fn test_epub_roundtrip_preserves_content() {
 fn test_azw3_roundtrip_preserves_content() {
     use tempfile::TempDir;
 
-    let original = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let original = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.azw3");

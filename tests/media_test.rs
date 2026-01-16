@@ -19,7 +19,7 @@ fn fixture_path(name: &str) -> String {
 
 #[test]
 fn test_epub_has_images() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let image_resources: Vec<_> = book
         .resources
@@ -27,17 +27,25 @@ fn test_epub_has_images() {
         .filter(|(_, r)| r.media_type.starts_with("image/"))
         .collect();
 
-    assert!(!image_resources.is_empty(), "Standard Ebooks include images");
+    assert!(
+        !image_resources.is_empty(),
+        "Standard Ebooks include images"
+    );
 
     println!("Found {} images:", image_resources.len());
     for (href, resource) in &image_resources {
-        println!("  {} ({}, {} bytes)", href, resource.media_type, resource.data.len());
+        println!(
+            "  {} ({}, {} bytes)",
+            href,
+            resource.media_type,
+            resource.data.len()
+        );
     }
 }
 
 #[test]
 fn test_epub_image_types() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let image_types: HashSet<_> = book
         .resources
@@ -57,7 +65,7 @@ fn test_epub_image_types() {
 
 #[test]
 fn test_epub_images_preserved_in_roundtrip() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let original_images: HashSet<_> = original
         .resources
@@ -104,7 +112,7 @@ fn test_epub_images_preserved_in_roundtrip() {
 
 #[test]
 fn test_azw3_images_preserved_in_roundtrip() {
-    let original = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let original = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     let original_images: Vec<_> = original
         .resources
@@ -139,7 +147,7 @@ fn test_azw3_images_preserved_in_roundtrip() {
 
 #[test]
 fn test_epub_to_azw3_preserves_images() {
-    let epub = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let epub = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let epub_image_count = epub
         .resources
@@ -177,7 +185,7 @@ fn test_epub_to_azw3_preserves_images() {
 
 #[test]
 fn test_epub_cover_image_exists() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     if let Some(cover_href) = &book.metadata.cover_image {
         println!("Cover image: {}", cover_href);
@@ -192,7 +200,10 @@ fn test_epub_cover_image_exists() {
             cover.media_type.starts_with("image/"),
             "Cover should be an image"
         );
-        assert!(cover.data.len() > 1000, "Cover should have substantial data");
+        assert!(
+            cover.data.len() > 1000,
+            "Cover should have substantial data"
+        );
     } else {
         println!("No cover image metadata found");
     }
@@ -200,7 +211,7 @@ fn test_epub_cover_image_exists() {
 
 #[test]
 fn test_cover_image_preserved_in_conversion() {
-    let epub = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let epub = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     if epub.metadata.cover_image.is_none() {
         println!("No cover image to test");
@@ -220,7 +231,10 @@ fn test_cover_image_preserved_in_conversion() {
     let epub2 = read_epub(&epub2_path).expect("Failed to read EPUB");
 
     // Check images exist (cover metadata might not survive conversion)
-    let has_images = epub2.resources.values().any(|r| r.media_type.starts_with("image/"));
+    let has_images = epub2
+        .resources
+        .values()
+        .any(|r| r.media_type.starts_with("image/"));
     assert!(has_images, "Images should survive round-trip conversion");
 }
 
@@ -230,7 +244,7 @@ fn test_cover_image_preserved_in_conversion() {
 
 #[test]
 fn test_epub_css_preserved_in_roundtrip() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let original_css: HashSet<_> = original
         .resources
@@ -252,10 +266,7 @@ fn test_epub_css_preserved_in_roundtrip() {
         .map(|(href, _)| href.clone())
         .collect();
 
-    assert_eq!(
-        original_css, roundtrip_css,
-        "CSS files should be preserved"
-    );
+    assert_eq!(original_css, roundtrip_css, "CSS files should be preserved");
 
     // Verify CSS content is preserved
     for href in &original_css {
@@ -275,7 +286,7 @@ fn test_epub_css_preserved_in_roundtrip() {
 
 #[test]
 fn test_binary_resources_not_corrupted() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.epub");

@@ -5,7 +5,7 @@
 //!
 //! Original calibre tests: calibre/src/calibre/ebooks/oeb/polish/tests/structure.py
 
-use boko::{read_epub, read_mobi, TocEntry};
+use boko::{TocEntry, read_epub, read_mobi};
 use tempfile::TempDir;
 
 const FIXTURES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
@@ -21,7 +21,7 @@ fn fixture_path(name: &str) -> String {
 
 #[test]
 fn test_epub_toc_detection() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Standard Ebooks have comprehensive TOCs
     assert!(!book.toc.is_empty(), "TOC should be detected");
@@ -38,7 +38,7 @@ fn test_epub_toc_detection() {
 
 #[test]
 fn test_azw3_toc_detection() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     assert!(!book.toc.is_empty(), "TOC should be detected in AZW3");
 
@@ -55,7 +55,7 @@ fn test_azw3_toc_detection() {
 
 #[test]
 fn test_toc_hierarchy() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Check if TOC has any nested entries (common in Standard Ebooks)
     let has_nested = book.toc.iter().any(|e| !e.children.is_empty());
@@ -69,7 +69,7 @@ fn test_toc_hierarchy() {
 
 #[test]
 fn test_toc_hrefs_valid() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     fn check_toc_hrefs(entries: &[TocEntry]) {
         for entry in entries {
@@ -102,7 +102,7 @@ fn test_toc_hrefs_valid() {
 
 #[test]
 fn test_epub_metadata() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Standard Ebooks have complete metadata
     println!("Title: {}", book.metadata.title);
@@ -117,7 +117,7 @@ fn test_epub_metadata() {
 
 #[test]
 fn test_azw3_metadata() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     println!("AZW3 Title: {}", book.metadata.title);
     println!("AZW3 Authors: {:?}", book.metadata.authors);
@@ -128,7 +128,7 @@ fn test_azw3_metadata() {
 
 #[test]
 fn test_metadata_preservation_epub_roundtrip() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.epub");
@@ -147,7 +147,7 @@ fn test_metadata_preservation_epub_roundtrip() {
 
 #[test]
 fn test_epub_spine() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     assert!(!book.spine.is_empty(), "Spine should not be empty");
 
@@ -168,7 +168,7 @@ fn test_epub_spine() {
 
 #[test]
 fn test_azw3_spine() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
     assert!(!book.spine.is_empty(), "Spine should not be empty");
 
@@ -177,7 +177,7 @@ fn test_azw3_spine() {
 
 #[test]
 fn test_spine_references_resources() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Every spine item should reference an existing resource
     for item in &book.spine {
@@ -195,7 +195,7 @@ fn test_spine_references_resources() {
 
 #[test]
 fn test_epub_resource_types() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let mut xhtml_count = 0;
     let mut css_count = 0;
@@ -211,7 +211,10 @@ fn test_epub_resource_types() {
         }
     }
 
-    println!("XHTML: {}, CSS: {}, Images: {}, Other: {}", xhtml_count, css_count, image_count, other_count);
+    println!(
+        "XHTML: {}, CSS: {}, Images: {}, Other: {}",
+        xhtml_count, css_count, image_count, other_count
+    );
 
     assert!(xhtml_count > 0, "Should have XHTML documents");
     assert!(css_count > 0, "Standard Ebooks have CSS");
@@ -219,11 +222,12 @@ fn test_epub_resource_types() {
 
 #[test]
 fn test_azw3_resource_types() {
-    let book = read_mobi(&fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
+    let book = read_mobi(fixture_path("epictetus.azw3")).expect("Failed to read AZW3");
 
-    let has_html = book.resources.values().any(|r| {
-        r.media_type == "application/xhtml+xml" || r.media_type == "text/html"
-    });
+    let has_html = book
+        .resources
+        .values()
+        .any(|r| r.media_type == "application/xhtml+xml" || r.media_type == "text/html");
 
     assert!(has_html, "AZW3 should have HTML content");
     println!("AZW3 has {} resources", book.resources.len());
@@ -236,7 +240,7 @@ fn test_azw3_resource_types() {
 
 #[test]
 fn test_epub_cover_metadata() {
-    let book = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     // Standard Ebooks include cover images
     if let Some(cover) = &book.metadata.cover_image {
@@ -252,7 +256,7 @@ fn test_epub_cover_metadata() {
 
 #[test]
 fn test_cover_preservation() {
-    let original = read_epub(&fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let original = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let output_path = temp_dir.path().join("roundtrip.epub");
@@ -261,8 +265,7 @@ fn test_cover_preservation() {
     let roundtrip = read_epub(&output_path).expect("Failed to read roundtrip");
 
     assert_eq!(
-        original.metadata.cover_image,
-        roundtrip.metadata.cover_image,
+        original.metadata.cover_image, roundtrip.metadata.cover_image,
         "Cover image should be preserved"
     );
 }

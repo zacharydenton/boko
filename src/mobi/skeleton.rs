@@ -10,13 +10,71 @@ use std::collections::HashMap;
 
 /// Tags that can receive aid attributes (based on Calibre's list)
 pub const AID_ABLE_TAGS: &[&str] = &[
-    "a", "abbr", "address", "article", "aside", "audio", "b", "bdo", "blockquote",
-    "body", "button", "cite", "code", "dd", "del", "details", "dfn", "div", "dl",
-    "dt", "em", "fieldset", "figcaption", "figure", "footer", "h1", "h2", "h3",
-    "h4", "h5", "h6", "header", "hgroup", "i", "ins", "kbd", "label", "legend",
-    "li", "map", "mark", "meter", "nav", "ol", "output", "p", "pre", "progress",
-    "q", "rp", "rt", "samp", "section", "select", "small", "span", "strong",
-    "sub", "summary", "sup", "textarea", "time", "ul", "var", "video",
+    "a",
+    "abbr",
+    "address",
+    "article",
+    "aside",
+    "audio",
+    "b",
+    "bdo",
+    "blockquote",
+    "body",
+    "button",
+    "cite",
+    "code",
+    "dd",
+    "del",
+    "details",
+    "dfn",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "i",
+    "ins",
+    "kbd",
+    "label",
+    "legend",
+    "li",
+    "map",
+    "mark",
+    "meter",
+    "nav",
+    "ol",
+    "output",
+    "p",
+    "pre",
+    "progress",
+    "q",
+    "rp",
+    "rt",
+    "samp",
+    "section",
+    "select",
+    "small",
+    "span",
+    "strong",
+    "sub",
+    "summary",
+    "sup",
+    "textarea",
+    "time",
+    "ul",
+    "var",
+    "video",
 ];
 
 /// A chunk of content extracted from the skeleton
@@ -234,7 +292,13 @@ impl Chunker {
     }
 
     /// Process a single HTML file
-    fn process_file(&mut self, file_number: usize, file_href: &str, html: &[u8], start_pos: usize) -> Skeleton {
+    fn process_file(
+        &mut self,
+        file_number: usize,
+        file_href: &str,
+        html: &[u8],
+        start_pos: usize,
+    ) -> Skeleton {
         // Simple implementation: add aids, no actual chunking
         // Full HTML goes to skeleton, chunks are empty (content stays in skeleton)
 
@@ -257,34 +321,38 @@ impl Chunker {
 
         let file_href_owned = file_href.to_string();
 
-        AIDABLE_TAGS_RE.replace_all(html, |caps: &regex_lite::Captures| {
-            let tag = &caps[1];
-            let attrs = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        AIDABLE_TAGS_RE
+            .replace_all(html, |caps: &regex_lite::Captures| {
+                let tag = &caps[1];
+                let attrs = caps.get(2).map(|m| m.as_str()).unwrap_or("");
 
-            // Skip if already has aid
-            if attrs.contains("aid=") {
-                return format!("<{}{}>", tag, attrs);
-            }
+                // Skip if already has aid
+                if attrs.contains("aid=") {
+                    return format!("<{}{}>", tag, attrs);
+                }
 
-            let aid = self.next_aid();
+                let aid = self.next_aid();
 
-            // If this element has an id attribute, record the mapping
-            if let Some(id_cap) = TAG_ID_RE.captures(attrs) {
-                let id = id_cap[1].to_string();
-                self.id_map.insert((file_href_owned.clone(), id), aid.clone());
-            }
+                // If this element has an id attribute, record the mapping
+                if let Some(id_cap) = TAG_ID_RE.captures(attrs) {
+                    let id = id_cap[1].to_string();
+                    self.id_map
+                        .insert((file_href_owned.clone(), id), aid.clone());
+                }
 
-            // For body tag, also map empty string to this aid (links to file without fragment)
-            if tag == "body" {
-                self.id_map.insert((file_href_owned.clone(), String::new()), aid.clone());
-            }
+                // For body tag, also map empty string to this aid (links to file without fragment)
+                if tag == "body" {
+                    self.id_map
+                        .insert((file_href_owned.clone(), String::new()), aid.clone());
+                }
 
-            if attrs.is_empty() {
-                format!("<{} aid=\"{}\">", tag, aid)
-            } else {
-                format!("<{}{} aid=\"{}\">", tag, attrs, aid)
-            }
-        }).to_string()
+                if attrs.is_empty() {
+                    format!("<{} aid=\"{}\">", tag, aid)
+                } else {
+                    format!("<{}{} aid=\"{}\">", tag, attrs, aid)
+                }
+            })
+            .to_string()
     }
 }
 
@@ -366,8 +434,8 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use super::*;
     use super::tests::from_base32;
+    use super::*;
     use proptest::prelude::*;
 
     proptest! {
