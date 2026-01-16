@@ -8,6 +8,7 @@ use std::path::Path;
 use crate::book::Book;
 use crate::error::Result;
 
+use super::index::{build_skel_indx, build_chunk_indx, build_cncx, calculate_cncx_offsets, build_ncx_indx, NcxBuildEntry};
 use super::palmdoc;
 use super::skeleton::{Chunker, ChunkerResult};
 
@@ -36,6 +37,7 @@ struct MobiBuilder<'a> {
     first_resource_record: u32,
     skel_index: u32,
     frag_index: u32,
+    ncx_index: u32,
     chunker_result: Option<ChunkerResult>,
 }
 
@@ -49,6 +51,7 @@ impl<'a> MobiBuilder<'a> {
             first_resource_record: NULL_INDEX,
             skel_index: NULL_INDEX,
             frag_index: NULL_INDEX,
+            ncx_index: NULL_INDEX,
             chunker_result: None,
         };
 
@@ -102,14 +105,56 @@ impl<'a> MobiBuilder<'a> {
 
     fn build_kf8_indices(&mut self) -> Result<()> {
         // Build SKEL and Fragment INDX records
-        // For now, just set indices - proper INDX generation is complex
-        if self.chunker_result.is_some() {
-            // Will be set when we add actual INDX record generation
-            // self.skel_index = self.records.len() as u32;
-            // self.records.push(build_skel_indx(...));
-            // self.frag_index = self.records.len() as u32;
-            // self.records.push(build_frag_indx(...));
+        if let Some(ref chunker_result) = self.chunker_result {
+            // Build SKEL index
+            if !chunker_result.skel_table.is_empty() {
+                self.skel_index = self.records.len() as u32;
+                let skel_records = build_skel_indx(&chunker_result.skel_table);
+                for record in skel_records {
+                    self.records.push(record);
+                }
+            }
+
+            // Build Fragment/Chunk index
+            if !chunker_result.chunk_table.is_empty() {
+                // Build CNCX for chunk selectors
+                let selectors: Vec<String> = chunker_result.chunk_table
+                    .iter()
+                    .map(|c| c.selector.clone())
+                    .collect();
+                let cncx_offsets = calculate_cncx_offsets(&selectors);
+                let cncx = build_cncx(&selectors);
+
+                self.frag_index = self.records.len() as u32;
+                let chunk_records = build_chunk_indx(&chunker_result.chunk_table, &cncx_offsets);
+                for record in chunk_records {
+                    self.records.push(record);
+                }
+
+                // Add CNCX record after chunk index records
+                if !cncx.is_empty() {
+                    self.records.push(cncx);
+                }
+            }
         }
+
+        // Build NCX index for table of contents
+        if !self.book.toc.is_empty() {
+            // Flatten TOC entries (including children) into a list with depth
+            let ncx_entries = flatten_toc(&self.book.toc, 0, self.text_length as u32);
+
+            if !ncx_entries.is_empty() {
+                self.ncx_index = self.records.len() as u32;
+                let (ncx_records, ncx_cncx) = build_ncx_indx(&ncx_entries);
+                for record in ncx_records {
+                    self.records.push(record);
+                }
+                if !ncx_cncx.is_empty() {
+                    self.records.push(ncx_cncx);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -281,9 +326,9 @@ impl<'a> MobiBuilder<'a> {
         record0.extend_from_slice(&1u32.to_be_bytes()); // Multibyte overlap
 
         // KF8 indices (244-264)
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // NCX index
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // Chunk index
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // Skel index
+        record0.extend_from_slice(&self.ncx_index.to_be_bytes()); // NCX index
+        record0.extend_from_slice(&self.frag_index.to_be_bytes()); // Chunk/Fragment index
+        record0.extend_from_slice(&self.skel_index.to_be_bytes()); // Skel index
         record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // DATP index
         record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // Guide index
 
@@ -514,6 +559,25 @@ fn escape_xml(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Flatten a hierarchical TOC into a linear list with depth info
+fn flatten_toc(entries: &[crate::book::TocEntry], depth: u32, text_length: u32) -> Vec<NcxBuildEntry> {
+    let mut result = Vec::new();
+
+    for entry in entries {
+        result.push(NcxBuildEntry {
+            pos: 0, // Simplified: all entries point to start
+            length: text_length,
+            label: entry.title.clone(),
+            depth,
+        });
+
+        // Recursively add children
+        result.extend(flatten_toc(&entry.children, depth + 1, text_length));
+    }
+
+    result
 }
 
 #[cfg(test)]

@@ -134,9 +134,14 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     // Try KF8 parsing for proper chapters
     if mobi.is_kf8() {
         if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, kf8_record_offset) {
+            // Build file_starts array: (start_pos, file_number) for ID lookup
+            let file_starts: Vec<(u32, u32)> = kf8_result.files.iter()
+                .map(|f| (f.start_pos, f.file_number as u32))
+                .collect();
+
             // Add chapter HTML files
             for (i, (filename, content)) in kf8_result.parts.iter().enumerate() {
-                let html = wrap_html_content(content, &mobi.title, i, &kf8_result.elems);
+                let html = wrap_html_content(content, &mobi.title, i, &kf8_result.elems, &text, &file_starts);
                 book.add_resource(filename, html.into_bytes(), "application/xhtml+xml");
                 book.add_spine_item(
                     &format!("part{:04}", i),
@@ -511,14 +516,14 @@ fn find_file_for_position(files: &[SkeletonFile], pos: u32) -> Option<&SkeletonF
 }
 
 /// Process KF8 content: clean up declarations and convert kindle: references
-fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[DivElement]) -> String {
+fn wrap_html_content(content: &[u8], _title: &str, part_num: usize, elems: &[DivElement], raw_text: &[u8], file_starts: &[(u32, u32)]) -> String {
     let content_str = String::from_utf8_lossy(content);
 
     // Strip encoding declarations but keep structure
     let cleaned = strip_encoding_declarations(&content_str);
 
     // Convert kindle: references to proper paths
-    let result = clean_kindle_references(&cleaned, elems);
+    let result = clean_kindle_references(&cleaned, elems, raw_text, file_starts);
 
     // Strip Amazon-specific attributes (aid, data-AmznRemoved, etc.)
     let stripped = strip_kindle_attributes(&result);
@@ -555,9 +560,13 @@ fn strip_kindle_attributes(html: &str) -> String {
     let aid_re = Regex::new(r#"\s+aid\s*=\s*["'][^"']*["']"#).unwrap();
     let result = aid_re.replace_all(html, "");
 
-    // Strip data-AmznRemoved-M8="..." attributes
-    let amzn_re = Regex::new(r#"\s+data-AmznRemoved-[^=]+\s*=\s*["'][^"']*["']"#).unwrap();
-    let result2 = amzn_re.replace_all(&result, "");
+    // Strip data-AmznRemoved and data-AmznRemoved-M8="..." attributes
+    let amzn_removed_re = Regex::new(r#"\s+data-AmznRemoved[^=]*\s*=\s*["'][^"']*["']"#).unwrap();
+    let result2 = amzn_removed_re.replace_all(&result, "");
+
+    // Strip data-AmznPageBreak="..." attributes
+    let amzn_page_re = Regex::new(r#"\s+data-AmznPageBreak\s*=\s*["'][^"']*["']"#).unwrap();
+    let result2 = amzn_page_re.replace_all(&result2, "");
 
     // Add alt="" to img tags that don't have alt attribute
     // Match <img that doesn't already have alt= and add alt="" before the closing
@@ -647,7 +656,7 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
 
         result = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>Content</title></head>
 <body>
@@ -955,11 +964,14 @@ fn build_html(text: &[u8], mobi: &MobiHeader) -> String {
     };
 
     let body_content = extract_body_content(&content);
-    let body_content = clean_kindle_references(&body_content, &[]);
+    // For MOBI6, we don't have KF8 structures for ID lookup, pass empty slices
+    let body_content = clean_kindle_references(&body_content, &[], text, &[]);
+    // Strip Amazon-specific attributes (aid, data-AmznRemoved, etc.)
+    let body_content = strip_kindle_attributes(&body_content);
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <title>{}</title>
@@ -1052,7 +1064,74 @@ fn strip_html_structure(content: &str) -> String {
     result
 }
 
-fn clean_kindle_references(html: &str, elems: &[DivElement]) -> String {
+/// Find the nearest id= attribute at or after a given position in the raw text
+/// The kindle:pos:fid links point to positions that are at or just before the target element
+fn find_nearest_id(raw_text: &[u8], pos: usize, _file_starts: &[(u32, u32)]) -> Option<String> {
+    use regex_lite::Regex;
+
+    if pos >= raw_text.len() {
+        return None;
+    }
+
+    // Look for id="..." or ID="..." attributes
+    let id_re = Regex::new(r#"<[^>]+\s(?:id|ID)\s*=\s*['"]([^'"]+)['"]"#).unwrap();
+
+    // Search forward from pos to find the next tag with an id= attribute
+    // Limit search to a reasonable window (e.g., 2000 bytes forward)
+    let end_pos = (pos + 2000).min(raw_text.len());
+    let search_text = &raw_text[pos..end_pos];
+    let search_str = String::from_utf8_lossy(search_text);
+
+    // Find the first id= in the forward search
+    if let Some(caps) = id_re.captures(&search_str) {
+        if let Some(m) = caps.get(1) {
+            return Some(m.as_str().to_string());
+        }
+    }
+
+    // If no ID found forward, try searching backwards as fallback
+    let start_pos = pos.saturating_sub(500);
+    let search_back = &raw_text[start_pos..pos];
+    for tag in reverse_tag_iter(search_back) {
+        let tag_str = String::from_utf8_lossy(tag);
+        if let Some(caps) = id_re.captures(&tag_str) {
+            if let Some(m) = caps.get(1) {
+                return Some(m.as_str().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+/// Iterate over all tags in a byte slice in reverse order (last tag to first tag)
+/// This is a Rust port of Calibre's reverse_tag_iter function
+fn reverse_tag_iter(block: &[u8]) -> ReverseTagIterator<'_> {
+    ReverseTagIterator { block, end: block.len() }
+}
+
+struct ReverseTagIterator<'a> {
+    block: &'a [u8],
+    end: usize,
+}
+
+impl<'a> Iterator for ReverseTagIterator<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Find the last '>' before end
+        let pgt = self.block[..self.end].iter().rposition(|&b| b == b'>')?;
+        // Find the last '<' before the '>'
+        let plt = self.block[..pgt].iter().rposition(|&b| b == b'<')?;
+        // Extract the tag
+        let tag = &self.block[plt..=pgt];
+        // Update end for next iteration
+        self.end = plt;
+        Some(tag)
+    }
+}
+
+fn clean_kindle_references(html: &str, elems: &[DivElement], raw_text: &[u8], file_starts: &[(u32, u32)]) -> String {
     let mut result = html.to_string();
 
     // Replace kindle:flow references (e.g., kindle:flow:0001?mime=text/css)
@@ -1074,7 +1153,7 @@ fn clean_kindle_references(html: &str, elems: &[DivElement]) -> String {
         }
     }
 
-    // Replace kindle:pos:fid:XXXX:off:YYYY links with file references
+    // Replace kindle:pos:fid:XXXX:off:YYYY links with file references + anchors
     // XXXX is div table index (base32) - index into elems array
     // YYYY is offset (base32) - offset within the element
     while let Some(start) = result.find("kindle:pos:fid:") {
@@ -1083,18 +1162,34 @@ fn clean_kindle_references(html: &str, elems: &[DivElement]) -> String {
             let ref_str = &result[start..start + end];
             // Format: kindle:pos:fid:XXXX:off:YYYY
             let parts: Vec<&str> = ref_str.split(':').collect();
-            if parts.len() >= 4 {
+            if parts.len() >= 6 && parts[4] == "off" {
                 let fid_str = parts[3]; // The XXXX part (elem index)
+                let off_str = parts[5]; // The YYYY part (offset)
                 let elem_idx = parse_kindle_base32(fid_str);
+                let offset = parse_kindle_base32(off_str);
 
-                // Look up the element to get its file_number
-                let file_num = if let Some(elem) = elems.get(elem_idx) {
-                    elem.file_number as usize
+                // Look up the element to get its file_number and position
+                let (file_num, target_pos) = if let Some(elem) = elems.get(elem_idx) {
+                    (elem.file_number as usize, elem.insert_pos as u32 + offset as u32)
                 } else {
-                    // Fallback to elem index if out of bounds
-                    0
+                    (0, 0u32)
                 };
 
+                // Search backwards in the raw text to find the nearest id= attribute
+                // Like Calibre's get_id_tag() function
+                let anchor = find_nearest_id(raw_text, target_pos as usize, file_starts);
+
+                let replacement = if let Some(id) = anchor {
+                    format!("part{:04}.html#{}", file_num, id)
+                } else {
+                    format!("part{:04}.html", file_num)
+                };
+                result = format!("{}{}{}", &result[..start], replacement, &result[start + end..]);
+            } else if parts.len() >= 4 {
+                // Old format without offset
+                let fid_str = parts[3];
+                let elem_idx = parse_kindle_base32(fid_str);
+                let file_num = elems.get(elem_idx).map(|e| e.file_number as usize).unwrap_or(0);
                 let replacement = format!("part{:04}.html", file_num);
                 result = format!("{}{}{}", &result[..start], replacement, &result[start + end..]);
             } else {
