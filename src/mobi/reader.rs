@@ -13,6 +13,16 @@ use super::index::{
     SkeletonFile,
 };
 
+/// Extracted resources from MOBI file
+struct ExtractedResources {
+    /// Images as (data, media_type)
+    images: Vec<(Vec<u8>, String)>,
+    /// Fonts as (data, extension)
+    fonts: Vec<(Vec<u8>, String)>,
+    /// Maps resource index to href (for CSS reference resolution)
+    resource_map: Vec<Option<String>>,
+}
+
 /// Read a MOBI/AZW3 file into a Book
 pub fn read_mobi<P: AsRef<Path>>(path: P) -> Result<Book> {
     let file = std::fs::File::open(path)?;
@@ -86,10 +96,8 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
     };
 
     // 5. Build metadata
-    let mut metadata = Metadata::default();
-
     // Title priority: EXTH 503 > MOBI header > PDB name
-    metadata.title = exth
+    let title = exth
         .as_ref()
         .and_then(|e| e.title.clone())
         .or_else(|| {
@@ -101,24 +109,30 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> Result<Book> {
         })
         .unwrap_or_else(|| pdb.name.clone());
 
-    if let Some(ref exth) = exth {
-        metadata.authors = exth.authors.clone();
-        metadata.publisher = exth.publisher.clone();
-        metadata.description = exth.description.clone();
-        metadata.subjects = exth.subjects.clone();
-        metadata.date = exth.pub_date.clone();
-        metadata.rights = exth.rights.clone();
-
-        if let Some(ref lang) = exth.language {
-            metadata.language = lang.clone();
+    let metadata = if let Some(ref exth) = exth {
+        Metadata {
+            title,
+            authors: exth.authors.clone(),
+            publisher: exth.publisher.clone(),
+            description: exth.description.clone(),
+            subjects: exth.subjects.clone(),
+            date: exth.pub_date.clone(),
+            rights: exth.rights.clone(),
+            language: exth.language.clone().unwrap_or_default(),
+            ..Default::default()
         }
-    }
+    } else {
+        Metadata {
+            title,
+            ..Default::default()
+        }
+    };
 
     // 6. Extract text content (use kf8_record_offset for combo files)
     let text = extract_text(&mut reader, &pdb, &mobi, kf8_record_offset)?;
 
     // 7. Extract resources (images and fonts)
-    let (images, fonts, resource_map) = extract_resources(&mut reader, &pdb, &mobi)?;
+    let ExtractedResources { images, fonts, resource_map } = extract_resources(&mut reader, &pdb, &mobi)?;
 
     // 8. Build Book
     let mut book = Book::new();
@@ -871,19 +885,18 @@ fn strip_trailing_data(record: &[u8], flags: u16) -> &[u8] {
 }
 
 /// Extract all resources (images and fonts) from the MOBI file
-/// Returns a vector of resources and a resource_map for CSS reference resolution
 fn extract_resources<R: Read + Seek>(
     reader: &mut R,
     pdb: &PdbHeader,
     mobi: &MobiHeader,
-) -> Result<(Vec<(Vec<u8>, String)>, Vec<(Vec<u8>, String)>, Vec<Option<String>>)> {
+) -> Result<ExtractedResources> {
     let mut images = Vec::new();
     let mut fonts = Vec::new();
     let mut resource_map: Vec<Option<String>> = Vec::new();
 
     let first_image = mobi.first_image_index as usize;
     if first_image == NULL_INDEX as usize {
-        return Ok((images, fonts, resource_map));
+        return Ok(ExtractedResources { images, fonts, resource_map });
     }
 
     let mut image_idx = 0usize;
@@ -936,7 +949,7 @@ fn extract_resources<R: Read + Seek>(
         }
     }
 
-    Ok((images, fonts, resource_map))
+    Ok(ExtractedResources { images, fonts, resource_map })
 }
 
 /// Read and decode a FONT record from MOBI
@@ -1055,21 +1068,15 @@ fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> Stri
         };
 
         // Replace in result, handling the full match including quotes
-        let old_pattern = if full_match.ends_with('"') || full_match.ends_with('\'') {
-            full_match.to_string()
-        } else {
-            full_match.to_string()
-        };
-
-        let new_value = if old_pattern.ends_with('"') {
+        let new_value = if full_match.ends_with('"') {
             format!("{}\"", replacement)
-        } else if old_pattern.ends_with('\'') {
+        } else if full_match.ends_with('\'') {
             format!("{}'", replacement)
         } else {
             replacement
         };
 
-        result = result.replacen(&old_pattern, &new_value, 1);
+        result = result.replacen(full_match, &new_value, 1);
     }
 
     result

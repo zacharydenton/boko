@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Read, Seek};
 use std::path::Path;
 use quick_xml::events::Event;
@@ -6,6 +7,15 @@ use zip::ZipArchive;
 
 use crate::book::{Book, Metadata, TocEntry};
 use crate::error::{Error, Result};
+
+/// Parsed OPF content
+struct OpfData {
+    metadata: Metadata,
+    /// Maps manifest id -> (href, media_type)
+    manifest: HashMap<String, (String, String)>,
+    spine_ids: Vec<String>,
+    ncx_href: Option<String>,
+}
 
 /// Read an EPUB file into a Book
 pub fn read_epub<P: AsRef<Path>>(path: P) -> Result<Book> {
@@ -26,7 +36,7 @@ pub fn read_epub_from_reader<R: Read + Seek>(reader: R) -> Result<Book> {
 
     // 2. Parse the OPF file
     let opf_content = read_archive_file(&mut archive, &opf_path)?;
-    let (metadata, manifest, spine_ids, ncx_href) = parse_opf(&opf_content, &opf_dir)?;
+    let OpfData { metadata, manifest, spine_ids, ncx_href } = parse_opf(&opf_content, &opf_dir)?;
 
     // 3. Build the Book structure
     let mut book = Book::new();
@@ -89,12 +99,12 @@ struct ManifestItem {
     properties: Option<String>,
 }
 
-fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collections::HashMap<String, (String, String)>, Vec<String>, Option<String>)> {
+fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
     let mut metadata = Metadata::default();
-    let mut manifest_items: std::collections::HashMap<String, ManifestItem> = std::collections::HashMap::new();
+    let mut manifest_items: HashMap<String, ManifestItem> = HashMap::new();
     let mut spine_ids: Vec<String> = Vec::new();
     let mut ncx_href: Option<String> = None;
     let mut toc_id: Option<String> = None;
@@ -239,8 +249,8 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
         }
     }
 
-    // Convert manifest_items to simple (href, media_type) map for backward compatibility
-    let manifest: std::collections::HashMap<String, (String, String)> = manifest_items
+    // Convert manifest_items to simple (href, media_type) map
+    let manifest: HashMap<String, (String, String)> = manifest_items
         .into_iter()
         .map(|(id, item)| (id, (item.href, item.media_type)))
         .collect();
@@ -251,7 +261,7 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<(Metadata, std::collection
             ncx_href = Some(href.clone());
         }
 
-    Ok((metadata, manifest, spine_ids, ncx_href))
+    Ok(OpfData { metadata, manifest, spine_ids, ncx_href })
 }
 
 fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
