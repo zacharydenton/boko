@@ -135,6 +135,10 @@ struct MobiBuilder<'a> {
     css_flows: Vec<String>,
     /// Total flows length (text + CSS)
     flows_length: usize,
+    /// Ordered list of image hrefs (for writing after text)
+    image_hrefs: Vec<String>,
+    /// Ordered list of font hrefs (for writing after images)
+    font_hrefs: Vec<String>,
 }
 
 impl<'a> MobiBuilder<'a> {
@@ -152,10 +156,13 @@ impl<'a> MobiBuilder<'a> {
             resource_map: HashMap::new(),
             css_flows: Vec::new(),
             flows_length: 0,
+            image_hrefs: Vec::new(),
+            font_hrefs: Vec::new(),
         };
 
-        builder.build_resource_records()?;
-        builder.build_text_records()?;
+        builder.collect_resources()?;      // Build resource_map (no records yet)
+        builder.build_text_records()?;     // Text records 1-N (uses resource_map)
+        builder.write_resource_records()?; // Resource records after text
         builder.build_kf8_indices()?;
         builder.build_fdst_record()?;
         builder.build_flis_fcis_eof()?;
@@ -399,19 +406,21 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    fn build_resource_records(&mut self) -> Result<()> {
+    /// Phase 1: Collect resources and build resource_map (before text records)
+    /// This populates resource_map for kindle:embed reference rewriting
+    fn collect_resources(&mut self) -> Result<()> {
         // Collect images
-        let mut image_hrefs: Vec<_> = self
+        self.image_hrefs = self
             .book
             .resources
             .iter()
             .filter(|(_, r)| r.media_type.starts_with("image/"))
             .map(|(href, _)| href.clone())
             .collect();
-        image_hrefs.sort();
+        self.image_hrefs.sort();
 
         // Collect fonts
-        let mut font_hrefs: Vec<_> = self
+        self.font_hrefs = self
             .book
             .resources
             .iter()
@@ -426,7 +435,7 @@ impl<'a> MobiBuilder<'a> {
             })
             .map(|(href, _)| href.clone())
             .collect();
-        font_hrefs.sort();
+        self.font_hrefs.sort();
 
         // Collect CSS (for flow tracking - actual CSS goes in text flows)
         let mut css_hrefs: Vec<_> = self
@@ -446,30 +455,42 @@ impl<'a> MobiBuilder<'a> {
             }
         }
 
-        // Set first resource record if we have any resources
-        if !image_hrefs.is_empty() || !font_hrefs.is_empty() {
+        // Build resource_map with indices (1-indexed for kindle:embed)
+        // Resources will be written after text records, but we need indices now
+        let mut resource_idx = 1usize;
+
+        for href in &self.image_hrefs {
+            self.resource_map.insert(href.clone(), resource_idx);
+            resource_idx += 1;
+        }
+
+        for href in &self.font_hrefs {
+            self.resource_map.insert(href.clone(), resource_idx);
+            resource_idx += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Phase 2: Write resource records (after text records)
+    fn write_resource_records(&mut self) -> Result<()> {
+        // Set first resource record (now that text records are written)
+        if !self.image_hrefs.is_empty() || !self.font_hrefs.is_empty() {
             self.first_resource_record = self.records.len() as u32;
         }
 
-        // Resource index counter (1-indexed for kindle:embed references)
-        let mut resource_idx = 1usize;
-
         // Write images as raw data
-        for href in &image_hrefs {
+        for href in &self.image_hrefs.clone() {
             if let Some(resource) = self.book.resources.get(href) {
-                self.resource_map.insert(href.clone(), resource_idx);
                 self.records.push(resource.data.clone());
-                resource_idx += 1;
             }
         }
 
         // Write fonts as FONT records
-        for href in &font_hrefs {
+        for href in &self.font_hrefs.clone() {
             if let Some(resource) = self.book.resources.get(href) {
-                self.resource_map.insert(href.clone(), resource_idx);
                 let font_record = write_font_record(&resource.data);
                 self.records.push(font_record);
-                resource_idx += 1;
             }
         }
 
