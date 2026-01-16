@@ -577,7 +577,7 @@ impl IndxBuilder {
 
         // For simplicity, put all entries in one record (works for small indices)
         let (entry_data, idxt_offsets) = self.build_entries();
-        let idxt = self.build_idxt(&idxt_offsets);
+        let idxt = self.build_idxt(&idxt_offsets, entry_data.len());
 
         // Build the single data record
         let data_record = self.build_data_record(&entry_data, &idxt);
@@ -591,55 +591,73 @@ impl IndxBuilder {
     fn build_header_record(&self, total_entries: u32, num_records: u32) -> Vec<u8> {
         let mut record = Vec::new();
 
-        // INDX signature
+        // INDX signature (offset 0)
         record.extend_from_slice(b"INDX");
 
-        // Header length (192 bytes)
+        // Fields follow Calibre's INDEX_HEADER_FIELDS order:
+        // len, nul1, type, gen, start, count, code, lng, total, ordt, ligt, nligt, ncncx
+
+        // len: Header length (offset 4)
         record.extend_from_slice(&192u32.to_be_bytes());
 
-        // Unknown
+        // nul1: Unknown/zero (offset 8)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Index type (2 = inflection/KF8)
+        // type: Index type (offset 12) - 2 = inflection/KF8
         record.extend_from_slice(&2u32.to_be_bytes());
 
-        // IDXT offset (0 for header record)
+        // gen: Generation/unknown (offset 16)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Number of entries in this record
+        // start: IDXT offset (offset 20) - 0 for header record
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // count: Number of data records (offset 24)
         record.extend_from_slice(&num_records.to_be_bytes());
 
-        // Encoding (65001 = UTF-8)
+        // code: Encoding (offset 28) - 65001 = UTF-8
         record.extend_from_slice(&65001u32.to_be_bytes());
 
-        // Unknown
+        // lng: Language (offset 32)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Total entries across all records
+        // total: Total entries across all records (offset 36)
         record.extend_from_slice(&total_entries.to_be_bytes());
 
-        // ORDT offset (0)
+        // ordt: ORDT offset (offset 40)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // LIGT offset (0)
+        // ligt: LIGT offset (offset 44)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Number of ORDT entries (0)
+        // nligt: Number of LIGT entries (offset 48)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Number of CNCX records
+        // ncncx: Number of CNCX records (offset 52)
         record.extend_from_slice(&self.num_cncx.to_be_bytes());
 
-        // Unknown (128 bytes of zeros)
-        record.extend_from_slice(&[0u8; 128]);
+        // Unknown fields (27 u32s = 108 bytes) (offset 56-163)
+        record.extend_from_slice(&[0u8; 108]);
 
-        // TAGX offset
+        // ocnt (offset 164)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // oentries (offset 168)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt1 (offset 172)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt2 (offset 176)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // tagx: TAGX offset (offset 180) - points to TAGX after header
         record.extend_from_slice(&192u32.to_be_bytes());
 
-        // Unknown (8 bytes)
+        // Padding to reach 192 bytes (offsets 184-191)
         record.extend_from_slice(&[0u8; 8]);
 
-        // TAGX section
+        // TAGX section (after 192-byte header)
         record.extend_from_slice(&self.build_tagx());
 
         record
@@ -651,46 +669,70 @@ impl IndxBuilder {
         // Calculate IDXT offset
         let idxt_offset = 192 + entry_data.len();
 
-        // INDX signature
+        // INDX signature (offset 0)
         record.extend_from_slice(b"INDX");
 
-        // Header length
+        // Fields follow Calibre's INDEX_HEADER_FIELDS order:
+        // len, nul1, type, gen, start, count, code, lng, total, ordt, ligt, nligt, ncncx
+
+        // len: Header length (offset 4)
         record.extend_from_slice(&192u32.to_be_bytes());
 
-        // Unknown
+        // nul1: Unknown/zero (offset 8)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Index type
+        // type: Index type (offset 12)
         record.extend_from_slice(&2u32.to_be_bytes());
 
-        // IDXT offset
+        // gen: Generation/unknown (offset 16)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // start: IDXT offset (offset 20)
         record.extend_from_slice(&(idxt_offset as u32).to_be_bytes());
 
-        // Number of entries in this record
+        // count: Number of entries in this record (offset 24)
         record.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
-        // Encoding
+        // code: Encoding (offset 28) - 65001 = UTF-8
         record.extend_from_slice(&65001u32.to_be_bytes());
 
-        // Unknown
+        // lng: Language (offset 32)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Total entries
+        // total: Total entries (offset 36)
         record.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
-        // ORDT, LIGT, ORDT count, CNCX count
+        // ordt: ORDT offset (offset 40)
         record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ligt: LIGT offset (offset 44)
         record.extend_from_slice(&0u32.to_be_bytes());
+
+        // nligt: Number of LIGT entries (offset 48)
         record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ncncx: Number of CNCX records (offset 52)
         record.extend_from_slice(&self.num_cncx.to_be_bytes());
 
-        // Unknown (128 bytes)
-        record.extend_from_slice(&[0u8; 128]);
+        // Unknown fields (27 u32s = 108 bytes) (offset 56-163)
+        record.extend_from_slice(&[0u8; 108]);
 
-        // TAGX offset (0 for data records - TAGX is in header)
+        // ocnt (offset 164)
         record.extend_from_slice(&0u32.to_be_bytes());
 
-        // Unknown
+        // oentries (offset 168)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt1 (offset 172)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt2 (offset 176)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // tagx: TAGX offset (offset 180) - 0 for data records
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // Padding to reach 192 bytes (offsets 184-191)
         record.extend_from_slice(&[0u8; 8]);
 
         // Entry data
@@ -747,7 +789,7 @@ impl IndxBuilder {
         (data, offsets)
     }
 
-    fn build_idxt(&self, offsets: &[u16]) -> Vec<u8> {
+    fn build_idxt(&self, offsets: &[u16], entry_data_len: usize) -> Vec<u8> {
         let mut idxt = Vec::new();
 
         // IDXT signature
@@ -757,6 +799,11 @@ impl IndxBuilder {
         for &offset in offsets {
             idxt.extend_from_slice(&offset.to_be_bytes());
         }
+
+        // Add end-of-data offset (points to end of entry data, which is where IDXT starts)
+        // This is required - Calibre's reader expects n+1 offsets for n entries
+        let end_offset = (192 + entry_data_len) as u16;
+        idxt.extend_from_slice(&end_offset.to_be_bytes());
 
         // Pad to 4-byte boundary
         while idxt.len() % 4 != 0 {
@@ -778,8 +825,11 @@ pub fn build_skel_indx(skeletons: &[super::skeleton::SkelEntry]) -> Vec<Vec<u8>>
     let mut builder = IndxBuilder::new(tagx, 1);
 
     for skel in skeletons {
-        // Control byte: 0x0F = all tags present (chunk_count + geometry)
-        let mut tag_data = vec![0x0F];
+        // Control byte calculation per Calibre:
+        // chunk_count: 2 values / vpe=1 = 2 entries. mask=3, shift=0. 3 & (2 << 0) = 2
+        // geometry: 4 values / vpe=2 = 2 entries. mask=12, shift=2. 12 & (2 << 2) = 8
+        // Total: 2 | 8 = 10 = 0x0A
+        let mut tag_data = vec![0x0A];
 
         // Chunk count (repeated twice per Calibre implementation)
         tag_data.extend(encint(skel.chunk_count as u32));

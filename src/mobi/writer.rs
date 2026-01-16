@@ -12,9 +12,99 @@ use super::index::{build_skel_indx, build_chunk_indx, build_cncx, calculate_cncx
 use super::palmdoc;
 use super::skeleton::{Chunker, ChunkerResult};
 
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+use std::collections::HashMap;
+
 // Constants
 const RECORD_SIZE: usize = 4096;
 const NULL_INDEX: u32 = 0xFFFF_FFFF;
+const XOR_KEY_LEN: usize = 20;
+
+/// Create a FONT record from raw font data
+/// Format: 24-byte header + XOR key (20 bytes) + compressed/obfuscated data
+fn write_font_record(data: &[u8]) -> Vec<u8> {
+    use std::io::Write as IoWrite;
+
+    let usize_val = data.len() as u32;
+    let mut flags: u32 = 0;
+
+    // Step 1: Zlib compress the data
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+    encoder.write_all(data).unwrap();
+    let mut compressed = encoder.finish().unwrap();
+    flags |= 0b01; // Compression flag
+
+    // Step 2: XOR obfuscation (only if data >= 1040 bytes)
+    let mut xor_key = Vec::new();
+    if compressed.len() >= 1040 {
+        flags |= 0b10; // XOR obfuscation flag
+
+        // Generate random XOR key (use timestamp-based pseudo-random)
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(12345);
+        xor_key = (0..XOR_KEY_LEN)
+            .map(|i| {
+                let mut x = seed.wrapping_add(i as u64);
+                x = x.wrapping_mul(6364136223846793005);
+                x = x.wrapping_add(1442695040888963407);
+                (x >> 33) as u8
+            })
+            .collect();
+
+        // XOR first 1040 bytes
+        for i in 0..1040.min(compressed.len()) {
+            compressed[i] ^= xor_key[i % XOR_KEY_LEN];
+        }
+    }
+
+    // Step 3: Build the FONT record
+    let key_start: u32 = 24; // Header is 24 bytes
+    let data_start: u32 = key_start + xor_key.len() as u32;
+
+    let mut record = Vec::with_capacity(24 + xor_key.len() + compressed.len());
+
+    // Header: FONT + 5 big-endian u32s
+    record.extend_from_slice(b"FONT");
+    record.extend_from_slice(&usize_val.to_be_bytes());
+    record.extend_from_slice(&flags.to_be_bytes());
+    record.extend_from_slice(&data_start.to_be_bytes());
+    record.extend_from_slice(&(xor_key.len() as u32).to_be_bytes());
+    record.extend_from_slice(&key_start.to_be_bytes());
+
+    // XOR key (if present)
+    record.extend_from_slice(&xor_key);
+
+    // Compressed (and possibly obfuscated) data
+    record.extend_from_slice(&compressed);
+
+    record
+}
+
+/// Convert a number to base32 with minimum 4 digits (0-9A-V)
+fn to_base32(mut num: usize) -> String {
+    const DIGITS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
+    let mut result = Vec::new();
+
+    if num == 0 {
+        result.push(b'0');
+    } else {
+        while num > 0 {
+            result.push(DIGITS[num % 32]);
+            num /= 32;
+        }
+    }
+
+    // Pad to 4 digits minimum
+    while result.len() < 4 {
+        result.push(b'0');
+    }
+
+    result.reverse();
+    String::from_utf8(result).unwrap()
+}
 
 /// Write a Book to a MOBI/AZW3 file
 pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> Result<()> {
@@ -39,6 +129,12 @@ struct MobiBuilder<'a> {
     frag_index: u32,
     ncx_index: u32,
     chunker_result: Option<ChunkerResult>,
+    /// Maps resource href to 1-indexed resource record number (for kindle:embed references)
+    resource_map: HashMap<String, usize>,
+    /// CSS flows (flow 0 is text, flows 1+ are CSS)
+    css_flows: Vec<String>,
+    /// Total flows length (text + CSS)
+    flows_length: usize,
 }
 
 impl<'a> MobiBuilder<'a> {
@@ -53,10 +149,13 @@ impl<'a> MobiBuilder<'a> {
             frag_index: NULL_INDEX,
             ncx_index: NULL_INDEX,
             chunker_result: None,
+            resource_map: HashMap::new(),
+            css_flows: Vec::new(),
+            flows_length: 0,
         };
 
-        builder.build_text_records()?;
         builder.build_resource_records()?;
+        builder.build_text_records()?;
         builder.build_kf8_indices()?;
         builder.build_fdst_record()?;
         builder.build_flis_fcis_eof()?;
@@ -66,26 +165,59 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_text_records(&mut self) -> Result<()> {
-        // Collect HTML files from spine
+        // Build CSS href -> flow index map (flow 0 is text, CSS starts at 1)
+        let css_hrefs: Vec<_> = self
+            .book
+            .resources
+            .iter()
+            .filter(|(_, r)| r.media_type == "text/css")
+            .map(|(href, _)| href.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut css_flow_map: HashMap<String, usize> = HashMap::new();
+        for (i, href) in css_hrefs.iter().enumerate() {
+            css_flow_map.insert(href.clone(), i + 1); // Flows are 1-indexed (0 is text)
+        }
+
+        // Collect and process HTML files from spine
         let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
         for spine_item in &self.book.spine {
             if let Some(resource) = self.book.resources.get(&spine_item.href) {
                 if resource.media_type == "application/xhtml+xml" {
-                    html_files.push((spine_item.href.clone(), resource.data.clone()));
+                    // Rewrite HTML to use kindle: references
+                    let html = String::from_utf8_lossy(&resource.data);
+                    let rewritten = self.rewrite_html_references(&html, &spine_item.href, &css_flow_map);
+                    html_files.push((spine_item.href.clone(), rewritten.into_bytes()));
                 }
             }
         }
 
-        // Process with chunker (adds aids, prepares for KF8)
+        // Rewrite CSS to use kindle:embed references for fonts/images
+        let rewritten_css: Vec<String> = self
+            .css_flows
+            .iter()
+            .map(|css| self.rewrite_css_references(css))
+            .collect();
+
+        // Process HTML with chunker (adds aids, prepares for KF8)
         let mut chunker = Chunker::new();
         let chunker_result = chunker.process(&html_files);
         self.text_length = chunker_result.text.len();
 
+        // Build combined flow data: text (flow 0) + CSS flows (1+)
+        let mut all_flows = chunker_result.text.clone();
+        for css in &rewritten_css {
+            all_flows.extend_from_slice(css.as_bytes());
+        }
+        self.flows_length = all_flows.len();
+
         // Split into records and compress
         let mut pos = 0;
-        while pos < chunker_result.text.len() {
-            let end = (pos + RECORD_SIZE).min(chunker_result.text.len());
-            let chunk = &chunker_result.text[pos..end];
+        while pos < all_flows.len() {
+            let end = (pos + RECORD_SIZE).min(all_flows.len());
+            let chunk = &all_flows[pos..end];
 
             // Compress with PalmDOC
             let compressed = palmdoc::compress(chunk);
@@ -100,7 +232,116 @@ impl<'a> MobiBuilder<'a> {
 
         self.last_text_record = (self.records.len() - 1) as u16;
         self.chunker_result = Some(chunker_result);
+
+        // Store flow boundaries for FDST
+        // Flow 0: text (0 to text_length)
+        // Flow 1+: CSS flows
+        self.css_flows = rewritten_css;
+
         Ok(())
+    }
+
+    /// Rewrite HTML references to use kindle: URLs
+    fn rewrite_html_references(
+        &self,
+        html: &str,
+        html_href: &str,
+        css_flow_map: &HashMap<String, usize>,
+    ) -> String {
+        use regex_lite::Regex;
+
+        let mut result = html.to_string();
+
+        // Get the directory of this HTML file for resolving relative paths
+        let base_dir = std::path::Path::new(html_href)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Rewrite <link href="..."> to kindle:flow references
+        let link_re = Regex::new(r#"<link\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>"#).unwrap();
+        result = link_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                let href = &caps[1];
+                let full_tag = &caps[0];
+
+                // Resolve relative path
+                let resolved = resolve_href(&base_dir, href);
+
+                if let Some(&flow_idx) = css_flow_map.get(&resolved) {
+                    let flow_ref = to_base32(flow_idx);
+                    full_tag.replace(href, &format!("kindle:flow:{}?mime=text/css", flow_ref))
+                } else {
+                    full_tag.to_string()
+                }
+            })
+            .to_string();
+
+        // Rewrite <img src="..."> to kindle:embed references
+        let img_re = Regex::new(r#"<img\s+[^>]*src\s*=\s*["']([^"']+)["']"#).unwrap();
+        result = img_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                let src = &caps[1];
+                let full_match = &caps[0];
+
+                // Resolve relative path
+                let resolved = resolve_href(&base_dir, src);
+
+                if let Some(&res_idx) = self.resource_map.get(&resolved) {
+                    let embed_ref = to_base32(res_idx);
+                    // Get MIME type
+                    let mime = self
+                        .book
+                        .resources
+                        .get(&resolved)
+                        .map(|r| r.media_type.as_str())
+                        .unwrap_or("image/jpeg");
+                    full_match.replace(src, &format!("kindle:embed:{}?mime={}", embed_ref, mime))
+                } else {
+                    full_match.to_string()
+                }
+            })
+            .to_string();
+
+        result
+    }
+
+    /// Rewrite CSS url() references to kindle:embed
+    fn rewrite_css_references(&self, css: &str) -> String {
+        use regex_lite::Regex;
+
+        let mut result = css.to_string();
+
+        // Rewrite url(...) references
+        let url_re = Regex::new(r#"url\s*\(\s*["']?([^"')]+)["']?\s*\)"#).unwrap();
+        result = url_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                let url = &caps[1];
+
+                // Skip data: URLs and external URLs
+                if url.starts_with("data:") || url.starts_with("http") {
+                    return caps[0].to_string();
+                }
+
+                // Try to find the resource
+                // CSS files might reference ../fonts/foo.ttf or similar
+                let normalized = url.trim_start_matches("../").trim_start_matches("./");
+
+                // Try different path patterns
+                for href in self.resource_map.keys() {
+                    if href.ends_with(normalized) || href == normalized {
+                        let res_idx = self.resource_map[href];
+                        let embed_ref = to_base32(res_idx);
+                        return format!("url(kindle:embed:{})", embed_ref);
+                    }
+                }
+
+                // Not found, keep original
+                caps[0].to_string()
+            })
+            .to_string();
+
+        result
     }
 
     fn build_kf8_indices(&mut self) -> Result<()> {
@@ -159,7 +400,7 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_resource_records(&mut self) -> Result<()> {
-        // Add images
+        // Collect images
         let mut image_hrefs: Vec<_> = self
             .book
             .resources
@@ -169,13 +410,66 @@ impl<'a> MobiBuilder<'a> {
             .collect();
         image_hrefs.sort();
 
-        if !image_hrefs.is_empty() {
+        // Collect fonts
+        let mut font_hrefs: Vec<_> = self
+            .book
+            .resources
+            .iter()
+            .filter(|(_, r)| {
+                r.media_type.contains("font")
+                    || r.media_type == "application/x-font-ttf"
+                    || r.media_type == "application/x-font-opentype"
+                    || r.media_type == "application/vnd.ms-opentype"
+                    || r.media_type == "font/ttf"
+                    || r.media_type == "font/otf"
+                    || r.media_type == "font/woff"
+            })
+            .map(|(href, _)| href.clone())
+            .collect();
+        font_hrefs.sort();
+
+        // Collect CSS (for flow tracking - actual CSS goes in text flows)
+        let mut css_hrefs: Vec<_> = self
+            .book
+            .resources
+            .iter()
+            .filter(|(_, r)| r.media_type == "text/css")
+            .map(|(href, _)| href.clone())
+            .collect();
+        css_hrefs.sort();
+
+        // Store CSS flows (will be appended to text)
+        for href in &css_hrefs {
+            if let Some(resource) = self.book.resources.get(href) {
+                let css = String::from_utf8_lossy(&resource.data).to_string();
+                self.css_flows.push(css);
+            }
+        }
+
+        // Set first resource record if we have any resources
+        if !image_hrefs.is_empty() || !font_hrefs.is_empty() {
             self.first_resource_record = self.records.len() as u32;
         }
 
-        for href in image_hrefs {
-            if let Some(resource) = self.book.resources.get(&href) {
+        // Resource index counter (1-indexed for kindle:embed references)
+        let mut resource_idx = 1usize;
+
+        // Write images as raw data
+        for href in &image_hrefs {
+            if let Some(resource) = self.book.resources.get(href) {
+                self.resource_map.insert(href.clone(), resource_idx);
                 self.records.push(resource.data.clone());
+                resource_idx += 1;
+            }
+        }
+
+        // Write fonts as FONT records
+        for href in &font_hrefs {
+            if let Some(resource) = self.book.resources.get(href) {
+                self.resource_map.insert(href.clone(), resource_idx);
+                let font_record = write_font_record(&resource.data);
+                self.records.push(font_record);
+                resource_idx += 1;
             }
         }
 
@@ -183,13 +477,30 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_fdst_record(&mut self) -> Result<()> {
-        // FDST (Flow Descriptor Table) - single flow for our simple output
+        // FDST (Flow Descriptor Table) - supports multiple flows
+        // Flow 0: text content
+        // Flows 1+: CSS stylesheets
+
+        let num_flows = 1 + self.css_flows.len(); // text + CSS flows
+
         let mut fdst = Vec::new();
         fdst.extend_from_slice(b"FDST");
         fdst.extend_from_slice(&12u32.to_be_bytes()); // Offset to flow table
-        fdst.extend_from_slice(&1u32.to_be_bytes()); // Number of flows (1)
-        fdst.extend_from_slice(&0u32.to_be_bytes()); // Flow 0 start
-        fdst.extend_from_slice(&(self.text_length as u32).to_be_bytes()); // Flow 0 end
+        fdst.extend_from_slice(&(num_flows as u32).to_be_bytes());
+
+        // Flow 0: text (0 to text_length)
+        fdst.extend_from_slice(&0u32.to_be_bytes());
+        fdst.extend_from_slice(&(self.text_length as u32).to_be_bytes());
+
+        // Flow 1+: CSS flows
+        let mut offset = self.text_length;
+        for css in &self.css_flows {
+            let start = offset;
+            let end = offset + css.len();
+            fdst.extend_from_slice(&(start as u32).to_be_bytes());
+            fdst.extend_from_slice(&(end as u32).to_be_bytes());
+            offset = end;
+        }
 
         self.records.push(fdst);
         Ok(())
@@ -559,6 +870,33 @@ fn escape_xml(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Resolve a relative href against a base directory
+fn resolve_href(base_dir: &str, href: &str) -> String {
+    // Handle absolute paths
+    if href.starts_with('/') {
+        return href.trim_start_matches('/').to_string();
+    }
+
+    // Handle ../ paths
+    let mut parts: Vec<&str> = if base_dir.is_empty() {
+        Vec::new()
+    } else {
+        base_dir.split('/').collect()
+    };
+
+    for segment in href.split('/') {
+        match segment {
+            ".." => {
+                parts.pop();
+            }
+            "." | "" => {}
+            s => parts.push(s),
+        }
+    }
+
+    parts.join("/")
 }
 
 /// Flatten a hierarchical TOC into a linear list with depth info
