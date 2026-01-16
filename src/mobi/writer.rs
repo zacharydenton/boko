@@ -310,6 +310,33 @@ impl<'a> MobiBuilder<'a> {
             })
             .to_string();
 
+        // Rewrite <a href="..."> internal links to fragment-only references
+        // In KF8, all content is merged, so file.xhtml#anchor becomes #anchor
+        let anchor_re = Regex::new(r#"<a\s+([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>"#).unwrap();
+        result = anchor_re
+            .replace_all(&result, |caps: &regex_lite::Captures| {
+                let before = &caps[1];
+                let href = &caps[2];
+                let after = &caps[3];
+
+                // Skip external links and already-fragment links
+                if href.starts_with("http") || href.starts_with("mailto:") || href.starts_with("#") {
+                    return caps[0].to_string();
+                }
+
+                // Extract fragment if present (file.xhtml#anchor -> #anchor)
+                let new_href = if let Some(hash_pos) = href.find('#') {
+                    &href[hash_pos..] // Keep just #anchor
+                } else {
+                    // No fragment - link to file start. Use file name as anchor.
+                    // The skeleton/chunker should have added filepos markers
+                    "#"
+                };
+
+                format!("<a {}href=\"{}\"{}>", before, new_href, after)
+            })
+            .to_string();
+
         result
     }
 
@@ -632,7 +659,8 @@ impl<'a> MobiBuilder<'a> {
         // FDST (192-200)
         let fdst_record = (self.records.len() - 4) as u32; // FDST is 4 before end
         record0.extend_from_slice(&fdst_record.to_be_bytes());
-        record0.extend_from_slice(&1u32.to_be_bytes()); // FDST count
+        let fdst_count = 1 + self.css_flows.len() as u32; // 1 text flow + N CSS flows
+        record0.extend_from_slice(&fdst_count.to_be_bytes());
 
         // FCIS (200-208)
         let fcis_record = (self.records.len() - 2) as u32;
