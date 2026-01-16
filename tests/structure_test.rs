@@ -269,3 +269,108 @@ fn test_cover_preservation() {
         "Cover image should be preserved"
     );
 }
+
+// ============================================================================
+// TOC Text Preservation Tests
+// ============================================================================
+
+/// Test that TOC entries with special characters survive EPUB -> AZW3 -> EPUB roundtrip
+#[test]
+fn test_toc_text_preservation_roundtrip() {
+    use boko::{Book, write_epub, write_mobi};
+
+    // Create a book with special character TOC entries
+    let mut book = Book::new();
+    book.metadata.title = "Test Book".to_string();
+    book.metadata.identifier = "test-special-toc".to_string();
+    book.metadata.language = "en".to_string();
+
+    // Add content
+    let content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter</title></head>
+<body>
+<h1 id="ch1">What's in This Book?</h1>
+<p>Content here.</p>
+<h1 id="ch2">Don't Stop</h1>
+<p>More content.</p>
+</body>
+</html>"#;
+    book.add_resource(
+        "chapter.html".to_string(),
+        content.as_bytes().to_vec(),
+        "application/xhtml+xml".to_string(),
+    );
+    book.add_spine_item(
+        "ch1",
+        "chapter.html".to_string(),
+        "application/xhtml+xml".to_string(),
+    );
+
+    // Add TOC with special characters (curly apostrophe, etc.)
+    book.toc
+        .push(TocEntry::new("What's in This Book?", "chapter.html#ch1")); // curly apostrophe
+    book.toc
+        .push(TocEntry::new("Don't Stop", "chapter.html#ch2")); // straight apostrophe
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // EPUB -> AZW3
+    let azw3_path = temp_dir.path().join("test.azw3");
+    write_mobi(&book, &azw3_path).expect("Failed to write AZW3");
+
+    // Read AZW3
+    let azw3_book = read_mobi(&azw3_path).expect("Failed to read AZW3");
+
+    // Check TOC entries
+    println!("AZW3 TOC entries:");
+    for entry in &azw3_book.toc {
+        println!("  - '{}'", entry.title);
+    }
+
+    // Find the entries
+    fn find_title_containing<'a>(toc: &'a [TocEntry], substr: &str) -> Option<&'a str> {
+        for entry in toc {
+            if entry.title.contains(substr) {
+                return Some(&entry.title);
+            }
+            if let Some(found) = find_title_containing(&entry.children, substr) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    // Check "What's in This Book?" - should contain "What" at start
+    let whats_entry = find_title_containing(&azw3_book.toc, "This Book");
+    assert!(
+        whats_entry.is_some(),
+        "Should find TOC entry containing 'This Book'"
+    );
+    let whats_title = whats_entry.unwrap();
+    assert!(
+        whats_title.starts_with("What"),
+        "TOC entry '{}' should start with 'What'",
+        whats_title
+    );
+
+    // AZW3 -> EPUB
+    let epub_path = temp_dir.path().join("roundtrip.epub");
+    write_epub(&azw3_book, &epub_path).expect("Failed to write EPUB");
+
+    // Read roundtripped EPUB
+    let epub_book = read_epub(&epub_path).expect("Failed to read EPUB");
+
+    // Check TOC again
+    println!("Roundtrip EPUB TOC entries:");
+    for entry in &epub_book.toc {
+        println!("  - '{}'", entry.title);
+    }
+
+    let epub_whats = find_title_containing(&epub_book.toc, "This Book");
+    assert!(
+        epub_whats.is_some() && epub_whats.unwrap().starts_with("What"),
+        "Roundtrip EPUB TOC should preserve 'What's in This Book?'"
+    );
+}
