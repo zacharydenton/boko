@@ -318,10 +318,21 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
-    let mut stack: Vec<Vec<TocEntry>> = vec![Vec::new()];
-    let mut current_text: Option<String> = None;
-    let mut current_src: Option<String> = None;
-    let mut current_play_order: Option<usize> = None;
+    // State for each navPoint level: (children, text, src, play_order)
+    // We need to save/restore these when entering/exiting nested navPoints
+    struct NavPointState {
+        children: Vec<TocEntry>,
+        text: Option<String>,
+        src: Option<String>,
+        play_order: Option<usize>,
+    }
+
+    let mut stack: Vec<NavPointState> = vec![NavPointState {
+        children: Vec::new(),
+        text: None,
+        src: None,
+        play_order: None,
+    }];
     let mut in_text = false;
 
     loop {
@@ -332,15 +343,22 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 let local = local_name(name_bytes);
                 match local {
                     b"navPoint" => {
-                        stack.push(Vec::new());
                         // Extract playOrder attribute
+                        let mut play_order = None;
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"playOrder"
                                 && let Ok(order_str) = String::from_utf8(attr.value.to_vec())
                             {
-                                current_play_order = order_str.parse().ok();
+                                play_order = order_str.parse().ok();
                             }
                         }
+                        // Push new state for this navPoint
+                        stack.push(NavPointState {
+                            children: Vec::new(),
+                            text: None,
+                            src: None,
+                            play_order,
+                        });
                     }
                     b"text" => in_text = true,
                     _ => {}
@@ -353,14 +371,18 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 if local == b"content" {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"src" {
-                            current_src = Some(String::from_utf8(attr.value.to_vec())?);
+                            if let Some(state) = stack.last_mut() {
+                                state.src = Some(String::from_utf8(attr.value.to_vec())?);
+                            }
                         }
                     }
                 }
             }
             Ok(Event::Text(e)) => {
                 if in_text {
-                    current_text = Some(e.unescape().unwrap_or_default().to_string());
+                    if let Some(state) = stack.last_mut() {
+                        state.text = Some(e.unescape().unwrap_or_default().to_string());
+                    }
                 }
             }
             Ok(Event::End(e)) => {
@@ -370,14 +392,15 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 match local {
                     b"text" => in_text = false,
                     b"navPoint" => {
-                        if let (Some(text), Some(src)) = (current_text.take(), current_src.take()) {
-                            let children = stack.pop().unwrap_or_default();
-                            let mut entry = TocEntry::new(text, src);
-                            entry.children = children;
-                            entry.play_order = current_play_order.take();
+                        if let Some(state) = stack.pop() {
+                            if let (Some(text), Some(src)) = (state.text, state.src) {
+                                let mut entry = TocEntry::new(text, src);
+                                entry.children = state.children;
+                                entry.play_order = state.play_order;
 
-                            if let Some(parent) = stack.last_mut() {
-                                parent.push(entry);
+                                if let Some(parent) = stack.last_mut() {
+                                    parent.children.push(entry);
+                                }
                             }
                         }
                     }
@@ -390,7 +413,7 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
         }
     }
 
-    Ok(stack.pop().unwrap_or_default())
+    Ok(stack.pop().map(|s| s.children).unwrap_or_default())
 }
 
 fn read_archive_file<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Result<String> {

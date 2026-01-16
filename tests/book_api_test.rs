@@ -130,7 +130,6 @@ fn test_create_and_write_minimal_book() {
 }
 
 #[test]
-#[ignore = "NCX parser doesn't correctly read nested navPoints - see parser for fix"]
 fn test_create_book_with_nested_toc() {
     let mut book = Book::new();
     book.metadata = Metadata::new("Nested TOC Test")
