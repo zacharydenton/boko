@@ -114,16 +114,25 @@ pub struct ChunkerResult {
     pub skel_table: Vec<SkelEntry>,
     pub chunk_table: Vec<ChunkEntry>,
     pub text: Vec<u8>,
+    /// Maps (file_href, anchor_id) -> aid for link resolution
+    pub id_map: HashMap<(String, String), String>,
+    /// Maps aid -> (chunk_sequence_number, offset_in_chunk, offset_in_text)
+    pub aid_offset_map: HashMap<String, (usize, usize, usize)>,
 }
 
 /// Chunker - breaks HTML files into skeletons and chunks
 pub struct Chunker {
     aid_counter: u32,
+    /// Mapping of (file, id) -> aid built during processing
+    id_map: HashMap<(String, String), String>,
 }
 
 impl Chunker {
     pub fn new() -> Self {
-        Self { aid_counter: 0 }
+        Self {
+            aid_counter: 0,
+            id_map: HashMap::new(),
+        }
     }
 
     /// Generate a unique aid value
@@ -138,8 +147,8 @@ impl Chunker {
         let mut skeletons = Vec::new();
         let mut start_pos = 0;
 
-        for (i, (_filename, html)) in html_files.iter().enumerate() {
-            let skeleton = self.process_file(i, html, start_pos);
+        for (i, (file_href, html)) in html_files.iter().enumerate() {
+            let skeleton = self.process_file(i, file_href, html, start_pos);
             start_pos += skeleton.len();
             skeletons.push(skeleton);
         }
@@ -156,59 +165,115 @@ impl Chunker {
             })
             .collect();
 
+        // Create virtual chunk entries to cover the entire text
+        // Each chunk covers CHUNK_SIZE bytes for link resolution
         let mut chunk_table = Vec::new();
-        let mut seq_num = 0;
+        let mut text_offset = 0usize;
+        let mut seq_num = 0usize;
+
         for skel in &skeletons {
-            for chunk in &skel.chunks {
+            // Create one chunk entry per skeleton file covering its content
+            let skel_len = skel.skeleton.len();
+            if skel_len > 0 {
                 chunk_table.push(ChunkEntry {
-                    insert_pos: chunk.insert_pos,
-                    selector: chunk.selector.clone(),
+                    insert_pos: text_offset,
+                    selector: format!("P-//*[@aid='0000']"),
                     file_number: skel.file_number,
                     sequence_number: seq_num,
-                    start_pos: chunk.start_pos,
-                    length: chunk.raw.len(),
+                    start_pos: 0,
+                    length: skel_len,
                 });
                 seq_num += 1;
             }
+            text_offset += skel_len;
         }
 
         // Combine all text
         let text: Vec<u8> = skeletons.iter().flat_map(|s| s.raw_text()).collect();
+
+        // Build aid_offset_map by finding all aid attributes in the text
+        let aid_offset_map = self.build_aid_offset_map(&text, &chunk_table);
 
         ChunkerResult {
             skeletons,
             skel_table,
             chunk_table,
             text,
+            id_map: std::mem::take(&mut self.id_map),
+            aid_offset_map,
         }
     }
 
+    /// Build map of aid -> (chunk_sequence_number, offset_in_chunk, offset_in_text)
+    fn build_aid_offset_map(
+        &self,
+        text: &[u8],
+        chunk_table: &[ChunkEntry],
+    ) -> HashMap<String, (usize, usize, usize)> {
+        use regex_lite::Regex;
+
+        let mut aid_offset_map = HashMap::new();
+        let text_str = String::from_utf8_lossy(text);
+
+        // Find all aid="..." attributes
+        let aid_re = Regex::new(r#"\said=['"]([\dA-V]+)['"]"#).unwrap();
+
+        for cap in aid_re.captures_iter(&text_str) {
+            let aid = cap[1].to_string();
+            let offset = cap.get(0).unwrap().start();
+
+            // Find which chunk this offset is in
+            // Since we don't do real chunking yet, use a simple approach:
+            // sequence_number = 0 for first skeleton, offset_in_chunk = offset
+            let (seq_num, offset_in_chunk) = if chunk_table.is_empty() {
+                // No chunks, treat whole text as one chunk
+                (0usize, offset)
+            } else {
+                // Find the chunk containing this offset
+                let mut found_seq = 0usize;
+                let mut found_offset = offset;
+                for chunk in chunk_table {
+                    let chunk_start = chunk.insert_pos;
+                    let chunk_end = chunk_start + chunk.length;
+                    if offset >= chunk_start && offset < chunk_end {
+                        found_seq = chunk.sequence_number;
+                        found_offset = offset - chunk_start;
+                        break;
+                    }
+                }
+                (found_seq, found_offset)
+            };
+
+            aid_offset_map.insert(aid, (seq_num, offset_in_chunk, offset));
+        }
+
+        aid_offset_map
+    }
+
     /// Process a single HTML file
-    fn process_file(&mut self, file_number: usize, html: &[u8], start_pos: usize) -> Skeleton {
-        // For now, simple implementation: add aids and don't chunk
-        // A full implementation would parse HTML, add aids to aidable tags,
-        // and break large content into chunks
+    fn process_file(&mut self, file_number: usize, file_href: &str, html: &[u8], start_pos: usize) -> Skeleton {
+        // Simple implementation: add aids, no actual chunking
+        // Full HTML goes to skeleton, chunks are empty (content stays in skeleton)
 
         let html_str = String::from_utf8_lossy(html);
-        let mut result = self.add_aid_attributes(&html_str);
+        let result = self.add_aid_attributes(file_href, &html_str);
 
         // Find body offset
         let body_offset = result.find("<body").unwrap_or(0);
 
-        // For simple case: no chunking, entire body content is one chunk
         let skeleton_bytes = result.as_bytes().to_vec();
 
         Skeleton {
             file_number,
             skeleton: skeleton_bytes,
-            chunks: Vec::new(), // No chunking for now
+            chunks: Vec::new(), // No chunking - content stays in skeleton
             start_pos,
             body_offset,
         }
     }
 
-    /// Add aid attributes to aidable tags
-    fn add_aid_attributes(&mut self, html: &str) -> String {
+    /// Add aid attributes to aidable tags and record id->aid mappings
+    fn add_aid_attributes(&mut self, file_href: &str, html: &str) -> String {
         use regex_lite::Regex;
 
         // Pattern to find opening tags of aidable elements
@@ -217,6 +282,9 @@ impl Chunker {
             AID_ABLE_TAGS.join("|")
         );
         let re = Regex::new(&tag_pattern).unwrap();
+        let id_re = Regex::new(r#"\bid=['"]([\w\-:\.]+)['"]"#).unwrap();
+
+        let file_href_owned = file_href.to_string();
 
         re.replace_all(html, |caps: &regex_lite::Captures| {
             let tag = &caps[1];
@@ -228,6 +296,18 @@ impl Chunker {
             }
 
             let aid = self.next_aid();
+
+            // If this element has an id attribute, record the mapping
+            if let Some(id_cap) = id_re.captures(attrs) {
+                let id = id_cap[1].to_string();
+                self.id_map.insert((file_href_owned.clone(), id), aid.clone());
+            }
+
+            // For body tag, also map empty string to this aid (links to file without fragment)
+            if tag == "body" {
+                self.id_map.insert((file_href_owned.clone(), String::new()), aid.clone());
+            }
+
             if attrs.is_empty() {
                 format!("<{} aid=\"{}\">", tag, aid)
             } else {
@@ -275,7 +355,7 @@ mod tests {
     fn test_add_aids() {
         let mut chunker = Chunker::new();
         let html = "<html><body><p>Hello</p><div>World</div></body></html>";
-        let result = chunker.add_aid_attributes(html);
+        let result = chunker.add_aid_attributes("test.xhtml", html);
         assert!(result.contains("aid=\"0000\""));
         assert!(result.contains("aid=\"0001\""));
     }

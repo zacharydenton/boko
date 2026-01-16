@@ -1,3 +1,13 @@
+/// PalmDOC LZ77 compression/decompression
+///
+/// Uses the palmdoc-compression crate for fast compression with hash chains.
+/// Decompression is kept local for reading existing files.
+
+/// PalmDOC LZ77 compression using fast hash-chain implementation
+pub fn compress(input: &[u8]) -> Vec<u8> {
+    palmdoc_compression::compress(input)
+}
+
 /// PalmDOC LZ77 decompression
 ///
 /// The compression scheme is simple:
@@ -6,8 +16,16 @@
 /// - Bytes 0x80-0xBF: Back-reference (LZ77)
 ///   - Combined with next byte: distance = (val & 0x3FFF) >> 3, length = (val & 7) + 3
 /// - Bytes 0xC0-0xFF: Space + (byte ^ 0x80)
-
 pub fn decompress(input: &[u8]) -> Vec<u8> {
+    // Use the crate's implementation
+    palmdoc_compression::decompress(input).unwrap_or_else(|_| {
+        // Fallback to manual decompression on error
+        decompress_manual(input)
+    })
+}
+
+/// Manual decompression implementation (fallback)
+fn decompress_manual(input: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(input.len() * 4);
     let mut i = 0;
 
@@ -51,84 +69,6 @@ pub fn decompress(input: &[u8]) -> Vec<u8> {
     }
 
     output
-}
-
-/// PalmDOC LZ77 compression
-pub fn compress(input: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(input.len());
-    let mut i = 0;
-
-    while i < input.len() {
-        // Try to find a back-reference
-        if i > 10 && (input.len() - i) > 10 {
-            let mut found = false;
-            for chunk_len in (3..=10).rev() {
-                if let Some(dist) = find_match(input, i, chunk_len) {
-                    if dist <= 2047 {
-                        let compound = (dist << 3) | (chunk_len - 3);
-                        output.push(0x80 | ((compound >> 8) as u8));
-                        output.push((compound & 0xFF) as u8);
-                        i += chunk_len;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if found {
-                continue;
-            }
-        }
-
-        let c = input[i];
-        i += 1;
-
-        // Try space + ASCII optimization
-        if c == b' ' && i < input.len() {
-            let next = input[i];
-            if next >= 0x40 && next <= 0x7F {
-                output.push(next ^ 0x80);
-                i += 1;
-                continue;
-            }
-        }
-
-        // Literal bytes
-        if c == 0 || (c > 8 && c < 0x80) {
-            output.push(c);
-        } else {
-            // Binary data (bytes 1-8 or >= 0x80)
-            let start = i - 1;
-            let mut binary_data = vec![c];
-
-            while i < input.len() && binary_data.len() < 8 {
-                let next = input[i];
-                if next == 0 || (next > 8 && next < 0x80) {
-                    break;
-                }
-                binary_data.push(next);
-                i += 1;
-            }
-
-            output.push(binary_data.len() as u8);
-            output.extend_from_slice(&binary_data);
-        }
-    }
-
-    output
-}
-
-fn find_match(data: &[u8], pos: usize, len: usize) -> Option<usize> {
-    if pos < len {
-        return None;
-    }
-
-    let pattern = &data[pos..pos + len];
-    for i in (0..pos - len + 1).rev() {
-        if &data[i..i + len] == pattern {
-            return Some(pos - i);
-        }
-    }
-    None
 }
 
 #[cfg(test)]

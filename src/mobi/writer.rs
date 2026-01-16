@@ -83,8 +83,8 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
     record
 }
 
-/// Convert a number to base32 with minimum 4 digits (0-9A-V)
-fn to_base32(mut num: usize) -> String {
+/// Convert a number to base32 with specified minimum digits (0-9A-V)
+fn to_base32_with_digits(mut num: usize, min_digits: usize) -> String {
     const DIGITS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
     let mut result = Vec::new();
 
@@ -97,13 +97,23 @@ fn to_base32(mut num: usize) -> String {
         }
     }
 
-    // Pad to 4 digits minimum
-    while result.len() < 4 {
+    // Pad to minimum digits
+    while result.len() < min_digits {
         result.push(b'0');
     }
 
     result.reverse();
     String::from_utf8(result).unwrap()
+}
+
+/// Convert a number to base32 with minimum 4 digits (0-9A-V)
+fn to_base32(num: usize) -> String {
+    to_base32_with_digits(num, 4)
+}
+
+/// Convert a number to base32 with 10 digits for link offsets
+fn to_base32_10(num: usize) -> String {
+    to_base32_with_digits(num, 10)
 }
 
 /// Write a Book to a MOBI/AZW3 file
@@ -139,6 +149,10 @@ struct MobiBuilder<'a> {
     image_hrefs: Vec<String>,
     /// Ordered list of font hrefs (for writing after images)
     font_hrefs: Vec<String>,
+    /// Counter for link placeholders
+    link_counter: usize,
+    /// Maps placeholder -> (target_file_href, target_fragment)
+    link_map: HashMap<String, (String, String)>,
 }
 
 impl<'a> MobiBuilder<'a> {
@@ -158,6 +172,8 @@ impl<'a> MobiBuilder<'a> {
             flows_length: 0,
             image_hrefs: Vec::new(),
             font_hrefs: Vec::new(),
+            link_counter: 0,
+            link_map: HashMap::new(),
         };
 
         builder.collect_resources()?;      // Build resource_map (no records yet)
@@ -211,10 +227,17 @@ impl<'a> MobiBuilder<'a> {
         // Process HTML with chunker (adds aids, prepares for KF8)
         let mut chunker = Chunker::new();
         let chunker_result = chunker.process(&html_files);
-        self.text_length = chunker_result.text.len();
+
+        // Resolve internal link placeholders now that we have aid mappings
+        let resolved_text = self.resolve_link_placeholders(
+            &chunker_result.text,
+            &chunker_result.id_map,
+            &chunker_result.aid_offset_map,
+        );
+        self.text_length = resolved_text.len();
 
         // Build combined flow data: text (flow 0) + CSS flows (1+)
-        let mut all_flows = chunker_result.text.clone();
+        let mut all_flows = resolved_text;
         for css in &rewritten_css {
             all_flows.extend_from_slice(css.as_bytes());
         }
@@ -250,7 +273,7 @@ impl<'a> MobiBuilder<'a> {
 
     /// Rewrite HTML references to use kindle: URLs
     fn rewrite_html_references(
-        &self,
+        &mut self,
         html: &str,
         html_href: &str,
         css_flow_map: &HashMap<String, usize>,
@@ -310,34 +333,124 @@ impl<'a> MobiBuilder<'a> {
             })
             .to_string();
 
-        // Rewrite <a href="..."> internal links to fragment-only references
-        // In KF8, all content is merged, so file.xhtml#anchor becomes #anchor
+        // Rewrite <a href="..."> internal links to kindle:pos:fid placeholders
+        // These will be resolved after chunking when we know anchor positions
         let anchor_re = Regex::new(r#"<a\s+([^>]*)href\s*=\s*["']([^"']+)["']([^>]*)>"#).unwrap();
+
+        // Collect spine hrefs for checking if links are internal
+        let spine_hrefs: std::collections::HashSet<_> = self.book.spine.iter().map(|s| s.href.as_str()).collect();
+
+        // Use a RefCell to allow mutation inside closure
+        use std::cell::RefCell;
+        let link_counter = RefCell::new(self.link_counter);
+        let link_map: RefCell<Vec<(String, String, String)>> = RefCell::new(Vec::new());
+
+        let base_dir_owned = base_dir.clone();
+        let html_href_owned = html_href.to_string();
+
         result = anchor_re
             .replace_all(&result, |caps: &regex_lite::Captures| {
+                let full_match = &caps[0];
                 let before = &caps[1];
                 let href = &caps[2];
                 let after = &caps[3];
 
-                // Skip external links and already-fragment links
-                if href.starts_with("http") || href.starts_with("mailto:") || href.starts_with("#") {
-                    return caps[0].to_string();
+                // Skip external links and kindle: links
+                if href.starts_with("http") || href.starts_with("mailto:") || href.starts_with("kindle:") {
+                    return full_match.to_string();
                 }
 
-                // Extract fragment if present (file.xhtml#anchor -> #anchor)
-                let new_href = if let Some(hash_pos) = href.find('#') {
-                    &href[hash_pos..] // Keep just #anchor
+                // Resolve the href to get target file and fragment
+                let (target_file, fragment) = if let Some(hash_pos) = href.find('#') {
+                    let file_part = &href[..hash_pos];
+                    let frag_part = &href[hash_pos + 1..];
+                    if file_part.is_empty() {
+                        // Fragment-only link like #anchor - resolve to current file
+                        (html_href_owned.clone(), frag_part.to_string())
+                    } else {
+                        (resolve_href(&base_dir_owned, file_part), frag_part.to_string())
+                    }
                 } else {
-                    // No fragment - link to file start. Use file name as anchor.
-                    // The skeleton/chunker should have added filepos markers
-                    "#"
+                    // Link to file without fragment
+                    (resolve_href(&base_dir_owned, href), String::new())
                 };
 
-                format!("<a {}href=\"{}\"{}>", before, new_href, after)
+                // Only create placeholders for internal links
+                if spine_hrefs.contains(target_file.as_str()) {
+                    let mut counter = link_counter.borrow_mut();
+                    *counter += 1;
+                    let placeholder = format!("kindle:pos:fid:0000:off:{}", to_base32_10(*counter));
+                    link_map.borrow_mut().push((placeholder.clone(), target_file, fragment));
+                    format!("<a {}href=\"{}\"{}>", before, placeholder, after)
+                } else {
+                    // Keep non-internal links as-is
+                    full_match.to_string()
+                }
             })
             .to_string();
 
+        // Update self with the collected data
+        self.link_counter = *link_counter.borrow();
+        for (placeholder, target_file, fragment) in link_map.into_inner() {
+            self.link_map.insert(placeholder, (target_file, fragment));
+        }
+
         result
+    }
+
+    /// Resolve link placeholders after chunking
+    /// Replaces kindle:pos:fid:0000:off:XXXXXXXXXX with actual positions
+    fn resolve_link_placeholders(
+        &self,
+        text: &[u8],
+        id_map: &HashMap<(String, String), String>,
+        aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+    ) -> Vec<u8> {
+        use regex_lite::Regex;
+
+        let text_str = String::from_utf8_lossy(text);
+        let mut result = text_str.to_string();
+
+        // Pattern to match placeholder links: kindle:pos:fid:0000:off:XXXXXXXXXX
+        let placeholder_re = Regex::new(r"kindle:pos:fid:0000:off:([0-9A-V]{10})").unwrap();
+
+        // Build replacement map
+        let mut replacements: Vec<(String, String)> = Vec::new();
+
+        for caps in placeholder_re.captures_iter(&text_str) {
+            let full_match = caps[0].to_string();
+
+            // Look up this placeholder in link_map to get target
+            if let Some((target_file, fragment)) = self.link_map.get(&full_match) {
+                // Look up the target in id_map to get the aid
+                let key = (target_file.clone(), fragment.clone());
+                let aid = id_map.get(&key)
+                    .or_else(|| {
+                        // Fall back to file body (empty fragment)
+                        id_map.get(&(target_file.clone(), String::new()))
+                    });
+
+                if let Some(aid) = aid {
+                    // Look up the aid in aid_offset_map to get position
+                    if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) = aid_offset_map.get(aid) {
+                        // Create the final link: kindle:pos:fid:NNNN:off:OOOOOOOOOO
+                        let replacement = format!(
+                            "kindle:pos:fid:{}:off:{}",
+                            to_base32(seq_num),
+                            to_base32_10(offset_in_chunk)
+                        );
+                        replacements.push((full_match, replacement));
+                    }
+                }
+            }
+        }
+
+        // Apply replacements
+        for (from, to) in replacements {
+            result = result.replacen(&from, &to, 1);
+        }
+
+        result.into_bytes()
     }
 
     /// Rewrite CSS url() references to kindle:embed
@@ -415,17 +528,25 @@ impl<'a> MobiBuilder<'a> {
 
         // Build NCX index for table of contents
         if !self.book.toc.is_empty() {
-            // Flatten TOC entries (including children) into a list with depth
-            let ncx_entries = flatten_toc(&self.book.toc, 0, self.text_length as u32);
+            if let Some(ref chunker_result) = self.chunker_result {
+                // Flatten TOC entries (including children) into a list with depth
+                let ncx_entries = flatten_toc(
+                    &self.book.toc,
+                    0,
+                    self.text_length as u32,
+                    &chunker_result.id_map,
+                    &chunker_result.aid_offset_map,
+                );
 
-            if !ncx_entries.is_empty() {
-                self.ncx_index = self.records.len() as u32;
-                let (ncx_records, ncx_cncx) = build_ncx_indx(&ncx_entries);
-                for record in ncx_records {
-                    self.records.push(record);
-                }
-                if !ncx_cncx.is_empty() {
-                    self.records.push(ncx_cncx);
+                if !ncx_entries.is_empty() {
+                    self.ncx_index = self.records.len() as u32;
+                    let (ncx_records, ncx_cncx) = build_ncx_indx(&ncx_entries);
+                    for record in ncx_records {
+                        self.records.push(record);
+                    }
+                    if !ncx_cncx.is_empty() {
+                        self.records.push(ncx_cncx);
+                    }
                 }
             }
         }
@@ -949,19 +1070,40 @@ fn resolve_href(base_dir: &str, href: &str) -> String {
 }
 
 /// Flatten a hierarchical TOC into a linear list with depth info
-fn flatten_toc(entries: &[crate::book::TocEntry], depth: u32, text_length: u32) -> Vec<NcxBuildEntry> {
+fn flatten_toc(
+    entries: &[crate::book::TocEntry],
+    depth: u32,
+    text_length: u32,
+    id_map: &HashMap<(String, String), String>,
+    aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+) -> Vec<NcxBuildEntry> {
     let mut result = Vec::new();
 
     for entry in entries {
+        // Parse the href to get file and fragment
+        let (file, fragment) = if let Some(hash_pos) = entry.href.find('#') {
+            (entry.href[..hash_pos].to_string(), entry.href[hash_pos + 1..].to_string())
+        } else {
+            (entry.href.clone(), String::new())
+        };
+
+        // Look up position: href -> aid -> offset_in_text
+        let pos = id_map
+            .get(&(file.clone(), fragment.clone()))
+            .or_else(|| id_map.get(&(file, String::new()))) // Fall back to file body
+            .and_then(|aid| aid_offset_map.get(aid))
+            .map(|&(_seq, _off_chunk, off_text)| off_text as u32)
+            .unwrap_or(0);
+
         result.push(NcxBuildEntry {
-            pos: 0, // Simplified: all entries point to start
-            length: text_length,
+            pos,
+            length: text_length.saturating_sub(pos),
             label: entry.title.clone(),
             depth,
         });
 
         // Recursively add children
-        result.extend(flatten_toc(&entry.children, depth + 1, text_length));
+        result.extend(flatten_toc(&entry.children, depth + 1, text_length, id_map, aid_offset_map));
     }
 
     result

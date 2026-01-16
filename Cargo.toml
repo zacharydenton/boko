@@ -19,5 +19,8 @@ markup5ever_rcdom = "0.36"
 cssparser = "0.36"
 regex-lite = "0.1"
 
+# PalmDOC compression (fast LZ77 with hash chains)
+palmdoc-compression = "0.3"
+
 [dev-dependencies]
 tempfile = "3.14"
