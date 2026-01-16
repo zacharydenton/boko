@@ -173,15 +173,15 @@ impl<'a> MobiBuilder<'a> {
 
     fn build_text_records(&mut self) -> Result<()> {
         // Build CSS href -> flow index map (flow 0 is text, CSS starts at 1)
-        let css_hrefs: Vec<_> = self
+        // MUST be sorted to match the order in collect_resources() / css_flows
+        let mut css_hrefs: Vec<_> = self
             .book
             .resources
             .iter()
             .filter(|(_, r)| r.media_type == "text/css")
             .map(|(href, _)| href.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
             .collect();
+        css_hrefs.sort();
 
         let mut css_flow_map: HashMap<String, usize> = HashMap::new();
         for (i, href) in css_hrefs.iter().enumerate() {
