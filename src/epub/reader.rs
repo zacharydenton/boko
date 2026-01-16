@@ -243,12 +243,27 @@ fn parse_opf(content: &str, _opf_dir: &str) -> Result<OpfData> {
                 }
             }
             Ok(Event::GeneralRef(e)) => {
+<<<<<<< HEAD
                 // Handle entity references like &apos; &lt; and numeric refs like &#x2019;
                 if current_element.is_some() {
                     let entity = String::from_utf8_lossy(e.as_ref());
                     if let Some(resolved) = resolve_entity(&entity) {
                         buf_text.push_str(&resolved);
                     }
+=======
+                // Handle entity references like &apos; &lt; etc
+                if current_element.is_some() {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    let resolved = match entity.as_ref() {
+                        "apos" => "'",
+                        "quot" => "\"",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "amp" => "&",
+                        _ => "",
+                    };
+                    buf_text.push_str(resolved);
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
                 }
             }
             Ok(Event::End(e)) => {
@@ -398,6 +413,7 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 }
             }
             Ok(Event::GeneralRef(e)) => {
+<<<<<<< HEAD
                 // Handle entity references like &apos; &lt; and numeric refs like &#x2019;
                 if in_text && let Some(state) = stack.last_mut() {
                     let entity = String::from_utf8_lossy(e.as_ref());
@@ -406,6 +422,22 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                             Some(existing) => existing.push_str(&resolved),
                             None => state.text = Some(resolved),
                         }
+=======
+                // Handle entity references like &apos; &lt; etc
+                if in_text && let Some(state) = stack.last_mut() {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    let resolved = match entity.as_ref() {
+                        "apos" => "'",
+                        "quot" => "\"",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "amp" => "&",
+                        _ => "",
+                    };
+                    match &mut state.text {
+                        Some(existing) => existing.push_str(resolved),
+                        None => state.text = Some(resolved.to_string()),
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
                     }
                 }
             }
@@ -544,7 +576,10 @@ mod tests {
 
     #[test]
     fn test_xml_entity_parsing() {
+<<<<<<< HEAD
         // Test named entity &apos;
+=======
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
         let xml = r#"<text>Don&apos;t Stop</text>"#;
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
@@ -558,14 +593,27 @@ mod tests {
                 }
                 Ok(Event::GeneralRef(e)) => {
                     let entity = String::from_utf8_lossy(e.as_ref());
+<<<<<<< HEAD
                     if let Some(resolved) = resolve_entity(&entity) {
                         full_text.push_str(&resolved);
                     }
+=======
+                    let resolved = match entity.as_ref() {
+                        "apos" => "'",
+                        "quot" => "\"",
+                        "lt" => "<",
+                        "gt" => ">",
+                        "amp" => "&",
+                        _ => "",
+                    };
+                    full_text.push_str(resolved);
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
                 }
                 Ok(Event::Eof) => break,
                 _ => {}
             }
         }
+<<<<<<< HEAD
         assert_eq!(full_text, "Don't Stop");
     }
 
@@ -596,4 +644,9 @@ mod tests {
         // U+2019 is the curly apostrophe '
         assert_eq!(full_text, "What\u{2019}s in This Book?");
     }
+=======
+        println!("Full text: {:?}", full_text);
+        assert_eq!(full_text, "Don't Stop");
+    }
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
 }

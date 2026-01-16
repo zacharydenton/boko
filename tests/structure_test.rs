@@ -308,6 +308,7 @@ fn test_toc_text_preservation_roundtrip() {
         "application/xhtml+xml".to_string(),
     );
 
+<<<<<<< HEAD
     // Add TOC with special characters
     // Use \u{2019} for curly apostrophe (RIGHT SINGLE QUOTATION MARK)
     book.toc.push(TocEntry::new(
@@ -316,6 +317,13 @@ fn test_toc_text_preservation_roundtrip() {
     )); // curly apostrophe '
     book.toc
         .push(TocEntry::new("Don't Stop", "chapter.html#ch2")); // straight apostrophe '
+=======
+    // Add TOC with special characters (curly apostrophe, etc.)
+    book.toc
+        .push(TocEntry::new("What's in This Book?", "chapter.html#ch1")); // curly apostrophe
+    book.toc
+        .push(TocEntry::new("Don't Stop", "chapter.html#ch2")); // straight apostrophe
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
 
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
@@ -373,6 +381,7 @@ fn test_toc_text_preservation_roundtrip() {
 
     let epub_whats = find_title_containing(&epub_book.toc, "This Book");
     assert!(
+<<<<<<< HEAD
         epub_whats.is_some(),
         "Should find TOC entry containing 'This Book'"
     );
@@ -388,5 +397,9 @@ fn test_toc_text_preservation_roundtrip() {
     assert!(
         epub_dont.is_some() && epub_dont.unwrap().contains('\''),
         "Roundtrip EPUB TOC should preserve straight apostrophe in 'Don't Stop'"
+=======
+        epub_whats.is_some() && epub_whats.unwrap().starts_with("What"),
+        "Roundtrip EPUB TOC should preserve 'What's in This Book?'"
+>>>>>>> 10d0eaec3ef7d58980238edb95c1ab0eac345849
     );
 }
