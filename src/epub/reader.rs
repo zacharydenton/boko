@@ -370,20 +370,18 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 let local = local_name(name_bytes);
                 if local == b"content" {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"src" {
-                            if let Some(state) = stack.last_mut() {
+                        if attr.key.as_ref() == b"src"
+                            && let Some(state) = stack.last_mut() {
                                 state.src = Some(String::from_utf8(attr.value.to_vec())?);
                             }
-                        }
                     }
                 }
             }
             Ok(Event::Text(e)) => {
-                if in_text {
-                    if let Some(state) = stack.last_mut() {
+                if in_text
+                    && let Some(state) = stack.last_mut() {
                         state.text = Some(e.unescape().unwrap_or_default().to_string());
                     }
-                }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
@@ -392,8 +390,8 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                 match local {
                     b"text" => in_text = false,
                     b"navPoint" => {
-                        if let Some(state) = stack.pop() {
-                            if let (Some(text), Some(src)) = (state.text, state.src) {
+                        if let Some(state) = stack.pop()
+                            && let (Some(text), Some(src)) = (state.text, state.src) {
                                 let mut entry = TocEntry::new(text, src);
                                 entry.children = state.children;
                                 entry.play_order = state.play_order;
@@ -402,7 +400,6 @@ fn parse_ncx(content: &str) -> Result<Vec<TocEntry>> {
                                     parent.children.push(entry);
                                 }
                             }
-                        }
                     }
                     _ => {}
                 }

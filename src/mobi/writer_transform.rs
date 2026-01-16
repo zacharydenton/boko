@@ -537,7 +537,7 @@ pub fn add_aid_attributes_fast(
                 let tag_end = tag_start + tag_end_rel + 1;
                 let tag = &html[tag_start..tag_end];
 
-                if is_aidable && !tag.find(b"aid=").is_some() {
+                if is_aidable && tag.find(b"aid=").is_none() {
                     // Generate aid
                     let mut aid_buf = [0u8; 4];
                     write_base32_4(*aid_counter as usize, &mut aid_buf);
