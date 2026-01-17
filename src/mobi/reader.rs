@@ -1287,7 +1287,7 @@ fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> Stri
 
         if base32_end > 0 {
             let base32_str = &after_prefix[..base32_end];
-            let idx = parse_kindle_base32(&String::from_utf8_lossy(base32_str));
+            let idx = super::parse_base32(base32_str);
             let resource_idx = if idx > 0 { idx - 1 } else { 0 };
 
             // Look up resource path
@@ -1642,24 +1642,6 @@ fn escape_xml_text(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-/// Parse Kindle base32 encoding
-/// Kindle uses custom base32: 0-9 (0-9), A-V (10-31)
-fn parse_kindle_base32(s: &str) -> usize {
-    let mut result = 0usize;
-    // Kindle IDs are typically 4-10 chars, limit to prevent overflow
-    for c in s.chars().take(10) {
-        result = result.saturating_mul(32);
-        let val = match c {
-            '0'..='9' => c as usize - '0' as usize,
-            'A'..='V' => c as usize - 'A' as usize + 10,
-            'a'..='v' => c as usize - 'a' as usize + 10,
-            _ => continue, // Skip invalid chars
-        };
-        result = result.saturating_add(val);
-    }
-    result
 }
 
 #[cfg(test)]

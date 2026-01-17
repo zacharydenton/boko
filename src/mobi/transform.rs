@@ -7,23 +7,7 @@ use bstr::ByteSlice;
 use memchr::memmem;
 
 use super::index::DivElement;
-
-/// Parse Kindle base32 encoding (0-9A-V) to number
-#[inline]
-fn parse_base32(s: &[u8]) -> usize {
-    let mut result = 0usize;
-    for &b in s {
-        result = result.wrapping_mul(32);
-        let val = match b {
-            b'0'..=b'9' => (b - b'0') as usize,
-            b'A'..=b'V' => (b - b'A') as usize + 10,
-            b'a'..=b'v' => (b - b'a') as usize + 10,
-            _ => continue,
-        };
-        result = result.wrapping_add(val);
-    }
-    result
-}
+use super::parse_base32;
 
 /// Result of finding a kindle reference in the input
 struct KindleRef {

@@ -477,7 +477,6 @@ pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, us
 }
 
 /// Optimized aid attribute insertion using byte operations
-#[allow(dead_code)]
 pub fn add_aid_attributes_fast(
     html: &[u8],
     file_href: &str,
