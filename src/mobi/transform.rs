@@ -172,7 +172,8 @@ fn generate_replacement(
                 (0, 0)
             };
 
-            let anchor = find_nearest_id_fast(raw_text, target_pos as usize, file_starts);
+            let anchor =
+                find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
             if let Some(id) = anchor {
                 format!("part{:04}.html#{}", file_num, id).into_bytes()
             } else {
@@ -196,62 +197,93 @@ fn generate_replacement(
     }
 }
 
-/// Fast ID lookup using memchr
+/// Fast ID lookup using memchr, constrained to file bounds
 fn find_nearest_id_fast(
     raw_text: &[u8],
     pos: usize,
-    _file_starts: &[(u32, u32)],
+    file_num: usize,
+    file_starts: &[(u32, u32)],
 ) -> Option<String> {
-    // Search forward from pos to find the next id= attribute
-    // Use " id=" to avoid matching "aid=" (Kindle-specific)
-    let end_pos = (pos + 2000).min(raw_text.len());
-    let search_window = &raw_text[pos..end_pos];
+    // Calculate file bounds from file_starts
+    // file_starts contains (start_pos, file_number) tuples
+    let (file_start, file_end) = {
+        let mut start = 0usize;
+        let mut end = raw_text.len();
+
+        // Find the start and end of our target file
+        for (i, &(start_pos, fnum)) in file_starts.iter().enumerate() {
+            if fnum as usize == file_num {
+                start = start_pos as usize;
+                // End is the start of the next file, or end of raw_text
+                if let Some(&(next_start, _)) = file_starts.get(i + 1) {
+                    end = next_start as usize;
+                }
+                break;
+            }
+        }
+        (start, end)
+    };
+
+    // Constrain pos to file bounds
+    let pos = pos.clamp(file_start, file_end);
 
     // Use memchr to find potential id= patterns (with space prefix to avoid matching aid=)
     let id_finder = memmem::Finder::new(b" id=\"");
     let id_finder_single = memmem::Finder::new(b" id='");
 
-    let id_pos = id_finder
-        .find(search_window)
-        .or_else(|| id_finder_single.find(search_window));
+    // Search forward from pos to find the next id= attribute, but stay within file
+    let end_pos = (pos + 2000).min(file_end);
+    if pos < end_pos {
+        let search_window = &raw_text[pos..end_pos];
 
-    if let Some(rel_pos) = id_pos {
-        let quote_char = search_window[rel_pos + 4];
-        let value_start = rel_pos + 5;
-        if let Some(value_end) = search_window[value_start..].find_byte(quote_char) {
-            let id_bytes = &search_window[value_start..value_start + value_end];
-            // Validate it's ASCII alphanumeric with allowed punctuation
-            if id_bytes.iter().all(|&b| {
-                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
-            }) {
-                return Some(String::from_utf8_lossy(id_bytes).into_owned());
+        let id_pos = id_finder
+            .find(search_window)
+            .or_else(|| id_finder_single.find(search_window));
+
+        if let Some(rel_pos) = id_pos {
+            let quote_char = search_window[rel_pos + 4];
+            let value_start = rel_pos + 5;
+            if let Some(value_end) = search_window[value_start..].find_byte(quote_char) {
+                let id_bytes = &search_window[value_start..value_start + value_end];
+                // Validate it's ASCII alphanumeric with allowed punctuation
+                if id_bytes.iter().all(|&b| {
+                    b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
+                }) {
+                    return Some(String::from_utf8_lossy(id_bytes).into_owned());
+                }
             }
         }
     }
 
-    // Fallback: search backwards
-    let start_pos = pos.saturating_sub(500);
-    let back_window = &raw_text[start_pos..pos];
+    // Fallback: search backwards within file bounds
+    let start_pos = pos.saturating_sub(500).max(file_start);
+    if start_pos < pos {
+        let back_window = &raw_text[start_pos..pos];
 
-    // Search for last id= in backwards window
-    let mut last_id = None;
-    let mut search_pos = 0;
-    while let Some(rel_pos) = id_finder.find(&back_window[search_pos..]) {
-        let abs_pos = search_pos + rel_pos;
-        let quote_char = back_window.get(abs_pos + 4).copied().unwrap_or(b'"');
-        let value_start = abs_pos + 5;
-        if let Some(value_end) = back_window[value_start..].find_byte(quote_char) {
-            let id_bytes = &back_window[value_start..value_start + value_end];
-            if id_bytes.iter().all(|&b| {
-                b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
-            }) {
-                last_id = Some(String::from_utf8_lossy(id_bytes).into_owned());
+        // Search for last id= in backwards window
+        let mut last_id = None;
+        let mut search_pos = 0;
+        while let Some(rel_pos) = id_finder.find(&back_window[search_pos..]) {
+            let abs_pos = search_pos + rel_pos;
+            let quote_char = back_window.get(abs_pos + 4).copied().unwrap_or(b'"');
+            let value_start = abs_pos + 5;
+            if let Some(value_end) = back_window[value_start..].find_byte(quote_char) {
+                let id_bytes = &back_window[value_start..value_start + value_end];
+                if id_bytes.iter().all(|&b| {
+                    b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
+                }) {
+                    last_id = Some(String::from_utf8_lossy(id_bytes).into_owned());
+                }
             }
+            search_pos = abs_pos + 1;
         }
-        search_pos = abs_pos + 1;
+
+        if last_id.is_some() {
+            return last_id;
+        }
     }
 
-    last_id
+    None
 }
 
 /// Strip Amazon-specific attributes from HTML in a single pass.
