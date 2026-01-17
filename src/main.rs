@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use boko::{read_epub, read_mobi, write_epub, write_mobi};
+use boko::{read_epub, read_kfx, read_mobi, write_epub, write_mobi};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -15,7 +15,7 @@ use boko::{read_epub, read_mobi, write_epub, write_mobi};
     boko book.azw3 book.epub    Convert AZW3 to EPUB
     boko -i book.epub           Show book metadata")]
 struct Cli {
-    /// Input file (EPUB, AZW3, or MOBI)
+    /// Input file (EPUB, AZW3, MOBI, or KFX)
     #[arg(value_name = "INPUT")]
     input: String,
 
@@ -63,6 +63,7 @@ fn get_format(path: &str) -> Option<&'static str> {
         .and_then(|ext| match ext.as_str() {
             "epub" => Some("epub"),
             "azw3" | "mobi" => Some("mobi"),
+            "kfx" => Some("kfx"),
             _ => None,
         })
 }
@@ -73,6 +74,7 @@ fn show_info(path: &str) -> Result<(), String> {
     let book = match format {
         "epub" => read_epub(path).map_err(|e| e.to_string())?,
         "mobi" => read_mobi(path).map_err(|e| e.to_string())?,
+        "kfx" => read_kfx(path).map_err(|e| e.to_string())?,
         _ => unreachable!(),
     };
 
@@ -108,6 +110,11 @@ fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
     let output_format =
         get_format(output).ok_or_else(|| format!("unsupported output format: {output}"))?;
 
+    // KFX is read-only
+    if output_format == "kfx" {
+        return Err("KFX format is read-only; output must be EPUB or AZW3".to_string());
+    }
+
     if !quiet {
         eprintln!("Reading {input}...");
     }
@@ -115,6 +122,7 @@ fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
     let book = match input_format {
         "epub" => read_epub(input).map_err(|e| e.to_string())?,
         "mobi" => read_mobi(input).map_err(|e| e.to_string())?,
+        "kfx" => read_kfx(input).map_err(|e| e.to_string())?,
         _ => unreachable!(),
     };
 
