@@ -393,9 +393,10 @@ fn test_format_from_path() {
 
     assert_eq!(Format::from_path("book.epub"), Some(Format::Epub));
     assert_eq!(Format::from_path("book.azw3"), Some(Format::Azw3));
-    assert_eq!(Format::from_path("book.mobi"), Some(Format::Azw3));
+    assert_eq!(Format::from_path("book.mobi"), Some(Format::Mobi));
     assert_eq!(Format::from_path("book.EPUB"), Some(Format::Epub));
     assert_eq!(Format::from_path("book.AZW3"), Some(Format::Azw3));
+    assert_eq!(Format::from_path("book.MOBI"), Some(Format::Mobi));
     assert_eq!(Format::from_path("book.txt"), None);
     assert_eq!(Format::from_path("book"), None);
 }

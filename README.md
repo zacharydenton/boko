@@ -64,12 +64,12 @@ let book = Book::open("input.epub")?;
 book.save("output.azw3")?;
 ```
 
-For explicit format control:
+For explicit format control (Format: Epub, Azw3, Mobi):
 
 ```rust
 use boko::{Book, Format};
 
-let book = Book::open_format("input.bin", Format::Epub)?;
+let book = Book::open_format("input.bin", Format::Mobi)?;
 book.save_format("output.bin", Format::Azw3)?;
 ```
 

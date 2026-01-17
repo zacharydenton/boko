@@ -14,6 +14,8 @@ pub enum Format {
     Epub,
     /// AZW3/KF8 format (modern Kindle)
     Azw3,
+    /// MOBI format (legacy Kindle). Writes as KF8/AZW3.
+    Mobi,
 }
 
 /// Intermediate representation of an ebook.
@@ -89,7 +91,8 @@ impl Format {
             .and_then(|e| e.to_str())
             .and_then(|ext| match ext.to_lowercase().as_str() {
                 "epub" => Some(Format::Epub),
-                "azw3" | "mobi" => Some(Format::Azw3),
+                "azw3" => Some(Format::Azw3),
+                "mobi" => Some(Format::Mobi),
                 _ => None,
             })
     }
@@ -135,7 +138,7 @@ impl Book {
     pub fn open_format(path: impl AsRef<Path>, format: Format) -> io::Result<Self> {
         match format {
             Format::Epub => crate::epub::read_epub(path),
-            Format::Azw3 => crate::mobi::read_mobi(path),
+            Format::Azw3 | Format::Mobi => crate::mobi::read_mobi(path),
         }
     }
 
@@ -175,7 +178,7 @@ impl Book {
     pub fn save_format(&self, path: impl AsRef<Path>, format: Format) -> io::Result<()> {
         match format {
             Format::Epub => crate::epub::write_epub(self, path),
-            Format::Azw3 => crate::mobi::write_mobi(self, path),
+            Format::Azw3 | Format::Mobi => crate::mobi::write_mobi(self, path),
         }
     }
 

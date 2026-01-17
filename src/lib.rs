@@ -26,12 +26,12 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 //!
-//! For explicit format control:
+//! For explicit format control (Format: Epub, Azw3, Mobi):
 //!
 //! ```no_run
 //! use boko::{Book, Format};
 //!
-//! let book = Book::open_format("input.bin", Format::Epub)?;
+//! let book = Book::open_format("input.bin", Format::Mobi)?;
 //! book.save_format("output.bin", Format::Azw3)?;
 //! # Ok::<(), std::io::Error>(())
 //! ```
