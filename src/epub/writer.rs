@@ -89,10 +89,17 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Resu
 fn is_precompressed(media_type: &str) -> bool {
     matches!(
         media_type,
-        "image/jpeg" | "image/png" | "image/gif" | "image/webp" |
-        "audio/mpeg" | "audio/mp4" | "video/mp4" |
-        "application/font-woff" | "application/font-woff2" |
-        "font/woff" | "font/woff2"
+        "image/jpeg"
+            | "image/png"
+            | "image/gif"
+            | "image/webp"
+            | "audio/mpeg"
+            | "audio/mp4"
+            | "video/mp4"
+            | "application/font-woff"
+            | "application/font-woff2"
+            | "font/woff"
+            | "font/woff2"
     )
 }
 

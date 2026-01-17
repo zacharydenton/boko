@@ -71,7 +71,10 @@ pub fn read_mobi<P: AsRef<Path>>(path: P) -> io::Result<Book> {
 pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> {
     let pdb = PdbHeader::read(&mut reader)?;
     if pdb.num_records < 2 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not enough records"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not enough records",
+        ));
     }
 
     // Parse record 0 header (may be MOBI6 header for combo files)
@@ -148,8 +151,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
 
     // KF8 format: use skeleton/div structure for proper chapters
     if format.is_kf8() {
-        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, record_offset)
-        {
+        if let Ok(kf8_result) = parse_kf8(&mut reader, &pdb, &mobi, &text, codec, record_offset) {
             // Build file_starts array: (start_pos, file_number) for ID lookup
             let file_starts: Vec<(u32, u32)> = kf8_result
                 .files
@@ -944,15 +946,17 @@ fn extract_text<R: Read + Seek>(
                 if let Some(ref mut hr) = huff_reader {
                     hr.decompress(record)?
                 } else {
-                    return Err(io::Error::new(io::ErrorKind::Unsupported,
-                        "Huffman reader not initialized"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "Huffman reader not initialized",
+                    ));
                 }
             }
             Compression::Unknown(n) => {
-                return Err(io::Error::new(io::ErrorKind::Unsupported, format!(
-                    "Unknown compression type: {}",
-                    n
-                )));
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!("Unknown compression type: {}", n),
+                ));
             }
         };
 
@@ -978,8 +982,10 @@ fn load_huffcdic<R: Read + Seek>(
     record_offset: usize, // Offset for combo MOBI6+KF8 files
 ) -> io::Result<HuffCdicReader> {
     if mobi.huff_record_index == NULL_INDEX || mobi.huff_record_count == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData,
-            "Huffman compression but no HUFF/CDIC records"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Huffman compression but no HUFF/CDIC records",
+        ));
     }
 
     // Apply record offset for combo files
@@ -1391,13 +1397,13 @@ fn process_mobi6_markup(html: &str, raw_text: &[u8], first_image_index: usize) -
 /// Parse an attribute value (handles quoted and unquoted)
 fn parse_attribute_value(s: &str) -> (&str, usize) {
     let s = s.trim_start();
-    if s.starts_with('"') {
-        if let Some(end) = s[1..].find('"') {
-            return (&s[1..1 + end], 1 + end + 1);
+    if let Some(stripped) = s.strip_prefix('"') {
+        if let Some(end) = stripped.find('"') {
+            return (&stripped[..end], 1 + end + 1);
         }
-    } else if s.starts_with('\'') {
-        if let Some(end) = s[1..].find('\'') {
-            return (&s[1..1 + end], 1 + end + 1);
+    } else if let Some(stripped) = s.strip_prefix('\'') {
+        if let Some(end) = stripped.find('\'') {
+            return (&stripped[..end], 1 + end + 1);
         }
     } else {
         // Unquoted - ends at whitespace or >
@@ -1410,7 +1416,11 @@ fn parse_attribute_value(s: &str) -> (&str, usize) {
 }
 
 /// Insert anchors at filepos positions
-fn insert_filepos_anchors(html: &str, _raw_text: &[u8], targets: &std::collections::HashSet<usize>) -> String {
+fn insert_filepos_anchors(
+    html: &str,
+    _raw_text: &[u8],
+    targets: &std::collections::HashSet<usize>,
+) -> String {
     if targets.is_empty() {
         return html.to_string();
     }
@@ -1498,7 +1508,7 @@ fn convert_filepos_links(html: &str) -> String {
         } else {
             // Keep original if can't parse
             result.extend_from_slice(b"filepos=");
-            result.extend_from_slice(after[..consumed].as_bytes());
+            result.extend_from_slice(&after.as_bytes()[..consumed]);
         }
 
         pos = abs_pos + 8 + consumed;
@@ -1534,7 +1544,7 @@ fn convert_recindex_images(html: &str, _first_image_index: usize) -> String {
         } else {
             // Keep original if can't parse
             result.extend_from_slice(b"recindex=");
-            result.extend_from_slice(after[..consumed].as_bytes());
+            result.extend_from_slice(&after.as_bytes()[..consumed]);
         }
 
         pos = abs_pos + 9 + consumed;

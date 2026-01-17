@@ -300,7 +300,10 @@ fn test_mobi_metadata() {
 
     assert_eq!(book.metadata.title, "Short Works");
     assert!(
-        book.metadata.authors.iter().any(|a| a.contains("Epictetus")),
+        book.metadata
+            .authors
+            .iter()
+            .any(|a| a.contains("Epictetus")),
         "Should have Epictetus as author"
     );
 }
@@ -313,9 +316,7 @@ fn test_mobi_has_content() {
     let html_resources: Vec<_> = book
         .resources
         .iter()
-        .filter(|(_, r)| {
-            r.media_type == "application/xhtml+xml" || r.media_type == "text/html"
-        })
+        .filter(|(_, r)| r.media_type == "application/xhtml+xml" || r.media_type == "text/html")
         .collect();
 
     assert!(!html_resources.is_empty(), "MOBI should have HTML content");
@@ -349,7 +350,10 @@ fn test_mobi_to_epub_conversion() {
 
     // Should have content
     assert!(!epub.spine.is_empty(), "Converted EPUB should have spine");
-    assert!(!epub.resources.is_empty(), "Converted EPUB should have resources");
+    assert!(
+        !epub.resources.is_empty(),
+        "Converted EPUB should have resources"
+    );
 }
 
 #[test]
@@ -388,8 +392,16 @@ fn test_mobi_vs_azw3_same_source() {
     assert_eq!(mobi.metadata.title, azw3.metadata.title);
     assert_eq!(mobi.metadata.authors, azw3.metadata.authors);
 
-    println!("MOBI: {} resources, {} spine items", mobi.resources.len(), mobi.spine.len());
-    println!("AZW3: {} resources, {} spine items", azw3.resources.len(), azw3.spine.len());
+    println!(
+        "MOBI: {} resources, {} spine items",
+        mobi.resources.len(),
+        mobi.spine.len()
+    );
+    println!(
+        "AZW3: {} resources, {} spine items",
+        azw3.resources.len(),
+        azw3.spine.len()
+    );
 }
 
 // ============================================================================

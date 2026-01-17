@@ -326,3 +326,76 @@ fn test_modify_and_convert_epub_to_azw3() {
 
     assert_eq!(azw3.metadata.title, "Modified for Kindle");
 }
+
+// ============================================================================
+// Book::open() and Book::save() API
+// ============================================================================
+
+#[test]
+fn test_book_open_save_api() {
+    use boko::Book;
+
+    // Test Book::open() with EPUB
+    let book = Book::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/epictetus.epub"
+    ))
+    .expect("Failed to open EPUB");
+
+    assert_eq!(book.metadata.title, "Short Works");
+
+    // Test Book::save() to AZW3
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let azw3_path = temp_dir.path().join("output.azw3");
+
+    book.save(&azw3_path).expect("Failed to save AZW3");
+
+    // Read back and verify
+    let book2 = Book::open(&azw3_path).expect("Failed to open AZW3");
+    assert_eq!(book2.metadata.title, "Short Works");
+
+    // Test saving back to EPUB
+    let epub_path = temp_dir.path().join("output.epub");
+    book2.save(&epub_path).expect("Failed to save EPUB");
+
+    let book3 = Book::open(&epub_path).expect("Failed to open EPUB");
+    assert_eq!(book3.metadata.title, "Short Works");
+}
+
+#[test]
+fn test_book_open_format_api() {
+    use boko::{Book, Format};
+
+    // Test with explicit format
+    let book = Book::open_format(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/epictetus.azw3"),
+        Format::Azw3,
+    )
+    .expect("Failed to open AZW3");
+
+    assert_eq!(book.metadata.title, "Short Works");
+
+    // Test save with explicit format
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let output_path = temp_dir.path().join("output.bin");
+
+    book.save_format(&output_path, Format::Epub)
+        .expect("Failed to save EPUB");
+
+    // Verify it's a valid EPUB
+    let book2 = Book::open_format(&output_path, Format::Epub).expect("Failed to open EPUB");
+    assert_eq!(book2.metadata.title, "Short Works");
+}
+
+#[test]
+fn test_format_from_path() {
+    use boko::Format;
+
+    assert_eq!(Format::from_path("book.epub"), Some(Format::Epub));
+    assert_eq!(Format::from_path("book.azw3"), Some(Format::Azw3));
+    assert_eq!(Format::from_path("book.mobi"), Some(Format::Azw3));
+    assert_eq!(Format::from_path("book.EPUB"), Some(Format::Epub));
+    assert_eq!(Format::from_path("book.AZW3"), Some(Format::Azw3));
+    assert_eq!(Format::from_path("book.txt"), None);
+    assert_eq!(Format::from_path("book"), None);
+}

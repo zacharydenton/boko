@@ -109,7 +109,7 @@ fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> io::Result<Stri
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == b"full-path" {
-                        return Ok(String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?);
+                        return String::from_utf8(attr.value.to_vec()).map_err(io::Error::other);
                     }
                 }
             }
@@ -119,7 +119,10 @@ fn find_opf_path<R: Read + Seek>(archive: &mut ZipArchive<R>) -> io::Result<Stri
         }
     }
 
-    Err(io::Error::new(io::ErrorKind::InvalidData, "No rootfile found in container.xml"))
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "No rootfile found in container.xml",
+    ))
 }
 
 /// Manifest item with properties (for EPUB3 cover-image detection)
@@ -163,7 +166,10 @@ fn parse_opf(content: &str, _opf_dir: &str) -> io::Result<OpfData> {
                         // Get toc attribute for NCX reference
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"toc" {
-                                toc_id = Some(String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?);
+                                toc_id = Some(
+                                    String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?,
+                                );
                             }
                         }
                     }
@@ -183,13 +189,23 @@ fn parse_opf(content: &str, _opf_dir: &str) -> io::Result<OpfData> {
 
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"id" => id = String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?,
-                                b"href" => href = String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?,
+                                b"id" => {
+                                    id = String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?
+                                }
+                                b"href" => {
+                                    href = String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?
+                                }
                                 b"media-type" => {
-                                    media_type = String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?
+                                    media_type = String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?
                                 }
                                 b"properties" => {
-                                    properties = Some(String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?)
+                                    properties = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    )
                                 }
                                 _ => {}
                             }
@@ -209,7 +225,10 @@ fn parse_opf(content: &str, _opf_dir: &str) -> io::Result<OpfData> {
                     b"itemref" => {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"idref" {
-                                spine_ids.push(String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?);
+                                spine_ids.push(
+                                    String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?,
+                                );
                             }
                         }
                     }
@@ -221,7 +240,10 @@ fn parse_opf(content: &str, _opf_dir: &str) -> io::Result<OpfData> {
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"name" if attr.value.as_ref() == b"cover" => is_cover = true,
-                                b"content" => cover_id = String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?,
+                                b"content" => {
+                                    cover_id = String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?
+                                }
                                 _ => {}
                             }
                         }
@@ -380,7 +402,9 @@ fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                         if attr.key.as_ref() == b"src"
                             && let Some(state) = stack.last_mut()
                         {
-                            state.src = Some(String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?);
+                            state.src = Some(
+                                String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?,
+                            );
                         }
                     }
                 }
@@ -437,7 +461,10 @@ fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
     Ok(stack.pop().map(|s| s.children).unwrap_or_default())
 }
 
-fn read_archive_file<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> io::Result<String> {
+fn read_archive_file<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    path: &str,
+) -> io::Result<String> {
     let bytes = read_archive_file_bytes(archive, path)?;
     // Strip UTF-8 BOM if present
     let bytes = strip_bom(&bytes);
@@ -462,7 +489,12 @@ fn read_archive_file_bytes<R: Read + Seek>(
     // Fallback: try percent-decoded path (handles malformed EPUBs)
     let decoded = percent_encoding::percent_decode_str(path)
         .decode_utf8()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid UTF-8 in path: {}", path)))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid UTF-8 in path: {}", path),
+            )
+        })?;
 
     let mut file = archive.by_name(&decoded)?;
     let mut contents = Vec::new();
@@ -506,15 +538,17 @@ fn resolve_entity(entity: &str) -> Option<String> {
     if let Some(hex) = entity.strip_prefix("#x") {
         // Hexadecimal: &#x2019;
         if let Ok(code) = u32::from_str_radix(hex, 16)
-            && let Some(c) = char::from_u32(code) {
-                return Some(c.to_string());
-            }
+            && let Some(c) = char::from_u32(code)
+        {
+            return Some(c.to_string());
+        }
     } else if let Some(dec) = entity.strip_prefix('#') {
         // Decimal: &#8217;
         if let Ok(code) = dec.parse::<u32>()
-            && let Some(c) = char::from_u32(code) {
-                return Some(c.to_string());
-            }
+            && let Some(c) = char::from_u32(code)
+        {
+            return Some(c.to_string());
+        }
     }
 
     None

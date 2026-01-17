@@ -46,7 +46,10 @@ impl HuffCdicReader {
     fn load_huff(&mut self, huff: &[u8]) -> io::Result<()> {
         // Check header: "HUFF\x00\x00\x00\x18"
         if huff.len() < 24 || &huff[0..8] != b"HUFF\x00\x00\x00\x18" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid HUFF header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid HUFF header",
+            ));
         }
 
         let off1 = u32::from_be_bytes([huff[8], huff[9], huff[10], huff[11]]) as usize;
@@ -54,7 +57,10 @@ impl HuffCdicReader {
 
         // Load dict1: 256 entries at off1
         if huff.len() < off1 + 256 * 4 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "HUFF dict1 truncated"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HUFF dict1 truncated",
+            ));
         }
 
         for i in 0..256 {
@@ -77,7 +83,10 @@ impl HuffCdicReader {
 
         // Load dict2: 64 entries at off2 (32 mincode/maxcode pairs)
         if huff.len() < off2 + 64 * 4 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "HUFF dict2 truncated"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HUFF dict2 truncated",
+            ));
         }
 
         // Initialize with codelen 0
@@ -103,7 +112,10 @@ impl HuffCdicReader {
     fn load_cdic(&mut self, cdic: &[u8]) -> io::Result<()> {
         // Check header: "CDIC\x00\x00\x00\x10"
         if cdic.len() < 16 || &cdic[0..8] != b"CDIC\x00\x00\x00\x10" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid CDIC header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid CDIC header",
+            ));
         }
 
         let phrases = u32::from_be_bytes([cdic[8], cdic[9], cdic[10], cdic[11]]) as usize;
@@ -113,7 +125,10 @@ impl HuffCdicReader {
 
         // Read offset table
         if cdic.len() < 16 + n * 2 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "CDIC offset table truncated"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "CDIC offset table truncated",
+            ));
         }
 
         for i in 0..n {
@@ -121,7 +136,10 @@ impl HuffCdicReader {
             let off = u16::from_be_bytes([cdic[off_pos], cdic[off_pos + 1]]) as usize;
 
             if 16 + off + 2 > cdic.len() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "CDIC entry truncated"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "CDIC entry truncated",
+                ));
             }
 
             let blen = u16::from_be_bytes([cdic[16 + off], cdic[16 + off + 1]]);
@@ -198,11 +216,14 @@ impl HuffCdicReader {
             };
 
             if r >= self.dictionary.len() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, format!(
-                    "Dictionary index {} out of bounds (len {})",
-                    r,
-                    self.dictionary.len()
-                )));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Dictionary index {} out of bounds (len {})",
+                        r,
+                        self.dictionary.len()
+                    ),
+                ));
             }
 
             // Get the slice, unpacking recursively if needed

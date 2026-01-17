@@ -22,10 +22,10 @@ impl PdbHeader {
         // Bytes 60-67: Type/Creator should be "BOOKMOBI" or "TEXtREAd"
         let ident = &buf[60..68];
         if ident != b"BOOKMOBI" && !ident.eq_ignore_ascii_case(b"TEXTREAD") {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!(
-                "Unknown book type: {:?}",
-                String::from_utf8_lossy(ident)
-            )));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unknown book type: {:?}", String::from_utf8_lossy(ident)),
+            ));
         }
 
         // Bytes 76-77: Number of records
@@ -49,10 +49,10 @@ impl PdbHeader {
 
     pub fn read_record<R: Read + Seek>(&self, reader: &mut R, index: usize) -> io::Result<Vec<u8>> {
         if index >= self.record_offsets.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!(
-                "Record index {} out of bounds",
-                index
-            )));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Record index {} out of bounds", index),
+            ));
         }
 
         let start = self.record_offsets[index] as u64;
@@ -117,7 +117,10 @@ pub enum Encoding {
 impl MobiHeader {
     pub fn parse(data: &[u8]) -> io::Result<Self> {
         if data.len() < 16 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "MOBI header too short"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "MOBI header too short",
+            ));
         }
 
         let compression = match u16::from_be_bytes([data[0], data[1]]) {
@@ -300,11 +303,17 @@ pub struct ExthHeader {
 impl ExthHeader {
     pub fn parse(data: &[u8], encoding: Encoding) -> io::Result<Self> {
         if data.len() < 12 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "EXTH header too short"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "EXTH header too short",
+            ));
         }
 
         if &data[0..4] != b"EXTH" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid EXTH signature"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid EXTH signature",
+            ));
         }
 
         let _header_length = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);

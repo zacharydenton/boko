@@ -4,6 +4,17 @@
 //! representation between different ebook formats (EPUB, MOBI, AZW3).
 
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
+
+/// Ebook file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Format {
+    /// EPUB format (EPUB 2 or 3)
+    Epub,
+    /// AZW3/KF8 format (modern Kindle)
+    Azw3,
+}
 
 /// Intermediate representation of an ebook.
 /// Format-agnostic structure that EPUB, MOBI, and AZW3 can convert to/from.
@@ -68,9 +79,104 @@ pub struct Resource {
     pub media_type: String,
 }
 
+impl Format {
+    /// Detect format from file extension.
+    ///
+    /// Returns `None` if the extension is not recognized.
+    pub fn from_path(path: impl AsRef<Path>) -> Option<Self> {
+        path.as_ref()
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(|ext| match ext.to_lowercase().as_str() {
+                "epub" => Some(Format::Epub),
+                "azw3" | "mobi" => Some(Format::Azw3),
+                _ => None,
+            })
+    }
+}
+
 impl Book {
+    /// Create a new empty book.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Open an ebook file, auto-detecting the format from the file extension.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::Book;
+    ///
+    /// let book = Book::open("input.epub")?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let path = path.as_ref();
+        let format = Format::from_path(path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown file format: {}", path.display()),
+            )
+        })?;
+        Self::open_format(path, format)
+    }
+
+    /// Open an ebook file with an explicit format.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::{Book, Format};
+    ///
+    /// let book = Book::open_format("input.bin", Format::Epub)?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn open_format(path: impl AsRef<Path>, format: Format) -> io::Result<Self> {
+        match format {
+            Format::Epub => crate::epub::read_epub(path),
+            Format::Azw3 => crate::mobi::read_mobi(path),
+        }
+    }
+
+    /// Save the book to a file, auto-detecting the format from the file extension.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::Book;
+    ///
+    /// let book = Book::open("input.epub")?;
+    /// book.save("output.azw3")?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let path = path.as_ref();
+        let format = Format::from_path(path).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown file format: {}", path.display()),
+            )
+        })?;
+        self.save_format(path, format)
+    }
+
+    /// Save the book to a file with an explicit format.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::{Book, Format};
+    ///
+    /// let book = Book::open("input.epub")?;
+    /// book.save_format("output.bin", Format::Azw3)?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn save_format(&self, path: impl AsRef<Path>, format: Format) -> io::Result<()> {
+        match format {
+            Format::Epub => crate::epub::write_epub(self, path),
+            Format::Azw3 => crate::mobi::write_mobi(self, path),
+        }
     }
 
     /// Add a resource to the book

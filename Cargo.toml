@@ -2,8 +2,14 @@
 name = "boko"
 version = "0.1.0"
 edition = "2024"
-description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"
+description = "Fast ebook conversion library for EPUB and Kindle formats"
 license = "MIT"
+repository = "https://github.com/zacharydenton/boko"
+homepage = "https://github.com/zacharydenton/boko"
+documentation = "https://docs.rs/boko"
+readme = "README.md"
+keywords = ["ebook", "epub", "mobi", "azw3", "kindle"]
+categories = ["parsing", "encoding"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,7 +21,6 @@ wasm = ["wasm-bindgen", "console_error_panic_hook"]
 [dependencies]
 wasm-bindgen = { version = "0.2", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
-walkdir = "2"
 quick-xml = "0.39"
 zip = { version = "7.1", default-features = false, features = ["deflate-flate2"] }
 percent-encoding = "2.3"
@@ -24,8 +29,8 @@ percent-encoding = "2.3"
 memchr = "2.7"
 bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 
-# Parallel processing
-rayon = "1.10"
+# CLI argument parsing (only for binary)
+clap = { version = "4", features = ["derive"] }
 
 # Native: use fast zlib-rs
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -146,7 +146,11 @@ pub fn compress(input: &[u8]) -> Vec<u8> {
                 }
             }
             i += best_match_len;
-        } else if input[i] == b' ' && i + 1 < input.len() && input[i + 1] >= 0x40 && input[i + 1] < 0x80 {
+        } else if input[i] == b' '
+            && i + 1 < input.len()
+            && input[i + 1] >= 0x40
+            && input[i + 1] < 0x80
+        {
             // Space + printable ASCII -> single byte encoding
             output.push(input[i + 1] ^ 0x80);
             i += 2;

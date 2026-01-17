@@ -11,16 +11,39 @@
 //!
 //! ## Quick Start
 //!
+//! The simplest way to convert ebooks:
+//!
 //! ```no_run
-//! use boko::{read_epub, write_mobi, read_mobi, write_epub};
+//! use boko::Book;
 //!
 //! // Convert EPUB to AZW3
-//! let book = read_epub("input.epub").unwrap();
-//! write_mobi(&book, "output.azw3").unwrap();
+//! let book = Book::open("input.epub")?;
+//! book.save("output.azw3")?;
 //!
-//! // Convert AZW3 to EPUB
-//! let book = read_mobi("input.azw3").unwrap();
-//! write_epub(&book, "output.epub").unwrap();
+//! // Convert AZW3/MOBI to EPUB
+//! let book = Book::open("input.azw3")?;
+//! book.save("output.epub")?;
+//! # Ok::<(), std::io::Error>(())
+//! ```
+//!
+//! For explicit format control:
+//!
+//! ```no_run
+//! use boko::{Book, Format};
+//!
+//! let book = Book::open_format("input.bin", Format::Epub)?;
+//! book.save_format("output.bin", Format::Azw3)?;
+//! # Ok::<(), std::io::Error>(())
+//! ```
+//!
+//! Free functions are also available:
+//!
+//! ```no_run
+//! use boko::{read_epub, write_mobi};
+//!
+//! let book = read_epub("input.epub")?;
+//! write_mobi(&book, "output.azw3")?;
+//! # Ok::<(), std::io::Error>(())
 //! ```
 //!
 //! ## Working with Books
@@ -52,6 +75,6 @@ pub(crate) mod util;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-pub use book::{Book, Metadata, Resource, SpineItem, TocEntry};
-pub use epub::{read_epub, write_epub};
-pub use mobi::{read_mobi, write_mobi};
+pub use book::{Book, Format, Metadata, Resource, SpineItem, TocEntry};
+pub use epub::{read_epub, read_epub_from_reader, write_epub, write_epub_to_writer};
+pub use mobi::{read_mobi, read_mobi_from_reader, write_mobi, write_mobi_to_writer};

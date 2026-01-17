@@ -172,8 +172,7 @@ fn generate_replacement(
                 (0, 0)
             };
 
-            let anchor =
-                find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
+            let anchor = find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
             if let Some(id) = anchor {
                 format!("part{:04}.html#{}", file_num, id).into_bytes()
             } else {

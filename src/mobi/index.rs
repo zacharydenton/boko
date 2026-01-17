@@ -65,7 +65,10 @@ pub struct IndxHeader {
 impl IndxHeader {
     pub fn parse(data: &[u8]) -> io::Result<Self> {
         if data.len() < 192 || &data[0..4] != b"INDX" {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid INDX header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid INDX header",
+            ));
         }
 
         let u32_at = |offset: usize| -> u32 {
@@ -95,7 +98,10 @@ impl IndxHeader {
 /// Parse TAGX section from index header
 pub fn parse_tagx(data: &[u8]) -> io::Result<(u32, Vec<TagXEntry>)> {
     if data.len() < 12 || &data[0..4] != b"TAGX" {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid TAGX section"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid TAGX section",
+        ));
     }
 
     let first_entry_offset = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
