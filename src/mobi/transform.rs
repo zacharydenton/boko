@@ -341,8 +341,19 @@ fn process_tag(
             i += 1;
         }
 
-        if i >= tag.len() || tag[i] == b'>' || tag[i] == b'/' {
+        if i >= tag.len() || tag[i] == b'>' {
             break;
+        }
+
+        // Handle stray "/" - skip it but continue processing (handles malformed tags)
+        if tag[i] == b'/' {
+            // Check if this is just the self-closing "/" at the end
+            if i + 1 < tag.len() && tag[i + 1] == b'>' {
+                break;
+            }
+            // Stray "/" in middle of attributes - skip it
+            i += 1;
+            continue;
         }
 
         // Find attribute name end
@@ -479,5 +490,26 @@ mod tests {
         let input = b"<img src=\"test.jpg\"/>";
         let output = ensure_img_alt(input);
         assert!(output.contains_str("alt=\"\""));
+    }
+
+    #[test]
+    fn test_strip_malformed_aid() {
+        // Test malformed tag with stray "/" before aid
+        let input = b"<a id=\"tp\"/ aid=\"006F\"/>";
+        let output = strip_kindle_attributes_fast(input);
+        assert!(!output.contains_str("aid="), "aid should be stripped");
+        assert!(
+            output.contains_str("<a id=\"tp\""),
+            "id should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_strip_self_closing_aid() {
+        // Test properly formed self-closing tag with aid
+        let input = b"<a id=\"tp\" aid=\"006F\"/>";
+        let output = strip_kindle_attributes_fast(input);
+        assert!(!output.contains_str("aid="));
+        assert!(output.contains_str("<a id=\"tp\""));
     }
 }

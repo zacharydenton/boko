@@ -565,10 +565,18 @@ pub fn add_aid_attributes_fast(
 
                     // Check if there are attributes or whitespace after tag name
                     // tag_end points to the character AFTER '>', so tag_end - 1 is '>'
-                    if name_end < tag_end - 1 {
+                    let is_self_closing = tag.ends_with(b"/>");
+                    // For self-closing tags, exclude the trailing "/" from attributes
+                    let attr_end = if is_self_closing {
+                        tag_end - 2 // Before "/>"
+                    } else {
+                        tag_end - 1 // Before ">"
+                    };
+
+                    if name_end < attr_end {
                         // Copy existing attributes/whitespace, preserving format
                         // This handles <div class="..."> and <div\nclass="...">
-                        output.extend_from_slice(&html[name_end..tag_end - 1]);
+                        output.extend_from_slice(&html[name_end..attr_end]);
                         output.extend_from_slice(b" aid=\"");
                     } else {
                         // No attributes, just add aid
@@ -578,7 +586,7 @@ pub fn add_aid_attributes_fast(
                     output.push(b'"');
 
                     // Copy closing
-                    if tag.ends_with(b"/>") {
+                    if is_self_closing {
                         output.extend_from_slice(b"/>");
                     } else {
                         output.push(b'>');
@@ -635,5 +643,30 @@ mod tests {
             "images/test.jpg"
         );
         assert_eq!(resolve_href("", "test.html"), "test.html");
+    }
+
+    #[test]
+    fn test_add_aid_self_closing() {
+        use bstr::ByteSlice;
+
+        let html = b"<a id=\"tp\"/>";
+        let mut aid_counter = 0u32;
+        let mut id_map = HashMap::new();
+        let result = add_aid_attributes_fast(html, "test.html", &mut aid_counter, &mut id_map);
+        let result_str = String::from_utf8_lossy(&result);
+
+        // Should produce <a id="tp" aid="0000"/> not <a id="tp"/ aid="0000"/>
+        assert!(
+            result_str.contains("id=\"tp\" aid="),
+            "aid should come after id, not after /: {result_str}"
+        );
+        assert!(
+            !result_str.contains("\"/ aid"),
+            "should not have stray / before aid: {result_str}"
+        );
+        assert!(
+            result.ends_with_str(b"/>"),
+            "should end with />: {result_str}"
+        );
     }
 }
