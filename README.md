@@ -25,18 +25,20 @@ Benchmarks converting a 450KB ebook on an AMD Ryzen 9 7950X:
 
 ## Installation
 
-Requires Rust nightly (uses edition 2024 features):
+Requires Rust nightly (uses edition 2024 features).
+
+### CLI
 
 ```bash
 rustup default nightly
 cargo install boko
 ```
 
-Or add to your `Cargo.toml`:
+### Library
 
 ```toml
 [dependencies]
-boko = "0.1"
+boko = { version = "0.1", default-features = false }
 ```
 
 ## Usage
