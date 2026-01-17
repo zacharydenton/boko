@@ -1,6 +1,7 @@
 mod headers;
 mod huffcdic;
 mod index;
+mod palmdoc;
 mod reader;
 mod skeleton;
 mod transform;

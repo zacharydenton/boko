@@ -938,9 +938,7 @@ fn extract_text<R: Read + Seek>(
         let record = strip_trailing_data(&record, mobi.extra_data_flags);
 
         let decompressed = match mobi.compression {
-            Compression::PalmDoc => palmdoc_compression::decompress(record).map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("PalmDoc decompression failed: {:?}", e))
-            })?,
+            Compression::PalmDoc => super::palmdoc::decompress(record)?,
             Compression::None => record.to_vec(),
             Compression::Huffman => {
                 if let Some(ref mut hr) = huff_reader {

@@ -8,16 +8,23 @@ license = "MIT"
 [dependencies]
 walkdir = "2"
 quick-xml = "0.39"
-zip = { version = "7.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+zip = { version = "7.1", default-features = false, features = ["deflate-flate2"] }
 percent-encoding = "2.3"
 
 # High-performance byte operations (SIMD-accelerated)
 memchr = "2.7"
 bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 
-# PalmDOC compression (fast LZ77 with hash chains)
-palmdoc-compression = "0.3"
+# Parallel processing
+rayon = "1.10"
+
+# Native: use fast zlib-rs
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+
+# WASM: use pure-Rust backend
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 tempfile = "3.14"

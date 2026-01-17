@@ -203,20 +203,21 @@ fn find_nearest_id_fast(
     _file_starts: &[(u32, u32)],
 ) -> Option<String> {
     // Search forward from pos to find the next id= attribute
+    // Use " id=" to avoid matching "aid=" (Kindle-specific)
     let end_pos = (pos + 2000).min(raw_text.len());
     let search_window = &raw_text[pos..end_pos];
 
-    // Use memchr to find potential id= patterns
-    let id_finder = memmem::Finder::new(b"id=\"");
-    let id_finder_single = memmem::Finder::new(b"id='");
+    // Use memchr to find potential id= patterns (with space prefix to avoid matching aid=)
+    let id_finder = memmem::Finder::new(b" id=\"");
+    let id_finder_single = memmem::Finder::new(b" id='");
 
     let id_pos = id_finder
         .find(search_window)
         .or_else(|| id_finder_single.find(search_window));
 
     if let Some(rel_pos) = id_pos {
-        let quote_char = search_window[rel_pos + 3];
-        let value_start = rel_pos + 4;
+        let quote_char = search_window[rel_pos + 4];
+        let value_start = rel_pos + 5;
         if let Some(value_end) = search_window[value_start..].find_byte(quote_char) {
             let id_bytes = &search_window[value_start..value_start + value_end];
             // Validate it's ASCII alphanumeric with allowed punctuation
@@ -237,8 +238,8 @@ fn find_nearest_id_fast(
     let mut search_pos = 0;
     while let Some(rel_pos) = id_finder.find(&back_window[search_pos..]) {
         let abs_pos = search_pos + rel_pos;
-        let quote_char = back_window.get(abs_pos + 3).copied().unwrap_or(b'"');
-        let value_start = abs_pos + 4;
+        let quote_char = back_window.get(abs_pos + 4).copied().unwrap_or(b'"');
+        let value_start = abs_pos + 5;
         if let Some(value_end) = back_window[value_start..].find_byte(quote_char) {
             let id_bytes = &back_window[value_start..value_start + value_end];
             if id_bytes.iter().all(|&b| {

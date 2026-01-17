@@ -264,7 +264,7 @@ impl<'a> MobiBuilder<'a> {
             let chunk = &all_flows[pos..end];
 
             // Compress with PalmDOC
-            let compressed = palmdoc_compression::compress(chunk);
+            let compressed = super::palmdoc::compress(chunk);
 
             // Add trailing byte (overlap byte for multibyte chars)
             let mut record = compressed;
