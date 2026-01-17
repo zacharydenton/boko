@@ -47,6 +47,10 @@
 pub mod book;
 pub mod epub;
 pub mod mobi;
+pub(crate) mod util;
+
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 pub use book::{Book, Metadata, Resource, SpineItem, TocEntry};
 pub use epub::{read_epub, write_epub};

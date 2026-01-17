@@ -70,8 +70,10 @@ name = "boko"
 version = "0.1.0"
 dependencies = [
  "bstr",
+ "console_error_panic_hook",
  "criterion",
  "flate2",
+ "js-sys",
  "memchr",
  "percent-encoding",
  "proptest",
@@ -79,6 +81,7 @@ dependencies = [
  "rayon",
  "tempfile",
  "walkdir",
+ "wasm-bindgen",
  "zip",
 ]
 
@@ -171,6 +174,16 @@ name = "clap_lex"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "crc32fast"

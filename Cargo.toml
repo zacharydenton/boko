@@ -5,7 +5,16 @@ edition = "2024"
 description = "Cross-platform ebook conversion library (EPUB, AZW3, MOBI)"
 license = "MIT"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+wasm = ["wasm-bindgen", "console_error_panic_hook"]
+
 [dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
 walkdir = "2"
 quick-xml = "0.39"
 zip = { version = "7.1", default-features = false, features = ["deflate-flate2"] }
@@ -25,6 +34,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # WASM: use pure-Rust backend
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+js-sys = "0.3"
 
 [dev-dependencies]
 tempfile = "3.14"

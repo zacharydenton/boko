@@ -292,12 +292,7 @@ fn href_to_id(href: &str) -> String {
 
 /// Generate a simple UUID v4 (random)
 fn uuid_v4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64;
+    let seed = crate::util::time_seed_nanos();
 
     // Simple PRNG for UUID generation (not cryptographically secure, but fine for identifiers)
     let mut state = seed;

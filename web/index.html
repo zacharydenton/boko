@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>boko - Ebook Converter</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>boko</h1>
+            <p class="subtitle">Convert ebooks in your browser</p>
+        </header>
+
+        <main>
+            <div id="dropzone" class="dropzone">
+                <input type="file" id="file-input" accept=".epub,.azw3,.mobi" hidden>
+                <div class="dropzone-content">
+                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p>Drop your ebook here or <span class="browse-link">browse</span></p>
+                    <p class="supported-formats">Supports EPUB, AZW3, MOBI</p>
+                </div>
+            </div>
+
+            <div id="file-info" class="file-info hidden">
+                <div class="file-details">
+                    <span id="file-name" class="file-name"></span>
+                    <span id="file-size" class="file-size"></span>
+                </div>
+                <button id="clear-file" class="clear-btn" title="Clear file">&times;</button>
+            </div>
+
+            <div id="conversion-options" class="conversion-options hidden">
+                <label for="output-format">Convert to:</label>
+                <select id="output-format">
+                    <option value="epub">EPUB</option>
+                    <option value="azw3">AZW3</option>
+                </select>
+                <button id="convert-btn" class="convert-btn">Convert</button>
+            </div>
+
+            <div id="progress" class="progress hidden">
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill"></div>
+                </div>
+                <p id="progress-text" class="progress-text">Converting...</p>
+            </div>
+
+            <div id="result" class="result hidden">
+                <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                </svg>
+                <p>Conversion complete!</p>
+                <a id="download-link" class="download-btn" download>Download</a>
+            </div>
+
+            <div id="error" class="error hidden">
+                <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="15" y1="9" x2="9" y2="15"/>
+                    <line x1="9" y1="9" x2="15" y2="15"/>
+                </svg>
+                <p id="error-message"></p>
+            </div>
+        </main>
+
+        <footer>
+            <p>Powered by <a href="https://github.com/zacharydenton/boko" target="_blank">boko</a> &middot; All conversions happen locally in your browser</p>
+        </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

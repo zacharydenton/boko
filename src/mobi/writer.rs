@@ -45,10 +45,7 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
         flags |= 0b10; // XOR obfuscation flag
 
         // Generate random XOR key (use timestamp-based pseudo-random)
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(12345);
+        let seed = crate::util::time_seed_nanos();
         xor_key = (0..XOR_KEY_LEN)
             .map(|i| {
                 let mut x = seed.wrapping_add(i as u64);
@@ -818,10 +815,7 @@ impl<'a> MobiBuilder<'a> {
         writer.write_all(&title_bytes)?;
 
         // Attributes, version, creation/modification dates
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as u32)
-            .unwrap_or(0);
+        let now = crate::util::time_now_secs();
         writer.write_all(&0u16.to_be_bytes())?; // Attributes
         writer.write_all(&0u16.to_be_bytes())?; // Version
         writer.write_all(&now.to_be_bytes())?; // Creation
@@ -862,11 +856,7 @@ impl<'a> MobiBuilder<'a> {
 }
 
 fn rand_uid() -> u32 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u32)
-        .unwrap_or(12345);
+    let seed = crate::util::time_seed_nanos() as u32;
     // Simple LCG
     seed.wrapping_mul(1103515245).wrapping_add(12345)
 }
