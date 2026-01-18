@@ -798,3 +798,66 @@ mod tests {
         }
     }
 }
+/// Encode a float as a KFX/Ion decimal (exponent + coefficient)
+/// Uses a fixed precision of 2 decimal places (e.g., 1.25 -> 125 * 10^-2)
+pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
+    if val == 0.0 {
+        return vec![0x80]; // Exponent 0, Coef 0
+    }
+
+    // Convert to coefficient and exponent
+    // Start with precision 2
+    let mut coef = (val * 100.0).round() as i64;
+    let mut exp: i32 = -2;
+
+    // Normalize: remove trailing zeros
+    while coef != 0 && coef % 10 == 0 {
+        coef /= 10;
+        exp += 1;
+    }
+
+    let mut bytes = Vec::new();
+
+    // 1. Encode Exponent (VarInt Signed)
+    // - Magnitude = abs(val)
+    // - Sign bit = 0x40 (bit 6) if negative
+    // - Stop bit = 0x80 (bit 7)
+    // This simplified encoding assumes exponent fits in 6 bits (-63 to 63)
+    let exp_mag = exp.abs();
+    let exp_sign = if exp < 0 { 0x40 } else { 0x00 };
+    bytes.push(0x80 | exp_sign | (exp_mag as u8 & 0x3F));
+
+    // 2. Encode Coefficient (Int Signed)
+    if coef != 0 {
+        let coef_mag = coef.abs() as u64;
+        let is_neg = coef < 0;
+        
+        // Serialize magnitude (Big Endian)
+        let mut mag_bytes = Vec::new();
+        let mut temp = coef_mag;
+        while temp > 0 {
+            mag_bytes.push((temp & 0xFF) as u8);
+            temp >>= 8;
+        }
+        if mag_bytes.is_empty() {
+            mag_bytes.push(0);
+        }
+        mag_bytes.reverse();
+        
+        // Handle sign bit (MSB of first byte)
+        // If MSB is already set by magnitude, or if we need to set it for negative
+        if (mag_bytes[0] & 0x80) != 0 {
+            // Padding needed
+            let padding = if is_neg { 0x80 } else { 0x00 };
+            bytes.push(padding);
+            bytes.extend(mag_bytes);
+        } else {
+            if is_neg {
+                mag_bytes[0] |= 0x80;
+            }
+            bytes.extend(mag_bytes);
+        }
+    }
+    
+    bytes
+}

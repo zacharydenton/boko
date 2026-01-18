@@ -68,6 +68,7 @@
 //! ```
 
 pub mod book;
+pub(crate) mod css;
 pub mod epub;
 pub mod kfx;
 pub mod mobi;

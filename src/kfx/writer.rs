@@ -11,9 +11,13 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-use crate::book::Book;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 
-use super::ion::{IonValue, IonWriter};
+use crate::book::Book;
+use crate::css::{CssValue, ParsedStyle, Stylesheet, TextAlign};
+
+use super::ion::{encode_kfx_decimal, IonValue, IonWriter};
 
 // =============================================================================
 // YJ_SYMBOLS - Shared symbol table (subset of the full 800+ symbols)
@@ -34,8 +38,10 @@ pub mod sym {
     pub const MARGIN_TOP: u64 = 42; // $42 - margin top
     pub const TEXT_ALIGN: u64 = 44; // $44 - text alignment
     pub const BOLD: u64 = 45; // $45 - bold flag
+    pub const ITALIC: u64 = 46; // $46 - italic flag
     pub const MARGIN_BOTTOM: u64 = 47; // $47 - margin bottom
     pub const MARGIN_LEFT: u64 = 49; // $49 - margin left
+    pub const MARGIN_RIGHT: u64 = 51; // $51 - margin right
 
     // Style value symbols
     pub const UNIT: u64 = 306; // $306 - unit field
@@ -312,8 +318,8 @@ pub struct KfxBookBuilder {
     symtab: SymbolTable,
     fragments: Vec<KfxFragment>,
     container_id: String,
-    /// Map from element type to style symbol
-    style_map: HashMap<ElementType, u64>,
+    /// Map from parsed style to style symbol
+    style_map: HashMap<ParsedStyle, u64>,
 }
 
 impl KfxBookBuilder {
@@ -330,6 +336,25 @@ impl KfxBookBuilder {
     pub fn from_book(book: &Book) -> Self {
         let mut builder = Self::new();
 
+        // 1. Extract and parse all CSS stylesheets from resources
+        let mut combined_css = String::new();
+        // Add default user-agent styles for common elements
+        combined_css.push_str("h1, h2, h3, h4, h5, h6 { font-weight: bold; margin-top: 1em; margin-bottom: 1em; }\n");
+        combined_css.push_str("h1 { font-size: 2em; text-align: center; }\n");
+        combined_css.push_str("h2 { font-size: 1.5em; }\n");
+        combined_css.push_str("h3 { font-size: 1.25em; }\n");
+        combined_css.push_str("p { text-align: justify; }\n");
+        combined_css.push_str("blockquote { margin-left: 2em; margin-right: 2em; }\n");
+        combined_css.push_str("li { margin-left: 1em; }\n");
+
+        for resource in book.resources.values() {
+            if resource.media_type == "text/css" {
+                combined_css.push_str(&String::from_utf8_lossy(&resource.data));
+                combined_css.push('\n');
+            }
+        }
+        let stylesheet = Stylesheet::parse(&combined_css);
+
         // Build a map from href to TOC title for lookup
         let toc_titles: std::collections::HashMap<&str, &str> = book
             .toc
@@ -337,14 +362,14 @@ impl KfxBookBuilder {
             .map(|entry| (entry.href.as_str(), entry.title.as_str()))
             .collect();
 
-        // Extract content from spine
+        // 2. Extract content from spine with computed styles
         let mut chapters: Vec<ChapterData> = Vec::new();
         let mut chapter_num = 1;
         for (idx, spine_item) in book.spine.iter().enumerate() {
             let content = book
                 .resources
                 .get(&spine_item.href)
-                .map(|r| extract_styled_text_from_xhtml(&r.data))
+                .map(|r| extract_styled_text_from_xhtml(&r.data, &stylesheet))
                 .unwrap_or_default();
 
             if content.is_empty() {
@@ -376,7 +401,7 @@ impl KfxBookBuilder {
             chapter_num += 1;
         }
 
-        // Build all fragments
+        // 3. Build all fragments
         builder.add_format_capabilities();
         builder.add_metadata(book);
         builder.add_metadata_258(&chapters);
@@ -384,8 +409,8 @@ impl KfxBookBuilder {
         builder.add_book_navigation(&chapters);
         builder.add_nav_unit_list();
 
-        // Add typography styles for different element types
-        builder.add_styles();
+        // 4. Collect all unique styles and add them as P157 fragments
+        builder.add_all_styles(&chapters);
 
         // Add content fragments for each chapter
         // Track EID base for consistent position IDs across content blocks and position maps
@@ -821,137 +846,143 @@ impl KfxBookBuilder {
         ));
     }
 
-    /// Add typography styles ($157 fragments) for different element types
-    /// Creates styles for headings, paragraphs, blockquotes, list items
-    ///
-    /// Style format based on reference KFX analysis:
-    /// - Font family: symbol (P350=default, P382=serif)
-    /// - Font size: symbol (P350=default, P361=px) - not a struct
-    /// - Line height/margins: struct { P307: null decimal, P306: unit_symbol }
-    /// - Text align: symbol (P370=justify, P371=center, P372=left)
-    /// - Bold: boolean true when bold
-    fn add_styles(&mut self) {
-        // Helper to create a null value struct: { $307: null-decimal, $306: unit_sym }
-        // This format is used by Kindle for "inherit/default with unit hint"
-        let make_null_size = |unit: u64| -> IonValue {
-            let mut s = HashMap::new();
-            // Null-like decimal value (0x80 0x01 per Kindle format)
-            s.insert(sym::VALUE, IonValue::Decimal(vec![0x80, 0x01]));
-            s.insert(sym::UNIT, IonValue::Symbol(unit));
-            IonValue::Struct(s)
+    /// Add all unique styles found in the book as $157 fragments
+    fn add_all_styles(&mut self, chapters: &[ChapterData]) {
+        // Collect all unique styles
+        let mut unique_styles = std::collections::HashSet::new();
+        for chapter in chapters {
+            for text in &chapter.texts {
+                unique_styles.insert(text.style.clone());
+            }
+        }
+
+        // Helper to convert CssValue to IonValue
+        let css_to_ion = |val: &CssValue| -> Option<IonValue> {
+            match val {
+                CssValue::Px(v) => {
+                    let mut s = HashMap::new();
+                    // For Px, use decimal with UNIT_PX ($361)
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX));
+                    Some(IonValue::Struct(s))
+                }
+                CssValue::Em(v) | CssValue::Rem(v) => {
+                    let mut s = HashMap::new();
+                    // Kindle uses decimal for em values
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
+                    Some(IonValue::Struct(s))
+                }
+                CssValue::Percent(v) => {
+                    let mut s = HashMap::new();
+                    s.insert(sym::VALUE, IonValue::Int(*v as i64));
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
+                    Some(IonValue::Struct(s))
+                }
+                CssValue::Number(v) => {
+                    let mut s = HashMap::new();
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                    // Default to percent for line-height number
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
+                    Some(IonValue::Struct(s))
+                }
+                _ => None,
+            }
         };
 
-        // Style definitions: (id, element_type, bold, align, has_margins)
-        // The reference KFX uses symbols for font sizes, not explicit values
-        let styles = [
-            (
-                "style-h1",
-                ElementType::Heading1,
-                true,
-                sym::ALIGN_CENTER,
-                true,
-            ),
-            (
-                "style-h2",
-                ElementType::Heading2,
-                true,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-h3",
-                ElementType::Heading3,
-                true,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-h4",
-                ElementType::Heading4,
-                true,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-h5",
-                ElementType::Heading5,
-                true,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-h6",
-                ElementType::Heading6,
-                true,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-p",
-                ElementType::Paragraph,
-                false,
-                sym::ALIGN_JUSTIFY,
-                false,
-            ),
-            (
-                "style-blockquote",
-                ElementType::Blockquote,
-                false,
-                sym::ALIGN_LEFT,
-                true,
-            ),
-            (
-                "style-li",
-                ElementType::ListItem,
-                false,
-                sym::ALIGN_LEFT,
-                false,
-            ),
-        ];
+        for (i, style) in unique_styles.into_iter().enumerate() {
+            let style_id = format!("style-{}", i);
+            let style_sym = self.symtab.get_or_intern(&style_id);
 
-        for (style_id, element_type, bold, align, has_margins) in styles {
-            let style_sym = self.symtab.get_or_intern(style_id);
+            let mut style_ion = HashMap::new();
+            style_ion.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
 
-            let mut style = HashMap::new();
-            style.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
-            style.insert(sym::FONT_FAMILY, IonValue::Symbol(sym::FONT_DEFAULT));
-            style.insert(sym::TEXT_ALIGN, IonValue::Symbol(align));
-
-            // Line height: struct with null value and percent unit
-            style.insert(sym::LINE_HEIGHT, make_null_size(sym::UNIT_PERCENT));
-
-            if bold {
-                style.insert(sym::BOLD, IonValue::Bool(true));
+            if let Some(ref family) = style.font_family {
+                // Map common generic families to KFX symbols
+                let sym = match family.to_lowercase().as_str() {
+                    "serif" => sym::FONT_SERIF,
+                    _ => sym::FONT_DEFAULT,
+                };
+                style_ion.insert(sym::FONT_FAMILY, IonValue::Symbol(sym));
+            } else {
+                style_ion.insert(sym::FONT_FAMILY, IonValue::Symbol(sym::FONT_DEFAULT));
             }
 
-            // Headings and blockquotes get margins
-            if has_margins {
-                style.insert(sym::MARGIN_TOP, make_null_size(sym::UNIT_EM));
-                style.insert(sym::MARGIN_BOTTOM, make_null_size(sym::UNIT_EM));
+            if let Some(ref size) = style.font_size {
+                if let Some(val) = css_to_ion(size) {
+                    style_ion.insert(sym::FONT_SIZE, val);
+                }
             }
 
-            // Blockquotes and list items get left margin
-            if matches!(
-                element_type,
-                ElementType::Blockquote | ElementType::ListItem
-            ) {
-                style.insert(sym::MARGIN_LEFT, make_null_size(sym::UNIT_EM));
+            if let Some(align) = style.text_align {
+                let align_sym = match align {
+                    TextAlign::Left => sym::ALIGN_LEFT,
+                    TextAlign::Right => sym::ALIGN_RIGHT,
+                    TextAlign::Center => sym::ALIGN_CENTER,
+                    TextAlign::Justify => sym::ALIGN_JUSTIFY,
+                };
+                style_ion.insert(sym::TEXT_ALIGN, IonValue::Symbol(align_sym));
+            }
+
+            if let Some(ref weight) = style.font_weight {
+                if weight.is_bold() {
+                    style_ion.insert(sym::BOLD, IonValue::Bool(true));
+                }
+            }
+
+            if let Some(style_type) = style.font_style {
+                if matches!(style_type, crate::css::FontStyle::Italic | crate::css::FontStyle::Oblique) {
+                    style_ion.insert(sym::ITALIC, IonValue::Bool(true));
+                }
+            }
+
+            if let Some(ref margin) = style.margin_top {
+                if let Some(val) = css_to_ion(margin) {
+                    style_ion.insert(sym::MARGIN_TOP, val);
+                }
+            }
+            if let Some(ref margin) = style.margin_bottom {
+                if let Some(val) = css_to_ion(margin) {
+                    style_ion.insert(sym::MARGIN_BOTTOM, val);
+                }
+            }
+            if let Some(ref margin) = style.margin_left {
+                if let Some(val) = css_to_ion(margin) {
+                    style_ion.insert(sym::MARGIN_LEFT, val);
+                }
+            }
+            if let Some(ref margin) = style.margin_right {
+                if let Some(val) = css_to_ion(margin) {
+                    style_ion.insert(sym::MARGIN_RIGHT, val);
+                }
+            }
+
+            if let Some(ref indent) = style.text_indent {
+                if let Some(val) = css_to_ion(indent) {
+                    // P48 is text-indent
+                    style_ion.insert(48, val);
+                }
+            }
+
+            if let Some(ref height) = style.line_height {
+                if let Some(val) = css_to_ion(height) {
+                    style_ion.insert(sym::LINE_HEIGHT, val);
+                }
             }
 
             self.fragments.push(KfxFragment::new(
                 sym::STYLE,
-                style_id,
-                IonValue::Struct(style),
+                &style_id,
+                IonValue::Struct(style_ion),
             ));
 
-            // Store mapping from element type to style symbol
-            self.style_map.insert(element_type, style_sym);
+            self.style_map.insert(style, style_sym);
         }
     }
 
-    /// Get style symbol for an element type
-    fn get_style_for_element(&self, element: ElementType) -> Option<u64> {
-        self.style_map.get(&element).copied()
+    /// Get style symbol for a parsed style
+    fn get_style_symbol(&self, style: &ParsedStyle) -> Option<u64> {
+        self.style_map.get(style).copied()
     }
 
     /// Add text content fragment ($145)
@@ -999,8 +1030,8 @@ impl KfxBookBuilder {
             // Use consistent EID that matches position maps
             // +1 offset because eid_base is reserved for section content entry
             item.insert(sym::POSITION, IonValue::Int(eid_base + 1 + i as i64));
-            // Add element-specific style reference
-            if let Some(style_sym) = self.get_style_for_element(styled_text.element) {
+            // Add style reference
+            if let Some(style_sym) = self.get_style_symbol(&styled_text.style) {
                 item.insert(sym::STYLE, IonValue::Symbol(style_sym));
             }
 
@@ -1154,20 +1185,34 @@ impl KfxBookBuilder {
     }
 
     /// Add location map fragment ($550)
+    /// This creates the "virtual pages" for reading progress - needs granular entries
     fn add_location_map(&mut self, chapters: &[ChapterData]) {
-        // Location map structure: [ { P182: ( {P155: section_eid, P143: 0}, ... ) } ]
-        // Only includes section content entry EIDs, not content block EIDs
+        // Location map structure: [ { P182: ( {P155: eid, P143: offset}, ... ) } ]
+        // Include entries for each content block to enable granular reading positions
         let mut location_entries = Vec::new();
         let mut eid_base = 860i64;
 
         for chapter in chapters {
-            // Only the section content entry EID
+            // Section content entry EID at offset 0
             let section_eid = eid_base;
+            let mut section_entry = HashMap::new();
+            section_entry.insert(sym::POSITION, IonValue::Int(section_eid));
+            section_entry.insert(sym::OFFSET, IonValue::Int(0));
+            location_entries.push(IonValue::Struct(section_entry));
 
-            let mut entry = HashMap::new();
-            entry.insert(sym::POSITION, IonValue::Int(section_eid));
-            entry.insert(sym::OFFSET, IonValue::Int(0));
-            location_entries.push(IonValue::Struct(entry));
+            // Content block entries - each paragraph gets its own location entry
+            // This provides granular reading position tracking
+            let mut char_offset = 0i64;
+            for (i, styled_text) in chapter.texts.iter().enumerate() {
+                let content_eid = eid_base + 1 + i as i64;
+
+                let mut entry = HashMap::new();
+                entry.insert(sym::POSITION, IonValue::Int(content_eid));
+                entry.insert(sym::OFFSET, IonValue::Int(char_offset));
+                location_entries.push(IonValue::Struct(entry));
+
+                char_offset += styled_text.text.len() as i64;
+            }
 
             // +1 for section content entry, + texts.len() for content blocks
             eid_base += 1 + chapter.texts.len() as i64;
@@ -1364,27 +1409,13 @@ struct ChapterData {
     texts: Vec<StyledText>,
 }
 
-/// Text content with associated element type for style mapping
+/// Text content with associated style
 #[derive(Debug, Clone)]
 struct StyledText {
     /// The actual text content
     text: String,
-    /// The source HTML element type
-    element: ElementType,
-}
-
-/// HTML element types that affect styling
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ElementType {
-    Heading1,
-    Heading2,
-    Heading3,
-    Heading4,
-    Heading5,
-    Heading6,
-    Paragraph,
-    Blockquote,
-    ListItem,
+    /// The computed CSS style
+    style: ParsedStyle,
 }
 
 // =============================================================================
@@ -1655,133 +1686,104 @@ pub fn write_kfx_to_writer<W: Write>(book: &Book, mut writer: W) -> io::Result<(
 // Text Extraction
 // =============================================================================
 
-/// Extract styled text content from XHTML, preserving element types
-fn extract_styled_text_from_xhtml(data: &[u8]) -> Vec<StyledText> {
+/// Extract styled text content from XHTML, preserving styles from CSS
+fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<StyledText> {
     let html = String::from_utf8_lossy(data);
     let mut result = Vec::new();
 
-    // Find body content
-    let body_start = html
-        .find("<body")
-        .and_then(|i| html[i..].find('>').map(|j| i + j + 1));
-    let body_end = html.rfind("</body>");
+    let mut reader = Reader::from_str(&html);
+    reader.config_mut().trim_text(true);
 
-    let body = match (body_start, body_end) {
-        (Some(start), Some(end)) if start < end => &html[start..end],
-        _ => &html[..],
-    };
-
-    // Parse elements and extract text with element type
-    extract_elements_with_style(body, &mut result);
-
-    result
-}
-
-/// Parse HTML and extract text with associated element types
-fn extract_elements_with_style(html: &str, result: &mut Vec<StyledText>) {
-    let skip_tags = ["script", "style", "svg", "head", "title"];
-    let mut chars = html.chars().peekable();
     let mut current_text = String::new();
-    let mut current_element = ElementType::Paragraph;
-    let mut element_stack: Vec<ElementType> = vec![ElementType::Paragraph];
 
-    while let Some(ch) = chars.next() {
-        if ch == '<' {
-            let mut tag_content = String::new();
-            while let Some(&c) = chars.peek() {
-                if c == '>' {
-                    chars.next();
-                    break;
+    // We need to track the current computed style based on inheritance
+    let mut style_stack: Vec<ParsedStyle> = vec![ParsedStyle::default()];
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+
+                // Skip non-content tags
+                if matches!(tag_name.as_str(), "script" | "style" | "head" | "title" | "svg") {
+                    reader.read_to_end_into(e.name(), &mut Vec::new()).ok();
+                    continue;
                 }
-                tag_content.push(c);
-                chars.next();
-            }
 
-            let is_closing = tag_content.starts_with('/');
-            let tag_lower = tag_content.to_lowercase();
-            let tag_name = tag_lower
-                .trim_start_matches('/')
-                .split_whitespace()
-                .next()
-                .unwrap_or("");
-
-            // Skip script/style content entirely
-            if skip_tags.contains(&tag_name) && !is_closing {
-                let close_tag = format!("</{}", tag_name);
-                let remaining: String = chars.clone().collect();
-                if let Some(close_pos) = remaining.to_lowercase().find(&close_tag) {
-                    for _ in 0..close_pos {
-                        chars.next();
+                // Push current text if any
+                if !current_text.is_empty() {
+                    let text = clean_text(&current_text);
+                    if !text.is_empty() {
+                        result.push(StyledText {
+                            text,
+                            style: style_stack.last().cloned().unwrap_or_default(),
+                        });
                     }
-                    for c in chars.by_ref() {
-                        if c == '>' {
-                            break;
+                    current_text.clear();
+                }
+
+                // Extract class and id
+                let mut classes = Vec::new();
+                let mut id = None;
+                for attr in e.attributes().flatten() {
+                    if attr.key.as_ref() == b"class" {
+                        let class_val = String::from_utf8_lossy(&attr.value).to_string();
+                        classes.extend(class_val.split_whitespace().map(|s| s.to_string()));
+                    } else if attr.key.as_ref() == b"id" {
+                        id = Some(String::from_utf8_lossy(&attr.value).to_string());
+                    }
+                }
+
+                // Compute style for this element
+                let class_refs: Vec<&str> = classes.iter().map(|s| s.as_str()).collect();
+                let element_style =
+                    stylesheet.compute_style(&tag_name, &class_refs, id.as_deref());
+
+                // Merge with parent style for inheritance
+                let mut inherited_style = style_stack.last().cloned().unwrap_or_default();
+                inherited_style.merge(&element_style);
+                style_stack.push(inherited_style);
+            }
+            Ok(Event::End(_)) => {
+                // Push current text if any
+                if !current_text.is_empty() {
+                    let text = clean_text(&current_text);
+                    if !text.is_empty() {
+                        result.push(StyledText {
+                            text,
+                            style: style_stack.last().cloned().unwrap_or_default(),
+                        });
+                    }
+                    current_text.clear();
+                }
+                if style_stack.len() > 1 {
+                    style_stack.pop();
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                // Handle empty tags like <br/>
+                let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                if tag_name == "br" {
+                    if !current_text.is_empty() {
+                        let text = clean_text(&current_text);
+                        if !text.is_empty() {
+                            result.push(StyledText {
+                                text,
+                                style: style_stack.last().cloned().unwrap_or_default(),
+                            });
                         }
+                        current_text.clear();
                     }
                 }
-                continue;
             }
-
-            // Block-level elements that start a new text block
-            let element_type = match tag_name {
-                "h1" => Some(ElementType::Heading1),
-                "h2" => Some(ElementType::Heading2),
-                "h3" => Some(ElementType::Heading3),
-                "h4" => Some(ElementType::Heading4),
-                "h5" => Some(ElementType::Heading5),
-                "h6" => Some(ElementType::Heading6),
-                "p" => Some(ElementType::Paragraph),
-                "blockquote" => Some(ElementType::Blockquote),
-                "li" => Some(ElementType::ListItem),
-                "div" => Some(ElementType::Paragraph),
-                _ => None,
-            };
-
-            if let Some(elem) = element_type {
-                if is_closing {
-                    // Save current text if any
-                    let text = clean_text(&current_text);
-                    if !text.is_empty() {
-                        result.push(StyledText {
-                            text,
-                            element: current_element,
-                        });
-                    }
-                    current_text.clear();
-                    // Pop element stack
-                    element_stack.pop();
-                    current_element = element_stack
-                        .last()
-                        .copied()
-                        .unwrap_or(ElementType::Paragraph);
-                } else {
-                    // Save current text if any
-                    let text = clean_text(&current_text);
-                    if !text.is_empty() {
-                        result.push(StyledText {
-                            text,
-                            element: current_element,
-                        });
-                    }
-                    current_text.clear();
-                    // Push new element
-                    current_element = elem;
-                    element_stack.push(elem);
-                }
-            } else if tag_name == "br" {
-                // Line break - save current text and continue with same element
-                let text = clean_text(&current_text);
-                if !text.is_empty() {
-                    result.push(StyledText {
-                        text,
-                        element: current_element,
-                    });
-                }
-                current_text.clear();
+            Ok(Event::Text(e)) => {
+                current_text.push_str(&String::from_utf8_lossy(e.as_ref()));
             }
-        } else {
-            current_text.push(ch);
+            Ok(Event::Eof) => break,
+            _ => {}
         }
+        buf.clear();
     }
 
     // Save any remaining text
@@ -1789,9 +1791,11 @@ fn extract_elements_with_style(html: &str, result: &mut Vec<StyledText>) {
     if !text.is_empty() {
         result.push(StyledText {
             text,
-            element: current_element,
+            style: style_stack.last().cloned().unwrap_or_default(),
         });
     }
+
+    result
 }
 
 /// Clean up text by normalizing whitespace
