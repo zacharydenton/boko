@@ -1723,19 +1723,22 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
                     current_text.clear();
                 }
 
-                // Extract class and id
+                // Extract class, id, and inline style
                 let mut classes = Vec::new();
                 let mut id = None;
+                let mut inline_style = None;
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == b"class" {
                         let class_val = String::from_utf8_lossy(&attr.value).to_string();
                         classes.extend(class_val.split_whitespace().map(|s| s.to_string()));
                     } else if attr.key.as_ref() == b"id" {
                         id = Some(String::from_utf8_lossy(&attr.value).to_string());
+                    } else if attr.key.as_ref() == b"style" {
+                        inline_style = Some(String::from_utf8_lossy(&attr.value).to_string());
                     }
                 }
 
-                // Compute style for this element
+                // Compute style for this element from stylesheet
                 let class_refs: Vec<&str> = classes.iter().map(|s| s.as_str()).collect();
                 let element_style =
                     stylesheet.compute_style(&tag_name, &class_refs, id.as_deref());
@@ -1743,6 +1746,13 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
                 // Merge with parent style for inheritance
                 let mut inherited_style = style_stack.last().cloned().unwrap_or_default();
                 inherited_style.merge(&element_style);
+
+                // Apply inline style (highest specificity)
+                if let Some(ref style_attr) = inline_style {
+                    let inline = Stylesheet::parse_inline_style(style_attr);
+                    inherited_style.merge(&inline);
+                }
+
                 style_stack.push(inherited_style);
             }
             Ok(Event::End(_)) => {

@@ -237,6 +237,14 @@ impl Stylesheet {
         Stylesheet { rules }
     }
 
+    /// Parse an inline style attribute (style="...")
+    /// Returns a ParsedStyle with the declarations from the inline style
+    pub fn parse_inline_style(style_attr: &str) -> ParsedStyle {
+        let mut input = ParserInput::new(style_attr);
+        let mut parser = Parser::new(&mut input);
+        parse_declaration_block(&mut parser)
+    }
+
     /// Get the computed style for an element
     pub fn compute_style(&self, element: &str, classes: &[&str], id: Option<&str>) -> ParsedStyle {
         let mut result = ParsedStyle::default();
@@ -714,5 +722,85 @@ mod tests {
         let m2 = stylesheet.compute_style("div", &["m2"], None);
         assert!(matches!(m2.margin_top, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
         assert!(matches!(m2.margin_left, Some(CssValue::Em(e)) if (e - 2.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn test_text_indent() {
+        let css = r#"
+            p {
+                margin-top: 0;
+                margin-bottom: 0;
+                text-indent: 1em;
+            }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+        let p_style = stylesheet.compute_style("p", &[], None);
+
+        assert!(
+            matches!(p_style.text_indent, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01),
+            "Expected text-indent: 1em, got {:?}",
+            p_style.text_indent
+        );
+        assert!(
+            matches!(p_style.margin_top, Some(CssValue::Px(v)) if v.abs() < 0.01),
+            "Expected margin-top: 0, got {:?}",
+            p_style.margin_top
+        );
+    }
+
+    #[test]
+    fn test_inline_style_parsing() {
+        let inline = Stylesheet::parse_inline_style("font-weight: bold; text-align: center; margin-top: 2em");
+
+        assert!(matches!(inline.font_weight, Some(FontWeight::Bold)));
+        assert_eq!(inline.text_align, Some(TextAlign::Center));
+        assert!(matches!(inline.margin_top, Some(CssValue::Em(e)) if (e - 2.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn test_epictetus_css_styles() {
+        // Simplified version of epictetus.epub CSS
+        let css = r#"
+            p {
+                margin-top: 0;
+                margin-right: 0;
+                margin-bottom: 0;
+                margin-left: 0;
+                text-indent: 1em;
+            }
+
+            blockquote {
+                margin-top: 1em;
+                margin-right: 2.5em;
+                margin-bottom: 1em;
+                margin-left: 2.5em;
+            }
+
+            h1, h2, h3, h4, h5, h6 {
+                margin-top: 3em;
+                margin-bottom: 3em;
+                text-align: center;
+            }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Check paragraph styles
+        let p_style = stylesheet.compute_style("p", &[], None);
+        assert!(matches!(p_style.text_indent, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+
+        // Check blockquote styles
+        let bq_style = stylesheet.compute_style("blockquote", &[], None);
+        assert!(matches!(bq_style.margin_left, Some(CssValue::Em(e)) if (e - 2.5).abs() < 0.01));
+        assert!(matches!(bq_style.margin_right, Some(CssValue::Em(e)) if (e - 2.5).abs() < 0.01));
+
+        // Check h1-h6 grouped selector
+        let h1_style = stylesheet.compute_style("h1", &[], None);
+        assert_eq!(h1_style.text_align, Some(TextAlign::Center));
+        assert!(matches!(h1_style.margin_top, Some(CssValue::Em(e)) if (e - 3.0).abs() < 0.01));
+
+        let h3_style = stylesheet.compute_style("h3", &[], None);
+        assert_eq!(h3_style.text_align, Some(TextAlign::Center));
     }
 }

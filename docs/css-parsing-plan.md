@@ -118,6 +118,8 @@ KFX Output:
 | text-indent | P48? | Need to verify symbol |
 
 ### Out of Scope (for now)
+- **Descendant selectors** (`blockquote p`, `div .class`) - would require tracking element ancestry
+- **Child/sibling combinators** (`>`, `+`, `~`) - complex matching logic
 - Complex selectors (`:not()`, `::before`)
 - CSS variables
 - @media queries
@@ -126,7 +128,19 @@ KFX Output:
 - Borders, shadows
 - Transforms, animations
 
+### Implementation Status
+
+| Feature | Status |
+|---------|--------|
+| Simple selectors (element, .class, #id) | ✅ Implemented |
+| Element.class selectors | ✅ Implemented |
+| Grouped selectors (h1, h2, h3) | ✅ Implemented |
+| Inline styles (style="...") | ✅ Implemented |
+| CSS specificity & cascade | ✅ Implemented |
+| All typography properties | ✅ Implemented |
+| Descendant selectors | ❌ Future enhancement |
+
 ### Testing Strategy
-1. Unit tests for CSS parsing
-2. Integration test: parse epictetus.epub CSS, verify styles applied
-3. Comparison test: generated KFX styles vs reference
+1. Unit tests for CSS parsing ✅
+2. Integration test: parse epictetus.epub CSS, verify styles applied ✅
+3. Comparison test: generated KFX styles vs reference (manual verification)
