@@ -247,11 +247,10 @@ impl SymbolTable {
     /// Get or create a symbol ID for a name
     pub fn get_or_intern(&mut self, name: &str) -> u64 {
         // Check if it's a shared symbol reference (starts with $)
-        if let Some(id_str) = name.strip_prefix('$') {
-            if let Ok(id) = id_str.parse::<u64>() {
+        if let Some(id_str) = name.strip_prefix('$')
+            && let Ok(id) = id_str.parse::<u64>() {
                 return id;
             }
-        }
 
         // Check if already interned
         if let Some(&id) = self.symbol_map.get(name) {
@@ -268,11 +267,10 @@ impl SymbolTable {
 
     /// Get symbol ID without interning (returns None if not found)
     pub fn get(&self, name: &str) -> Option<u64> {
-        if let Some(id_str) = name.strip_prefix('$') {
-            if let Ok(id) = id_str.parse::<u64>() {
+        if let Some(id_str) = name.strip_prefix('$')
+            && let Ok(id) = id_str.parse::<u64>() {
                 return Some(id);
             }
-        }
         self.symbol_map.get(name).copied()
     }
 
@@ -465,11 +463,9 @@ impl KfxBookBuilder {
         //
         // Structure: { $590: [ { $586: provider, $492: feature, $589: { $5: { $587: min, $588: ver } } }, ... ] }
         // Match reference KFX format capabilities exactly
-        let capabilities = vec![
-            ("com.amazon.yjconversion", "reflow-style", 6, 0),
+        let capabilities = [("com.amazon.yjconversion", "reflow-style", 6, 0),
             ("SDK.Marker", "CanonicalFormat", 1, 0),
-            ("com.amazon.yjconversion", "yj_hdv", 1, 0),
-        ];
+            ("com.amazon.yjconversion", "yj_hdv", 1, 0)];
 
         let caps_list: Vec<IonValue> = capabilities
             .iter()
@@ -1192,7 +1188,7 @@ impl KfxBookBuilder {
     fn add_resources(&mut self, book: &Book) {
         let mut resource_index = 0;
 
-        for (_href, resource) in &book.resources {
+        for resource in book.resources.values() {
             let is_image = is_image_media_type(&resource.media_type);
             let is_font = is_font_media_type(&resource.media_type);
 
@@ -1717,7 +1713,7 @@ fn extract_elements_with_style(html: &str, result: &mut Vec<StyledText>) {
                     for _ in 0..close_pos {
                         chars.next();
                     }
-                    while let Some(c) = chars.next() {
+                    for c in chars.by_ref() {
                         if c == '>' {
                             break;
                         }

@@ -33,9 +33,6 @@ bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 # CLI argument parsing (only for binary)
 clap = { version = "4", features = ["derive"], optional = true }
 
-# Amazon Ion binary format (for KFX)
-ion-rs = "1.0.0-rc.11"
-
 # Native: use fast zlib-rs
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }

@@ -91,7 +91,7 @@ fn parse_container(data: &[u8]) -> io::Result<KfxContainer> {
 
     // Read entity table until we hit ION magic
     let mut entities = Vec::new();
-    while pos + 4 <= data.len() && &data[pos..pos + 4] != ION_MAGIC {
+    while pos + 4 <= data.len() && data[pos..pos + 4] != ION_MAGIC {
         if pos + 24 > data.len() {
             break;
         }
@@ -177,7 +177,7 @@ fn parse_entity_payload(container: &KfxContainer, entry: &EntityEntry) -> io::Re
     let payload = &entity_data[ent_header_len..];
 
     // Check if payload is ION
-    if payload.len() >= 4 && &payload[0..4] == ION_MAGIC {
+    if payload.len() >= 4 && payload[0..4] == ION_MAGIC {
         let mut parser = IonParser::new(payload);
         parser.parse()
     } else {
@@ -203,11 +203,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     let mut text_by_id: HashMap<u32, Vec<String>> = HashMap::new();
     if let Some(text_entities) = entities_by_type.get(&ENTITY_TYPE_TEXT_CONTENT) {
         for entity in text_entities {
-            if let Ok(value) = parse_entity_payload(container, entity) {
-                if let Some(texts) = extract_text_content(&value) {
+            if let Ok(value) = parse_entity_payload(container, entity)
+                && let Some(texts) = extract_text_content(&value) {
                     text_by_id.insert(entity.id, texts);
                 }
-            }
         }
     }
 
@@ -224,11 +223,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     let mut resource_info: HashMap<u32, (String, String)> = HashMap::new();
     if let Some(info_entities) = entities_by_type.get(&ENTITY_TYPE_RESOURCE_INFO) {
         for entity in info_entities {
-            if let Ok(value) = parse_entity_payload(container, entity) {
-                if let Some(info) = extract_resource_info(&value) {
+            if let Ok(value) = parse_entity_payload(container, entity)
+                && let Some(info) = extract_resource_info(&value) {
                     resource_info.insert(entity.id, info);
                 }
-            }
         }
     }
 
@@ -263,11 +261,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
 
     // Get section order from document data (type 258) - reserved for future use
     // when we implement proper section ordering
-    if let Some(doc_entities) = entities_by_type.get(&ENTITY_TYPE_DOCUMENT_DATA) {
-        if let Some(entity) = doc_entities.first() {
+    if let Some(doc_entities) = entities_by_type.get(&ENTITY_TYPE_DOCUMENT_DATA)
+        && let Some(entity) = doc_entities.first() {
             let _ = parse_entity_payload(container, entity);
         }
-    }
 
     // Track sections (type 260) - reserved for future use
     if let Some(section_entities) = entities_by_type.get(&ENTITY_TYPE_SECTION) {
@@ -280,7 +277,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
         let href = format!("chapter_{}.xhtml", i);
 
         // Build XHTML from text fragments
-        let content = build_xhtml(&texts, &book.metadata.title);
+        let content = build_xhtml(texts, &book.metadata.title);
 
         book.resources.insert(
             href.clone(),
@@ -329,9 +326,9 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
 fn extract_text_content(value: &IonValue) -> Option<Vec<String>> {
     let value = value.unwrap_annotated();
 
-    if let Some(map) = value.as_struct() {
-        if let Some(text_array) = map.get(&PROP_TEXT_ARRAY) {
-            if let Some(items) = text_array.as_list() {
+    if let Some(map) = value.as_struct()
+        && let Some(text_array) = map.get(&PROP_TEXT_ARRAY)
+            && let Some(items) = text_array.as_list() {
                 let texts: Vec<String> = items
                     .iter()
                     .filter_map(|item| {
@@ -343,8 +340,6 @@ fn extract_text_content(value: &IonValue) -> Option<Vec<String>> {
                     return Some(texts);
                 }
             }
-        }
-    }
 
     None
 }
@@ -355,13 +350,12 @@ fn extract_metadata(value: &IonValue, metadata: &mut Metadata) {
 
     if let Some(map) = value.as_struct() {
         // Look for metadata entries ($491)
-        if let Some(entries) = map.get(&PROP_METADATA_ENTRIES) {
-            if let Some(entries_list) = entries.as_list() {
+        if let Some(entries) = map.get(&PROP_METADATA_ENTRIES)
+            && let Some(entries_list) = entries.as_list() {
                 for entry in entries_list {
                     process_metadata_entry(entry, metadata);
                 }
             }
-        }
     }
 }
 
@@ -370,8 +364,8 @@ fn process_metadata_entry(entry: &IonValue, metadata: &mut Metadata) {
 
     if let Some(map) = entry.as_struct() {
         // Look for $258 (document data array with key-value pairs)
-        if let Some(doc_data) = map.get(&PROP_DOC_DATA) {
-            if let Some(items) = doc_data.as_list() {
+        if let Some(doc_data) = map.get(&PROP_DOC_DATA)
+            && let Some(items) = doc_data.as_list() {
                 for item in items {
                     let item = item.unwrap_annotated();
                     if let Some(item_map) = item.as_struct() {
@@ -390,11 +384,10 @@ fn process_metadata_entry(entry: &IonValue, metadata: &mut Metadata) {
                                 }
                             }
                             "author" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    if !metadata.authors.contains(&s.to_string()) {
+                                if let Some(s) = val.and_then(|v| v.as_string())
+                                    && !metadata.authors.contains(&s.to_string()) {
                                         metadata.authors.push(s.to_string());
                                     }
-                                }
                             }
                             "language" => {
                                 if let Some(s) = val.and_then(|v| v.as_string()) {
@@ -412,11 +405,10 @@ fn process_metadata_entry(entry: &IonValue, metadata: &mut Metadata) {
                                 }
                             }
                             "ASIN" | "content_id" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    if metadata.identifier.is_empty() {
+                                if let Some(s) = val.and_then(|v| v.as_string())
+                                    && metadata.identifier.is_empty() {
                                         metadata.identifier = s.to_string();
                                     }
-                                }
                             }
                             "issue_date" => {
                                 if let Some(s) = val.and_then(|v| v.as_string()) {
@@ -428,7 +420,6 @@ fn process_metadata_entry(entry: &IonValue, metadata: &mut Metadata) {
                     }
                 }
             }
-        }
     }
 }
 

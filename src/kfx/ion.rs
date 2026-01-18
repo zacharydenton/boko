@@ -156,7 +156,7 @@ impl<'a> IonParser<'a> {
         if self.remaining() < 4 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "data too short"));
         }
-        if &self.data[self.pos..self.pos + 4] != ION_MAGIC {
+        if self.data[self.pos..self.pos + 4] != ION_MAGIC {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "not Ion data (missing BVM)",
