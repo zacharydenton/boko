@@ -16,7 +16,7 @@ pub enum Format {
     Azw3,
     /// MOBI format (legacy Kindle). Writes as KF8/AZW3.
     Mobi,
-    /// KFX/KF10 format (latest Kindle). Read-only.
+    /// KFX/KF10 format (latest Kindle)
     Kfx,
 }
 
@@ -170,8 +170,6 @@ impl Book {
 
     /// Save the book to a file with an explicit format.
     ///
-    /// Note: KFX format is read-only. Attempting to save as KFX will return an error.
-    ///
     /// # Example
     ///
     /// ```no_run
@@ -185,10 +183,7 @@ impl Book {
         match format {
             Format::Epub => crate::epub::write_epub(self, path),
             Format::Azw3 | Format::Mobi => crate::mobi::write_mobi(self, path),
-            Format::Kfx => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "KFX format is read-only; save as EPUB or AZW3 instead",
-            )),
+            Format::Kfx => crate::kfx::write_kfx(self, path),
         }
     }
 

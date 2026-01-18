@@ -6,6 +6,7 @@ use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
 use crate::epub::{read_epub_from_reader, write_epub_to_writer};
+use crate::kfx::{read_kfx_from_reader, write_kfx_to_writer};
 use crate::mobi::{read_mobi_from_reader, write_mobi_to_writer};
 
 /// Initialize panic hook for better error messages in the browser console.
@@ -55,6 +56,62 @@ pub fn mobi_to_azw3(data: &[u8]) -> Result<Vec<u8>, JsValue> {
 
     let mut output = Vec::new();
     write_mobi_to_writer(&book, &mut output).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output)
+}
+
+/// Convert EPUB to KFX (latest Kindle format).
+///
+/// Takes raw EPUB bytes and returns KFX bytes.
+#[wasm_bindgen]
+pub fn epub_to_kfx(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let cursor = Cursor::new(data);
+    let book = read_epub_from_reader(cursor).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Vec::new();
+    write_kfx_to_writer(&book, &mut output).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output)
+}
+
+/// Convert KFX to EPUB.
+///
+/// Takes raw KFX bytes and returns EPUB bytes.
+#[wasm_bindgen]
+pub fn kfx_to_epub(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let cursor = Cursor::new(data);
+    let book = read_kfx_from_reader(cursor).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Cursor::new(Vec::new());
+    write_epub_to_writer(&book, &mut output).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output.into_inner())
+}
+
+/// Convert KFX to AZW3.
+///
+/// Takes raw KFX bytes and returns AZW3 bytes.
+#[wasm_bindgen]
+pub fn kfx_to_azw3(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let cursor = Cursor::new(data);
+    let book = read_kfx_from_reader(cursor).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Vec::new();
+    write_mobi_to_writer(&book, &mut output).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output)
+}
+
+/// Convert MOBI/AZW3 to KFX.
+///
+/// Takes raw MOBI or AZW3 bytes and returns KFX bytes.
+#[wasm_bindgen]
+pub fn mobi_to_kfx(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let cursor = Cursor::new(data);
+    let book = read_mobi_from_reader(cursor).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Vec::new();
+    write_kfx_to_writer(&book, &mut output).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     Ok(output)
 }

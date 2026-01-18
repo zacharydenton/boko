@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::book::{Book, Metadata, Resource, SpineItem, TocEntry};
 
-use super::ion::{IonParser, IonValue, ION_MAGIC};
+use super::ion::{ION_MAGIC, IonParser, IonValue};
 
 /// KFX container magic
 const CONTAINER_MAGIC: &[u8; 4] = b"CONT";
@@ -160,9 +160,12 @@ fn parse_entity_payload(container: &KfxContainer, entry: &EntityEntry) -> io::Re
     }
 
     // Get entity header length
-    let ent_header_len =
-        u32::from_le_bytes([entity_data[6], entity_data[7], entity_data[8], entity_data[9]])
-            as usize;
+    let ent_header_len = u32::from_le_bytes([
+        entity_data[6],
+        entity_data[7],
+        entity_data[8],
+        entity_data[9],
+    ]) as usize;
 
     if ent_header_len > entity_data.len() {
         return Err(io::Error::new(
@@ -234,16 +237,13 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
         for (i, entity) in resource_entities.iter().enumerate() {
             if let Ok(IonValue::Blob(data)) = parse_entity_payload(container, entity) {
                 let (path, media_type) =
-                    resource_info
-                        .get(&entity.id)
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            let ext = guess_extension(&data);
-                            (
-                                format!("resource/rsrc{}.{}", i, ext),
-                                guess_media_type(&data),
-                            )
-                        });
+                    resource_info.get(&entity.id).cloned().unwrap_or_else(|| {
+                        let ext = guess_extension(&data);
+                        (
+                            format!("resource/rsrc{}.{}", i, ext),
+                            guess_media_type(&data),
+                        )
+                    });
 
                 book.resources.insert(
                     path.clone(),
@@ -459,10 +459,7 @@ fn build_xhtml(texts: &[String], title: &str) -> String {
     html.push_str("<!DOCTYPE html>\n");
     html.push_str("<html xmlns=\"http://www.w3.org/1999/xhtml\">\n");
     html.push_str("<head>\n");
-    html.push_str(&format!(
-        "  <title>{}</title>\n",
-        escape_xml(title)
-    ));
+    html.push_str(&format!("  <title>{}</title>\n", escape_xml(title)));
     html.push_str("</head>\n");
     html.push_str("<body>\n");
 
@@ -539,10 +536,21 @@ fn uuid_v4() -> String {
 
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        bytes[6], bytes[7],
-        bytes[8], bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
     )
 }

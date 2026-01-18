@@ -78,5 +78,5 @@ pub mod wasm;
 
 pub use book::{Book, Format, Metadata, Resource, SpineItem, TocEntry};
 pub use epub::{read_epub, read_epub_from_reader, write_epub, write_epub_to_writer};
-pub use kfx::{read_kfx, read_kfx_from_reader};
+pub use kfx::{read_kfx, read_kfx_from_reader, write_kfx, write_kfx_to_writer};
 pub use mobi::{read_mobi, read_mobi_from_reader, write_mobi, write_mobi_to_writer};
