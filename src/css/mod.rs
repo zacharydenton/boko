@@ -54,8 +54,6 @@ impl std::hash::Hash for CssValue {
     }
 }
 
-impl CssValue {}
-
 /// Text alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {

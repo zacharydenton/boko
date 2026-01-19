@@ -351,11 +351,17 @@ impl KfxBookBuilder {
         combined_css.push_str("blockquote { margin-left: 2em; margin-right: 2em; }\n");
         combined_css.push_str("li { margin-left: 1em; }\n");
 
-        for resource in book.resources.values() {
-            if resource.media_type == "text/css" {
-                combined_css.push_str(&String::from_utf8_lossy(&resource.data));
-                combined_css.push('\n');
-            }
+        // Collect and sort CSS resources by path for deterministic ordering
+        let mut css_resources: Vec<_> = book
+            .resources
+            .iter()
+            .filter(|(_, r)| r.media_type == "text/css")
+            .collect();
+        css_resources.sort_by_key(|(path, _)| path.as_str());
+
+        for (_, resource) in css_resources {
+            combined_css.push_str(&String::from_utf8_lossy(&resource.data));
+            combined_css.push('\n');
         }
         let stylesheet = Stylesheet::parse(&combined_css);
 
