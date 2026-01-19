@@ -596,12 +596,15 @@ impl KfxBookBuilder {
             }
         }
 
-        // 3. Build all fragments
+        // 3. Build section EID mapping first (needed for TOC navigation)
+        builder.build_section_eids(&chapters, book.metadata.cover_image.is_some());
+
+        // 4. Build all fragments
         builder.add_format_capabilities();
         builder.add_metadata(book);
         builder.add_metadata_258(&chapters);
         builder.add_document_data(&chapters);
-        builder.add_book_navigation(&chapters);
+        builder.add_book_navigation(&book.toc);
         builder.add_nav_unit_list();
 
         // 4. Collect all unique styles and add them as P157 fragments
@@ -627,9 +630,6 @@ impl KfxBookBuilder {
         for (_, chunk) in &all_chunks {
             builder.add_text_content_chunk(chunk);
         }
-
-        // Build section EID mapping (maps XHTML paths to their EIDs for internal links)
-        builder.build_section_eids(&chapters, book.metadata.cover_image.is_some());
 
         // Build anchor symbol mapping BEFORE content blocks (needed for $179 refs)
         builder.build_anchor_symbols(&chapters);
@@ -1021,43 +1021,14 @@ impl KfxBookBuilder {
     /// Creates a complete TOC navigation structure with:
     /// - Reading order reference
     /// - Nav container with type=toc
-    /// - Nav entries with titles and section targets (using EIDs)
-    fn add_book_navigation(&mut self, chapters: &[ChapterData]) {
+    /// - Nav entries with titles and section targets (using EIDs from section_eids map)
+    fn add_book_navigation(&mut self, toc: &[crate::book::TocEntry]) {
         // Create nav container ID
         let nav_container_id = "nav-toc";
         let nav_container_sym = self.symtab.get_or_intern(nav_container_id);
 
-        // Build nav entries for each chapter (inline, annotated with $393)
-        // Use EIDs that match content blocks and position maps
-        let mut nav_entry_values = Vec::new();
-        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64; // Same starting EID as content blocks
-
-        for chapter in chapters.iter() {
-            // Nav title: { $244 (text): "Chapter Title" }
-            let mut nav_title = HashMap::new();
-            nav_title.insert(sym::TEXT, IonValue::String(chapter.title.clone()));
-
-            // Nav target: { $155 (position/eid): eid, $143 (offset): 0 }
-            // Use EID of first content block in this chapter (eid_base + 1)
-            // eid_base is reserved for section content entry
-            let mut nav_target = HashMap::new();
-            nav_target.insert(sym::POSITION, IonValue::Int(eid_base + 1));
-            nav_target.insert(sym::OFFSET, IonValue::Int(0));
-
-            // Nav entry struct: { $241: nav_title, $246: nav_target }
-            let mut nav_entry = HashMap::new();
-            nav_entry.insert(sym::NAV_TITLE, IonValue::Struct(nav_title));
-            nav_entry.insert(sym::NAV_TARGET, IonValue::Struct(nav_target));
-
-            // Annotate with $393 (nav_definition)
-            nav_entry_values.push(IonValue::Annotated(
-                vec![sym::NAV_DEFINITION],
-                Box::new(IonValue::Struct(nav_entry)),
-            ));
-
-            // Advance EID base: +1 for section content entry, + content.len() for content blocks
-            eid_base += 1 + chapter.content.len() as i64;
-        }
+        // Flatten TOC entries (including nested children) and build nav entries
+        let nav_entry_values = self.build_nav_entries_from_toc(toc);
 
         // Nav container: { $235 (nav_type): $212 (toc), $239 (nav_id): nav_container_sym, $247 (nav_entries): [...] }
         let mut nav_container = HashMap::new();
@@ -1086,6 +1057,61 @@ impl KfxBookBuilder {
             sym::BOOK_NAVIGATION,
             IonValue::List(vec![IonValue::Struct(nav)]),
         ));
+    }
+
+    /// Build nav entries from TOC entries, flattening nested children
+    /// Maps TOC hrefs to EIDs using section_eids lookup
+    fn build_nav_entries_from_toc(&self, toc: &[crate::book::TocEntry]) -> Vec<IonValue> {
+        let mut nav_entries = Vec::new();
+        self.collect_nav_entries(toc, &mut nav_entries);
+        nav_entries
+    }
+
+    /// Recursively collect nav entries from TOC hierarchy
+    fn collect_nav_entries(
+        &self,
+        entries: &[crate::book::TocEntry],
+        nav_entries: &mut Vec<IonValue>,
+    ) {
+        for entry in entries {
+            // Parse the href to extract path and fragment
+            let (path, _fragment) = if let Some(hash_pos) = entry.href.find('#') {
+                (&entry.href[..hash_pos], Some(&entry.href[hash_pos + 1..]))
+            } else {
+                (entry.href.as_str(), None)
+            };
+
+            // Look up the EID for this path from section_eids
+            // If not found, skip this entry (it might reference a non-spine item)
+            if let Some(&eid) = self.section_eids.get(path) {
+                // Nav title: { $244 (text): "Entry Title" }
+                let mut nav_title = HashMap::new();
+                nav_title.insert(sym::TEXT, IonValue::String(entry.title.clone()));
+
+                // Nav target: { $155 (position/eid): eid, $143 (offset): 0 }
+                // TODO: In the future, we could compute offset based on fragment identifier
+                // For now, we point to the start of the section
+                let mut nav_target = HashMap::new();
+                nav_target.insert(sym::POSITION, IonValue::Int(eid));
+                nav_target.insert(sym::OFFSET, IonValue::Int(0));
+
+                // Nav entry struct: { $241: nav_title, $246: nav_target }
+                let mut nav_entry = HashMap::new();
+                nav_entry.insert(sym::NAV_TITLE, IonValue::Struct(nav_title));
+                nav_entry.insert(sym::NAV_TARGET, IonValue::Struct(nav_target));
+
+                // Annotate with $393 (nav_definition)
+                nav_entries.push(IonValue::Annotated(
+                    vec![sym::NAV_DEFINITION],
+                    Box::new(IonValue::Struct(nav_entry)),
+                ));
+            }
+
+            // Recursively process children (flattening the hierarchy)
+            if !entry.children.is_empty() {
+                self.collect_nav_entries(&entry.children, nav_entries);
+            }
+        }
     }
 
     /// Add nav unit list fragment ($395)
@@ -4334,6 +4360,158 @@ mod tests {
             "Styles too verbose: {:.1} avg properties (expected <= 7.0)",
             avg_props
         );
+    }
+
+    #[test]
+    fn test_toc_navigation_from_epub() {
+        // Test that TOC entries from EPUB are correctly converted to KFX navigation
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+
+        // Verify the book has a hierarchical TOC structure
+        assert!(
+            book.toc.len() > 0,
+            "Book should have TOC entries"
+        );
+
+        // Count total TOC entries including children
+        fn count_toc_entries(entries: &[crate::book::TocEntry]) -> usize {
+            entries.iter().fold(0, |acc, e| {
+                acc + 1 + count_toc_entries(&e.children)
+            })
+        }
+        let total_toc_entries = count_toc_entries(&book.toc);
+        println!("Total TOC entries (including nested): {}", total_toc_entries);
+
+        // Build KFX
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find the book navigation fragment ($389)
+        let nav_fragment = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::BOOK_NAVIGATION)
+            .expect("Should have $389 book_navigation fragment");
+
+        // Verify the navigation structure
+        if let IonValue::List(book_navs) = &nav_fragment.value {
+            assert!(!book_navs.is_empty(), "Book navigation should not be empty");
+
+            // Get the first (and usually only) book navigation entry
+            if let IonValue::Struct(book_nav) = &book_navs[0] {
+                // Check for nav_containers ($392)
+                let nav_containers = book_nav
+                    .get(&sym::NAV_CONTAINER_REF)
+                    .expect("Should have nav_containers");
+
+                if let IonValue::List(containers) = nav_containers {
+                    assert!(!containers.is_empty(), "Nav containers should not be empty");
+
+                    // Get the TOC nav container (annotated with $391)
+                    let toc_container = &containers[0];
+                    let toc_struct = match toc_container {
+                        IonValue::Annotated(annotations, inner) => {
+                            assert!(
+                                annotations.contains(&sym::NAV_CONTAINER_TYPE),
+                                "Nav container should be annotated with $391"
+                            );
+                            match inner.as_ref() {
+                                IonValue::Struct(s) => s,
+                                _ => panic!("Nav container inner should be a struct"),
+                            }
+                        }
+                        IonValue::Struct(s) => s,
+                        _ => panic!("Nav container should be struct or annotated struct"),
+                    };
+
+                    // Verify nav type is TOC ($212)
+                    if let Some(IonValue::Symbol(nav_type)) = toc_struct.get(&sym::NAV_TYPE) {
+                        assert_eq!(
+                            *nav_type, sym::TOC,
+                            "Nav type should be $212 (TOC)"
+                        );
+                    }
+
+                    // Check nav entries ($247)
+                    if let Some(IonValue::List(nav_entries)) = toc_struct.get(&sym::NAV_ENTRIES) {
+                        println!("KFX nav entries: {}", nav_entries.len());
+
+                        // We should have nav entries for each TOC entry that maps to a valid section
+                        assert!(
+                            nav_entries.len() > 0,
+                            "Should have at least one nav entry"
+                        );
+
+                        // Verify each nav entry has the required structure
+                        for (i, entry) in nav_entries.iter().enumerate() {
+                            let entry_struct = match entry {
+                                IonValue::Annotated(annotations, inner) => {
+                                    assert!(
+                                        annotations.contains(&sym::NAV_DEFINITION),
+                                        "Nav entry should be annotated with $393"
+                                    );
+                                    match inner.as_ref() {
+                                        IonValue::Struct(s) => s,
+                                        _ => panic!("Nav entry inner should be a struct"),
+                                    }
+                                }
+                                IonValue::Struct(s) => s,
+                                _ => panic!("Nav entry should be struct or annotated struct"),
+                            };
+
+                            // Check nav_title ($241)
+                            assert!(
+                                entry_struct.contains_key(&sym::NAV_TITLE),
+                                "Nav entry {} should have nav_title ($241)",
+                                i
+                            );
+
+                            // Check nav_target ($246)
+                            if let Some(IonValue::Struct(target)) =
+                                entry_struct.get(&sym::NAV_TARGET)
+                            {
+                                // Should have position ($155)
+                                assert!(
+                                    target.contains_key(&sym::POSITION),
+                                    "Nav target should have position ($155)"
+                                );
+
+                                // Verify EID is valid (> LOCAL_MIN_ID)
+                                if let Some(IonValue::Int(eid)) = target.get(&sym::POSITION) {
+                                    assert!(
+                                        *eid >= SymbolTable::LOCAL_MIN_ID as i64,
+                                        "Nav entry EID should be >= LOCAL_MIN_ID"
+                                    );
+                                }
+                            } else {
+                                panic!("Nav entry {} should have nav_target ($246)", i);
+                            }
+                        }
+
+                        // Print some nav entry titles for debugging
+                        for (i, entry) in nav_entries.iter().take(5).enumerate() {
+                            if let IonValue::Annotated(_, inner) = entry {
+                                if let IonValue::Struct(s) = inner.as_ref() {
+                                    if let Some(IonValue::Struct(title)) = s.get(&sym::NAV_TITLE) {
+                                        if let Some(IonValue::String(text)) = title.get(&sym::TEXT)
+                                        {
+                                            println!("  Nav entry {}: {}", i, text);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        panic!("Nav container should have nav_entries ($247)");
+                    }
+                } else {
+                    panic!("Nav containers should be a list");
+                }
+            } else {
+                panic!("Book navigation entry should be a struct");
+            }
+        } else {
+            panic!("Book navigation should be a list");
+        }
     }
 }
 
