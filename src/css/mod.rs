@@ -54,8 +54,7 @@ impl std::hash::Hash for CssValue {
     }
 }
 
-impl CssValue {
-}
+impl CssValue {}
 
 /// Text alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -751,7 +750,9 @@ mod tests {
 
     #[test]
     fn test_inline_style_parsing() {
-        let inline = Stylesheet::parse_inline_style("font-weight: bold; text-align: center; margin-top: 2em");
+        let inline = Stylesheet::parse_inline_style(
+            "font-weight: bold; text-align: center; margin-top: 2em",
+        );
 
         assert!(matches!(inline.font_weight, Some(FontWeight::Bold)));
         assert_eq!(inline.text_align, Some(TextAlign::Center));

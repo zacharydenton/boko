@@ -11,13 +11,13 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::book::Book;
 use crate::css::{CssValue, ParsedStyle, Stylesheet, TextAlign};
 
-use super::ion::{encode_kfx_decimal, IonValue, IonWriter};
+use super::ion::{IonValue, IonWriter, encode_kfx_decimal};
 
 // =============================================================================
 // YJ_SYMBOLS - Shared symbol table (subset of the full 800+ symbols)
@@ -254,9 +254,10 @@ impl SymbolTable {
     pub fn get_or_intern(&mut self, name: &str) -> u64 {
         // Check if it's a shared symbol reference (starts with $)
         if let Some(id_str) = name.strip_prefix('$')
-            && let Ok(id) = id_str.parse::<u64>() {
-                return id;
-            }
+            && let Ok(id) = id_str.parse::<u64>()
+        {
+            return id;
+        }
 
         // Check if already interned
         if let Some(&id) = self.symbol_map.get(name) {
@@ -274,9 +275,10 @@ impl SymbolTable {
     /// Get symbol ID without interning (returns None if not found)
     pub fn get(&self, name: &str) -> Option<u64> {
         if let Some(id_str) = name.strip_prefix('$')
-            && let Ok(id) = id_str.parse::<u64>() {
-                return Some(id);
-            }
+            && let Ok(id) = id_str.parse::<u64>()
+        {
+            return Some(id);
+        }
         self.symbol_map.get(name).copied()
     }
 
@@ -339,7 +341,9 @@ impl KfxBookBuilder {
         // 1. Extract and parse all CSS stylesheets from resources
         let mut combined_css = String::new();
         // Add default user-agent styles for common elements
-        combined_css.push_str("h1, h2, h3, h4, h5, h6 { font-weight: bold; margin-top: 1em; margin-bottom: 1em; }\n");
+        combined_css.push_str(
+            "h1, h2, h3, h4, h5, h6 { font-weight: bold; margin-top: 1em; margin-bottom: 1em; }\n",
+        );
         combined_css.push_str("h1 { font-size: 2em; text-align: center; }\n");
         combined_css.push_str("h2 { font-size: 1.5em; }\n");
         combined_css.push_str("h3 { font-size: 1.25em; }\n");
@@ -488,9 +492,11 @@ impl KfxBookBuilder {
         //
         // Structure: { $590: [ { $586: provider, $492: feature, $589: { $5: { $587: min, $588: ver } } }, ... ] }
         // Match reference KFX format capabilities exactly
-        let capabilities = [("com.amazon.yjconversion", "reflow-style", 6, 0),
+        let capabilities = [
+            ("com.amazon.yjconversion", "reflow-style", 6, 0),
             ("SDK.Marker", "CanonicalFormat", 1, 0),
-            ("com.amazon.yjconversion", "yj_hdv", 1, 0)];
+            ("com.amazon.yjconversion", "yj_hdv", 1, 0),
+        ];
 
         let caps_list: Vec<IonValue> = capabilities
             .iter()
@@ -908,11 +914,10 @@ impl KfxBookBuilder {
                 style_ion.insert(sym::FONT_FAMILY, IonValue::Symbol(sym::FONT_DEFAULT));
             }
 
-            if let Some(ref size) = style.font_size {
-                if let Some(val) = css_to_ion(size) {
+            if let Some(ref size) = style.font_size
+                && let Some(val) = css_to_ion(size) {
                     style_ion.insert(sym::FONT_SIZE, val);
                 }
-            }
 
             if let Some(align) = style.text_align {
                 let align_sym = match align {
@@ -924,51 +929,46 @@ impl KfxBookBuilder {
                 style_ion.insert(sym::TEXT_ALIGN, IonValue::Symbol(align_sym));
             }
 
-            if let Some(ref weight) = style.font_weight {
-                if weight.is_bold() {
+            if let Some(ref weight) = style.font_weight
+                && weight.is_bold() {
                     style_ion.insert(sym::BOLD, IonValue::Bool(true));
                 }
-            }
 
-            if let Some(style_type) = style.font_style {
-                if matches!(style_type, crate::css::FontStyle::Italic | crate::css::FontStyle::Oblique) {
+            if let Some(style_type) = style.font_style
+                && matches!(
+                    style_type,
+                    crate::css::FontStyle::Italic | crate::css::FontStyle::Oblique
+                ) {
                     style_ion.insert(sym::ITALIC, IonValue::Bool(true));
                 }
-            }
 
-            if let Some(ref margin) = style.margin_top {
-                if let Some(val) = css_to_ion(margin) {
+            if let Some(ref margin) = style.margin_top
+                && let Some(val) = css_to_ion(margin) {
                     style_ion.insert(sym::MARGIN_TOP, val);
                 }
-            }
-            if let Some(ref margin) = style.margin_bottom {
-                if let Some(val) = css_to_ion(margin) {
+            if let Some(ref margin) = style.margin_bottom
+                && let Some(val) = css_to_ion(margin) {
                     style_ion.insert(sym::MARGIN_BOTTOM, val);
                 }
-            }
-            if let Some(ref margin) = style.margin_left {
-                if let Some(val) = css_to_ion(margin) {
+            if let Some(ref margin) = style.margin_left
+                && let Some(val) = css_to_ion(margin) {
                     style_ion.insert(sym::MARGIN_LEFT, val);
                 }
-            }
-            if let Some(ref margin) = style.margin_right {
-                if let Some(val) = css_to_ion(margin) {
+            if let Some(ref margin) = style.margin_right
+                && let Some(val) = css_to_ion(margin) {
                     style_ion.insert(sym::MARGIN_RIGHT, val);
                 }
-            }
 
-            if let Some(ref indent) = style.text_indent {
-                if let Some(val) = css_to_ion(indent) {
+            if let Some(ref indent) = style.text_indent
+                && let Some(val) = css_to_ion(indent) {
                     // P48 is text-indent
                     style_ion.insert(48, val);
                 }
-            }
 
-            if let Some(ref height) = style.line_height {
-                if let Some(val) = css_to_ion(height) {
+            if let Some(ref height) = style.line_height
+                && let Some(val) = css_to_ion(height) {
                     style_ion.insert(sym::LINE_HEIGHT, val);
                 }
-            }
 
             self.fragments.push(KfxFragment::new(
                 sym::STYLE,
@@ -1715,7 +1715,10 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
 
                 // Skip non-content tags
-                if matches!(tag_name.as_str(), "script" | "style" | "head" | "title" | "svg") {
+                if matches!(
+                    tag_name.as_str(),
+                    "script" | "style" | "head" | "title" | "svg"
+                ) {
                     reader.read_to_end_into(e.name(), &mut Vec::new()).ok();
                     continue;
                 }
@@ -1749,8 +1752,7 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
 
                 // Compute style for this element from stylesheet
                 let class_refs: Vec<&str> = classes.iter().map(|s| s.as_str()).collect();
-                let element_style =
-                    stylesheet.compute_style(&tag_name, &class_refs, id.as_deref());
+                let element_style = stylesheet.compute_style(&tag_name, &class_refs, id.as_deref());
 
                 // Merge with parent style for inheritance
                 let mut inherited_style = style_stack.last().cloned().unwrap_or_default();
@@ -1783,8 +1785,8 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
             Ok(Event::Empty(e)) => {
                 // Handle empty tags like <br/>
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
-                if tag_name == "br" {
-                    if !current_text.is_empty() {
+                if tag_name == "br"
+                    && !current_text.is_empty() {
                         let text = clean_text(&current_text);
                         if !text.is_empty() {
                             result.push(StyledText {
@@ -1794,7 +1796,6 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
                         }
                         current_text.clear();
                     }
-                }
             }
             Ok(Event::Text(e)) => {
                 current_text.push_str(&String::from_utf8_lossy(e.as_ref()));
@@ -1969,7 +1970,9 @@ mod tests {
         // Verify all characters after "CR!" are valid (alphanumeric uppercase)
         let suffix = &id[3..];
         assert!(
-            suffix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            suffix
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
             "Container ID should only contain uppercase alphanumeric: {}",
             id
         );

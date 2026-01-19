@@ -415,7 +415,7 @@ fn test_mobi_vs_azw3_same_source() {
 /// Test that KFX output has granular reading positions (not just 1 per section)
 #[test]
 fn test_kfx_location_map_granularity() {
-    use boko::{read_epub, write_kfx, read_kfx};
+    use boko::{read_epub, read_kfx, write_kfx};
 
     let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
 
@@ -435,7 +435,9 @@ fn test_kfx_location_map_granularity() {
     assert!(!kfx_book.spine.is_empty(), "KFX should have spine");
 
     // Count total text content items (paragraphs)
-    let total_paragraphs: usize = kfx_book.resources.values()
+    let total_paragraphs: usize = kfx_book
+        .resources
+        .values()
         .filter(|r| r.media_type == "application/xhtml+xml" || r.media_type == "text/html")
         .map(|r| {
             let content = String::from_utf8_lossy(&r.data);
@@ -449,7 +451,10 @@ fn test_kfx_location_map_granularity() {
     // The key test: KFX should have more than just section_count position entries
     // (This is a sanity check - the actual location map testing would need ION parsing)
     // For now, just verify the roundtrip works and content is preserved
-    assert!(!kfx_book.metadata.title.is_empty(), "KFX should preserve title");
+    assert!(
+        !kfx_book.metadata.title.is_empty(),
+        "KFX should preserve title"
+    );
 }
 
 /// Test that TOC entries with special characters survive EPUB -> AZW3 -> EPUB roundtrip

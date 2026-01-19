@@ -204,9 +204,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     if let Some(text_entities) = entities_by_type.get(&ENTITY_TYPE_TEXT_CONTENT) {
         for entity in text_entities {
             if let Ok(value) = parse_entity_payload(container, entity)
-                && let Some(texts) = extract_text_content(&value) {
-                    text_by_id.insert(entity.id, texts);
-                }
+                && let Some(texts) = extract_text_content(&value)
+            {
+                text_by_id.insert(entity.id, texts);
+            }
         }
     }
 
@@ -224,9 +225,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     if let Some(info_entities) = entities_by_type.get(&ENTITY_TYPE_RESOURCE_INFO) {
         for entity in info_entities {
             if let Ok(value) = parse_entity_payload(container, entity)
-                && let Some(info) = extract_resource_info(&value) {
-                    resource_info.insert(entity.id, info);
-                }
+                && let Some(info) = extract_resource_info(&value)
+            {
+                resource_info.insert(entity.id, info);
+            }
         }
     }
 
@@ -262,9 +264,10 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     // Get section order from document data (type 258) - reserved for future use
     // when we implement proper section ordering
     if let Some(doc_entities) = entities_by_type.get(&ENTITY_TYPE_DOCUMENT_DATA)
-        && let Some(entity) = doc_entities.first() {
-            let _ = parse_entity_payload(container, entity);
-        }
+        && let Some(entity) = doc_entities.first()
+    {
+        let _ = parse_entity_payload(container, entity);
+    }
 
     // Track sections (type 260) - reserved for future use
     if let Some(section_entities) = entities_by_type.get(&ENTITY_TYPE_SECTION) {
@@ -328,18 +331,19 @@ fn extract_text_content(value: &IonValue) -> Option<Vec<String>> {
 
     if let Some(map) = value.as_struct()
         && let Some(text_array) = map.get(&PROP_TEXT_ARRAY)
-            && let Some(items) = text_array.as_list() {
-                let texts: Vec<String> = items
-                    .iter()
-                    .filter_map(|item| {
-                        let item = item.unwrap_annotated();
-                        item.as_string().map(|s| s.to_string())
-                    })
-                    .collect();
-                if !texts.is_empty() {
-                    return Some(texts);
-                }
-            }
+        && let Some(items) = text_array.as_list()
+    {
+        let texts: Vec<String> = items
+            .iter()
+            .filter_map(|item| {
+                let item = item.unwrap_annotated();
+                item.as_string().map(|s| s.to_string())
+            })
+            .collect();
+        if !texts.is_empty() {
+            return Some(texts);
+        }
+    }
 
     None
 }
@@ -351,11 +355,12 @@ fn extract_metadata(value: &IonValue, metadata: &mut Metadata) {
     if let Some(map) = value.as_struct() {
         // Look for metadata entries ($491)
         if let Some(entries) = map.get(&PROP_METADATA_ENTRIES)
-            && let Some(entries_list) = entries.as_list() {
-                for entry in entries_list {
-                    process_metadata_entry(entry, metadata);
-                }
+            && let Some(entries_list) = entries.as_list()
+        {
+            for entry in entries_list {
+                process_metadata_entry(entry, metadata);
             }
+        }
     }
 }
 
@@ -365,61 +370,64 @@ fn process_metadata_entry(entry: &IonValue, metadata: &mut Metadata) {
     if let Some(map) = entry.as_struct() {
         // Look for $258 (document data array with key-value pairs)
         if let Some(doc_data) = map.get(&PROP_DOC_DATA)
-            && let Some(items) = doc_data.as_list() {
-                for item in items {
-                    let item = item.unwrap_annotated();
-                    if let Some(item_map) = item.as_struct() {
-                        let key = item_map
-                            .get(&PROP_METADATA_KEY)
-                            .and_then(|v| v.unwrap_annotated().as_string())
-                            .unwrap_or("");
-                        let val = item_map
-                            .get(&PROP_METADATA_VALUE)
-                            .map(|v| v.unwrap_annotated());
+            && let Some(items) = doc_data.as_list()
+        {
+            for item in items {
+                let item = item.unwrap_annotated();
+                if let Some(item_map) = item.as_struct() {
+                    let key = item_map
+                        .get(&PROP_METADATA_KEY)
+                        .and_then(|v| v.unwrap_annotated().as_string())
+                        .unwrap_or("");
+                    let val = item_map
+                        .get(&PROP_METADATA_VALUE)
+                        .map(|v| v.unwrap_annotated());
 
-                        match key {
-                            "title" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    metadata.title = s.to_string();
-                                }
+                    match key {
+                        "title" => {
+                            if let Some(s) = val.and_then(|v| v.as_string()) {
+                                metadata.title = s.to_string();
                             }
-                            "author" => {
-                                if let Some(s) = val.and_then(|v| v.as_string())
-                                    && !metadata.authors.contains(&s.to_string()) {
-                                        metadata.authors.push(s.to_string());
-                                    }
-                            }
-                            "language" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    metadata.language = s.to_string();
-                                }
-                            }
-                            "publisher" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    metadata.publisher = Some(s.to_string());
-                                }
-                            }
-                            "description" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    metadata.description = Some(s.to_string());
-                                }
-                            }
-                            "ASIN" | "content_id" => {
-                                if let Some(s) = val.and_then(|v| v.as_string())
-                                    && metadata.identifier.is_empty() {
-                                        metadata.identifier = s.to_string();
-                                    }
-                            }
-                            "issue_date" => {
-                                if let Some(s) = val.and_then(|v| v.as_string()) {
-                                    metadata.date = Some(s.to_string());
-                                }
-                            }
-                            _ => {}
                         }
+                        "author" => {
+                            if let Some(s) = val.and_then(|v| v.as_string())
+                                && !metadata.authors.contains(&s.to_string())
+                            {
+                                metadata.authors.push(s.to_string());
+                            }
+                        }
+                        "language" => {
+                            if let Some(s) = val.and_then(|v| v.as_string()) {
+                                metadata.language = s.to_string();
+                            }
+                        }
+                        "publisher" => {
+                            if let Some(s) = val.and_then(|v| v.as_string()) {
+                                metadata.publisher = Some(s.to_string());
+                            }
+                        }
+                        "description" => {
+                            if let Some(s) = val.and_then(|v| v.as_string()) {
+                                metadata.description = Some(s.to_string());
+                            }
+                        }
+                        "ASIN" | "content_id" => {
+                            if let Some(s) = val.and_then(|v| v.as_string())
+                                && metadata.identifier.is_empty()
+                            {
+                                metadata.identifier = s.to_string();
+                            }
+                        }
+                        "issue_date" => {
+                            if let Some(s) = val.and_then(|v| v.as_string()) {
+                                metadata.date = Some(s.to_string());
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
+        }
     }
 }
 

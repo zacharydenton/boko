@@ -829,9 +829,9 @@ pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
 
     // 2. Encode Coefficient (Int Signed)
     if coef != 0 {
-        let coef_mag = coef.abs() as u64;
+        let coef_mag = coef.unsigned_abs();
         let is_neg = coef < 0;
-        
+
         // Serialize magnitude (Big Endian)
         let mut mag_bytes = Vec::new();
         let mut temp = coef_mag;
@@ -843,7 +843,7 @@ pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
             mag_bytes.push(0);
         }
         mag_bytes.reverse();
-        
+
         // Handle sign bit (MSB of first byte)
         // If MSB is already set by magnitude, or if we need to set it for negative
         if (mag_bytes[0] & 0x80) != 0 {
@@ -858,6 +858,6 @@ pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
             bytes.extend(mag_bytes);
         }
     }
-    
+
     bytes
 }
