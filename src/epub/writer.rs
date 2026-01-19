@@ -1,9 +1,9 @@
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use std::io::{self, Cursor, Seek, Write};
 use std::path::Path;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
-use quick_xml::Writer;
-use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use crate::book::{Book, TocEntry};
 
@@ -114,10 +114,12 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 fn generate_opf(book: &Book, identifier: &str) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
-    
+
     // Write XML declaration manually as quick-xml's API is a bit verbose for this simple case
     // or use write_event(Event::Decl)
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
     // <package>
     let mut package = BytesStart::new("package");
@@ -139,7 +141,9 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
             elem.push_attribute(("id", id_val));
         }
         writer.write_event(Event::Start(elem)).unwrap();
-        writer.write_event(Event::Text(BytesText::new(content))).unwrap();
+        writer
+            .write_event(Event::Text(BytesText::new(content)))
+            .unwrap();
         writer.write_event(Event::End(BytesEnd::new(name))).unwrap();
     };
 
@@ -186,10 +190,14 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
         writer.write_event(Event::Empty(meta)).unwrap();
     }
 
-    writer.write_event(Event::End(BytesEnd::new("metadata"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("metadata")))
+        .unwrap();
 
     // <manifest>
-    writer.write_event(Event::Start(BytesStart::new("manifest"))).unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("manifest")))
+        .unwrap();
 
     // NCX item
     let mut ncx_item = BytesStart::new("item");
@@ -206,7 +214,7 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
         } else {
             &id
         };
-        
+
         let mut item = BytesStart::new("item");
         item.push_attribute(("id", item_id));
         item.push_attribute(("href", href.as_str()));
@@ -214,7 +222,9 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
         writer.write_event(Event::Empty(item)).unwrap();
     }
 
-    writer.write_event(Event::End(BytesEnd::new("manifest"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("manifest")))
+        .unwrap();
 
     // <spine>
     let mut spine = BytesStart::new("spine");
@@ -229,17 +239,23 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
         writer.write_event(Event::Empty(itemref)).unwrap();
     }
 
-    writer.write_event(Event::End(BytesEnd::new("spine"))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("package"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("spine")))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("package")))
+        .unwrap();
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
 fn generate_ncx(book: &Book, identifier: &str) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
-    
+
     // <?xml ... ?>
-    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
+    writer
+        .write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))
+        .unwrap();
 
     // <!DOCTYPE ncx ...>
     writer.write_event(Event::DocType(BytesText::from_escaped(
@@ -253,7 +269,9 @@ fn generate_ncx(book: &Book, identifier: &str) -> String {
     writer.write_event(Event::Start(ncx)).unwrap();
 
     // <head>
-    writer.write_event(Event::Start(BytesStart::new("head"))).unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("head")))
+        .unwrap();
 
     let mut meta_uid = BytesStart::new("meta");
     meta_uid.push_attribute(("name", "dtb:uid"));
@@ -275,17 +293,31 @@ fn generate_ncx(book: &Book, identifier: &str) -> String {
     meta_max.push_attribute(("content", "0"));
     writer.write_event(Event::Empty(meta_max)).unwrap();
 
-    writer.write_event(Event::End(BytesEnd::new("head"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("head")))
+        .unwrap();
 
     // <docTitle>
-    writer.write_event(Event::Start(BytesStart::new("docTitle"))).unwrap();
-    writer.write_event(Event::Start(BytesStart::new("text"))).unwrap();
-    writer.write_event(Event::Text(BytesText::new(&book.metadata.title))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("text"))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("docTitle"))).unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("docTitle")))
+        .unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("text")))
+        .unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new(&book.metadata.title)))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("text")))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("docTitle")))
+        .unwrap();
 
     // <navMap>
-    writer.write_event(Event::Start(BytesStart::new("navMap"))).unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("navMap")))
+        .unwrap();
 
     // Generate navPoints
     let mut play_order = 1;
@@ -293,13 +325,21 @@ fn generate_ncx(book: &Book, identifier: &str) -> String {
         write_nav_point_recursive(&mut writer, entry, &mut play_order);
     }
 
-    writer.write_event(Event::End(BytesEnd::new("navMap"))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("ncx"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("navMap")))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("ncx")))
+        .unwrap();
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-fn write_nav_point_recursive<W: Write>(writer: &mut Writer<W>, entry: &TocEntry, play_order: &mut usize) {
+fn write_nav_point_recursive<W: Write>(
+    writer: &mut Writer<W>,
+    entry: &TocEntry,
+    play_order: &mut usize,
+) {
     let mut nav_point = BytesStart::new("navPoint");
     nav_point.push_attribute(("id", format!("navpoint-{}", play_order).as_str()));
     nav_point.push_attribute(("playOrder", play_order.to_string().as_str()));
@@ -308,11 +348,21 @@ fn write_nav_point_recursive<W: Write>(writer: &mut Writer<W>, entry: &TocEntry,
     *play_order += 1;
 
     // <navLabel><text>...</text></navLabel>
-    writer.write_event(Event::Start(BytesStart::new("navLabel"))).unwrap();
-    writer.write_event(Event::Start(BytesStart::new("text"))).unwrap();
-    writer.write_event(Event::Text(BytesText::new(&entry.title))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("text"))).unwrap();
-    writer.write_event(Event::End(BytesEnd::new("navLabel"))).unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("navLabel")))
+        .unwrap();
+    writer
+        .write_event(Event::Start(BytesStart::new("text")))
+        .unwrap();
+    writer
+        .write_event(Event::Text(BytesText::new(&entry.title)))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("text")))
+        .unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("navLabel")))
+        .unwrap();
 
     // <content src="..."/>
     let mut content = BytesStart::new("content");
@@ -323,7 +373,9 @@ fn write_nav_point_recursive<W: Write>(writer: &mut Writer<W>, entry: &TocEntry,
         write_nav_point_recursive(writer, child, play_order);
     }
 
-    writer.write_event(Event::End(BytesEnd::new("navPoint"))).unwrap();
+    writer
+        .write_event(Event::End(BytesEnd::new("navPoint")))
+        .unwrap();
 }
 
 fn href_to_id(href: &str) -> String {

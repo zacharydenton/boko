@@ -12,7 +12,9 @@ use std::io::{self, BufWriter, Write};
 use std::path::Path;
 
 use crate::book::Book;
-use crate::css::{Border, BorderStyle, Color, CssValue, FontVariant, NodeRef, ParsedStyle, Stylesheet, TextAlign};
+use crate::css::{
+    Border, BorderStyle, Color, CssValue, FontVariant, NodeRef, ParsedStyle, Stylesheet, TextAlign,
+};
 use kuchiki::traits::*;
 
 use super::ion::{IonValue, IonWriter, encode_kfx_decimal};
@@ -539,14 +541,18 @@ impl KfxBookBuilder {
                 .map(|s| s.to_string())
                 .or_else(|| {
                     // Try to use first text item if it looks like a title (search nested containers)
-                    content.iter().flat_map(|item| item.flatten()).find_map(|item| {
-                        if let ContentItem::Text { text, .. } = item {
-                            if text.len() < 100 && !text.contains('.') {
+                    content
+                        .iter()
+                        .flat_map(|item| item.flatten())
+                        .find_map(|item| {
+                            if let ContentItem::Text { text, .. } = item
+                                && text.len() < 100
+                                && !text.contains('.')
+                            {
                                 return Some(text.clone());
                             }
-                        }
-                        None
-                    })
+                            None
+                        })
                 })
                 .unwrap_or_else(|| format!("Chapter {}", chapter_num));
 
@@ -562,9 +568,16 @@ impl KfxBookBuilder {
 
         // 2.5 Populate image dimensions for image styles
         // This allows width: 100% styles to use actual pixel dimensions
-        fn populate_image_dimensions(item: &mut ContentItem, resources: &std::collections::HashMap<String, crate::book::Resource>) {
+        fn populate_image_dimensions(
+            item: &mut ContentItem,
+            resources: &std::collections::HashMap<String, crate::book::Resource>,
+        ) {
             match item {
-                ContentItem::Image { resource_href, style, .. } => {
+                ContentItem::Image {
+                    resource_href,
+                    style,
+                    ..
+                } => {
                     // Look up the image resource and get its dimensions
                     if let Some(resource) = resources.get(resource_href) {
                         if let Some((width, height)) = get_image_dimensions(&resource.data) {
@@ -573,7 +586,10 @@ impl KfxBookBuilder {
                         }
                     } else {
                         eprintln!("DEBUG: Image resource not found: {}", resource_href);
-                        eprintln!("DEBUG: Available: {:?}", resources.keys().collect::<Vec<_>>());
+                        eprintln!(
+                            "DEBUG: Available: {:?}",
+                            resources.keys().collect::<Vec<_>>()
+                        );
                     }
                 }
                 ContentItem::Container { children, .. } => {
@@ -1139,7 +1155,7 @@ impl KfxBookBuilder {
                         return None;
                     }
                     // Convert px to percent (approximate: 1px ~ 0.117% based on mapping)
-                    let pct = *v as f32 * 0.117;
+                    let pct = *v * 0.117;
                     let mut s = HashMap::new();
                     s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
                     s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
@@ -1150,7 +1166,7 @@ impl KfxBookBuilder {
                         return None;
                     }
                     // Convert em to percent (3.125% per 1em based on mapping)
-                    let pct = *v as f32 * 3.125;
+                    let pct = *v * 3.125;
                     let mut s = HashMap::new();
                     s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
                     s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
@@ -1162,7 +1178,7 @@ impl KfxBookBuilder {
                     }
                     let mut s = HashMap::new();
                     s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v as f32)));
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
                     Some(IonValue::Struct(s))
                 }
                 CssValue::Number(v) => {
@@ -1172,7 +1188,7 @@ impl KfxBookBuilder {
                     // Unitless number - use multiplier
                     let mut s = HashMap::new();
                     s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v as f32)));
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
                     Some(IonValue::Struct(s))
                 }
                 _ => None,
@@ -1196,7 +1212,7 @@ impl KfxBookBuilder {
         let border_left_sym = self.symtab.get_or_intern("border-left");
         let border_right_sym = self.symtab.get_or_intern("border-right");
         let border_style_sym = self.symtab.get_or_intern("border-style");
-        
+
         let solid_sym = self.symtab.get_or_intern("solid");
         let dotted_sym = self.symtab.get_or_intern("dotted");
         let dashed_sym = self.symtab.get_or_intern("dashed");
@@ -1258,7 +1274,10 @@ impl KfxBookBuilder {
             // Inline styles (for links/anchors) are minimal - just block type
             // Reference uses $127: $349 for inline elements
             if is_inline_style {
-                style_ion.insert(sym::STYLE_BLOCK_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_INLINE));
+                style_ion.insert(
+                    sym::STYLE_BLOCK_TYPE,
+                    IonValue::Symbol(sym::BLOCK_TYPE_INLINE),
+                );
                 // Skip all other properties - inline elements inherit from parent
                 self.fragments.push(KfxFragment::new(
                     sym::STYLE,
@@ -1287,7 +1306,10 @@ impl KfxBookBuilder {
 
                 // Add display:block ($127: $383) for text block elements
                 if style.display == Some(crate::css::Display::Block) {
-                    style_ion.insert(sym::STYLE_BLOCK_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_BLOCK));
+                    style_ion.insert(
+                        sym::STYLE_BLOCK_TYPE,
+                        IonValue::Symbol(sym::BLOCK_TYPE_BLOCK),
+                    );
                 }
             }
 
@@ -1299,14 +1321,14 @@ impl KfxBookBuilder {
                         if (v - 1.0).abs() < 0.001 {
                             None // 1em is baseline, omit
                         } else {
-                            Some(*v as f32)
+                            Some(*v)
                         }
                     }
                     CssValue::Percent(v) => {
                         if (v - 100.0).abs() < 0.001 {
                             None // 100% is baseline, omit
                         } else {
-                            Some(*v as f32 / 100.0)
+                            Some(*v / 100.0)
                         }
                     }
                     CssValue::Keyword(k) => match k.as_str() {
@@ -1323,7 +1345,7 @@ impl KfxBookBuilder {
                     },
                     CssValue::Px(v) => {
                         // Approximate: assume 16px = 1em
-                        let em_val = *v as f32 / 16.0;
+                        let em_val = *v / 16.0;
                         if (em_val - 1.0).abs() < 0.001 {
                             None
                         } else {
@@ -1396,7 +1418,10 @@ impl KfxBookBuilder {
 
             // Font variant - use $583 with $369 for small-caps
             if let Some(FontVariant::SmallCaps) = style.font_variant {
-                style_ion.insert(sym::FONT_VARIANT, IonValue::Symbol(sym::FONT_VARIANT_SMALL_CAPS));
+                style_ion.insert(
+                    sym::FONT_VARIANT,
+                    IonValue::Symbol(sym::FONT_VARIANT_SMALL_CAPS),
+                );
             }
 
             // Apply margin properties from computed styles
@@ -1429,14 +1454,14 @@ impl KfxBookBuilder {
                         // Use percent unit ($314) with the percentage value directly
                         let mut s = HashMap::new();
                         s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct as f32)));
+                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct)));
                         IonValue::Struct(s)
                     }
                     CssValue::Em(v) | CssValue::Rem(v) => {
                         // Em widths use em unit ($308) and need $65 (max-width) set to 100%
                         let mut s = HashMap::new();
                         s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
-                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v as f32)));
+                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
                         // Also set max-width to 100%
                         let mut max_s = HashMap::new();
                         max_s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
@@ -1446,7 +1471,7 @@ impl KfxBookBuilder {
                     }
                     CssValue::Px(v) => {
                         // Pixel widths - convert to percent (approximate)
-                        let pct = *v as f32 * 0.117; // Rough conversion
+                        let pct = *v * 0.117; // Rough conversion
                         let mut s = HashMap::new();
                         s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
                         s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
@@ -1461,7 +1486,7 @@ impl KfxBookBuilder {
                     CssValue::Percent(pct) => {
                         let mut s = HashMap::new();
                         s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct as f32)));
+                        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct)));
                         IonValue::Struct(s)
                     }
                     _ => {
@@ -1503,14 +1528,14 @@ impl KfxBookBuilder {
             // Verified: text-indent: 1em -> $36={'$307': 1, '$306': '$308'}
             if let Some(ref indent) = style.text_indent {
                 let em_val: Option<f32> = match indent {
-                    CssValue::Em(v) | CssValue::Rem(v) => Some(*v as f32),
+                    CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
                     CssValue::Px(v) => {
                         // Convert px to em (assume 16px = 1em)
-                        Some(*v as f32 / 16.0)
+                        Some(*v / 16.0)
                     }
                     CssValue::Percent(v) => {
                         // Convert percent to em approximation
-                        Some(*v as f32 / 100.0)
+                        Some(*v / 100.0)
                     }
                     _ => None,
                 };
@@ -1532,19 +1557,19 @@ impl KfxBookBuilder {
                         // Unitless number - the KFX value is different from CSS
                         // Based on mapping: css 1.0 -> 0.833333, css 1.5 -> 1.25, css 2.0 -> 1.66667
                         // Formula appears to be: kfx = css * (5/6) approximately
-                        Some(*v as f32 * 0.833333)
+                        Some(*v * 0.833333)
                     }
                     CssValue::Percent(v) => {
                         // Percentage - convert to multiplier then apply formula
-                        Some(*v as f32 / 100.0 * 0.833333)
+                        Some(*v / 100.0 * 0.833333)
                     }
                     CssValue::Em(v) | CssValue::Rem(v) => {
                         // Em values - similar treatment
-                        Some(*v as f32 * 0.833333)
+                        Some(*v * 0.833333)
                     }
                     CssValue::Px(v) => {
                         // Pixel values - convert to em first (assume 16px = 1em)
-                        Some(*v as f32 / 16.0 * 0.833333)
+                        Some(*v / 16.0 * 0.833333)
                     }
                     _ => None,
                 };
@@ -1668,7 +1693,12 @@ impl KfxBookBuilder {
             let mut item = HashMap::new();
 
             match content_item {
-                ContentItem::Text { style, inline_runs, anchor_href, .. } => {
+                ContentItem::Text {
+                    style,
+                    inline_runs,
+                    anchor_href: _,
+                    ..
+                } => {
                     // Text content: reference the text chunk
                     let mut text_ref = HashMap::new();
                     text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
@@ -1698,10 +1728,11 @@ impl KfxBookBuilder {
                                 run_struct.insert(sym::STYLE, IonValue::Symbol(style_sym));
 
                                 // Add anchor reference ($179) if this run has a hyperlink
-                                if let Some(ref href) = run.anchor_href {
-                                    if let Some(anchor_sym) = builder.anchor_symbols.get(href) {
-                                        run_struct.insert(sym::ANCHOR_REF, IonValue::Symbol(*anchor_sym));
-                                    }
+                                if let Some(ref href) = run.anchor_href
+                                    && let Some(anchor_sym) = builder.anchor_symbols.get(href)
+                                {
+                                    run_struct
+                                        .insert(sym::ANCHOR_REF, IonValue::Symbol(*anchor_sym));
                                 }
 
                                 Some(IonValue::Struct(run_struct))
@@ -1715,14 +1746,23 @@ impl KfxBookBuilder {
 
                     state.text_idx_in_chunk += 1;
                 }
-                ContentItem::Image { resource_href, style, alt } => {
+                ContentItem::Image {
+                    resource_href,
+                    style,
+                    alt,
+                } => {
                     // Image content: reference the resource directly
-                    let resource_sym = builder.resource_symbols.get(resource_href)
-                        .unwrap_or_else(|| panic!(
-                            "Image resource not found: '{}'. Available: {:?}",
-                            resource_href,
-                            builder.resource_symbols.keys().collect::<Vec<_>>()
-                        ));
+                    let resource_sym =
+                        builder
+                            .resource_symbols
+                            .get(resource_href)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Image resource not found: '{}'. Available: {:?}",
+                                    resource_href,
+                                    builder.resource_symbols.keys().collect::<Vec<_>>()
+                                )
+                            });
                     item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
                     item.insert(sym::RESOURCE_NAME, IonValue::Symbol(*resource_sym));
                     // $584 = IMAGE_ALT_TEXT for accessibility
@@ -1734,7 +1774,9 @@ impl KfxBookBuilder {
                         item.insert(sym::STYLE, IonValue::Symbol(style_sym));
                     }
                 }
-                ContentItem::Container { style, children, .. } => {
+                ContentItem::Container {
+                    style, children, ..
+                } => {
                     // Container: create nested $146 array with children
                     item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
 
@@ -1755,7 +1797,10 @@ impl KfxBookBuilder {
 
             // Use consistent EID that matches position maps
             // +1 offset because eid_base is reserved for section content entry
-            item.insert(sym::POSITION, IonValue::Int(eid_base + 1 + state.global_idx as i64));
+            item.insert(
+                sym::POSITION,
+                IonValue::Int(eid_base + 1 + state.global_idx as i64),
+            );
             state.global_idx += 1;
 
             IonValue::Struct(item)
@@ -1825,10 +1870,10 @@ impl KfxBookBuilder {
         // Use flatten() to find images in nested containers
         for content_item in &chapter.content {
             for leaf_item in content_item.flatten() {
-                if let ContentItem::Image { resource_href, .. } = leaf_item {
-                    if let Some(resource_sym) = self.resource_symbols.get(resource_href) {
-                        self.section_to_resource.push((section_sym, *resource_sym));
-                    }
+                if let ContentItem::Image { resource_href, .. } = leaf_item
+                    && let Some(resource_sym) = self.resource_symbols.get(resource_href)
+                {
+                    self.section_to_resource.push((section_sym, *resource_sym));
                 }
             }
         }
@@ -1836,7 +1881,13 @@ impl KfxBookBuilder {
 
     /// Add cover section with IMAGE_CONTENT for the cover image
     /// Creates a style (P157), content block (P259), and section (P260) for the cover
-    fn add_cover_section(&mut self, cover_resource_sym: u64, width: u32, height: u32, eid_base: i64) {
+    fn add_cover_section(
+        &mut self,
+        cover_resource_sym: u64,
+        width: u32,
+        height: u32,
+        eid_base: i64,
+    ) {
         let cover_block_id = "cover-block";
         let cover_block_sym = self.symtab.get_or_intern(cover_block_id);
         let cover_section_id = "cover-section";
@@ -1890,7 +1941,10 @@ impl KfxBookBuilder {
         content_ref.insert(sym::SECTION_WIDTH, IonValue::Int(width as i64));
         content_ref.insert(sym::SECTION_HEIGHT, IonValue::Int(height as i64));
         content_ref.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTAINER_INFO));
-        content_ref.insert(sym::DEFAULT_TEXT_ALIGN, IonValue::Symbol(sym::ALIGN_JUSTIFY));
+        content_ref.insert(
+            sym::DEFAULT_TEXT_ALIGN,
+            IonValue::Symbol(sym::ALIGN_JUSTIFY),
+        );
         content_ref.insert(sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE));
 
         let mut section = HashMap::new();
@@ -2159,7 +2213,8 @@ impl KfxBookBuilder {
         // Map each chapter's source path to its section EID
         for chapter in chapters {
             // The section EID is eid_base (matches add_section which uses eid_base for POSITION)
-            self.section_eids.insert(chapter.source_path.clone(), eid_base);
+            self.section_eids
+                .insert(chapter.source_path.clone(), eid_base);
 
             // Advance by section entry + content items (including nested items)
             // Must match calculation in add_page_templates and main chapter loop
@@ -2910,12 +2965,35 @@ pub fn write_kfx_to_writer<W: Write>(book: &Book, mut writer: W) -> io::Result<(
 fn is_block_element(tag: &str) -> bool {
     matches!(
         tag,
-        "div" | "section" | "article" | "header" | "footer" | "nav" | "aside"
-            | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-            | "figure" | "figcaption" | "blockquote"
-            | "ul" | "ol" | "li"
-            | "table" | "tr" | "td" | "th" | "thead" | "tbody"
-            | "main" | "address" | "pre"
+        "div"
+            | "section"
+            | "article"
+            | "header"
+            | "footer"
+            | "nav"
+            | "aside"
+            | "p"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "figure"
+            | "figcaption"
+            | "blockquote"
+            | "ul"
+            | "ol"
+            | "li"
+            | "table"
+            | "tr"
+            | "td"
+            | "th"
+            | "thead"
+            | "tbody"
+            | "main"
+            | "address"
+            | "pre"
     )
 }
 
@@ -2930,7 +3008,10 @@ fn is_structural_container(tag: &str) -> bool {
 /// Semantic elements like <header>, <footer>, <figure> should never be flattened
 /// or unwrapped, even with a single child.
 fn is_semantic_container(tag: &str) -> bool {
-    matches!(tag, "header" | "footer" | "nav" | "aside" | "figure" | "figcaption" | "blockquote")
+    matches!(
+        tag,
+        "header" | "footer" | "nav" | "aside" | "figure" | "figcaption" | "blockquote"
+    )
 }
 
 /// Flatten unnecessary container nesting
@@ -2938,77 +3019,93 @@ fn is_semantic_container(tag: &str) -> bool {
 /// - Semantic containers (header, footer, figure) are always preserved as containers
 /// - Generic containers (p, span) with a single block child are unwrapped (child promoted)
 fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
-    items.into_iter().flat_map(|item| {
-        match item {
-            ContentItem::Container { children, style, tag } => {
-                // First, recursively flatten children
-                let flattened_children = flatten_containers(children);
+    items
+        .into_iter()
+        .flat_map(|item| {
+            match item {
+                ContentItem::Container {
+                    children,
+                    style,
+                    tag,
+                } => {
+                    // First, recursively flatten children
+                    let flattened_children = flatten_containers(children);
 
-                // Structural containers (section, div, article) are flattened -
-                // their children are promoted to the parent level.
-                // This matches the reference KFX structure where <section> doesn't
-                // create an extra container layer.
-                if is_structural_container(&tag) {
-                    return flattened_children;
-                }
+                    // Structural containers (section, div, article) are flattened -
+                    // their children are promoted to the parent level.
+                    // This matches the reference KFX structure where <section> doesn't
+                    // create an extra container layer.
+                    if is_structural_container(&tag) {
+                        return flattened_children;
+                    }
 
-                // Semantic containers (header, footer, figure) are always preserved,
-                // even with a single child. They represent meaningful structure.
-                if is_semantic_container(&tag) {
-                    return vec![ContentItem::Container {
+                    // Semantic containers (header, footer, figure) are always preserved,
+                    // even with a single child. They represent meaningful structure.
+                    if is_semantic_container(&tag) {
+                        return vec![ContentItem::Container {
+                            children: flattened_children,
+                            style,
+                            tag,
+                        }];
+                    }
+
+                    // For generic containers (p, span, etc.), apply single-child unwrapping
+
+                    // If container has single child that's a Container or Text, unwrap it
+                    // (unless the container has meaningful style that would be lost)
+                    if flattened_children.len() == 1 {
+                        let child = flattened_children.into_iter().next().unwrap();
+                        match child {
+                            // Single Text child - the container (like <p>) becomes the Text
+                            // The style from the container should be on the Text
+                            ContentItem::Text {
+                                text,
+                                inline_runs,
+                                anchor_href,
+                                style: child_style,
+                            } => {
+                                // Merge container's style with child's style
+                                let mut merged_style = style;
+                                merged_style.merge(&child_style);
+                                return vec![ContentItem::Text {
+                                    text,
+                                    style: merged_style,
+                                    inline_runs,
+                                    anchor_href,
+                                }];
+                            }
+                            // Single Container child - flatten if container has default style
+                            ContentItem::Container {
+                                children: inner_children,
+                                style: inner_style,
+                                tag: inner_tag,
+                            } => {
+                                // Keep the inner container, but with merged style
+                                let mut merged_style = style;
+                                merged_style.merge(&inner_style);
+                                return vec![ContentItem::Container {
+                                    children: inner_children,
+                                    style: merged_style,
+                                    tag: inner_tag,
+                                }];
+                            }
+                            // Single Image child - unwrap, keeping the image
+                            other => return vec![other],
+                        }
+                    }
+
+                    // Multiple children - keep container but with flattened children
+                    vec![ContentItem::Container {
                         children: flattened_children,
                         style,
                         tag,
-                    }];
+                    }]
                 }
-
-                // For generic containers (p, span, etc.), apply single-child unwrapping
-
-                // If container has single child that's a Container or Text, unwrap it
-                // (unless the container has meaningful style that would be lost)
-                if flattened_children.len() == 1 {
-                    let child = flattened_children.into_iter().next().unwrap();
-                    match child {
-                        // Single Text child - the container (like <p>) becomes the Text
-                        // The style from the container should be on the Text
-                        ContentItem::Text { text, inline_runs, anchor_href, style: child_style } => {
-                            // Merge container's style with child's style
-                            let mut merged_style = style;
-                            merged_style.merge(&child_style);
-                            return vec![ContentItem::Text {
-                                text,
-                                style: merged_style,
-                                inline_runs,
-                                anchor_href,
-                            }];
-                        }
-                        // Single Container child - flatten if container has default style
-                        ContentItem::Container { children: inner_children, style: inner_style, tag: inner_tag } => {
-                            // Keep the inner container, but with merged style
-                            let mut merged_style = style;
-                            merged_style.merge(&inner_style);
-                            return vec![ContentItem::Container {
-                                children: inner_children,
-                                style: merged_style,
-                                tag: inner_tag,
-                            }];
-                        }
-                        // Single Image child - unwrap, keeping the image
-                        other => return vec![other],
-                    }
-                }
-
-                // Multiple children - keep container but with flattened children
-                vec![ContentItem::Container {
-                    children: flattened_children,
-                    style,
-                    tag,
-                }]
+                // Non-containers pass through unchanged
+                other => vec![other],
             }
-            // Non-containers pass through unchanged
-            other => vec![other],
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Merge consecutive Text items into a single Text item with inline style runs
@@ -3096,7 +3193,12 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
 
     for item in items {
         match item {
-            ContentItem::Text { text, style, anchor_href, .. } => {
+            ContentItem::Text {
+                text,
+                style,
+                anchor_href,
+                ..
+            } => {
                 // Don't split on anchor changes - just accumulate all text
                 pending_texts.push((text, style, anchor_href));
             }
@@ -3135,12 +3237,12 @@ fn extract_css_hrefs_from_xhtml(data: &[u8], base_path: &str) -> Vec<String> {
         if let Some(element) = node.as_element() {
             let attrs = element.attributes.borrow();
             // Check if this is a stylesheet link
-            if attrs.get("rel").map_or(false, |r| r.contains("stylesheet")) {
-                if let Some(href) = attrs.get("href") {
-                    // Resolve relative path to absolute path within EPUB
-                    let resolved = resolve_relative_path(base_dir, href);
-                    css_hrefs.push(resolved);
-                }
+            if attrs.get("rel").is_some_and(|r| r.contains("stylesheet"))
+                && let Some(href) = attrs.get("href")
+            {
+                // Resolve relative path to absolute path within EPUB
+                let resolved = resolve_relative_path(base_dir, href);
+                css_hrefs.push(resolved);
             }
         }
     }
@@ -3150,7 +3252,11 @@ fn extract_css_hrefs_from_xhtml(data: &[u8], base_path: &str) -> Vec<String> {
 
 /// Extract content items (text and images) from XHTML, preserving styles and hierarchy
 /// `base_path` is the path of the XHTML file within the EPUB, used to resolve relative paths
-fn extract_content_from_xhtml(data: &[u8], stylesheet: &Stylesheet, base_path: &str) -> Vec<ContentItem> {
+fn extract_content_from_xhtml(
+    data: &[u8],
+    stylesheet: &Stylesheet,
+    base_path: &str,
+) -> Vec<ContentItem> {
     let html = String::from_utf8_lossy(data);
 
     // Get the directory part of the base path for resolving relative paths
@@ -3293,7 +3399,13 @@ fn extract_content_from_xhtml(data: &[u8], stylesheet: &Stylesheet, base_path: &
                 // Process children for document/doctype/etc nodes
                 let mut children = Vec::new();
                 for child in node.children() {
-                    children.extend(extract_from_node(&child, stylesheet, parent_style, base_dir, anchor_href));
+                    children.extend(extract_from_node(
+                        &child,
+                        stylesheet,
+                        parent_style,
+                        base_dir,
+                        anchor_href,
+                    ));
                 }
                 children
             }
@@ -3342,7 +3454,10 @@ fn clean_text(text: &str) -> String {
 
     // Preserve knowledge of leading/trailing whitespace for proper merging
     let has_leading_space = decoded.chars().next().is_some_and(|c| c.is_whitespace());
-    let has_trailing_space = decoded.chars().next_back().is_some_and(|c| c.is_whitespace());
+    let has_trailing_space = decoded
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_whitespace());
 
     // Normalize internal whitespace (collapse multiple whitespace to single space)
     let mut cleaned = String::new();
@@ -3490,15 +3605,21 @@ mod tests {
 
     /// Helper to find text content containing a needle and get its style
     /// Searches recursively through nested containers
-    fn find_text_style<'a>(items: &'a [ContentItem], needle: &str) -> Option<(&'a str, &'a ParsedStyle)> {
-        items.iter().flat_map(|item| item.flatten()).find_map(|item| {
-            if let ContentItem::Text { text, style, .. } = item {
-                if text.contains(needle) {
-                    return Some((text.as_str(), style));
+    fn find_text_style<'a>(
+        items: &'a [ContentItem],
+        needle: &str,
+    ) -> Option<(&'a str, &'a ParsedStyle)> {
+        items
+            .iter()
+            .flat_map(|item| item.flatten())
+            .find_map(|item| {
+                if let ContentItem::Text { text, style, .. } = item {
+                    if text.contains(needle) {
+                        return Some((text.as_str(), style));
+                    }
                 }
-            }
-            None
-        })
+                None
+            })
     }
 
     #[test]
@@ -3586,18 +3707,31 @@ mod tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Count flattened text items (nested in containers)
-        let flat_text_count = items.iter().flat_map(|i| i.flatten())
+        let flat_text_count = items
+            .iter()
+            .flat_map(|i| i.flatten())
             .filter(|i| matches!(i, ContentItem::Text { .. }))
             .count();
-        assert!(flat_text_count >= 2, "Expected at least 2 text items, got {}", flat_text_count);
+        assert!(
+            flat_text_count >= 2,
+            "Expected at least 2 text items, got {}",
+            flat_text_count
+        );
 
         // Find the heading text
         let (_, heading_style) = find_text_style(&items, "Chapter").expect("Should find heading");
-        assert_eq!(heading_style.text_align, Some(TextAlign::Center), "Heading should be centered");
+        assert_eq!(
+            heading_style.text_align,
+            Some(TextAlign::Center),
+            "Heading should be centered"
+        );
 
         // Find the paragraph text
         let (_, para_style) = find_text_style(&items, "body text").expect("Should find paragraph");
-        assert_eq!(para_style.text_align, None, "Body paragraph should NOT be centered (siblings don't inherit)");
+        assert_eq!(
+            para_style.text_align, None,
+            "Body paragraph should NOT be centered (siblings don't inherit)"
+        );
     }
 
     #[test]
@@ -3627,12 +3761,20 @@ mod tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Find the subtitle (inside hgroup)
-        let (_, subtitle_style) = find_text_style(&items, "Subtitle").expect("Should find subtitle");
-        assert_eq!(subtitle_style.text_align, Some(TextAlign::Center), "Subtitle inside hgroup should inherit center");
+        let (_, subtitle_style) =
+            find_text_style(&items, "Subtitle").expect("Should find subtitle");
+        assert_eq!(
+            subtitle_style.text_align,
+            Some(TextAlign::Center),
+            "Subtitle inside hgroup should inherit center"
+        );
 
         // Find the body paragraph (outside hgroup)
         let (_, body_style) = find_text_style(&items, "Body text").expect("Should find body");
-        assert_eq!(body_style.text_align, None, "Body paragraph outside hgroup should NOT be centered");
+        assert_eq!(
+            body_style.text_align, None,
+            "Body paragraph outside hgroup should NOT be centered"
+        );
     }
 
     #[test]
@@ -3720,10 +3862,15 @@ mod tests {
 
         // Find heading
         let (_, heading_style) = find_text_style(&items, "XXXIII").expect("Should find heading");
-        assert_eq!(heading_style.text_align, Some(TextAlign::Center), "Heading should be centered");
+        assert_eq!(
+            heading_style.text_align,
+            Some(TextAlign::Center),
+            "Heading should be centered"
+        );
 
         // Find the silence paragraph
-        let (_, silence_style) = find_text_style(&items, "silence").expect("Should find silence para");
+        let (_, silence_style) =
+            find_text_style(&items, "silence").expect("Should find silence para");
 
         // Paragraph should have text-indent
         assert!(
@@ -3764,12 +3911,17 @@ mod tests {
         let stylesheet = Stylesheet::parse(&combined_css);
 
         // Find the main content XHTML
-        let content_path = book.spine.iter()
+        let content_path = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("enchiridion"))
             .map(|s| s.href.clone())
             .expect("Should find enchiridion");
 
-        let content = book.resources.get(&content_path).expect("Should have content");
+        let content = book
+            .resources
+            .get(&content_path)
+            .expect("Should have content");
         let items = extract_content_from_xhtml(&content.data, &stylesheet, "");
 
         // Find the silence paragraph
@@ -3828,8 +3980,8 @@ mod tests {
         println!("\n=== Silence style hash/equality check ===");
         println!("text_indent: {:?}", silence_style.text_indent);
         println!("style hash: {:?}", {
-            use std::hash::{Hash, Hasher};
             use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
             let mut h = DefaultHasher::new();
             silence_style.hash(&mut h);
             h.finish()
@@ -3837,12 +3989,17 @@ mod tests {
 
         // Check if there's a style with exact same text_indent that differs in other ways
         // which might cause hash collisions
-        let silence_has_em_indent = matches!(silence_style.text_indent, Some(CssValue::Em(v)) if (v - 1.0).abs() < 0.01);
-        assert!(silence_has_em_indent, "Silence style should have Em(1.0) text-indent when extracted");
+        let silence_has_em_indent =
+            matches!(silence_style.text_indent, Some(CssValue::Em(v)) if (v - 1.0).abs() < 0.01);
+        assert!(
+            silence_has_em_indent,
+            "Silence style should have Em(1.0) text-indent when extracted"
+        );
 
         // Print all unique styles to see which one the silence paragraph maps to
         // Search recursively through nested containers
-        let unique_styles: std::collections::HashSet<_> = items.iter()
+        let unique_styles: std::collections::HashSet<_> = items
+            .iter()
             .flat_map(|item| item.flatten())
             .filter_map(|item| {
                 if let ContentItem::Text { style, .. } = item {
@@ -3880,11 +4037,23 @@ mod tests {
                         if let Some(IonValue::Symbol(name_sym)) = style.get(&sym::STYLE_NAME) {
                             if *name_sym == style_sym {
                                 println!("Found KFX style {}", style_sym);
-                                if let Some(IonValue::Struct(indent_val)) = style.get(&sym::TEXT_INDENT) {
+                                if let Some(IonValue::Struct(indent_val)) =
+                                    style.get(&sym::TEXT_INDENT)
+                                {
                                     println!("  P16 (text_indent): {:?}", indent_val);
-                                    if let Some(IonValue::Symbol(unit)) = indent_val.get(&sym::UNIT) {
-                                        println!("  Unit symbol: {} (P505={}, ZERO={})", unit, sym::VALUE_1_5EM, sym::ZERO);
-                                        assert_ne!(*unit, sym::ZERO, "Silence style should have non-zero text-indent!");
+                                    if let Some(IonValue::Symbol(unit)) = indent_val.get(&sym::UNIT)
+                                    {
+                                        println!(
+                                            "  Unit symbol: {} (P505={}, ZERO={})",
+                                            unit,
+                                            sym::VALUE_1_5EM,
+                                            sym::ZERO
+                                        );
+                                        assert_ne!(
+                                            *unit,
+                                            sym::ZERO,
+                                            "Silence style should have non-zero text-indent!"
+                                        );
                                     }
                                 } else {
                                     println!("  No P16 (text_indent) field!");
@@ -3939,8 +4108,10 @@ mod tests {
         println!("margin_top: {:?}", silence_style.margin_top);
 
         // The key check: text_indent should be Em(1.0), not zero
-        let has_em_indent = matches!(silence_style.text_indent, Some(CssValue::Em(v)) if (v - 1.0).abs() < 0.01);
-        let has_zero_indent = matches!(silence_style.text_indent, Some(CssValue::Px(v)) if v.abs() < 0.001);
+        let has_em_indent =
+            matches!(silence_style.text_indent, Some(CssValue::Em(v)) if (v - 1.0).abs() < 0.01);
+        let has_zero_indent =
+            matches!(silence_style.text_indent, Some(CssValue::Px(v)) if v.abs() < 0.001);
 
         println!("Has Em(1.0) indent: {}", has_em_indent);
         println!("Has Px(0) indent: {}", has_zero_indent);
@@ -3953,7 +4124,8 @@ mod tests {
         );
 
         // Now trace through the style_map to see what happens
-        let unique_styles: std::collections::HashSet<_> = all_items.iter()
+        let unique_styles: std::collections::HashSet<_> = all_items
+            .iter()
             .filter_map(|item| {
                 if let ContentItem::Text { style, .. } = item {
                     Some(style.clone())
@@ -3973,8 +4145,8 @@ mod tests {
             // Check if other_style has zero indent
             if matches!(other_style.text_indent, Some(CssValue::Px(v)) if v.abs() < 0.001) {
                 // Check if they're hash-equal (which would cause collision)
-                use std::hash::{Hash, Hasher};
                 use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
                 let mut h1 = DefaultHasher::new();
                 let mut h2 = DefaultHasher::new();
                 silence_style.hash(&mut h1);
@@ -3994,7 +4166,10 @@ mod tests {
                 }
             }
         }
-        assert!(!equal_to_zero_indent, "Silence style should not equal any zero-indent style!");
+        assert!(
+            !equal_to_zero_indent,
+            "Silence style should not equal any zero-indent style!"
+        );
 
         // Finally, trace through the builder to see which style the silence paragraph gets
         let builder = KfxBookBuilder::from_book(&book);
@@ -4013,7 +4188,10 @@ mod tests {
                         // P173 is STYLE_NAME which contains the symbol
                         if let Some(IonValue::Symbol(name_sym)) = s.get(&sym::STYLE_NAME) {
                             if *name_sym == sym {
-                                println!("Found style fragment for silence (frag.fid={}):", frag.fid);
+                                println!(
+                                    "Found style fragment for silence (frag.fid={}):",
+                                    frag.fid
+                                );
                                 if let Some(IonValue::Struct(p16)) = s.get(&sym::TEXT_INDENT) {
                                     if let Some(IonValue::Symbol(unit)) = p16.get(&sym::UNIT) {
                                         println!("  text_indent unit symbol: {}", unit);
@@ -4044,14 +4222,17 @@ mod tests {
                     matches += 1;
                 }
             }
-            println!("Total styles with Em(1.0) text-indent in builder: {}", matches);
+            println!(
+                "Total styles with Em(1.0) text-indent in builder: {}",
+                matches
+            );
         }
     }
 
     #[test]
     fn test_font_size_serialization() {
         // Test that font-size values are serialized correctly
-        use crate::css::{ParsedStyle, CssValue};
+        use crate::css::{CssValue, ParsedStyle};
 
         // Create styles with different font sizes
         let mut style_100 = ParsedStyle::default();
@@ -4072,12 +4253,14 @@ mod tests {
         // Smaller values should use P382
         assert!(matches!(style_smaller.font_size, Some(CssValue::Em(v)) if v < 1.0));
         assert!(matches!(style_percent_small.font_size, Some(CssValue::Percent(v)) if v < 100.0));
-        assert!(matches!(style_keyword.font_size, Some(CssValue::Keyword(ref k)) if k == "smaller"));
+        assert!(
+            matches!(style_keyword.font_size, Some(CssValue::Keyword(ref k)) if k == "smaller")
+        );
     }
 
     #[test]
     fn test_font_variant_serialization() {
-        use crate::css::{ParsedStyle, FontVariant};
+        use crate::css::{FontVariant, ParsedStyle};
 
         // Style with small-caps
         let mut style = ParsedStyle::default();
@@ -4100,7 +4283,9 @@ mod tests {
         let kfx = KfxBookBuilder::from_book(&book);
 
         // Find style fragments
-        let styles: Vec<_> = kfx.fragments.iter()
+        let styles: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::STYLE)
             .collect();
 
@@ -4109,7 +4294,12 @@ mod tests {
         let mut styles_with_zero_margins = 0;
         for style in &styles {
             if let IonValue::Struct(s) = &style.value {
-                for &margin_key in &[sym::MARGIN_TOP, sym::MARGIN_BOTTOM, sym::MARGIN_LEFT, sym::MARGIN_RIGHT] {
+                for &margin_key in &[
+                    sym::MARGIN_TOP,
+                    sym::MARGIN_BOTTOM,
+                    sym::MARGIN_LEFT,
+                    sym::MARGIN_RIGHT,
+                ] {
                     if let Some(IonValue::Struct(margin_struct)) = s.get(&margin_key) {
                         // Check if unit is ZERO ($310)
                         if let Some(IonValue::Symbol(unit)) = margin_struct.get(&sym::UNIT) {
@@ -4124,8 +4314,11 @@ mod tests {
         }
 
         // No styles should have explicit zero margins - they should be omitted
-        assert_eq!(styles_with_zero_margins, 0,
-            "Found {} styles with explicit zero margins (should be omitted)", styles_with_zero_margins);
+        assert_eq!(
+            styles_with_zero_margins, 0,
+            "Found {} styles with explicit zero margins (should be omitted)",
+            styles_with_zero_margins
+        );
     }
 
     #[test]
@@ -4135,11 +4328,14 @@ mod tests {
         let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
         let kfx = KfxBookBuilder::from_book(&book);
 
-        let styles: Vec<_> = kfx.fragments.iter()
+        let styles: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::STYLE)
             .collect();
 
-        let total_props: usize = styles.iter()
+        let total_props: usize = styles
+            .iter()
             .filter_map(|s| match &s.value {
                 IonValue::Struct(map) => Some(map.len()),
                 _ => None,
@@ -4150,8 +4346,11 @@ mod tests {
         println!("Average properties per style: {:.1}", avg_props);
 
         // Should be <= 7 properties per style on average (reference is ~6.6)
-        assert!(avg_props <= 7.0,
-            "Styles too verbose: {:.1} avg properties (expected <= 7.0)", avg_props);
+        assert!(
+            avg_props <= 7.0,
+            "Styles too verbose: {:.1} avg properties (expected <= 7.0)",
+            avg_props
+        );
     }
 }
 
@@ -4161,15 +4360,21 @@ mod image_tests {
 
     /// Helper to find text content containing a needle and get its style
     /// Searches recursively through nested containers
-    fn find_text_style<'a>(items: &'a [ContentItem], needle: &str) -> Option<(&'a str, &'a ParsedStyle)> {
-        items.iter().flat_map(|item| item.flatten()).find_map(|item| {
-            if let ContentItem::Text { text, style, .. } = item {
-                if text.contains(needle) {
-                    return Some((text.as_str(), style));
+    fn find_text_style<'a>(
+        items: &'a [ContentItem],
+        needle: &str,
+    ) -> Option<(&'a str, &'a ParsedStyle)> {
+        items
+            .iter()
+            .flat_map(|item| item.flatten())
+            .find_map(|item| {
+                if let ContentItem::Text { text, style, .. } = item {
+                    if text.contains(needle) {
+                        return Some((text.as_str(), style));
+                    }
                 }
-            }
-            None
-        })
+                None
+            })
     }
 
     #[test]
@@ -4210,16 +4415,24 @@ mod image_tests {
             match item {
                 ContentItem::Text { text, .. } => println!("  Text: {}", text),
                 ContentItem::Image { resource_href, .. } => println!("  Image: {}", resource_href),
-                ContentItem::Container { tag, children, .. } => println!("  Container({}): {} children", tag, children.len()),
+                ContentItem::Container { tag, children, .. } => {
+                    println!("  Container({}): {} children", tag, children.len())
+                }
             }
         }
 
         // Should have ONLY the image, no text (h1 and p are hidden)
         // Search recursively through nested containers
-        let text_items: Vec<_> = items.iter().flat_map(|i| i.flatten())
-            .filter(|i| matches!(i, ContentItem::Text { .. })).collect();
-        let image_items: Vec<_> = items.iter().flat_map(|i| i.flatten())
-            .filter(|i| matches!(i, ContentItem::Image { .. })).collect();
+        let text_items: Vec<_> = items
+            .iter()
+            .flat_map(|i| i.flatten())
+            .filter(|i| matches!(i, ContentItem::Text { .. }))
+            .collect();
+        let image_items: Vec<_> = items
+            .iter()
+            .flat_map(|i| i.flatten())
+            .filter(|i| matches!(i, ContentItem::Image { .. }))
+            .collect();
 
         println!("Text items: {}", text_items.len());
         println!("Image items: {}", image_items.len());
@@ -4229,7 +4442,10 @@ mod image_tests {
 
         if let ContentItem::Image { resource_href, .. } = image_items[0] {
             // Resolved path should match manifest href format (not full EPUB path)
-            assert_eq!(resource_href, "images/titlepage.png", "Image path should be resolved to manifest href");
+            assert_eq!(
+                resource_href, "images/titlepage.png",
+                "Image path should be resolved to manifest href"
+            );
         }
     }
 
@@ -4249,14 +4465,18 @@ mod image_tests {
         }
 
         // Get the spine item for titlepage
-        let titlepage_spine = book.spine.iter()
+        let titlepage_spine = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("titlepage"))
             .expect("Should have titlepage in spine");
 
         println!("\nTitlepage spine item href: '{}'", titlepage_spine.href);
 
         // Load the titlepage content
-        let resource = book.resources.get(&titlepage_spine.href)
+        let resource = book
+            .resources
+            .get(&titlepage_spine.href)
             .expect("Should have titlepage resource");
 
         // Parse CSS
@@ -4278,9 +4498,14 @@ mod image_tests {
                 ContentItem::Text { text, .. } => println!("  Text: '{}'", text),
                 ContentItem::Image { resource_href, .. } => {
                     let found = book.resources.contains_key(resource_href);
-                    println!("  Image: '{}' (found in resources: {})", resource_href, found);
+                    println!(
+                        "  Image: '{}' (found in resources: {})",
+                        resource_href, found
+                    );
                 }
-                ContentItem::Container { tag, children, .. } => println!("  Container({}): {} children", tag, children.len()),
+                ContentItem::Container { tag, children, .. } => {
+                    println!("  Container({}): {} children", tag, children.len())
+                }
             }
         }
 
@@ -4314,12 +4539,19 @@ mod image_tests {
                     if let Some(IonValue::List(items)) = block.get(&sym::CONTENT_ARRAY) {
                         for item in items {
                             if let IonValue::Struct(item_struct) = item {
-                                if let Some(IonValue::Symbol(content_type)) = item_struct.get(&sym::CONTENT_TYPE) {
+                                if let Some(IonValue::Symbol(content_type)) =
+                                    item_struct.get(&sym::CONTENT_TYPE)
+                                {
                                     if *content_type == sym::IMAGE_CONTENT {
                                         image_count += 1;
                                         // Print which resource this image references
-                                        if let Some(IonValue::Symbol(rsrc_sym)) = item_struct.get(&sym::RESOURCE_NAME) {
-                                            println!("Found IMAGE_CONTENT with resource symbol: {}", rsrc_sym);
+                                        if let Some(IonValue::Symbol(rsrc_sym)) =
+                                            item_struct.get(&sym::RESOURCE_NAME)
+                                        {
+                                            println!(
+                                                "Found IMAGE_CONTENT with resource symbol: {}",
+                                                rsrc_sym
+                                            );
                                         }
                                     }
                                 }
@@ -4330,11 +4562,17 @@ mod image_tests {
             }
         }
 
-        println!("Content blocks: {}, Images: {}", content_block_count, image_count);
+        println!(
+            "Content blocks: {}, Images: {}",
+            content_block_count, image_count
+        );
 
         // The reference KFX has 2 images (titlepage and logo)
         // We should have at least the titlepage image
-        assert!(image_count >= 1, "Generated KFX should contain at least 1 image");
+        assert!(
+            image_count >= 1,
+            "Generated KFX should contain at least 1 image"
+        );
     }
 
     #[test]
@@ -4370,10 +4608,7 @@ mod image_tests {
                     {
                         // Cover is typically portrait orientation
                         if *h > *w && *h > 1000 {
-                            println!(
-                                "Found cover resource: {}x{}, fid={}",
-                                w, h, fragment.fid
-                            );
+                            println!("Found cover resource: {}x{}, fid={}", w, h, fragment.fid);
                             cover_resource = Some(&fragment.fid);
                             // Check if cover resource has MIME_TYPE (P162)
                             cover_has_mime_type = res.contains_key(&sym::MIME_TYPE);
@@ -4410,15 +4645,26 @@ mod image_tests {
 
     /// Helper to find image content and get its style
     /// Searches recursively through nested containers
-    fn find_image_style<'a>(items: &'a [ContentItem], resource_needle: &str) -> Option<&'a ParsedStyle> {
-        items.iter().flat_map(|item| item.flatten()).find_map(|item| {
-            if let ContentItem::Image { resource_href, style, .. } = item {
-                if resource_href.contains(resource_needle) {
-                    return Some(style);
+    fn find_image_style<'a>(
+        items: &'a [ContentItem],
+        resource_needle: &str,
+    ) -> Option<&'a ParsedStyle> {
+        items
+            .iter()
+            .flat_map(|item| item.flatten())
+            .find_map(|item| {
+                if let ContentItem::Image {
+                    resource_href,
+                    style,
+                    ..
+                } = item
+                {
+                    if resource_href.contains(resource_needle) {
+                        return Some(style);
+                    }
                 }
-            }
-            None
-        })
+                None
+            })
     }
 
     #[test]
@@ -4489,10 +4735,15 @@ mod image_tests {
 
         let items = extract_content_from_xhtml(html, &stylesheet, "");
         // Count flattened images (nested in containers)
-        let image_count = items.iter().flat_map(|i| i.flatten())
+        let image_count = items
+            .iter()
+            .flat_map(|i| i.flatten())
             .filter(|i| matches!(i, ContentItem::Image { .. }))
             .count();
-        assert_eq!(image_count, 2, "Should have 2 images (nested in containers)");
+        assert_eq!(
+            image_count, 2,
+            "Should have 2 images (nested in containers)"
+        );
 
         let hero_style = find_image_style(&items, "hero").expect("Should find hero image");
         let regular_style = find_image_style(&items, "regular").expect("Should find regular image");
@@ -4536,12 +4787,17 @@ mod image_tests {
         let stylesheet = crate::css::Stylesheet::parse(&combined_css);
 
         // Find titlepage XHTML
-        let titlepage_path = book.spine.iter()
+        let titlepage_path = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("titlepage"))
             .map(|s| s.href.clone())
             .expect("Should find titlepage");
 
-        let titlepage = book.resources.get(&titlepage_path).expect("Should have titlepage");
+        let titlepage = book
+            .resources
+            .get(&titlepage_path)
+            .expect("Should have titlepage");
         let base_dir = std::path::Path::new(&titlepage_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
@@ -4549,8 +4805,8 @@ mod image_tests {
         let items = extract_content_from_xhtml(&titlepage.data, &stylesheet, &base_dir);
 
         // Find the titlepage image
-        let image_style = find_image_style(&items, "titlepage")
-            .expect("Should find titlepage image");
+        let image_style =
+            find_image_style(&items, "titlepage").expect("Should find titlepage image");
 
         println!("Titlepage image style:");
         println!("  margin_top: {:?}", image_style.margin_top);
@@ -4581,12 +4837,17 @@ mod image_tests {
             for item in items {
                 if let IonValue::Struct(item_struct) = item {
                     // Check if this is an image
-                    if let Some(IonValue::Symbol(content_type)) = item_struct.get(&sym::CONTENT_TYPE) {
+                    if let Some(IonValue::Symbol(content_type)) =
+                        item_struct.get(&sym::CONTENT_TYPE)
+                    {
                         if *content_type == sym::IMAGE_CONTENT {
                             // Check if it has a style
-                            if let Some(IonValue::Symbol(style_sym)) = item_struct.get(&sym::STYLE) {
+                            if let Some(IonValue::Symbol(style_sym)) = item_struct.get(&sym::STYLE)
+                            {
                                 // Check resource name to find titlepage
-                                if let Some(IonValue::Symbol(_rsrc)) = item_struct.get(&sym::RESOURCE_NAME) {
+                                if let Some(IonValue::Symbol(_rsrc)) =
+                                    item_struct.get(&sym::RESOURCE_NAME)
+                                {
                                     println!("Found image with style symbol: {}", style_sym);
                                     return Some(*style_sym);
                                 }
@@ -4635,7 +4896,10 @@ mod image_tests {
             }
         }
 
-        println!("Image styles with margin-top: {:?}", image_styles_with_margin);
+        println!(
+            "Image styles with margin-top: {:?}",
+            image_styles_with_margin
+        );
 
         if let Some(style_sym) = titlepage_style_sym {
             for fragment in &kfx.fragments {
@@ -4643,7 +4907,11 @@ mod image_tests {
                     if let IonValue::Struct(style) = &fragment.value {
                         if let Some(IonValue::Symbol(name_sym)) = style.get(&sym::STYLE_NAME) {
                             if *name_sym == style_sym {
-                                println!("Found style {} content: {:?}", style_sym, style.keys().collect::<Vec<_>>());
+                                println!(
+                                    "Found style {} content: {:?}",
+                                    style_sym,
+                                    style.keys().collect::<Vec<_>>()
+                                );
 
                                 // Check for P36 (margin_top)
                                 if let Some(margin_top) = style.get(&sym::MARGIN_TOP) {
@@ -4651,19 +4919,32 @@ mod image_tests {
                                     // Verify it's not zero
                                     if let IonValue::Struct(mt) = margin_top {
                                         if let Some(IonValue::Symbol(unit)) = mt.get(&sym::UNIT) {
-                                            assert_ne!(*unit, sym::ZERO, "Titlepage image margin-top should not be zero!");
-                                            println!("  margin-top unit: {} (UNIT_EM={})", unit, sym::UNIT_EM);
+                                            assert_ne!(
+                                                *unit,
+                                                sym::ZERO,
+                                                "Titlepage image margin-top should not be zero!"
+                                            );
+                                            println!(
+                                                "  margin-top unit: {} (UNIT_EM={})",
+                                                unit,
+                                                sym::UNIT_EM
+                                            );
                                         }
                                     }
                                 } else {
                                     // This specific image may use a default style without margin-top
                                     // As long as SOME image styles have margin-top, we're OK
                                     if !image_styles_with_margin.is_empty() {
-                                        println!("Note: First image found uses style {}, but other image styles {} have margin-top",
-                                            style_sym, image_styles_with_margin.len());
+                                        println!(
+                                            "Note: First image found uses style {}, but other image styles {} have margin-top",
+                                            style_sym,
+                                            image_styles_with_margin.len()
+                                        );
                                         return;
                                     }
-                                    panic!("Titlepage image style should have P36 (margin_top)! No image styles with margin_top found.");
+                                    panic!(
+                                        "Titlepage image style should have P36 (margin_top)! No image styles with margin_top found."
+                                    );
                                 }
                                 return;
                             }
@@ -4697,8 +4978,15 @@ mod image_tests {
                     let has_image_fit = style.get(&sym::IMAGE_FIT).is_some();
 
                     if has_image_layout {
-                        let style_name = style.get(&sym::STYLE_NAME)
-                            .map(|v| if let IonValue::Symbol(s) = v { Some(*s) } else { None })
+                        let style_name = style
+                            .get(&sym::STYLE_NAME)
+                            .map(|v| {
+                                if let IonValue::Symbol(s) = v {
+                                    Some(*s)
+                                } else {
+                                    None
+                                }
+                            })
                             .flatten();
 
                         println!("Found image style: {:?}", style_name);
@@ -4712,20 +5000,28 @@ mod image_tests {
             }
         }
 
-        assert!(!image_styles.is_empty(),
-            "Should find at least one image style with IMAGE_LAYOUT");
+        assert!(
+            !image_styles.is_empty(),
+            "Should find at least one image style with IMAGE_LAYOUT"
+        );
 
         // Verify all image styles have IMAGE_FIT (contain)
         for (style_name, has_image_fit, style) in &image_styles {
-            assert!(*has_image_fit,
+            assert!(
+                *has_image_fit,
                 "Image style {:?} should have IMAGE_FIT ($546)",
-                style_name);
+                style_name
+            );
 
             // Verify IMAGE_LAYOUT is CENTER ($320)
             if let Some(IonValue::Symbol(layout)) = style.get(&sym::IMAGE_LAYOUT) {
-                assert_eq!(*layout, sym::ALIGN_CENTER,
+                assert_eq!(
+                    *layout,
+                    sym::ALIGN_CENTER,
                     "Image style {:?} IMAGE_LAYOUT should be CENTER ($320), got {}",
-                    style_name, layout);
+                    style_name,
+                    layout
+                );
             }
         }
     }
@@ -4755,23 +5051,29 @@ mod image_tests {
         let stylesheet = Stylesheet::parse(&combined_css);
 
         // Find the colophon XHTML
-        let colophon_path = book.spine.iter()
+        let colophon_path = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("colophon"))
             .map(|s| s.href.clone())
             .expect("Should find colophon");
 
-        let colophon = book.resources.get(&colophon_path).expect("Should have colophon");
+        let colophon = book
+            .resources
+            .get(&colophon_path)
+            .expect("Should have colophon");
         let items = extract_content_from_xhtml(&colophon.data, &stylesheet, &colophon_path);
 
         // Find the colophon paragraph containing specific text
-        let (_, colophon_style) = find_text_style(&items, "Standard Ebooks")
-            .expect("Should find colophon paragraph");
+        let (_, colophon_style) =
+            find_text_style(&items, "Standard Ebooks").expect("Should find colophon paragraph");
 
         // The paragraph should inherit text-align: center from the section
         // (section.epub-type-contains-word-colophon has text-align: center)
         // This tests CSS inheritance working correctly.
         assert_eq!(
-            colophon_style.text_align, Some(TextAlign::Center),
+            colophon_style.text_align,
+            Some(TextAlign::Center),
             "Colophon paragraph should inherit text-align: center from section, got {:?}",
             colophon_style.text_align
         );
@@ -4807,7 +5109,10 @@ mod image_tests {
             }
         }
 
-        assert!(colophon_text_id.is_some(), "Should find colophon text content");
+        assert!(
+            colophon_text_id.is_some(),
+            "Should find colophon text content"
+        );
 
         // Find content block that references this text and get its style
         // Content items have TEXT_CONTENT: {ID: text_sym, TEXT_OFFSET: n}
@@ -4820,7 +5125,8 @@ mod image_tests {
                         if let Some(IonValue::Symbol(found_id)) = text_ref.get(&sym::ID) {
                             if *found_id == text_id {
                                 // Get the style for this content item
-                                if let Some(IonValue::Symbol(style)) = item_struct.get(&sym::STYLE) {
+                                if let Some(IonValue::Symbol(style)) = item_struct.get(&sym::STYLE)
+                                {
                                     return Some(*style);
                                 }
                             }
@@ -4853,7 +5159,10 @@ mod image_tests {
             }
         }
 
-        assert!(colophon_style_sym.is_some(), "Should find style for colophon paragraph");
+        assert!(
+            colophon_style_sym.is_some(),
+            "Should find style for colophon paragraph"
+        );
 
         // Now find the style and verify its properties
         let style_sym = colophon_style_sym.unwrap();
@@ -4869,12 +5178,16 @@ mod image_tests {
 
                             // Check margin-top/SPACE_BEFORE exists and uses appropriate unit
                             // Based on CSS mapping: margin-top uses $47 with multiplier ($310) or percent ($314)
-                            if let Some(IonValue::Struct(margin_top)) = style.get(&sym::SPACE_BEFORE) {
+                            if let Some(IonValue::Struct(margin_top)) =
+                                style.get(&sym::SPACE_BEFORE)
+                            {
                                 if let Some(IonValue::Symbol(unit)) = margin_top.get(&sym::UNIT) {
                                     assert!(
                                         *unit == sym::UNIT_MULTIPLIER || *unit == sym::UNIT_PERCENT,
                                         "Colophon margin-top should use multiplier or percent unit, got unit={} (UNIT_MULTIPLIER={}, UNIT_PERCENT={})",
-                                        unit, sym::UNIT_MULTIPLIER, sym::UNIT_PERCENT
+                                        unit,
+                                        sym::UNIT_MULTIPLIER,
+                                        sym::UNIT_PERCENT
                                     );
                                     println!("  margin-top unit: {} (correct)", unit);
                                 }
@@ -4885,9 +5198,11 @@ mod image_tests {
                             // Check text-align is center (ALIGN_CENTER=321)
                             if let Some(IonValue::Symbol(align)) = style.get(&sym::TEXT_ALIGN) {
                                 assert_eq!(
-                                    *align, sym::ALIGN_CENTER,
+                                    *align,
+                                    sym::ALIGN_CENTER,
                                     "Colophon text-align should be center, got {} (ALIGN_CENTER={})",
-                                    align, sym::ALIGN_CENTER
+                                    align,
+                                    sym::ALIGN_CENTER
                                 );
                                 println!("  text-align: center (correct)");
                             }
@@ -4930,12 +5245,17 @@ mod image_tests {
         let stylesheet = Stylesheet::parse(&combined_css);
 
         // Find the-enchiridion.xhtml (has body paragraphs)
-        let chapter_path = book.spine.iter()
+        let chapter_path = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("enchiridion"))
             .map(|s| s.href.clone())
             .expect("Should find the-enchiridion");
 
-        let chapter = book.resources.get(&chapter_path).expect("Should have chapter");
+        let chapter = book
+            .resources
+            .get(&chapter_path)
+            .expect("Should have chapter");
         let items = extract_content_from_xhtml(&chapter.data, &stylesheet, &chapter_path);
 
         // Find a body paragraph (contains text from the first paragraph)
@@ -5011,17 +5331,22 @@ mod image_tests {
 
         let stylesheet = Stylesheet::parse(&combined_css);
 
-        let imprint_path = book.spine.iter()
+        let imprint_path = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("imprint"))
             .map(|s| s.href.clone())
             .expect("Should find imprint");
 
-        let imprint = book.resources.get(&imprint_path).expect("Should have imprint");
+        let imprint = book
+            .resources
+            .get(&imprint_path)
+            .expect("Should have imprint");
         let items = extract_content_from_xhtml(&imprint.data, &stylesheet, &imprint_path);
 
         // Find the imprint paragraph
-        let (_, imprint_style) = find_text_style(&items, "ebook is the product")
-            .expect("Should find imprint paragraph");
+        let (_, imprint_style) =
+            find_text_style(&items, "ebook is the product").expect("Should find imprint paragraph");
 
         println!("Imprint paragraph direct style:");
         println!("  font_size: {:?}", imprint_style.font_size);
@@ -5035,7 +5360,7 @@ mod image_tests {
 
     #[test]
     fn test_inline_style_runs_extraction() {
-        use crate::css::{Stylesheet, FontStyle, FontWeight};
+        use crate::css::{FontStyle, FontWeight, Stylesheet};
 
         // CSS that makes em/i/strong have distinct styles
         let css = r#"
@@ -5058,39 +5383,57 @@ mod image_tests {
         assert_eq!(items.len(), 1, "Should have 1 item");
 
         // After flattening, paragraph with single text child becomes just Text
-        if let ContentItem::Text { text, inline_runs, .. } = &items[0] {
+        if let ContentItem::Text {
+            text, inline_runs, ..
+        } = &items[0]
+        {
             // Text should be merged
             assert!(text.contains("Hello"), "Text should contain 'Hello'");
-            assert!(text.contains("emphasized"), "Text should contain 'emphasized'");
+            assert!(
+                text.contains("emphasized"),
+                "Text should contain 'emphasized'"
+            );
             assert!(text.contains("bold"), "Text should contain 'bold'");
             assert!(text.contains("world"), "Text should contain 'world'");
 
             println!("Merged text: '{}'", text);
             println!("Inline runs: {}", inline_runs.len());
             for run in inline_runs {
-                println!("  offset: {}, length: {}, font_style: {:?}, font_weight: {:?}",
-                    run.offset, run.length, run.style.font_style, run.style.font_weight);
+                println!(
+                    "  offset: {}, length: {}, font_style: {:?}, font_weight: {:?}",
+                    run.offset, run.length, run.style.font_style, run.style.font_weight
+                );
             }
 
             // Should have inline runs for em and strong styled portions
             // The exact count depends on how whitespace is handled
-            assert!(!inline_runs.is_empty(), "Should have inline style runs for styled text");
+            assert!(
+                !inline_runs.is_empty(),
+                "Should have inline style runs for styled text"
+            );
 
             // Check that at least one run has italic (for the em element)
-            let has_italic_run = inline_runs.iter().any(|r| r.style.font_style == Some(FontStyle::Italic));
+            let has_italic_run = inline_runs
+                .iter()
+                .any(|r| r.style.font_style == Some(FontStyle::Italic));
             assert!(has_italic_run, "Should have an italic inline run for <em>");
 
             // Check that at least one run has bold (for the strong element)
-            let has_bold_run = inline_runs.iter().any(|r| r.style.font_weight == Some(FontWeight::Bold));
+            let has_bold_run = inline_runs
+                .iter()
+                .any(|r| r.style.font_weight == Some(FontWeight::Bold));
             assert!(has_bold_run, "Should have a bold inline run for <strong>");
         } else {
-            panic!("Expected Text item (flattened paragraph), got {:?}", items[0]);
+            panic!(
+                "Expected Text item (flattened paragraph), got {:?}",
+                items[0]
+            );
         }
     }
 
     #[test]
     fn test_inline_style_runs_kfx_output() {
-        use crate::css::{Stylesheet, FontStyle};
+        use crate::css::{FontStyle, Stylesheet};
 
         // CSS with distinct styles
         let css = r#"
@@ -5109,19 +5452,30 @@ mod image_tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Find the text item with inline runs
-        let text_item = items.iter()
-            .flat_map(|i| i.flatten())
-            .find(|i| matches!(i, ContentItem::Text { inline_runs, .. } if !inline_runs.is_empty()));
+        let text_item = items.iter().flat_map(|i| i.flatten()).find(
+            |i| matches!(i, ContentItem::Text { inline_runs, .. } if !inline_runs.is_empty()),
+        );
 
-        assert!(text_item.is_some(), "Should have a text item with inline style runs");
+        assert!(
+            text_item.is_some(),
+            "Should have a text item with inline style runs"
+        );
 
-        if let Some(ContentItem::Text { text, inline_runs, .. }) = text_item {
+        if let Some(ContentItem::Text {
+            text, inline_runs, ..
+        }) = text_item
+        {
             println!("Text: '{}'", text);
             println!("Inline runs count: {}", inline_runs.len());
 
             // The italic portion should create an inline run
-            let italic_run = inline_runs.iter().find(|r| r.style.font_style == Some(FontStyle::Italic));
-            assert!(italic_run.is_some(), "Should have italic run for <em> content");
+            let italic_run = inline_runs
+                .iter()
+                .find(|r| r.style.font_style == Some(FontStyle::Italic));
+            assert!(
+                italic_run.is_some(),
+                "Should have italic run for <em> content"
+            );
         }
     }
 
@@ -5144,15 +5498,19 @@ mod image_tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Find the image item
-        let image_item = items.iter()
+        let image_item = items
+            .iter()
             .flat_map(|i| i.flatten())
             .find(|i| matches!(i, ContentItem::Image { .. }));
 
         assert!(image_item.is_some(), "Should have an image item");
 
         if let Some(ContentItem::Image { alt, .. }) = image_item {
-            assert_eq!(alt.as_deref(), Some("The Standard Ebooks logo."),
-                "Image should have alt text extracted");
+            assert_eq!(
+                alt.as_deref(),
+                Some("The Standard Ebooks logo."),
+                "Image should have alt text extracted"
+            );
         } else {
             panic!("Expected ContentItem::Image");
         }
@@ -5188,7 +5546,11 @@ mod image_tests {
 
         // A simple paragraph should have at most 1 level of container nesting
         // (the paragraph itself, containing text)
-        assert!(depth <= 1, "Simple paragraph should not be deeply nested (depth: {})", depth);
+        assert!(
+            depth <= 1,
+            "Simple paragraph should not be deeply nested (depth: {})",
+            depth
+        );
     }
 
     #[test]
@@ -5207,18 +5569,20 @@ mod image_tests {
 
         // Check that anchor information is preserved in inline_runs
         // The link text should have associated anchor/href data in inline runs
-        let has_anchor_data = items.iter()
+        let has_anchor_data = items
+            .iter()
             .flat_map(|i| i.flatten())
-            .any(|item| {
-                match item {
-                    ContentItem::Text { inline_runs, .. } => {
-                        inline_runs.iter().any(|r| r.anchor_href.is_some())
-                    }
-                    _ => false,
+            .any(|item| match item {
+                ContentItem::Text { inline_runs, .. } => {
+                    inline_runs.iter().any(|r| r.anchor_href.is_some())
                 }
+                _ => false,
             });
 
-        assert!(has_anchor_data, "Hyperlinks should preserve anchor href information");
+        assert!(
+            has_anchor_data,
+            "Hyperlinks should preserve anchor href information"
+        );
     }
 
     #[test]
@@ -5232,20 +5596,20 @@ mod image_tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // The anchor should reference the internal target (in inline_runs)
-        let has_internal_anchor = items.iter()
+        let has_internal_anchor = items
+            .iter()
             .flat_map(|i| i.flatten())
-            .any(|item| {
-                match item {
-                    ContentItem::Text { inline_runs, .. } => {
-                        inline_runs.iter().any(|r| {
-                            r.anchor_href.as_ref().map_or(false, |h| h.starts_with("#"))
-                        })
-                    }
-                    _ => false,
-                }
+            .any(|item| match item {
+                ContentItem::Text { inline_runs, .. } => inline_runs
+                    .iter()
+                    .any(|r| r.anchor_href.as_ref().map_or(false, |h| h.starts_with("#"))),
+                _ => false,
             });
 
-        assert!(has_internal_anchor, "Internal anchors (#footnote-1) should be preserved");
+        assert!(
+            has_internal_anchor,
+            "Internal anchors (#footnote-1) should be preserved"
+        );
     }
 
     #[test]
@@ -5270,10 +5634,15 @@ mod image_tests {
 
         // After flattening, h1/h2/p become Text items with their styles preserved
         // Should have 3 Text items
-        assert_eq!(items.len(), 3, "Should have 3 items (h1, h2, p flattened to Text)");
+        assert_eq!(
+            items.len(),
+            3,
+            "Should have 3 items (h1, h2, p flattened to Text)"
+        );
 
         // Collect styles from text items
-        let text_styles: Vec<_> = items.iter()
+        let text_styles: Vec<_> = items
+            .iter()
             .filter_map(|item| {
                 if let ContentItem::Text { text, style, .. } = item {
                     Some((text.as_str(), style.clone()))
@@ -5285,14 +5654,25 @@ mod image_tests {
 
         println!("Text styles:");
         for (text, style) in &text_styles {
-            println!("  '{}': font_size={:?}, font_weight={:?}",
-                text, style.font_size, style.font_weight);
+            println!(
+                "  '{}': font_size={:?}, font_weight={:?}",
+                text, style.font_size, style.font_weight
+            );
         }
 
         // Find by content
-        let h1_style = text_styles.iter().find(|(t, _)| *t == "Title").map(|(_, s)| s);
-        let h2_style = text_styles.iter().find(|(t, _)| *t == "Subtitle").map(|(_, s)| s);
-        let p_style = text_styles.iter().find(|(t, _)| *t == "Body text.").map(|(_, s)| s);
+        let h1_style = text_styles
+            .iter()
+            .find(|(t, _)| *t == "Title")
+            .map(|(_, s)| s);
+        let h2_style = text_styles
+            .iter()
+            .find(|(t, _)| *t == "Subtitle")
+            .map(|(_, s)| s);
+        let p_style = text_styles
+            .iter()
+            .find(|(t, _)| *t == "Body text.")
+            .map(|(_, s)| s);
 
         assert!(h1_style.is_some(), "Should have h1 text");
         assert!(h2_style.is_some(), "Should have h2 text");
@@ -5313,10 +5693,16 @@ mod image_tests {
         let h1_px = get_px_value(&h1_size);
         let p_px = get_px_value(&p_size);
 
-        assert!(h1_px.is_some() && p_px.is_some(),
-            "Both H1 and P should have px font sizes");
-        assert!(h1_px.unwrap() > p_px.unwrap(),
-            "H1 ({:?}px) should have larger font than P ({:?}px)", h1_px, p_size);
+        assert!(
+            h1_px.is_some() && p_px.is_some(),
+            "Both H1 and P should have px font sizes"
+        );
+        assert!(
+            h1_px.unwrap() > p_px.unwrap(),
+            "H1 ({:?}px) should have larger font than P ({:?}px)",
+            h1_px,
+            p_size
+        );
     }
 
     // ==========================================================================
@@ -5334,26 +5720,28 @@ mod image_tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Collect all unique anchor hrefs from inline_runs
-        let anchor_hrefs: Vec<_> = items.iter()
+        let anchor_hrefs: Vec<_> = items
+            .iter()
             .flat_map(|i| i.flatten())
-            .flat_map(|item| {
-                match item {
-                    ContentItem::Text { inline_runs, .. } => {
-                        inline_runs.iter()
-                            .filter_map(|r| r.anchor_href.clone())
-                            .collect::<Vec<_>>()
-                    }
-                    _ => vec![],
-                }
+            .flat_map(|item| match item {
+                ContentItem::Text { inline_runs, .. } => inline_runs
+                    .iter()
+                    .filter_map(|r| r.anchor_href.clone())
+                    .collect::<Vec<_>>(),
+                _ => vec![],
             })
             .collect();
 
         println!("Anchor hrefs found: {:?}", anchor_hrefs);
 
-        assert!(anchor_hrefs.contains(&"https://example.com".to_string()),
-            "Should have example.com anchor");
-        assert!(anchor_hrefs.contains(&"https://other.com".to_string()),
-            "Should have other.com anchor");
+        assert!(
+            anchor_hrefs.contains(&"https://example.com".to_string()),
+            "Should have example.com anchor"
+        );
+        assert!(
+            anchor_hrefs.contains(&"https://other.com".to_string()),
+            "Should have other.com anchor"
+        );
     }
 
     #[test]
@@ -5364,7 +5752,9 @@ mod image_tests {
         let kfx = KfxBookBuilder::from_book(&book);
 
         // Look for anchor fragments ($266) with external URLs ($186)
-        let anchor_fragments: Vec<_> = kfx.fragments.iter()
+        let anchor_fragments: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::PAGE_TEMPLATE) // $266
             .filter(|f| {
                 if let IonValue::Struct(s) = &f.value {
@@ -5375,7 +5765,10 @@ mod image_tests {
             })
             .collect();
 
-        println!("Found {} anchor fragments with external URLs", anchor_fragments.len());
+        println!(
+            "Found {} anchor fragments with external URLs",
+            anchor_fragments.len()
+        );
         for frag in &anchor_fragments {
             if let IonValue::Struct(s) = &frag.value {
                 if let Some(IonValue::String(url)) = s.get(&sym::EXTERNAL_URL) {
@@ -5385,8 +5778,10 @@ mod image_tests {
         }
 
         // The imprint section has links to standardebooks.org
-        assert!(!anchor_fragments.is_empty(),
-            "Should have anchor fragments with external URLs for links in imprint section");
+        assert!(
+            !anchor_fragments.is_empty(),
+            "Should have anchor fragments with external URLs for links in imprint section"
+        );
 
         // Verify at least one points to standardebooks.org
         let has_se_link = anchor_fragments.iter().any(|frag| {
@@ -5397,7 +5792,10 @@ mod image_tests {
             }
             false
         });
-        assert!(has_se_link, "Should have anchor fragment for standardebooks.org link");
+        assert!(
+            has_se_link,
+            "Should have anchor fragment for standardebooks.org link"
+        );
     }
 
     #[test]
@@ -5438,16 +5836,23 @@ mod image_tests {
             }
         }
 
-        let content_with_anchors: Vec<_> = kfx.fragments.iter()
+        let content_with_anchors: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .filter(|f| has_anchor_ref(&f.value))
             .collect();
 
-        println!("Found {} content blocks with anchor references", content_with_anchors.len());
+        println!(
+            "Found {} content blocks with anchor references",
+            content_with_anchors.len()
+        );
 
         // The imprint section has hyperlinks that should have $179 references
-        assert!(!content_with_anchors.is_empty(),
-            "Content blocks should have $179 anchor references for hyperlinks");
+        assert!(
+            !content_with_anchors.is_empty(),
+            "Content blocks should have $179 anchor references for hyperlinks"
+        );
     }
 
     // ==========================================================================
@@ -5460,26 +5865,33 @@ mod image_tests {
         let css = "a { color: blue; }";
         let stylesheet = Stylesheet::parse(css);
 
-        let html = b"<body><p>Visit <a href=\"https://example.com\">Example</a> for more.</p></body>";
+        let html =
+            b"<body><p>Visit <a href=\"https://example.com\">Example</a> for more.</p></body>";
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Should have 1 item (paragraph flattened to Text since it has single text content)
         assert_eq!(items.len(), 1, "Should have 1 item");
 
         // After flattening, paragraph with single text child becomes just Text
-        if let ContentItem::Text { text, inline_runs, .. } = &items[0] {
+        if let ContentItem::Text {
+            text, inline_runs, ..
+        } = &items[0]
+        {
             // Text should be combined
-            assert_eq!(text, "Visit Example for more.",
-                "Text should be combined, not split");
+            assert_eq!(
+                text, "Visit Example for more.",
+                "Text should be combined, not split"
+            );
 
             // Should have inline run for the link portion
-            assert!(!inline_runs.is_empty(),
-                "Should have inline run for link");
+            assert!(!inline_runs.is_empty(), "Should have inline run for link");
 
             // The inline run should have anchor_href
             let has_anchor_run = inline_runs.iter().any(|r| r.anchor_href.is_some());
-            assert!(has_anchor_run,
-                "Inline run should have anchor_href for the link");
+            assert!(
+                has_anchor_run,
+                "Inline run should have anchor_href for the link"
+            );
         } else {
             panic!("Expected Text item (flattened paragraph)");
         }
@@ -5495,7 +5907,8 @@ mod image_tests {
         let items = extract_content_from_xhtml(html, &stylesheet, "");
 
         // Find the text item and check its inline runs
-        let text_item = items.iter()
+        let text_item = items
+            .iter()
             .flat_map(|i| match i {
                 ContentItem::Container { children, .. } => children.iter().collect::<Vec<_>>(),
                 other => vec![other],
@@ -5506,11 +5919,14 @@ mod image_tests {
 
         if let Some(ContentItem::Text { inline_runs, .. }) = text_item {
             // Find the run for "here" (the link text)
-            let anchor_run = inline_runs.iter()
+            let anchor_run = inline_runs
+                .iter()
                 .find(|r| r.anchor_href.as_deref() == Some("https://example.com"));
 
-            assert!(anchor_run.is_some(),
-                "Should have inline run with anchor_href for the link");
+            assert!(
+                anchor_run.is_some(),
+                "Should have inline run with anchor_href for the link"
+            );
 
             let run = anchor_run.unwrap();
             // "Click " = 6 chars, so "here" starts at offset 6
@@ -5554,12 +5970,16 @@ mod image_tests {
             }
         }
 
-        let has_anchor_in_runs = kfx.fragments.iter()
+        let has_anchor_in_runs = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .any(|f| find_anchor_in_inline_runs(&f.value));
 
-        assert!(has_anchor_in_runs,
-            "$179 anchor refs should be inside $142 inline runs, not directly on content items");
+        assert!(
+            has_anchor_in_runs,
+            "$179 anchor refs should be inside $142 inline runs, not directly on content items"
+        );
     }
 
     #[test]
@@ -5580,7 +6000,8 @@ mod image_tests {
                     // If it has $179 but no $142, that's a direct anchor (bad)
                     if has_direct && !has_inline_runs {
                         // Check it's a content item (has $145 text ref or $159 content type)
-                        if s.contains_key(&sym::TEXT_CONTENT) || s.contains_key(&sym::CONTENT_TYPE) {
+                        if s.contains_key(&sym::TEXT_CONTENT) || s.contains_key(&sym::CONTENT_TYPE)
+                        {
                             return true;
                         }
                     }
@@ -5600,12 +6021,16 @@ mod image_tests {
             }
         }
 
-        let has_direct = kfx.fragments.iter()
+        let has_direct = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .any(|f| has_direct_anchor_ref(&f.value));
 
-        assert!(!has_direct,
-            "Content items should NOT have direct $179 refs - they should be in $142 inline runs");
+        assert!(
+            !has_direct,
+            "Content items should NOT have direct $179 refs - they should be in $142 inline runs"
+        );
     }
 
     // ==========================================================================
@@ -5629,9 +6054,15 @@ mod image_tests {
 
         assert_eq!(hrefs.len(), 3, "Should extract 3 CSS hrefs");
         // Document order: core.css, se.css, local.css (NOT alphabetical: core, local, se)
-        assert_eq!(hrefs[0], "epub/css/core.css", "First CSS should be core.css");
+        assert_eq!(
+            hrefs[0], "epub/css/core.css",
+            "First CSS should be core.css"
+        );
         assert_eq!(hrefs[1], "epub/css/se.css", "Second CSS should be se.css");
-        assert_eq!(hrefs[2], "epub/css/local.css", "Third CSS should be local.css");
+        assert_eq!(
+            hrefs[2], "epub/css/local.css",
+            "Third CSS should be local.css"
+        );
     }
 
     #[test]
@@ -5668,8 +6099,10 @@ mod image_tests {
 
         // With correct order (css1 then css2), color should be blue (css2 wins)
         // With wrong order (css2 then css1), color should be red (css1 wins)
-        assert_ne!(correct_color, wrong_color,
-            "CSS order should affect cascade - different orders should give different results");
+        assert_ne!(
+            correct_color, wrong_color,
+            "CSS order should affect cascade - different orders should give different results"
+        );
     }
 
     #[test]
@@ -5678,11 +6111,15 @@ mod image_tests {
         let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
 
         // Get imprint XHTML and extract CSS hrefs
-        let imprint_spine = book.spine.iter()
+        let imprint_spine = book
+            .spine
+            .iter()
             .find(|s| s.href.contains("imprint"))
             .expect("imprint in spine");
 
-        let imprint_resource = book.resources.get(&imprint_spine.href)
+        let imprint_resource = book
+            .resources
+            .get(&imprint_spine.href)
             .expect("imprint resource");
 
         let css_hrefs = extract_css_hrefs_from_xhtml(&imprint_resource.data, &imprint_spine.href);
@@ -5695,8 +6132,10 @@ mod image_tests {
 
         assert!(core_pos.is_some(), "Should find core.css");
         assert!(se_pos.is_some(), "Should find se.css");
-        assert!(core_pos < se_pos,
-            "core.css should come before se.css (document order, not alphabetical)");
+        assert!(
+            core_pos < se_pos,
+            "core.css should come before se.css (document order, not alphabetical)"
+        );
     }
 
     // ==========================================================================
@@ -5722,15 +6161,15 @@ mod image_tests {
                         0
                     }
                 }
-                IonValue::List(items) => {
-                    items.iter().map(count_nesting_depth).max().unwrap_or(0)
-                }
+                IonValue::List(items) => items.iter().map(count_nesting_depth).max().unwrap_or(0),
                 _ => 0,
             }
         }
 
         // Find content block with imprint content (has image with SE logo alt text)
-        let imprint_block = kfx.fragments.iter()
+        let imprint_block = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .find(|f| {
                 fn has_se_logo(v: &IonValue) -> bool {
@@ -5751,8 +6190,11 @@ mod image_tests {
 
         // Reference has depth 2: content array -> header container -> image
         // Paragraphs are direct children of content array (not wrapped)
-        assert!(depth <= 2,
-            "Imprint should not be over-nested (depth: {}, expected <= 2)", depth);
+        assert!(
+            depth <= 2,
+            "Imprint should not be over-nested (depth: {}, expected <= 2)",
+            depth
+        );
     }
 
     #[test]
@@ -5770,7 +6212,9 @@ mod image_tests {
         let kfx = KfxBookBuilder::from_book(&book);
 
         // Find the imprint content block
-        let imprint_block = kfx.fragments.iter()
+        let imprint_block = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .find(|f| {
                 fn has_se_logo(v: &IonValue) -> bool {
@@ -5798,9 +6242,12 @@ mod image_tests {
         };
 
         // Should have 5 items: 1 header container + 4 text paragraphs
-        assert_eq!(outer_items.len(), 5,
+        assert_eq!(
+            outer_items.len(),
+            5,
             "Outer content array should have 5 items (header + 4 paragraphs), got {}",
-            outer_items.len());
+            outer_items.len()
+        );
 
         // First item should be a Container (header) with its own $146 containing an image
         let first_item = &outer_items[0];
@@ -5808,8 +6255,10 @@ mod image_tests {
             IonValue::Struct(s) => s.contains_key(&sym::CONTENT_ARRAY),
             _ => false,
         };
-        assert!(first_has_content_array,
-            "First item should be a Container (header) with nested content array");
+        assert!(
+            first_has_content_array,
+            "First item should be a Container (header) with nested content array"
+        );
 
         // Check that header contains an image (has $175 resource name or $584 alt text)
         fn has_image(v: &IonValue) -> bool {
@@ -5823,7 +6272,10 @@ mod image_tests {
                 _ => false,
             }
         }
-        assert!(has_image(first_item), "Header container should contain an image");
+        assert!(
+            has_image(first_item),
+            "Header container should contain an image"
+        );
 
         // Remaining 4 items should be Text references (have $145 but no nested $146)
         for (i, item) in outer_items.iter().skip(1).enumerate() {
@@ -5834,8 +6286,11 @@ mod image_tests {
                 }
                 _ => false,
             };
-            assert!(is_text_ref,
-                "Item {} should be a Text reference (paragraph), not a Container", i + 2);
+            assert!(
+                is_text_ref,
+                "Item {} should be a Text reference (paragraph), not a Container",
+                i + 2
+            );
         }
     }
 
@@ -5887,13 +6342,19 @@ mod image_tests {
         let total_text = items.iter().map(count_text_items).sum::<usize>();
         let total_wrappers = items.iter().map(count_container_wrappers).sum::<usize>();
 
-        println!("Text items: {}, Single-child wrappers: {}", total_text, total_wrappers);
+        println!(
+            "Text items: {}, Single-child wrappers: {}",
+            total_text, total_wrappers
+        );
 
         assert_eq!(total_text, 3, "Should have 3 text items");
         // Should have at most 1 wrapper (the section itself if not flattened)
         // Each paragraph should NOT be wrapped
-        assert!(total_wrappers <= 1,
-            "Paragraphs should not be individually wrapped (found {} wrappers)", total_wrappers);
+        assert!(
+            total_wrappers <= 1,
+            "Paragraphs should not be individually wrapped (found {} wrappers)",
+            total_wrappers
+        );
     }
 
     #[test]
@@ -5927,7 +6388,11 @@ mod image_tests {
         println!("Depth after section flattening: {}", depth);
 
         // Should be 0 (just text) or at most 1 (if paragraph kept as container)
-        assert!(depth <= 1, "Section with single block child should be flattened (depth: {})", depth);
+        assert!(
+            depth <= 1,
+            "Section with single block child should be flattened (depth: {})",
+            depth
+        );
     }
 
     // ==========================================================================
@@ -5942,7 +6407,9 @@ mod image_tests {
         let kfx = KfxBookBuilder::from_book(&book);
 
         // Look for anchor fragments with $183 (position info) instead of $186 (external URL)
-        let internal_anchors: Vec<_> = kfx.fragments.iter()
+        let internal_anchors: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::PAGE_TEMPLATE) // $266
             .filter(|f| {
                 if let IonValue::Struct(s) = &f.value {
@@ -5958,8 +6425,10 @@ mod image_tests {
 
         // The imprint has an internal link to uncopyright.xhtml
         // So we should have at least one internal anchor
-        assert!(!internal_anchors.is_empty(),
-            "Should have internal anchor fragments for links like uncopyright.xhtml");
+        assert!(
+            !internal_anchors.is_empty(),
+            "Should have internal anchor fragments for links like uncopyright.xhtml"
+        );
     }
 
     #[test]
@@ -5969,7 +6438,9 @@ mod image_tests {
         let kfx = KfxBookBuilder::from_book(&book);
 
         // Find an internal anchor fragment
-        let internal_anchor = kfx.fragments.iter()
+        let internal_anchor = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::PAGE_TEMPLATE)
             .find(|f| {
                 if let IonValue::Struct(s) = &f.value {
@@ -5983,8 +6454,10 @@ mod image_tests {
             if let IonValue::Struct(s) = &anchor.value {
                 if let Some(IonValue::Struct(pos_info)) = s.get(&sym::POSITION_INFO) {
                     // Should have $155 (EID)
-                    assert!(pos_info.contains_key(&sym::POSITION),
-                        "Position info should contain $155 (EID)");
+                    assert!(
+                        pos_info.contains_key(&sym::POSITION),
+                        "Position info should contain $155 (EID)"
+                    );
                     println!("Internal anchor position info: {:?}", pos_info);
                 }
             }
@@ -6009,7 +6482,9 @@ mod image_tests {
                         for run in runs {
                             if let IonValue::Struct(run_s) = run {
                                 if let Some(IonValue::Int(offset)) = run_s.get(&sym::OFFSET) {
-                                    if *offset == target_offset && run_s.contains_key(&sym::ANCHOR_REF) {
+                                    if *offset == target_offset
+                                        && run_s.contains_key(&sym::ANCHOR_REF)
+                                    {
                                         return true;
                                     }
                                 }
@@ -6018,23 +6493,32 @@ mod image_tests {
                     }
                     // Check nested
                     if let Some(IonValue::List(items)) = s.get(&sym::CONTENT_ARRAY) {
-                        if items.iter().any(|item| find_anchor_at_offset(item, target_offset)) {
+                        if items
+                            .iter()
+                            .any(|item| find_anchor_at_offset(item, target_offset))
+                        {
                             return true;
                         }
                     }
                     false
                 }
-                IonValue::List(items) => items.iter().any(|item| find_anchor_at_offset(item, target_offset)),
+                IonValue::List(items) => items
+                    .iter()
+                    .any(|item| find_anchor_at_offset(item, target_offset)),
                 _ => false,
             }
         }
 
-        let has_uncopyright_anchor = kfx.fragments.iter()
+        let has_uncopyright_anchor = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::CONTENT_BLOCK)
             .any(|f| find_anchor_at_offset(&f.value, 544)); // Uncopyright is at offset 544
 
-        assert!(has_uncopyright_anchor,
-            "Uncopyright internal link at offset 544 should have $179 anchor reference");
+        assert!(
+            has_uncopyright_anchor,
+            "Uncopyright internal link at offset 544 should have $179 anchor reference"
+        );
     }
 
     #[test]
@@ -6047,7 +6531,9 @@ mod image_tests {
         // The section name is like "section-N" where N is the chapter index
         // The spine order is: titlepage, imprint, the-enchiridion, fragments, endnotes, colophon, uncopyright
         // uncopyright.xhtml is the 7th item (index 6 after cover)
-        let section_eids: std::collections::HashMap<String, i64> = kfx.fragments.iter()
+        let section_eids: std::collections::HashMap<String, i64> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::SECTION)
             .filter_map(|f| {
                 if let IonValue::Struct(s) = &f.value {
@@ -6070,7 +6556,9 @@ mod image_tests {
 
         // Find internal anchor fragments (those with $183 position info, but NOT page templates)
         // Page templates have IDs like "template-N", anchors have IDs like "$1234" or "anchor0"
-        let internal_anchors: Vec<_> = kfx.fragments.iter()
+        let internal_anchors: Vec<_> = kfx
+            .fragments
+            .iter()
             .filter(|f| f.ftype == sym::PAGE_TEMPLATE)
             .filter(|f| !f.fid.starts_with("template-")) // Exclude page templates
             .filter_map(|f| {
@@ -6088,12 +6576,16 @@ mod image_tests {
         println!("Internal anchor target EIDs: {:?}", internal_anchors);
 
         // Each internal anchor EID must exist in the section EIDs
-        let valid_section_eids: std::collections::HashSet<i64> = section_eids.values().copied().collect();
+        let valid_section_eids: std::collections::HashSet<i64> =
+            section_eids.values().copied().collect();
 
         for anchor_eid in &internal_anchors {
-            assert!(valid_section_eids.contains(anchor_eid),
+            assert!(
+                valid_section_eids.contains(anchor_eid),
                 "Internal anchor points to EID {} which is not a valid section EID. Valid EIDs: {:?}",
-                anchor_eid, valid_section_eids);
+                anchor_eid,
+                valid_section_eids
+            );
         }
 
         // Specifically check that uncopyright.xhtml (the last section) is correctly targeted
@@ -6101,9 +6593,11 @@ mod image_tests {
         let max_section_eid = *valid_section_eids.iter().max().unwrap();
         let has_uncopyright_anchor = internal_anchors.iter().any(|eid| *eid == max_section_eid);
 
-        assert!(has_uncopyright_anchor,
+        assert!(
+            has_uncopyright_anchor,
             "Should have internal anchor pointing to uncopyright.xhtml section (EID {})",
-            max_section_eid);
+            max_section_eid
+        );
     }
 
     #[test]
@@ -6145,7 +6639,10 @@ mod image_tests {
             }
         }
 
-        assert!(imprint_text_id.is_some(), "Should find imprint text fragment");
+        assert!(
+            imprint_text_id.is_some(),
+            "Should find imprint text fragment"
+        );
 
         // Find content block that references this text and get its style
         fn find_style_for_text_id(items: &[IonValue], text_id: u64) -> Option<u64> {
@@ -6154,7 +6651,8 @@ mod image_tests {
                     if let Some(IonValue::Struct(text_ref)) = item_struct.get(&sym::TEXT_CONTENT) {
                         if let Some(IonValue::Symbol(found_id)) = text_ref.get(&sym::ID) {
                             if *found_id == text_id {
-                                if let Some(IonValue::Symbol(style)) = item_struct.get(&sym::STYLE) {
+                                if let Some(IonValue::Symbol(style)) = item_struct.get(&sym::STYLE)
+                                {
                                     return Some(*style);
                                 }
                             }
@@ -6186,7 +6684,10 @@ mod image_tests {
             }
         }
 
-        assert!(imprint_style_sym.is_some(), "Should find style for imprint paragraph");
+        assert!(
+            imprint_style_sym.is_some(),
+            "Should find style for imprint paragraph"
+        );
         let style_sym = imprint_style_sym.unwrap();
 
         // Find the style and verify centering properties
@@ -6203,9 +6704,11 @@ mod image_tests {
                             // Check $34 (TEXT_ALIGN) = $321 (JUSTIFY)
                             if let Some(IonValue::Symbol(align)) = style.get(&sym::TEXT_ALIGN) {
                                 assert_eq!(
-                                    *align, sym::ALIGN_JUSTIFY,
+                                    *align,
+                                    sym::ALIGN_JUSTIFY,
                                     "Imprint text-align should be JUSTIFY ($321), got {} (ALIGN_JUSTIFY={})",
-                                    align, sym::ALIGN_JUSTIFY
+                                    align,
+                                    sym::ALIGN_JUSTIFY
                                 );
                                 println!("  TEXT_ALIGN: {} (JUSTIFY) ✓", align);
                             } else {
@@ -6215,21 +6718,27 @@ mod image_tests {
                             // Check $580 (IMAGE_LAYOUT) = $320 (CENTER) for block centering
                             if let Some(IonValue::Symbol(layout)) = style.get(&sym::IMAGE_LAYOUT) {
                                 assert_eq!(
-                                    *layout, sym::ALIGN_CENTER,
+                                    *layout,
+                                    sym::ALIGN_CENTER,
                                     "Imprint image-layout should be CENTER ($320), got {} (ALIGN_CENTER={})",
-                                    layout, sym::ALIGN_CENTER
+                                    layout,
+                                    sym::ALIGN_CENTER
                                 );
                                 println!("  IMAGE_LAYOUT: {} (CENTER) ✓", layout);
                             } else {
-                                panic!("Imprint style should have IMAGE_LAYOUT property for block centering");
+                                panic!(
+                                    "Imprint style should have IMAGE_LAYOUT property for block centering"
+                                );
                             }
 
                             // Check $546 (IMAGE_FIT) = $377 (CONTAIN)
                             if let Some(IonValue::Symbol(fit)) = style.get(&sym::IMAGE_FIT) {
                                 assert_eq!(
-                                    *fit, sym::IMAGE_FIT_CONTAIN,
+                                    *fit,
+                                    sym::IMAGE_FIT_CONTAIN,
                                     "Imprint image-fit should be CONTAIN ($377), got {} (IMAGE_FIT_CONTAIN={})",
-                                    fit, sym::IMAGE_FIT_CONTAIN
+                                    fit,
+                                    sym::IMAGE_FIT_CONTAIN
                                 );
                                 println!("  IMAGE_FIT: {} (CONTAIN) ✓", fit);
                             } else {

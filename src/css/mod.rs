@@ -101,20 +101,15 @@ pub enum FontVariant {
 }
 
 /// Color value
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Color {
     /// R, G, B, A (0-255)
     Rgba(u8, u8, u8, u8),
     /// Current color keyword
+    #[default]
     CurrentColor,
     /// Transparent keyword
     Transparent,
-}
-
-impl Default for Color {
-    fn default() -> Self {
-        Color::CurrentColor
-    }
 }
 
 /// Border style
@@ -297,13 +292,13 @@ impl ParsedStyle {
         }
 
         // position: absolute with large negative left offset
-        if self.position == Some(Position::Absolute) {
-            if let Some(ref left) = self.left {
-                match left {
-                    CssValue::Em(v) if *v < -100.0 => return true,
-                    CssValue::Px(v) if *v < -1000.0 => return true,
-                    _ => {}
-                }
+        if self.position == Some(Position::Absolute)
+            && let Some(ref left) = self.left
+        {
+            match left {
+                CssValue::Em(v) if *v < -100.0 => return true,
+                CssValue::Px(v) if *v < -1000.0 => return true,
+                _ => {}
             }
         }
 
@@ -473,7 +468,11 @@ impl Stylesheet {
     }
 
     /// Collect inherited CSS properties from ancestor elements
-    fn collect_inherited_styles(&self, element: &NodeDataRef<ElementData>, inherited: &mut ParsedStyle) {
+    fn collect_inherited_styles(
+        &self,
+        element: &NodeDataRef<ElementData>,
+        inherited: &mut ParsedStyle,
+    ) {
         // Walk up the ancestor chain
         let mut current = element.as_node().parent();
         while let Some(parent_node) = current {
@@ -753,7 +752,7 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
 
 fn parse_border(values: &[Token]) -> Border {
     let mut border = Border::default();
-    
+
     // Naive parsing: check for width, style, color in any order
     for token in values {
         if let Some(width) = parse_single_length(token) {
@@ -1214,7 +1213,11 @@ mod tests {
         assert!(matches!(small.font_size, Some(CssValue::Em(e)) if (e - 0.67).abs() < 0.01));
 
         // 0.83em
-        let med_small = get_style_for(&stylesheet, r#"<div class="medium-small">Test</div>"#, "div");
+        let med_small = get_style_for(
+            &stylesheet,
+            r#"<div class="medium-small">Test</div>"#,
+            "div",
+        );
         assert!(matches!(med_small.font_size, Some(CssValue::Em(e)) if (e - 0.83).abs() < 0.01));
 
         // 1em
@@ -1226,8 +1229,14 @@ mod tests {
         assert!(matches!(large.font_size, Some(CssValue::Em(e)) if (e - 1.17).abs() < 0.01));
 
         // 67%
-        let pct_small = get_style_for(&stylesheet, r#"<div class="percent-small">Test</div>"#, "div");
-        assert!(matches!(pct_small.font_size, Some(CssValue::Percent(p)) if (p - 67.0).abs() < 0.01));
+        let pct_small = get_style_for(
+            &stylesheet,
+            r#"<div class="percent-small">Test</div>"#,
+            "div",
+        );
+        assert!(
+            matches!(pct_small.font_size, Some(CssValue::Percent(p)) if (p - 67.0).abs() < 0.01)
+        );
 
         // smaller keyword
         let smaller = get_style_for(&stylesheet, r#"<div class="smaller">Test</div>"#, "div");
@@ -1321,7 +1330,10 @@ mod tests {
         assert!(hidden_style.is_hidden(), "display:none should be hidden");
 
         let block_style = get_style_for(&stylesheet, r#"<div class="block">Test</div>"#, "div");
-        assert!(!block_style.is_hidden(), "display:block should not be hidden");
+        assert!(
+            !block_style.is_hidden(),
+            "display:block should not be hidden"
+        );
     }
 
     #[test]
@@ -1347,7 +1359,8 @@ mod tests {
         let style = stylesheet.compute_style_for_element(&p);
 
         assert_eq!(
-            style.text_align, Some(TextAlign::Center),
+            style.text_align,
+            Some(TextAlign::Center),
             "Paragraph inside colophon should inherit text-align: center"
         );
 
@@ -1355,7 +1368,8 @@ mod tests {
         let section = doc.select_first("section").expect("section not found");
         let section_style = stylesheet.compute_style_for_element(&section);
         assert_eq!(
-            section_style.text_align, Some(TextAlign::Center),
+            section_style.text_align,
+            Some(TextAlign::Center),
             "Section should have text-align: center"
         );
     }
@@ -1393,7 +1407,8 @@ mod tests {
 
         // p inside colophon should inherit text-align: center
         assert_eq!(
-            style.text_align, Some(TextAlign::Center),
+            style.text_align,
+            Some(TextAlign::Center),
             "Paragraph inside epub-type colophon should inherit text-align: center, got {:?}",
             style.text_align
         );
@@ -1402,7 +1417,8 @@ mod tests {
         let section = doc.select_first("section").expect("section not found");
         let section_style = stylesheet.compute_style_for_element(&section);
         assert_eq!(
-            section_style.text_align, Some(TextAlign::Center),
+            section_style.text_align,
+            Some(TextAlign::Center),
             "Section should have text-align: center, got {:?}",
             section_style.text_align
         );
