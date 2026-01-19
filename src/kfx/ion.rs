@@ -3,7 +3,7 @@
 //! Ion is Amazon's data serialization format used in KFX ebooks.
 //! This implements a minimal parser sufficient for reading KFX content.
 //!
-//! Reference: https://amazon-ion.github.io/ion-docs/docs/binary.html
+//! Reference: <https://amazon-ion.github.io/ion-docs/docs/binary.html>
 
 use std::collections::HashMap;
 use std::io;
