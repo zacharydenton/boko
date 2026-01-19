@@ -27,7 +27,7 @@ const XOR_KEY_LEN: usize = 20;
 
 /// Create a FONT record from raw font data
 /// Format: 24-byte header + XOR key (20 bytes) + compressed/obfuscated data
-fn write_font_record(data: &[u8]) -> Vec<u8> {
+fn write_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
     use std::io::Write as IoWrite;
 
     let usize_val = data.len() as u32;
@@ -35,8 +35,8 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
 
     // Step 1: Zlib compress the data (level 6 is default, good balance of speed/size)
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(6));
-    encoder.write_all(data).unwrap();
-    let mut compressed = encoder.finish().unwrap();
+    encoder.write_all(data)?;
+    let mut compressed = encoder.finish()?;
     flags |= 0b01; // Compression flag
 
     // Step 2: XOR obfuscation (only if data >= 1040 bytes)
@@ -81,7 +81,7 @@ fn write_font_record(data: &[u8]) -> Vec<u8> {
     // Compressed (and possibly obfuscated) data
     record.extend_from_slice(&compressed);
 
-    record
+    Ok(record)
 }
 
 /// Write a [`Book`] to a MOBI/AZW3 file on disk.
@@ -519,7 +519,7 @@ impl<'a> MobiBuilder<'a> {
         // Write fonts as FONT records
         for href in &self.font_hrefs.clone() {
             if let Some(resource) = self.book.resources.get(href) {
-                let font_record = write_font_record(&resource.data);
+                let font_record = write_font_record(&resource.data)?;
                 self.records.push(font_record);
             }
         }

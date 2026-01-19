@@ -425,7 +425,7 @@ impl KfxBookBuilder {
         // Add content fragments for each chapter
         // Track EID base for consistent position IDs across content blocks and position maps
         // Each chapter uses: 1 EID for section content entry + N EIDs for content blocks
-        let mut eid_base = 860i64;
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
         for chapter in &chapters {
             builder.add_text_content(chapter);
             builder.add_content_block(chapter, eid_base);
@@ -788,7 +788,7 @@ impl KfxBookBuilder {
         // Build nav entries for each chapter (inline, annotated with $393)
         // Use EIDs that match content blocks and position maps
         let mut nav_entry_values = Vec::new();
-        let mut eid_base = 860i64; // Same starting EID as content blocks
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64; // Same starting EID as content blocks
 
         for chapter in chapters.iter() {
             // Nav title: { $244 (text): "Chapter Title" }
@@ -1123,7 +1123,7 @@ impl KfxBookBuilder {
     /// Structure: [ {$181: (section_eid, content_eid1, content_eid2, ...), $174: section_sym}, ... ]
     fn add_position_map(&mut self, chapters: &[ChapterData]) {
         let mut entries = Vec::new();
-        let mut eid_base = 860i64; // Start EIDs after local symbol range
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64; // Start EIDs after local symbol range
 
         for chapter in chapters {
             let section_id = format!("section-{}", chapter.id);
@@ -1159,7 +1159,7 @@ impl KfxBookBuilder {
     fn add_position_id_map(&mut self, chapters: &[ChapterData]) {
         let mut entries = Vec::new();
         let mut char_offset = 0i64;
-        let mut eid_base = 860i64;
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
         for chapter in chapters {
             // Section content entry at current position (1 char)
@@ -1205,7 +1205,7 @@ impl KfxBookBuilder {
         // Location map structure: [ { P182: ( {P155: eid, P143: offset}, ... ) } ]
         // Include entries for each content block to enable granular reading positions
         let mut location_entries = Vec::new();
-        let mut eid_base = 860i64;
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
         for chapter in chapters {
             // Section content entry EID at offset 0
@@ -1750,23 +1750,31 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
                     current_text.clear();
                 }
 
-                // Extract class, id, and inline style
-                let mut classes = Vec::new();
+                // Extract class, id, and inline style - avoid intermediate allocations
+                let mut class_val = None;
                 let mut id = None;
                 let mut inline_style = None;
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"class" {
-                        let class_val = String::from_utf8_lossy(&attr.value).to_string();
-                        classes.extend(class_val.split_whitespace().map(|s| s.to_string()));
-                    } else if attr.key.as_ref() == b"id" {
-                        id = Some(String::from_utf8_lossy(&attr.value).to_string());
-                    } else if attr.key.as_ref() == b"style" {
-                        inline_style = Some(String::from_utf8_lossy(&attr.value).to_string());
+                    match attr.key.as_ref() {
+                        b"class" => {
+                            class_val = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        }
+                        b"id" => {
+                            id = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        }
+                        b"style" => {
+                            inline_style = Some(String::from_utf8_lossy(&attr.value).into_owned());
+                        }
+                        _ => {}
                     }
                 }
 
                 // Compute style for this element from stylesheet
-                let class_refs: Vec<&str> = classes.iter().map(|s| s.as_str()).collect();
+                // Split classes directly without intermediate Vec<String>
+                let class_refs: Vec<&str> = class_val
+                    .as_deref()
+                    .map(|s| s.split_whitespace().collect())
+                    .unwrap_or_default();
                 let element_style = stylesheet.compute_style(&tag_name, &class_refs, id.as_deref());
 
                 // Merge with parent style for inheritance
