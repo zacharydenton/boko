@@ -15,7 +15,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::book::Book;
-use crate::css::{CssValue, ParsedStyle, Stylesheet, TextAlign};
+use crate::css::{Color, CssValue, ParsedStyle, Stylesheet, TextAlign};
 
 use super::ion::{IonValue, IonWriter, encode_kfx_decimal};
 
@@ -32,6 +32,7 @@ pub mod sym {
     pub const LANGUAGE: u64 = 10; // $10 - language
 
     // Style property symbols
+    pub const COLOR: u64 = 15; // $15 - text color
     pub const FONT_FAMILY: u64 = 12; // $12 - font family
     pub const FONT_SIZE: u64 = 13; // $13 - font size
     pub const LINE_HEIGHT: u64 = 16; // $16 - line height
@@ -42,6 +43,7 @@ pub mod sym {
     pub const MARGIN_BOTTOM: u64 = 47; // $47 - margin bottom
     pub const MARGIN_LEFT: u64 = 49; // $49 - margin left
     pub const MARGIN_RIGHT: u64 = 51; // $51 - margin right
+    pub const BACKGROUND_COLOR: u64 = 272; // $272 - background color
 
     // Style value symbols
     pub const UNIT: u64 = 306; // $306 - unit field
@@ -902,6 +904,17 @@ impl KfxBookBuilder {
             }
         };
 
+        let color_to_ion = |color: &Color| -> Option<IonValue> {
+            match color {
+                Color::Rgba(r, g, b, _a) => {
+                    // Serialize as integer 0x00RRGGBB
+                    let val = ((*r as i64) << 16) | ((*g as i64) << 8) | (*b as i64);
+                    Some(IonValue::Int(val))
+                }
+                _ => None,
+            }
+        };
+
         for (i, style) in unique_styles.into_iter().enumerate() {
             let style_id = format!("style-{}", i);
             let style_sym = self.symtab.get_or_intern(&style_id);
@@ -983,6 +996,18 @@ impl KfxBookBuilder {
                 && let Some(val) = css_to_ion(height)
             {
                 style_ion.insert(sym::LINE_HEIGHT, val);
+            }
+
+            if let Some(ref color) = style.color
+                && let Some(val) = color_to_ion(color)
+            {
+                style_ion.insert(sym::COLOR, val);
+            }
+
+            if let Some(ref bg_color) = style.background_color
+                && let Some(val) = color_to_ion(bg_color)
+            {
+                style_ion.insert(sym::BACKGROUND_COLOR, val);
             }
 
             self.fragments.push(KfxFragment::new(

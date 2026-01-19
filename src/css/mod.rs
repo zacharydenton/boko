@@ -92,6 +92,23 @@ pub enum FontStyle {
     Oblique,
 }
 
+/// Color value
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Color {
+    /// R, G, B, A (0-255)
+    Rgba(u8, u8, u8, u8),
+    /// Current color keyword
+    CurrentColor,
+    /// Transparent keyword
+    Transparent,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Color::CurrentColor
+    }
+}
+
 /// Parsed CSS style properties
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ParsedStyle {
@@ -106,6 +123,8 @@ pub struct ParsedStyle {
     pub margin_bottom: Option<CssValue>,
     pub margin_left: Option<CssValue>,
     pub margin_right: Option<CssValue>,
+    pub color: Option<Color>,
+    pub background_color: Option<Color>,
 }
 
 impl ParsedStyle {
@@ -144,6 +163,12 @@ impl ParsedStyle {
         if other.margin_right.is_some() {
             self.margin_right.clone_from(&other.margin_right);
         }
+        if other.color.is_some() {
+            self.color.clone_from(&other.color);
+        }
+        if other.background_color.is_some() {
+            self.background_color.clone_from(&other.background_color);
+        }
     }
 
     /// Check if this style has any properties set
@@ -159,6 +184,8 @@ impl ParsedStyle {
             && self.margin_bottom.is_none()
             && self.margin_left.is_none()
             && self.margin_right.is_none()
+            && self.color.is_none()
+            && self.background_color.is_none()
     }
 }
 
@@ -546,10 +573,61 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "margin-right" => {
             style.margin_right = parse_length_value(values);
         }
+        "color" => {
+            style.color = parse_color(values);
+        }
+        "background-color" => {
+            style.background_color = parse_color(values);
+        }
         _ => {
             // Ignore unsupported properties
         }
     }
+}
+
+fn parse_color(values: &[Token]) -> Option<Color> {
+    for token in values {
+        match token {
+            Token::Hash(value) | Token::IDHash(value) => {
+                // Parse hex color
+                let s = value.as_ref();
+                match s.len() {
+                    3 => {
+                        // #RGB
+                        let r = u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?;
+                        let g = u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?;
+                        let b = u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?;
+                        return Some(Color::Rgba(r, g, b, 255));
+                    }
+                    6 => {
+                        // #RRGGBB
+                        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+                        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+                        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+                        return Some(Color::Rgba(r, g, b, 255));
+                    }
+                    _ => continue,
+                }
+            }
+            Token::Ident(name) => {
+                let name = name.to_ascii_lowercase();
+                match name.as_str() {
+                    "currentcolor" => return Some(Color::CurrentColor),
+                    "transparent" => return Some(Color::Transparent),
+                    "black" => return Some(Color::Rgba(0, 0, 0, 255)),
+                    "white" => return Some(Color::Rgba(255, 255, 255, 255)),
+                    "red" => return Some(Color::Rgba(255, 0, 0, 255)),
+                    "green" => return Some(Color::Rgba(0, 128, 0, 255)),
+                    "blue" => return Some(Color::Rgba(0, 0, 255, 255)),
+                    // Add more named colors as needed or use a crate for full support
+                    _ => continue,
+                }
+            }
+            // Add rgb() / rgba() function parsing if needed
+            _ => continue,
+        }
+    }
+    None
 }
 
 fn parse_font_family(values: &[Token]) -> Option<String> {
