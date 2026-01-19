@@ -145,18 +145,7 @@ pub mod sym {
     pub const IMAGE_FIT_CONTAIN: u64 = 377; // $377 - contain fit mode
     pub const IMAGE_LAYOUT: u64 = 580; // $580 - image/block layout
 
-    // Legacy aliases (to be removed after test updates)
-    pub const NORMAL: u64 = 349; // $349 - NORMAL value (font-variant/transform)
-    pub const SMALL_CAPS: u64 = 369; // alias for FONT_VARIANT_SMALL_CAPS
-    // These were incorrectly defined before - kept for test compatibility
-    #[deprecated(note = "Use UNIT_EM with actual value instead")]
-    pub const VALUE_1EM: u64 = 308; // Legacy: was incorrectly 361, tests check for em unit
-    #[deprecated(note = "Use UNIT_EM with actual value instead")]
-    pub const VALUE_1_5EM: u64 = 308; // Legacy: was incorrectly 505, tests check for em unit
-    #[deprecated(note = "Use actual zero value with proper unit")]
-    pub const ZERO: u64 = 310; // Legacy: incorrectly named, $310 is UNIT_MULTIPLIER
-
-    // Block type symbols (these need verification)
+    // Block type symbols
     pub const STYLE_BLOCK_TYPE: u64 = 127; // $127 - block type/display mode for styles
     pub const BLOCK_TYPE_BLOCK: u64 = 383; // $383 - block display value
     pub const BLOCK_TYPE_INLINE: u64 = 349; // $349 - inline display value
@@ -3949,7 +3938,7 @@ mod tests {
                 if let IonValue::Struct(style) = &f.value {
                     if let Some(IonValue::Struct(indent_val)) = style.get(&sym::TEXT_INDENT) {
                         if let Some(IonValue::Symbol(unit_sym)) = indent_val.get(&sym::UNIT) {
-                            if *unit_sym == sym::ZERO {
+                            if *unit_sym == sym::UNIT_MULTIPLIER {
                                 zero_indent_count += 1;
                             } else {
                                 nonzero_indent_count += 1;
@@ -4040,12 +4029,12 @@ mod tests {
                                         println!(
                                             "  Unit symbol: {} (P505={}, ZERO={})",
                                             unit,
-                                            sym::VALUE_1_5EM,
-                                            sym::ZERO
+                                            sym::UNIT_EM,
+                                            sym::UNIT_MULTIPLIER
                                         );
                                         assert_ne!(
                                             *unit,
-                                            sym::ZERO,
+                                            sym::UNIT_MULTIPLIER,
                                             "Silence style should have non-zero text-indent!"
                                         );
                                     }
@@ -4189,9 +4178,9 @@ mod tests {
                                 if let Some(IonValue::Struct(p16)) = s.get(&sym::TEXT_INDENT) {
                                     if let Some(IonValue::Symbol(unit)) = p16.get(&sym::UNIT) {
                                         println!("  text_indent unit symbol: {}", unit);
-                                        if *unit == sym::VALUE_1_5EM {
+                                        if *unit == sym::UNIT_EM {
                                             println!("  -> P505 (1.5em) - CORRECT!");
-                                        } else if *unit == sym::ZERO {
+                                        } else if *unit == sym::UNIT_MULTIPLIER {
                                             println!("  -> P310 (zero) - WRONG!");
                                         } else {
                                             println!("  -> Unknown symbol: {}", unit);
@@ -4297,7 +4286,7 @@ mod tests {
                     if let Some(IonValue::Struct(margin_struct)) = s.get(&margin_key) {
                         // Check if unit is ZERO ($310)
                         if let Some(IonValue::Symbol(unit)) = margin_struct.get(&sym::UNIT) {
-                            if *unit == sym::ZERO {
+                            if *unit == sym::UNIT_MULTIPLIER {
                                 styles_with_zero_margins += 1;
                                 break; // Count each style only once
                             }
@@ -4915,7 +4904,7 @@ mod image_tests {
                                         if let Some(IonValue::Symbol(unit)) = mt.get(&sym::UNIT) {
                                             assert_ne!(
                                                 *unit,
-                                                sym::ZERO,
+                                                sym::UNIT_MULTIPLIER,
                                                 "Titlepage image margin-top should not be zero!"
                                             );
                                             println!(
