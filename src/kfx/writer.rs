@@ -1059,20 +1059,16 @@ impl KfxBookBuilder {
         ));
     }
 
-    /// Build nav entries from TOC entries, flattening nested children
+    /// Build nav entries from TOC entries, preserving nested hierarchy
     /// Maps TOC hrefs to EIDs using section_eids lookup
     fn build_nav_entries_from_toc(&self, toc: &[crate::book::TocEntry]) -> Vec<IonValue> {
-        let mut nav_entries = Vec::new();
-        self.collect_nav_entries(toc, &mut nav_entries);
-        nav_entries
+        self.build_nav_entries_recursive(toc)
     }
 
-    /// Recursively collect nav entries from TOC hierarchy
-    fn collect_nav_entries(
-        &self,
-        entries: &[crate::book::TocEntry],
-        nav_entries: &mut Vec<IonValue>,
-    ) {
+    /// Recursively build nav entries, preserving TOC hierarchy via nested $247 entries
+    fn build_nav_entries_recursive(&self, entries: &[crate::book::TocEntry]) -> Vec<IonValue> {
+        let mut nav_entries = Vec::new();
+
         for entry in entries {
             // Parse the href to extract path and fragment
             let (path, _fragment) = if let Some(hash_pos) = entry.href.find('#') {
@@ -1089,8 +1085,6 @@ impl KfxBookBuilder {
                 nav_title.insert(sym::TEXT, IonValue::String(entry.title.clone()));
 
                 // Nav target: { $155 (position/eid): eid, $143 (offset): 0 }
-                // TODO: In the future, we could compute offset based on fragment identifier
-                // For now, we point to the start of the section
                 let mut nav_target = HashMap::new();
                 nav_target.insert(sym::POSITION, IonValue::Int(eid));
                 nav_target.insert(sym::OFFSET, IonValue::Int(0));
@@ -1100,18 +1094,28 @@ impl KfxBookBuilder {
                 nav_entry.insert(sym::NAV_TITLE, IonValue::Struct(nav_title));
                 nav_entry.insert(sym::NAV_TARGET, IonValue::Struct(nav_target));
 
+                // Recursively build children and nest them via $247 (nav_entries)
+                if !entry.children.is_empty() {
+                    let nested_entries = self.build_nav_entries_recursive(&entry.children);
+                    if !nested_entries.is_empty() {
+                        nav_entry.insert(sym::NAV_ENTRIES, IonValue::List(nested_entries));
+                    }
+                }
+
                 // Annotate with $393 (nav_definition)
                 nav_entries.push(IonValue::Annotated(
                     vec![sym::NAV_DEFINITION],
                     Box::new(IonValue::Struct(nav_entry)),
                 ));
-            }
-
-            // Recursively process children (flattening the hierarchy)
-            if !entry.children.is_empty() {
-                self.collect_nav_entries(&entry.children, nav_entries);
+            } else if !entry.children.is_empty() {
+                // Entry itself doesn't map to a section, but children might
+                // Add children at this level (promoting them up)
+                let nested_entries = self.build_nav_entries_recursive(&entry.children);
+                nav_entries.extend(nested_entries);
             }
         }
+
+        nav_entries
     }
 
     /// Add nav unit list fragment ($395)
@@ -2105,23 +2109,65 @@ impl KfxBookBuilder {
             section_entry.insert(sym::OFFSET, IonValue::Int(0));
             location_entries.push(IonValue::Struct(section_entry));
 
-            // Content block entries - each content item gets its own location entry
-            // This provides granular reading position tracking
-            let total_items = count_content_items(&chapter.content);
+            // Content block entries - iterate over ALL items including nested ones
+            // EIDs are assigned sequentially to flattened content items
+            let mut content_eid = eid_base + 1;
             let mut char_offset = 0i64;
-            for (i, content_item) in chapter.content.iter().enumerate() {
-                let content_eid = eid_base + 1 + i as i64;
 
-                let mut entry = HashMap::new();
-                entry.insert(sym::POSITION, IonValue::Int(content_eid));
-                entry.insert(sym::OFFSET, IonValue::Int(char_offset));
-                location_entries.push(IonValue::Struct(entry));
-
-                // Containers use total_text_size to count all nested text
-                char_offset += content_item.total_text_size() as i64;
+            fn add_entries_recursive(
+                item: &ContentItem,
+                content_eid: &mut i64,
+                char_offset: &mut i64,
+                location_entries: &mut Vec<IonValue>,
+            ) {
+                // IMPORTANT: EIDs are assigned in children-first order to match
+                // add_content_block_chunked. For containers, children get EIDs first,
+                // then the container itself.
+                match item {
+                    ContentItem::Text { text, .. } => {
+                        // Text items: add entry, then increment char_offset
+                        let mut entry = HashMap::new();
+                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
+                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
+                        location_entries.push(IonValue::Struct(entry));
+                        *content_eid += 1;
+                        *char_offset += text.len() as i64;
+                    }
+                    ContentItem::Image { .. } => {
+                        // Images: add entry but don't update char_offset
+                        let mut entry = HashMap::new();
+                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
+                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
+                        location_entries.push(IonValue::Struct(entry));
+                        *content_eid += 1;
+                    }
+                    ContentItem::Container { children, .. } => {
+                        // Containers: process children FIRST (children-first EID order),
+                        // then add entry for the container itself
+                        for child in children {
+                            add_entries_recursive(child, content_eid, char_offset, location_entries);
+                        }
+                        // Now add the container's entry with current offset
+                        let mut entry = HashMap::new();
+                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
+                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
+                        location_entries.push(IonValue::Struct(entry));
+                        *content_eid += 1;
+                    }
+                }
             }
 
-            // +1 for section content entry, + total_items for content blocks (including nested)
+            for content_item in &chapter.content {
+                add_entries_recursive(
+                    content_item,
+                    &mut content_eid,
+                    &mut char_offset,
+                    &mut location_entries,
+                );
+            }
+
+            // Advance eid_base by section entry + all content items (including nested)
+            let total_items = count_content_items(&chapter.content);
             eid_base += 1 + total_items as i64;
         }
 
@@ -4487,6 +4533,72 @@ mod tests {
                             }
                         }
 
+                        // Count total entries including nested ones
+                        fn count_nested_entries(entries: &[IonValue]) -> usize {
+                            let mut count = 0;
+                            for entry in entries {
+                                count += 1;
+                                let entry_struct = match entry {
+                                    IonValue::Annotated(_, inner) => match inner.as_ref() {
+                                        IonValue::Struct(s) => s,
+                                        _ => continue,
+                                    },
+                                    IonValue::Struct(s) => s,
+                                    _ => continue,
+                                };
+                                // Check for nested entries ($247)
+                                if let Some(IonValue::List(nested)) =
+                                    entry_struct.get(&sym::NAV_ENTRIES)
+                                {
+                                    count += count_nested_entries(nested);
+                                }
+                            }
+                            count
+                        }
+
+                        let total_kfx_entries = count_nested_entries(nav_entries);
+                        println!(
+                            "Total KFX nav entries (including nested): {}",
+                            total_kfx_entries
+                        );
+
+                        // Verify nesting: "The Enchiridion" should have nested children
+                        let mut found_nested = false;
+                        for entry in nav_entries {
+                            let entry_struct = match entry {
+                                IonValue::Annotated(_, inner) => match inner.as_ref() {
+                                    IonValue::Struct(s) => s,
+                                    _ => continue,
+                                },
+                                IonValue::Struct(s) => s,
+                                _ => continue,
+                            };
+                            if let Some(IonValue::List(nested)) =
+                                entry_struct.get(&sym::NAV_ENTRIES)
+                            {
+                                if !nested.is_empty() {
+                                    found_nested = true;
+                                    // Get the title for debugging
+                                    if let Some(IonValue::Struct(title)) =
+                                        entry_struct.get(&sym::NAV_TITLE)
+                                    {
+                                        if let Some(IonValue::String(text)) = title.get(&sym::TEXT)
+                                        {
+                                            println!(
+                                                "Entry '{}' has {} nested children",
+                                                text,
+                                                nested.len()
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        assert!(
+                            found_nested,
+                            "At least one nav entry should have nested children"
+                        );
+
                         // Print some nav entry titles for debugging
                         for (i, entry) in nav_entries.iter().take(5).enumerate() {
                             if let IonValue::Annotated(_, inner) = entry {
@@ -4513,6 +4625,7 @@ mod tests {
             panic!("Book navigation should be a list");
         }
     }
+
 }
 
 #[cfg(test)]
