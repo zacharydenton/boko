@@ -124,7 +124,7 @@ A browser-based converter is available at [zacharydenton.github.io/boko](https:/
 | EPUB 2/3 | ✓ | ✓ | |
 | KFX (KF10) | ✓ | ✓ | Latest Kindle format with enhanced typography |
 | AZW3 (KF8) | ✓ | ✓ | |
-| MOBI | ✓ | ✓ | Output uses KF8 format |
+| MOBI | ✓ | | Legacy format, read-only |
 
 KFX output includes real CSS parsing from EPUB stylesheets for accurate typography.
 
