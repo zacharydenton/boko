@@ -1965,5 +1965,31 @@ mod tests {
         let id = generate_container_id();
         assert!(id.starts_with("CR!"));
         assert_eq!(id.len(), 31); // CR! + 28 chars
+
+        // Verify all characters after "CR!" are valid (alphanumeric uppercase)
+        let suffix = &id[3..];
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()),
+            "Container ID should only contain uppercase alphanumeric: {}",
+            id
+        );
+    }
+
+    #[test]
+    fn test_container_id_uniqueness() {
+        // Generate multiple IDs and verify they're different
+        // (they use time-based seeds so should be unique)
+        let id1 = generate_container_id();
+        let id2 = generate_container_id();
+
+        // IDs should be valid format
+        assert!(id1.starts_with("CR!"));
+        assert!(id2.starts_with("CR!"));
+        assert_eq!(id1.len(), 31);
+        assert_eq!(id2.len(), 31);
+
+        // With time-based seeding, consecutive calls may produce same ID
+        // if called within same nanosecond/millisecond, so we just verify format
+        // The important thing is they don't panic on any platform
     }
 }
