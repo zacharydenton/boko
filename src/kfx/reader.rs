@@ -319,7 +319,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
         book.metadata.language = "en".to_string();
     }
     if book.metadata.identifier.is_empty() {
-        book.metadata.identifier = format!("kfx-{}", uuid_v4());
+        book.metadata.identifier = format!("kfx-{}", crate::util::uuid_v4());
     }
 
     Ok(book)
@@ -510,46 +510,4 @@ fn guess_media_type(data: &[u8]) -> String {
         "application/octet-stream"
     }
     .to_string()
-}
-
-/// Generate a simple UUID v4
-fn uuid_v4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-
-    // Simple PRNG for UUID generation
-    let mut state = seed;
-    let mut bytes = [0u8; 16];
-    for byte in &mut bytes {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        *byte = (state >> 56) as u8;
-    }
-
-    // Set version (4) and variant (RFC 4122)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0],
-        bytes[1],
-        bytes[2],
-        bytes[3],
-        bytes[4],
-        bytes[5],
-        bytes[6],
-        bytes[7],
-        bytes[8],
-        bytes[9],
-        bytes[10],
-        bytes[11],
-        bytes[12],
-        bytes[13],
-        bytes[14],
-        bytes[15]
-    )
 }

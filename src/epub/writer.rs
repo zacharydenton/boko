@@ -1,7 +1,9 @@
-use std::io::{self, Seek, Write};
+use std::io::{self, Cursor, Seek, Write};
 use std::path::Path;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use crate::book::{Book, TocEntry};
 
@@ -48,7 +50,7 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Resu
 
     // Generate identifier once for consistency between OPF and NCX
     let identifier = if book.metadata.identifier.is_empty() {
-        format!("urn:uuid:{}", uuid_v4())
+        format!("urn:uuid:{}", crate::util::uuid_v4())
     } else {
         book.metadata.identifier.clone()
     };
@@ -111,83 +113,90 @@ const CONTAINER_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </container>"#;
 
 fn generate_opf(book: &Book, identifier: &str) -> String {
-    let mut opf = String::new();
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    
+    // Write XML declaration manually as quick-xml's API is a bit verbose for this simple case
+    // or use write_event(Event::Decl)
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
-    opf.push_str(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-"#,
-    );
+    // <package>
+    let mut package = BytesStart::new("package");
+    package.push_attribute(("xmlns", "http://www.idpf.org/2007/opf"));
+    package.push_attribute(("version", "2.0"));
+    package.push_attribute(("unique-identifier", "BookId"));
+    writer.write_event(Event::Start(package)).unwrap();
+
+    // <metadata>
+    let mut metadata = BytesStart::new("metadata");
+    metadata.push_attribute(("xmlns:dc", "http://purl.org/dc/elements/1.1/"));
+    metadata.push_attribute(("xmlns:opf", "http://www.idpf.org/2007/opf"));
+    writer.write_event(Event::Start(metadata)).unwrap();
+
+    // Helper to write simple elements
+    let mut write_elem = |name: &str, content: &str, id: Option<&str>| {
+        let mut elem = BytesStart::new(name);
+        if let Some(id_val) = id {
+            elem.push_attribute(("id", id_val));
+        }
+        writer.write_event(Event::Start(elem)).unwrap();
+        writer.write_event(Event::Text(BytesText::new(content))).unwrap();
+        writer.write_event(Event::End(BytesEnd::new(name))).unwrap();
+    };
 
     // Dublin Core metadata
-    opf.push_str(&format!(
-        "    <dc:title>{}</dc:title>\n",
-        escape_xml(&book.metadata.title)
-    ));
-
-    opf.push_str(&format!(
-        "    <dc:identifier id=\"BookId\">{}</dc:identifier>\n",
-        escape_xml(identifier)
-    ));
+    write_elem("dc:title", &book.metadata.title, None);
+    write_elem("dc:identifier", identifier, Some("BookId"));
 
     let language = if book.metadata.language.is_empty() {
         "en"
     } else {
         &book.metadata.language
     };
-    opf.push_str(&format!("    <dc:language>{}</dc:language>\n", language));
+    write_elem("dc:language", language, None);
 
     for author in &book.metadata.authors {
-        opf.push_str(&format!(
-            "    <dc:creator>{}</dc:creator>\n",
-            escape_xml(author)
-        ));
+        write_elem("dc:creator", author, None);
     }
 
     if let Some(ref publisher) = book.metadata.publisher {
-        opf.push_str(&format!(
-            "    <dc:publisher>{}</dc:publisher>\n",
-            escape_xml(publisher)
-        ));
+        write_elem("dc:publisher", publisher, None);
     }
 
     if let Some(ref description) = book.metadata.description {
-        opf.push_str(&format!(
-            "    <dc:description>{}</dc:description>\n",
-            escape_xml(description)
-        ));
+        write_elem("dc:description", description, None);
     }
 
     for subject in &book.metadata.subjects {
-        opf.push_str(&format!(
-            "    <dc:subject>{}</dc:subject>\n",
-            escape_xml(subject)
-        ));
+        write_elem("dc:subject", subject, None);
     }
 
     if let Some(ref date) = book.metadata.date {
-        opf.push_str(&format!("    <dc:date>{}</dc:date>\n", escape_xml(date)));
+        write_elem("dc:date", date, None);
     }
 
     if let Some(ref rights) = book.metadata.rights {
-        opf.push_str(&format!(
-            "    <dc:rights>{}</dc:rights>\n",
-            escape_xml(rights)
-        ));
+        write_elem("dc:rights", rights, None);
     }
 
     // Cover image meta
     if book.metadata.cover_image.is_some() {
-        opf.push_str("    <meta name=\"cover\" content=\"cover-image\"/>\n");
+        let mut meta = BytesStart::new("meta");
+        meta.push_attribute(("name", "cover"));
+        meta.push_attribute(("content", "cover-image"));
+        writer.write_event(Event::Empty(meta)).unwrap();
     }
 
-    opf.push_str("  </metadata>\n  <manifest>\n");
+    writer.write_event(Event::End(BytesEnd::new("metadata"))).unwrap();
+
+    // <manifest>
+    writer.write_event(Event::Start(BytesStart::new("manifest"))).unwrap();
 
     // NCX item
-    opf.push_str(
-        "    <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n",
-    );
+    let mut ncx_item = BytesStart::new("item");
+    ncx_item.push_attribute(("id", "ncx"));
+    ncx_item.push_attribute(("href", "toc.ncx"));
+    ncx_item.push_attribute(("media-type", "application/x-dtbncx+xml"));
+    writer.write_event(Event::Empty(ncx_item)).unwrap();
 
     // Manifest items
     for (href, resource) in &book.resources {
@@ -197,139 +206,126 @@ fn generate_opf(book: &Book, identifier: &str) -> String {
         } else {
             &id
         };
-        opf.push_str(&format!(
-            "    <item id=\"{}\" href=\"{}\" media-type=\"{}\"/>\n",
-            item_id,
-            escape_xml(href),
-            escape_xml(&resource.media_type)
-        ));
+        
+        let mut item = BytesStart::new("item");
+        item.push_attribute(("id", item_id));
+        item.push_attribute(("href", href.as_str()));
+        item.push_attribute(("media-type", resource.media_type.as_str()));
+        writer.write_event(Event::Empty(item)).unwrap();
     }
 
-    opf.push_str("  </manifest>\n  <spine toc=\"ncx\">\n");
+    writer.write_event(Event::End(BytesEnd::new("manifest"))).unwrap();
+
+    // <spine>
+    let mut spine = BytesStart::new("spine");
+    spine.push_attribute(("toc", "ncx"));
+    writer.write_event(Event::Start(spine)).unwrap();
 
     // Spine items
     for item in &book.spine {
         let id = href_to_id(&item.href);
-        opf.push_str(&format!("    <itemref idref=\"{}\"/>\n", id));
+        let mut itemref = BytesStart::new("itemref");
+        itemref.push_attribute(("idref", id.as_str()));
+        writer.write_event(Event::Empty(itemref)).unwrap();
     }
 
-    opf.push_str("  </spine>\n</package>\n");
-    opf
+    writer.write_event(Event::End(BytesEnd::new("spine"))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("package"))).unwrap();
+
+    String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
 fn generate_ncx(book: &Book, identifier: &str) -> String {
-    let mut ncx = String::new();
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    
+    // <?xml ... ?>
+    writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None))).unwrap();
 
-    ncx.push_str(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
-  <head>
-    <meta name="dtb:uid" content=""#,
-    );
+    // <!DOCTYPE ncx ...>
+    writer.write_event(Event::DocType(BytesText::from_escaped(
+        r#"ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd""#
+    ))).unwrap();
 
-    ncx.push_str(&escape_xml(identifier));
-    ncx.push_str(
-        r#""/>
-    <meta name="dtb:depth" content="1"/>
-    <meta name="dtb:totalPageCount" content="0"/>
-    <meta name="dtb:maxPageNumber" content="0"/>
-  </head>
-  <docTitle>
-    <text>"#,
-    );
-    ncx.push_str(&escape_xml(&book.metadata.title));
-    ncx.push_str(
-        r#"</text>
-  </docTitle>
-  <navMap>
-"#,
-    );
+    // <ncx>
+    let mut ncx = BytesStart::new("ncx");
+    ncx.push_attribute(("xmlns", "http://www.daisy.org/z3986/2005/ncx/"));
+    ncx.push_attribute(("version", "2005-1"));
+    writer.write_event(Event::Start(ncx)).unwrap();
+
+    // <head>
+    writer.write_event(Event::Start(BytesStart::new("head"))).unwrap();
+
+    let mut meta_uid = BytesStart::new("meta");
+    meta_uid.push_attribute(("name", "dtb:uid"));
+    meta_uid.push_attribute(("content", identifier));
+    writer.write_event(Event::Empty(meta_uid)).unwrap();
+
+    let mut meta_depth = BytesStart::new("meta");
+    meta_depth.push_attribute(("name", "dtb:depth"));
+    meta_depth.push_attribute(("content", "1"));
+    writer.write_event(Event::Empty(meta_depth)).unwrap();
+
+    let mut meta_total = BytesStart::new("meta");
+    meta_total.push_attribute(("name", "dtb:totalPageCount"));
+    meta_total.push_attribute(("content", "0"));
+    writer.write_event(Event::Empty(meta_total)).unwrap();
+
+    let mut meta_max = BytesStart::new("meta");
+    meta_max.push_attribute(("name", "dtb:maxPageNumber"));
+    meta_max.push_attribute(("content", "0"));
+    writer.write_event(Event::Empty(meta_max)).unwrap();
+
+    writer.write_event(Event::End(BytesEnd::new("head"))).unwrap();
+
+    // <docTitle>
+    writer.write_event(Event::Start(BytesStart::new("docTitle"))).unwrap();
+    writer.write_event(Event::Start(BytesStart::new("text"))).unwrap();
+    writer.write_event(Event::Text(BytesText::new(&book.metadata.title))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("text"))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("docTitle"))).unwrap();
+
+    // <navMap>
+    writer.write_event(Event::Start(BytesStart::new("navMap"))).unwrap();
 
     // Generate navPoints
     let mut play_order = 1;
     for entry in &book.toc {
-        write_nav_point(&mut ncx, entry, &mut play_order, 2);
+        write_nav_point_recursive(&mut writer, entry, &mut play_order);
     }
 
-    ncx.push_str("  </navMap>\n</ncx>\n");
-    ncx
+    writer.write_event(Event::End(BytesEnd::new("navMap"))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("ncx"))).unwrap();
+
+    String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-fn write_nav_point(ncx: &mut String, entry: &TocEntry, play_order: &mut usize, indent: usize) {
-    let indent_str = "  ".repeat(indent);
-
-    ncx.push_str(&format!(
-        "{}<navPoint id=\"navpoint-{}\" playOrder=\"{}\">\n",
-        indent_str, play_order, play_order
-    ));
-    ncx.push_str(&format!(
-        "{}  <navLabel>\n{}    <text>{}</text>\n{}  </navLabel>\n",
-        indent_str,
-        indent_str,
-        escape_xml(&entry.title),
-        indent_str
-    ));
-    ncx.push_str(&format!(
-        "{}  <content src=\"{}\"/>\n",
-        indent_str,
-        escape_xml(&entry.href)
-    ));
+fn write_nav_point_recursive<W: Write>(writer: &mut Writer<W>, entry: &TocEntry, play_order: &mut usize) {
+    let mut nav_point = BytesStart::new("navPoint");
+    nav_point.push_attribute(("id", format!("navpoint-{}", play_order).as_str()));
+    nav_point.push_attribute(("playOrder", play_order.to_string().as_str()));
+    writer.write_event(Event::Start(nav_point)).unwrap();
 
     *play_order += 1;
 
+    // <navLabel><text>...</text></navLabel>
+    writer.write_event(Event::Start(BytesStart::new("navLabel"))).unwrap();
+    writer.write_event(Event::Start(BytesStart::new("text"))).unwrap();
+    writer.write_event(Event::Text(BytesText::new(&entry.title))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("text"))).unwrap();
+    writer.write_event(Event::End(BytesEnd::new("navLabel"))).unwrap();
+
+    // <content src="..."/>
+    let mut content = BytesStart::new("content");
+    content.push_attribute(("src", entry.href.as_str()));
+    writer.write_event(Event::Empty(content)).unwrap();
+
     for child in &entry.children {
-        write_nav_point(ncx, child, play_order, indent + 1);
+        write_nav_point_recursive(writer, child, play_order);
     }
 
-    ncx.push_str(&format!("{}</navPoint>\n", indent_str));
-}
-
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    writer.write_event(Event::End(BytesEnd::new("navPoint"))).unwrap();
 }
 
 fn href_to_id(href: &str) -> String {
     href.replace(['/', '.', ' ', '-'], "_")
-}
-
-/// Generate a simple UUID v4 (random)
-fn uuid_v4() -> String {
-    let seed = crate::util::time_seed_nanos();
-
-    // Simple PRNG for UUID generation (not cryptographically secure, but fine for identifiers)
-    let mut state = seed;
-    let mut bytes = [0u8; 16];
-    for byte in &mut bytes {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        *byte = (state >> 33) as u8;
-    }
-
-    // Set version (4) and variant (2)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0],
-        bytes[1],
-        bytes[2],
-        bytes[3],
-        bytes[4],
-        bytes[5],
-        bytes[6],
-        bytes[7],
-        bytes[8],
-        bytes[9],
-        bytes[10],
-        bytes[11],
-        bytes[12],
-        bytes[13],
-        bytes[14],
-        bytes[15]
-    )
 }
