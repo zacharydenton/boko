@@ -470,10 +470,9 @@ impl IonWriter {
         // Serialize fields to temp buffer
         let mut inner = IonWriter::new();
 
-        // Sort keys in descending order (matches Kindle reference files)
+        // Sort keys in ascending order (matches Kindle reference files)
         let mut keys: Vec<_> = fields.keys().collect();
         keys.sort();
-        keys.reverse();
 
         for &key in &keys {
             inner.write_varuint(*key);

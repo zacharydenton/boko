@@ -1,3 +1,4 @@
 /target
 perf.data
 /web/pkg
+*.pyc

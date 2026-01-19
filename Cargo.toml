@@ -30,8 +30,12 @@ percent-encoding = "2.3"
 memchr = "2.7"
 bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 
-# CSS parsing for style extraction
-cssparser = "0.34"
+# CSS parsing and DOM-based selector matching
+cssparser = "0.27"
+kuchiki = { path = "../kuchiki" }
+
+# Base64 encoding for KFX raw media
+base64 = "0.22"
 
 # CLI argument parsing (only for binary)
 clap = { version = "4", features = ["derive"], optional = true }
