@@ -15,7 +15,7 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::book::Book;
-use crate::css::{Color, CssValue, ParsedStyle, Stylesheet, TextAlign};
+use crate::css::{Border, BorderStyle, Color, CssValue, ParsedStyle, Stylesheet, TextAlign};
 
 use super::ion::{IonValue, IonWriter, encode_kfx_decimal};
 
@@ -915,6 +915,50 @@ impl KfxBookBuilder {
             }
         };
 
+        let border_to_ion = |border: &Border| -> Option<IonValue> {
+            if border.style == BorderStyle::None || border.style == BorderStyle::Hidden {
+                return None;
+            }
+
+            let mut b_struct = HashMap::new();
+
+            // Style
+            let style_sym = match border.style {
+                BorderStyle::Solid => sym::BORDER_SOLID,
+                BorderStyle::Dotted => sym::BORDER_DOTTED,
+                BorderStyle::Dashed => sym::BORDER_DASHED,
+                // Fallback to solid for others
+                _ => sym::BORDER_SOLID,
+            };
+            b_struct.insert(sym::BORDER_STYLE, IonValue::Symbol(style_sym));
+
+            // Width
+            if let Some(ref w) = border.width {
+                if let Some(val) = css_to_ion(w) {
+                    b_struct.insert(sym::VALUE, val);
+                }
+            } else {
+                // Default width (medium ~ 3px)
+                // Use 1px as safe default for ebooks
+                let mut val = HashMap::new();
+                val.insert(sym::VALUE, IonValue::Decimal(vec![0x21, 0x01])); // 1.0
+                val.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX));
+                b_struct.insert(sym::VALUE, IonValue::Struct(val));
+            }
+
+            // Color
+            if let Some(ref c) = border.color {
+                if let Some(val) = color_to_ion(c) {
+                    b_struct.insert(sym::COLOR, val);
+                }
+            } else {
+                // Default to black
+                b_struct.insert(sym::COLOR, IonValue::Int(0));
+            }
+
+            Some(IonValue::Struct(b_struct))
+        };
+
         for (i, style) in unique_styles.into_iter().enumerate() {
             let style_id = format!("style-{}", i);
             let style_sym = self.symtab.get_or_intern(&style_id);
@@ -1008,6 +1052,27 @@ impl KfxBookBuilder {
                 && let Some(val) = color_to_ion(bg_color)
             {
                 style_ion.insert(sym::BACKGROUND_COLOR, val);
+            }
+
+            if let Some(ref b) = style.border_top
+                && let Some(val) = border_to_ion(b)
+            {
+                style_ion.insert(sym::BORDER_TOP, val);
+            }
+            if let Some(ref b) = style.border_right
+                && let Some(val) = border_to_ion(b)
+            {
+                style_ion.insert(sym::BORDER_RIGHT, val);
+            }
+            if let Some(ref b) = style.border_bottom
+                && let Some(val) = border_to_ion(b)
+            {
+                style_ion.insert(sym::BORDER_BOTTOM, val);
+            }
+            if let Some(ref b) = style.border_left
+                && let Some(val) = border_to_ion(b)
+            {
+                style_ion.insert(sym::BORDER_LEFT, val);
             }
 
             self.fragments.push(KfxFragment::new(

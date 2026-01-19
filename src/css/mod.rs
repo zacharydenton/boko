@@ -109,6 +109,30 @@ impl Default for Color {
     }
 }
 
+/// Border style
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BorderStyle {
+    #[default]
+    None,
+    Hidden,
+    Solid,
+    Dotted,
+    Dashed,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
+}
+
+/// Border properties
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Border {
+    pub width: Option<CssValue>,
+    pub style: BorderStyle,
+    pub color: Option<Color>,
+}
+
 /// Parsed CSS style properties
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ParsedStyle {
@@ -125,6 +149,10 @@ pub struct ParsedStyle {
     pub margin_right: Option<CssValue>,
     pub color: Option<Color>,
     pub background_color: Option<Color>,
+    pub border_top: Option<Border>,
+    pub border_bottom: Option<Border>,
+    pub border_left: Option<Border>,
+    pub border_right: Option<Border>,
 }
 
 impl ParsedStyle {
@@ -169,6 +197,18 @@ impl ParsedStyle {
         if other.background_color.is_some() {
             self.background_color.clone_from(&other.background_color);
         }
+        if other.border_top.is_some() {
+            self.border_top.clone_from(&other.border_top);
+        }
+        if other.border_bottom.is_some() {
+            self.border_bottom.clone_from(&other.border_bottom);
+        }
+        if other.border_left.is_some() {
+            self.border_left.clone_from(&other.border_left);
+        }
+        if other.border_right.is_some() {
+            self.border_right.clone_from(&other.border_right);
+        }
     }
 
     /// Check if this style has any properties set
@@ -186,6 +226,10 @@ impl ParsedStyle {
             && self.margin_right.is_none()
             && self.color.is_none()
             && self.background_color.is_none()
+            && self.border_top.is_none()
+            && self.border_bottom.is_none()
+            && self.border_left.is_none()
+            && self.border_right.is_none()
     }
 }
 
@@ -579,10 +623,89 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "background-color" => {
             style.background_color = parse_color(values);
         }
+        "border" => {
+            let border = parse_border(values);
+            if border.style != BorderStyle::None {
+                style.border_top = Some(border.clone());
+                style.border_bottom = Some(border.clone());
+                style.border_left = Some(border.clone());
+                style.border_right = Some(border.clone());
+            }
+        }
+        "border-top" => {
+            let border = parse_border(values);
+            if border.style != BorderStyle::None {
+                style.border_top = Some(border);
+            }
+        }
+        "border-bottom" => {
+            let border = parse_border(values);
+            if border.style != BorderStyle::None {
+                style.border_bottom = Some(border);
+            }
+        }
+        "border-left" => {
+            let border = parse_border(values);
+            if border.style != BorderStyle::None {
+                style.border_left = Some(border);
+            }
+        }
+        "border-right" => {
+            let border = parse_border(values);
+            if border.style != BorderStyle::None {
+                style.border_right = Some(border);
+            }
+        }
         _ => {
             // Ignore unsupported properties
         }
     }
+}
+
+fn parse_border(values: &[Token]) -> Border {
+    let mut border = Border::default();
+    
+    // Naive parsing: check for width, style, color in any order
+    for token in values {
+        if let Some(width) = parse_single_length(token) {
+            border.width = Some(width);
+        } else if let Some(color) = parse_single_color(token) {
+            border.color = Some(color);
+        } else if let Some(style) = parse_border_style_token(token) {
+            border.style = style;
+        }
+    }
+
+    // Default to solid if width/color present but no style
+    if border.style == BorderStyle::None && (border.width.is_some() || border.color.is_some()) {
+        border.style = BorderStyle::Solid;
+    }
+
+    border
+}
+
+fn parse_border_style_token(token: &Token) -> Option<BorderStyle> {
+    if let Token::Ident(name) = token {
+        match name.to_ascii_lowercase().as_str() {
+            "none" => Some(BorderStyle::None),
+            "hidden" => Some(BorderStyle::Hidden),
+            "solid" => Some(BorderStyle::Solid),
+            "dotted" => Some(BorderStyle::Dotted),
+            "dashed" => Some(BorderStyle::Dashed),
+            "double" => Some(BorderStyle::Double),
+            "groove" => Some(BorderStyle::Groove),
+            "ridge" => Some(BorderStyle::Ridge),
+            "inset" => Some(BorderStyle::Inset),
+            "outset" => Some(BorderStyle::Outset),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_single_color(token: &Token) -> Option<Color> {
+    parse_color(&[token.clone()])
 }
 
 fn parse_color(values: &[Token]) -> Option<Color> {
