@@ -1645,12 +1645,21 @@ fn serialize_annotated_ion(annotation_id: u64, value: &IonValue) -> Vec<u8> {
 
 /// Generate a unique container ID
 fn generate_container_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    // Get seed from platform-appropriate time source
+    #[cfg(target_arch = "wasm32")]
+    let seed = {
+        // In WASM, use js_sys::Date::now() which returns milliseconds
+        (js_sys::Date::now() as u128) * 1_000_000 // Convert to nanoseconds scale
+    };
 
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    #[cfg(not(target_arch = "wasm32"))]
+    let seed = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    };
 
     let mut state = seed;
     let chars: Vec<char> = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect();
