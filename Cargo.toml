@@ -32,7 +32,7 @@ bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 
 # CSS parsing and DOM-based selector matching
 cssparser = "0.27"
-kuchiki = { path = "../kuchiki" }
+kuchiki = "0.8"
 
 # Base64 encoding for KFX raw media
 base64 = "0.22"

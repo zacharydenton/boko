@@ -2,3 +2,4 @@
 perf.data
 /web/pkg
 *.pyc
+*.DS_Store
