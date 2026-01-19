@@ -71,7 +71,7 @@ pub fn write_epub_to_writer<W: Write + Seek>(book: &Book, writer: W) -> io::Resu
         if href == "toc.ncx" || href == "content.opf" {
             continue;
         }
-        let path = format!("OEBPS/{}", href);
+        let path = format!("OEBPS/{href}");
         // Use STORED for already-compressed formats (images, fonts)
         let opts = if is_precompressed(&resource.media_type) {
             options_stored
@@ -341,7 +341,7 @@ fn write_nav_point_recursive<W: Write>(
     play_order: &mut usize,
 ) {
     let mut nav_point = BytesStart::new("navPoint");
-    nav_point.push_attribute(("id", format!("navpoint-{}", play_order).as_str()));
+    nav_point.push_attribute(("id", format!("navpoint-{play_order}").as_str()));
     nav_point.push_attribute(("playOrder", play_order.to_string().as_str()));
     writer.write_event(Event::Start(nav_point)).unwrap();
 

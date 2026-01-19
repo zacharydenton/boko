@@ -51,7 +51,7 @@ impl PdbHeader {
         if index >= self.record_offsets.len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Record index {} out of bounds", index),
+                format!("Record index {index} out of bounds"),
             ));
         }
 

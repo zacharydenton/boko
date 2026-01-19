@@ -239,10 +239,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
                 let (path, media_type) =
                     resource_info.get(&entity.id).cloned().unwrap_or_else(|| {
                         let ext = guess_extension(&data);
-                        (
-                            format!("resource/rsrc{}.{}", i, ext),
-                            guess_media_type(&data),
-                        )
+                        (format!("resource/rsrc{i}.{ext}"), guess_media_type(&data))
                     });
 
                 book.resources.insert(
@@ -277,7 +274,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
     // Generate XHTML content for each section by finding associated text
     // For now, combine all text content into chapters based on the text entities
     for (i, (_text_id, texts)) in text_by_id.iter().enumerate() {
-        let href = format!("chapter_{}.xhtml", i);
+        let href = format!("chapter_{i}.xhtml");
 
         // Build XHTML from text fragments
         let content = build_xhtml(texts, &book.metadata.title);
@@ -291,7 +288,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
         );
 
         book.spine.push(SpineItem {
-            id: format!("chapter_{}", i),
+            id: format!("chapter_{i}"),
             href: href.clone(),
             media_type: "application/xhtml+xml".to_string(),
             linear: true,
@@ -301,7 +298,7 @@ fn convert_to_book(container: &KfxContainer) -> io::Result<Book> {
         let title = texts.first().map(|s| {
             let truncated: String = s.chars().take(50).collect();
             if truncated.len() < s.len() {
-                format!("{}...", truncated)
+                format!("{truncated}...")
             } else {
                 truncated
             }

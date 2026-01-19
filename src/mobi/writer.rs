@@ -784,7 +784,7 @@ impl<'a> MobiBuilder<'a> {
         }
 
         // Pad to 4-byte boundary
-        while content.len() % 4 != 0 {
+        while !content.len().is_multiple_of(4) {
             content.push(0);
         }
 

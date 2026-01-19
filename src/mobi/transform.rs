@@ -147,7 +147,7 @@ fn generate_replacement(
     match &kindle_ref.kind {
         RefKind::Flow { flow_num } => {
             let css_idx = flow_num.saturating_sub(1);
-            format!("styles/style{:04}.css", css_idx).into_bytes()
+            format!("styles/style{css_idx:04}.css").into_bytes()
         }
         RefKind::PosFid { elem_idx, offset } => {
             let (file_num, target_pos) = if let Some(elem) = elems.get(*elem_idx) {
@@ -158,9 +158,9 @@ fn generate_replacement(
 
             let anchor = find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
             if let Some(id) = anchor {
-                format!("part{:04}.html#{}", file_num, id).into_bytes()
+                format!("part{file_num:04}.html#{id}").into_bytes()
             } else {
-                format!("part{:04}.html", file_num).into_bytes()
+                format!("part{file_num:04}.html").into_bytes()
             }
         }
         RefKind::PosFidOld { elem_idx } => {
@@ -168,11 +168,9 @@ fn generate_replacement(
                 .get(*elem_idx)
                 .map(|e| e.file_number as usize)
                 .unwrap_or(0);
-            format!("part{:04}.html", file_num).into_bytes()
+            format!("part{file_num:04}.html").into_bytes()
         }
-        RefKind::Embed { img_idx, ext } => {
-            format!("images/image_{:04}.{}", img_idx, ext).into_bytes()
-        }
+        RefKind::Embed { img_idx, ext } => format!("images/image_{img_idx:04}.{ext}").into_bytes(),
         RefKind::Malformed => {
             // Return empty to remove malformed reference
             Vec::new()

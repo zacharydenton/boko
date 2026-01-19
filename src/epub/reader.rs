@@ -492,7 +492,7 @@ fn read_archive_file_bytes<R: Read + Seek>(
         .map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid UTF-8 in path: {}", path),
+                format!("Invalid UTF-8 in path: {path}"),
             )
         })?;
 
@@ -516,7 +516,7 @@ fn resolve_path(base: &str, href: &str) -> String {
     if base.is_empty() {
         href.to_string()
     } else {
-        format!("{}/{}", base, href)
+        format!("{base}/{href}")
     }
 }
 

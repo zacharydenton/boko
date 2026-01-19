@@ -170,7 +170,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
                     &file_starts,
                 );
                 book.add_resource(filename, html.into_bytes(), "application/xhtml+xml");
-                book.add_spine_item(format!("part{:04}", i), filename, "application/xhtml+xml");
+                book.add_spine_item(format!("part{i:04}"), filename, "application/xhtml+xml");
             }
 
             // Add TOC entries from NCX, reconstructing hierarchy from parent indices
@@ -203,7 +203,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
             "image/gif" => "gif",
             _ => "bin",
         };
-        let href = format!("images/image_{:04}.{}", i, ext);
+        let href = format!("images/image_{i:04}.{ext}");
         book.add_resource(&href, data, &media_type);
 
         // Check if this is the cover
@@ -222,7 +222,7 @@ pub fn read_mobi_from_reader<R: Read + Seek>(mut reader: R) -> io::Result<Book> 
             "woff" => "application/font-woff",
             _ => "application/octet-stream",
         };
-        let href = format!("fonts/font_{:04}.{}", i, ext);
+        let href = format!("fonts/font_{i:04}.{ext}");
         book.add_resource(&href, data, media_type);
     }
 
@@ -793,15 +793,14 @@ fn ensure_xhtml_structure(html: &str, _part_num: usize) -> String {
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>Content</title></head>
 <body>
-{}
+{body_content}
 </body>
-</html>"#,
-            body_content
+</html>"#
         );
     } else {
         // Add XML declaration if missing
         if !result.starts_with("<?xml") {
-            result = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}", result);
+            result = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{result}");
         }
 
         // Add xmlns to html tag if missing
@@ -955,7 +954,7 @@ fn extract_text<R: Read + Seek>(
             Compression::Unknown(n) => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    format!("Unknown compression type: {}", n),
+                    format!("Unknown compression type: {n}"),
                 ));
             }
         };
@@ -1082,7 +1081,7 @@ fn extract_resources<R: Read + Seek>(
         // Check for FONT record
         if record.starts_with(b"FONT") {
             if let Some((font_data, ext)) = read_font_record(&record) {
-                let href = format!("fonts/font_{:04}.{}", font_idx, ext);
+                let href = format!("fonts/font_{font_idx:04}.{ext}");
                 resource_map.push(Some(href.clone()));
                 fonts.push((font_data, ext));
                 font_idx += 1;
@@ -1122,7 +1121,7 @@ fn extract_resources<R: Read + Seek>(
                 "image/bmp" => "bmp",
                 _ => "bin",
             };
-            let href = format!("images/image_{:04}.{}", image_idx, ext);
+            let href = format!("images/image_{image_idx:04}.{ext}");
             resource_map.push(Some(href));
             images.push((record, mt.to_string()));
             image_idx += 1;
@@ -1292,7 +1291,7 @@ fn resolve_css_kindle_embeds(css: &str, resource_map: &[Option<String>]) -> Stri
 
             // Look up resource path
             let replacement = if let Some(Some(href)) = resource_map.get(resource_idx) {
-                format!("../{}", href)
+                format!("../{href}")
             } else {
                 "missing-resource".to_string()
             };
@@ -1457,7 +1456,7 @@ fn insert_filepos_anchors(
             // Insert any pending anchors for positions we've passed
             while target_idx < sorted_targets.len() && sorted_targets[target_idx] <= pos {
                 let target = sorted_targets[target_idx];
-                result.push_str(&format!("<a id=\"filepos{}\"></a>", target));
+                result.push_str(&format!("<a id=\"filepos{target}\"></a>"));
                 target_idx += 1;
             }
 
@@ -1465,7 +1464,7 @@ fn insert_filepos_anchors(
                 // Check if next target is close to current position
                 let next_target = sorted_targets[target_idx];
                 if next_target <= pos + 100 {
-                    result.push_str(&format!("<a id=\"filepos{}\"></a>", next_target));
+                    result.push_str(&format!("<a id=\"filepos{next_target}\"></a>"));
                     target_idx += 1;
                 }
             }
@@ -1478,7 +1477,7 @@ fn insert_filepos_anchors(
     // Insert any remaining anchors at the end
     while target_idx < sorted_targets.len() {
         let target = sorted_targets[target_idx];
-        result.push_str(&format!("<a id=\"filepos{}\"></a>", target));
+        result.push_str(&format!("<a id=\"filepos{target}\"></a>"));
         target_idx += 1;
     }
 
@@ -1504,7 +1503,7 @@ fn convert_filepos_links(html: &str) -> String {
 
         if let Ok(filepos) = value_str.parse::<usize>() {
             // Replace with href="#fileposN"
-            result.extend_from_slice(format!("href=\"#filepos{}\"", filepos).as_bytes());
+            result.extend_from_slice(format!("href=\"#filepos{filepos}\"").as_bytes());
         } else {
             // Keep original if can't parse
             result.extend_from_slice(b"filepos=");
@@ -1540,7 +1539,7 @@ fn convert_recindex_images(html: &str, _first_image_index: usize) -> String {
             // recindex is 1-based, so subtract 1 for 0-based image index
             // Our images are named image_NNNN.ext starting from 0
             let img_idx = recindex.saturating_sub(1);
-            result.extend_from_slice(format!("src=\"images/image_{:04}.jpg\"", img_idx).as_bytes());
+            result.extend_from_slice(format!("src=\"images/image_{img_idx:04}.jpg\"").as_bytes());
         } else {
             // Keep original if can't parse
             result.extend_from_slice(b"recindex=");

@@ -795,7 +795,7 @@ impl IndxBuilder {
         record.extend_from_slice(idxt);
 
         // Pad to 4-byte boundary
-        while record.len() % 4 != 0 {
+        while !record.len().is_multiple_of(4) {
             record.push(0);
         }
 
@@ -859,7 +859,7 @@ impl IndxBuilder {
         idxt.extend_from_slice(&end_offset.to_be_bytes());
 
         // Pad to 4-byte boundary
-        while idxt.len() % 4 != 0 {
+        while !idxt.len().is_multiple_of(4) {
             idxt.push(0);
         }
 
@@ -1172,7 +1172,7 @@ pub fn build_ncx_indx(entries: &[NcxBuildEntry]) -> (Vec<Vec<u8>>, Vec<u8>) {
         }
 
         // Entry name is a 4-digit zero-padded index
-        let name = format!("{:04}", i);
+        let name = format!("{i:04}");
         builder.add_entry(name, tag_data);
     }
 

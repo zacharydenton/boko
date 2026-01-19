@@ -48,7 +48,7 @@ pub fn decompress(input: &[u8]) -> io::Result<Vec<u8>> {
                 if distance > output.len() || distance == 0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("PalmDoc: invalid back-reference distance {}", distance),
+                        format!("PalmDoc: invalid back-reference distance {distance}"),
                     ));
                 }
 

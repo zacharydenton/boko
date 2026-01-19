@@ -107,7 +107,7 @@ pub enum Color {
     Rgba(u8, u8, u8, u8),
     /// Current color keyword
     #[default]
-    CurrentColor,
+    Current,
     /// Transparent keyword
     Transparent,
 }
@@ -329,48 +329,6 @@ impl ParsedStyle {
             && self.position.is_none()
             && self.left.is_none()
     }
-
-    /// Inherit CSS-inherited properties from an ancestor style.
-    /// Only copies properties that are CSS-inherited (font-*, text-align, color, line-height, text-indent)
-    /// and only if they're not already set on this element.
-    /// Non-inherited properties (margins, borders, display, position, etc.) are NOT copied.
-    pub fn inherit_from(&mut self, ancestor: &ParsedStyle) {
-        // CSS inherited properties - only copy if not already set
-        if self.font_family.is_none() && ancestor.font_family.is_some() {
-            self.font_family.clone_from(&ancestor.font_family);
-        }
-        if self.font_size.is_none() && ancestor.font_size.is_some() {
-            self.font_size.clone_from(&ancestor.font_size);
-        }
-        if self.font_weight.is_none() && ancestor.font_weight.is_some() {
-            self.font_weight = ancestor.font_weight;
-        }
-        if self.font_style.is_none() && ancestor.font_style.is_some() {
-            self.font_style = ancestor.font_style;
-        }
-        if self.font_variant.is_none() && ancestor.font_variant.is_some() {
-            self.font_variant = ancestor.font_variant;
-        }
-        if self.text_align.is_none() && ancestor.text_align.is_some() {
-            self.text_align = ancestor.text_align;
-        }
-        if self.text_indent.is_none() && ancestor.text_indent.is_some() {
-            self.text_indent.clone_from(&ancestor.text_indent);
-        }
-        if self.line_height.is_none() && ancestor.line_height.is_some() {
-            self.line_height.clone_from(&ancestor.line_height);
-        }
-        if self.color.is_none() && ancestor.color.is_some() {
-            self.color.clone_from(&ancestor.color);
-        }
-        // Note: The following are NOT inherited in CSS:
-        // - margin-* (not inherited)
-        // - background-color (not inherited)
-        // - border-* (not inherited)
-        // - display (not inherited)
-        // - position (not inherited)
-        // - left/width/height (not inherited)
-    }
 }
 
 pub use kuchiki::{ElementData, NodeDataRef, NodeRef, Selectors};
@@ -425,21 +383,6 @@ impl Stylesheet {
         parse_declaration_block(&mut parser)
     }
 
-    /// Get the computed style for a kuchiki element (DOM-based matching)
-    pub fn compute_style_for_element(&self, element: &NodeDataRef<ElementData>) -> ParsedStyle {
-        // First, collect inherited properties from ancestors
-        let mut inherited = ParsedStyle::default();
-        self.collect_inherited_styles(element, &mut inherited);
-
-        // Then compute directly matching styles for this element
-        let mut result = self.get_direct_style_for_element(element);
-
-        // Merge inherited properties (only for properties not set on the element)
-        result.inherit_from(&inherited);
-
-        result
-    }
-
     /// Get only the directly-matched styles for an element, WITHOUT CSS inheritance.
     /// This is useful when the output format (like KFX) has its own inheritance mechanism.
     pub fn get_direct_style_for_element(&self, element: &NodeDataRef<ElementData>) -> ParsedStyle {
@@ -465,41 +408,6 @@ impl Stylesheet {
         }
 
         result
-    }
-
-    /// Collect inherited CSS properties from ancestor elements
-    fn collect_inherited_styles(
-        &self,
-        element: &NodeDataRef<ElementData>,
-        inherited: &mut ParsedStyle,
-    ) {
-        // Walk up the ancestor chain
-        let mut current = element.as_node().parent();
-        while let Some(parent_node) = current {
-            // Clone the node to get a NodeDataRef without consuming our traversal reference
-            if let Some(parent_element) = parent_node.clone().into_element_ref() {
-                // Get styles that match this ancestor
-                let mut ancestor_style = ParsedStyle::default();
-                let mut matches: Vec<(kuchiki::Specificity, &ParsedStyle)> = Vec::new();
-
-                for rule in &self.rules {
-                    for selector in &rule.selectors.0 {
-                        if selector.matches(&parent_element) {
-                            matches.push((selector.specificity(), &rule.style));
-                        }
-                    }
-                }
-
-                matches.sort_by_key(|(spec, _)| *spec);
-                for (_, style) in matches {
-                    ancestor_style.merge(style);
-                }
-
-                // Merge inherited properties from this ancestor
-                inherited.inherit_from(&ancestor_style);
-            }
-            current = parent_node.parent();
-        }
     }
 }
 
@@ -793,7 +701,7 @@ fn parse_border_style_token(token: &Token) -> Option<BorderStyle> {
 }
 
 fn parse_single_color(token: &Token) -> Option<Color> {
-    parse_color(&[token.clone()])
+    parse_color(std::slice::from_ref(token))
 }
 
 fn parse_color(values: &[Token]) -> Option<Color> {
@@ -823,7 +731,7 @@ fn parse_color(values: &[Token]) -> Option<Color> {
             Token::Ident(name) => {
                 let name = name.to_ascii_lowercase();
                 match name.as_str() {
-                    "currentcolor" => return Some(Color::CurrentColor),
+                    "currentcolor" => return Some(Color::Current),
                     "transparent" => return Some(Color::Transparent),
                     "black" => return Some(Color::Rgba(0, 0, 0, 255)),
                     "white" => return Some(Color::Rgba(255, 255, 255, 255)),
@@ -996,7 +904,7 @@ mod tests {
     fn get_style_for(stylesheet: &Stylesheet, html: &str, selector: &str) -> ParsedStyle {
         let doc = kuchiki::parse_html().one(html);
         let element = doc.select_first(selector).expect("Element not found");
-        stylesheet.compute_style_for_element(&element)
+        stylesheet.get_direct_style_for_element(&element)
     }
 
     #[test]
@@ -1333,94 +1241,6 @@ mod tests {
         assert!(
             !block_style.is_hidden(),
             "display:block should not be hidden"
-        );
-    }
-
-    #[test]
-    fn test_text_align_inheritance() {
-        // Test that text-align is inherited from parent to child when child doesn't set it
-        let css = r#"
-            section.colophon { text-align: center; }
-            p { margin-top: 0; margin-bottom: 0; text-indent: 1em; }
-            section.colophon p { margin-top: 1em; text-indent: 0; }
-        "#;
-
-        let stylesheet = Stylesheet::parse(css);
-
-        // Colophon paragraph should inherit text-align: center from section
-        // (the p rule and section.colophon p rule do NOT set text-align)
-        let html = r#"
-            <section class="colophon">
-                <p id="test">Hello world</p>
-            </section>
-        "#;
-        let doc = kuchiki::parse_html().one(html);
-        let p = doc.select_first("#test").expect("p element not found");
-        let style = stylesheet.compute_style_for_element(&p);
-
-        assert_eq!(
-            style.text_align,
-            Some(TextAlign::Center),
-            "Paragraph inside colophon should inherit text-align: center"
-        );
-
-        // Section should have center directly
-        let section = doc.select_first("section").expect("section not found");
-        let section_style = stylesheet.compute_style_for_element(&section);
-        assert_eq!(
-            section_style.text_align,
-            Some(TextAlign::Center),
-            "Section should have text-align: center"
-        );
-    }
-
-    #[test]
-    fn test_text_align_inheritance_with_epub_class_name() {
-        // Test with the actual class name used in Standard Ebooks EPUBs
-        let css = r#"
-            section.epub-type-contains-word-colophon,
-            section.epub-type-contains-word-imprint {
-                text-align: center;
-            }
-            p {
-                margin-top: 0;
-                margin-bottom: 0;
-                text-indent: 1em;
-            }
-            section.epub-type-contains-word-colophon p,
-            section.epub-type-contains-word-imprint p {
-                margin-top: 1em;
-                text-indent: 0;
-            }
-        "#;
-
-        let stylesheet = Stylesheet::parse(css);
-
-        let html = r#"
-            <section class="epub-type-contains-word-colophon" id="colophon">
-                <p id="test">Hello world</p>
-            </section>
-        "#;
-        let doc = kuchiki::parse_html().one(html);
-        let p = doc.select_first("#test").expect("p element not found");
-        let style = stylesheet.compute_style_for_element(&p);
-
-        // p inside colophon should inherit text-align: center
-        assert_eq!(
-            style.text_align,
-            Some(TextAlign::Center),
-            "Paragraph inside epub-type colophon should inherit text-align: center, got {:?}",
-            style.text_align
-        );
-
-        // Check the section directly has center
-        let section = doc.select_first("section").expect("section not found");
-        let section_style = stylesheet.compute_style_for_element(&section);
-        assert_eq!(
-            section_style.text_align,
-            Some(TextAlign::Center),
-            "Section should have text-align: center, got {:?}",
-            section_style.text_align
         );
     }
 }

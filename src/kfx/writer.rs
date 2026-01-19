@@ -325,7 +325,7 @@ impl KfxFragment {
     pub fn singleton(ftype: u64, value: IonValue) -> Self {
         Self {
             ftype,
-            fid: format!("${}", ftype),
+            fid: format!("${ftype}"),
             value,
         }
     }
@@ -484,7 +484,7 @@ impl KfxBookBuilder {
                 continue;
             }
 
-            let resource_id = format!("rsrc{}", resource_index);
+            let resource_id = format!("rsrc{resource_index}");
             let resource_sym = self.symtab.get_or_intern(&resource_id);
 
             // Store mapping from original href to resource symbol
@@ -554,9 +554,9 @@ impl KfxBookBuilder {
                             None
                         })
                 })
-                .unwrap_or_else(|| format!("Chapter {}", chapter_num));
+                .unwrap_or_else(|| format!("Chapter {chapter_num}"));
 
-            let chapter_id = format!("chapter-{}", idx);
+            let chapter_id = format!("chapter-{idx}");
             chapters.push(ChapterData {
                 id: chapter_id,
                 title,
@@ -585,7 +585,7 @@ impl KfxBookBuilder {
                             style.image_height_px = Some(height);
                         }
                     } else {
-                        eprintln!("DEBUG: Image resource not found: {}", resource_href);
+                        eprintln!("DEBUG: Image resource not found: {resource_href}");
                         eprintln!(
                             "DEBUG: Available: {:?}",
                             resources.keys().collect::<Vec<_>>()
@@ -876,7 +876,7 @@ impl KfxBookBuilder {
                         if href == cover_href {
                             add_entry(
                                 "cover_image",
-                                IonValue::String(format!("rsrc{}", resource_index)),
+                                IonValue::String(format!("rsrc{resource_index}")),
                             );
                             break;
                         }
@@ -1261,7 +1261,7 @@ impl KfxBookBuilder {
         };
 
         for (i, style) in unique_styles.into_iter().enumerate() {
-            let style_id = format!("style-{}", i);
+            let style_id = format!("style-{i}");
             let style_sym = self.symtab.get_or_intern(&style_id);
 
             let mut style_ion = HashMap::new();
@@ -2178,7 +2178,7 @@ impl KfxBookBuilder {
 
     /// Add a single page template fragment with position offset
     fn add_page_template_with_offset(&mut self, idx: usize, eid: i64, offset: i64) {
-        let template_id = format!("template-{}", idx);
+        let template_id = format!("template-{idx}");
         let template_sym = self.symtab.get_or_intern(&template_id);
 
         // Position info: { P155: eid, P143: offset (optional if 0) }
@@ -2257,12 +2257,10 @@ impl KfxBookBuilder {
         }
 
         // Register symbols for each unique href (fragments created later)
-        let mut anchor_index = 0;
-        for href in unique_hrefs {
-            let anchor_id = format!("anchor{}", anchor_index);
+        for (anchor_index, href) in unique_hrefs.into_iter().enumerate() {
+            let anchor_id = format!("anchor{anchor_index}");
             let anchor_sym = self.symtab.get_or_intern(&anchor_id);
             self.anchor_symbols.insert(href, anchor_sym);
-            anchor_index += 1;
         }
     }
 
@@ -2276,7 +2274,7 @@ impl KfxBookBuilder {
 
         // Create anchor fragments for each registered href
         for (href, anchor_sym) in &self.anchor_symbols {
-            let anchor_id = format!("${}", anchor_sym);
+            let anchor_id = format!("${anchor_sym}");
             let mut anchor_struct = HashMap::new();
             anchor_struct.insert(sym::TEMPLATE_NAME, IonValue::Symbol(*anchor_sym)); // $180
 
@@ -2326,7 +2324,7 @@ impl KfxBookBuilder {
             }
 
             let is_cover = cover_href == Some(href.as_str());
-            let resource_id = format!("rsrc{}", resource_index);
+            let resource_id = format!("rsrc{resource_index}");
             let resource_sym = self.symtab.get_or_intern(&resource_id);
 
             // Use original image data (PNG conversion disabled - causes transparency issues)
@@ -2341,7 +2339,7 @@ impl KfxBookBuilder {
             }
             res_meta.insert(
                 sym::LOCATION,
-                IonValue::String(format!("resource/{}", resource_id)),
+                IonValue::String(format!("resource/{resource_id}")),
             );
 
             if is_image {
@@ -2371,7 +2369,7 @@ impl KfxBookBuilder {
             // Create P417 raw media fragment with raw image bytes
             // KFX stores raw image data directly in the blob (not base64)
             // Note: P417 fragment ID doesn't need to match P165 location - linkage is via P253
-            let media_id = format!("resource/{}", resource_id);
+            let media_id = format!("resource/{resource_id}");
             let media_sym = self.symtab.get_or_intern(&media_id);
             self.fragments.push(KfxFragment::new(
                 sym::RAW_MEDIA,
@@ -2640,11 +2638,6 @@ impl ContentItem {
             ContentItem::Image { style, .. } => style,
             ContentItem::Container { style, .. } => style,
         }
-    }
-
-    /// Check if this item is a container
-    fn is_container(&self) -> bool {
-        matches!(self, ContentItem::Container { .. })
     }
 
     /// Get flattened iterator over all leaf items (text and images)
@@ -3163,9 +3156,10 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                     let run_style = if !style_differs && has_anchor {
                         // Anchor-only run: create minimal inline style
                         // This matches reference behavior where links use $127: $349 only
-                        let mut inline_style = ParsedStyle::default();
-                        inline_style.is_inline = true;
-                        inline_style
+                        ParsedStyle {
+                            is_inline: true,
+                            ..Default::default()
+                        }
                     } else {
                         // Style differs: use the actual style
                         style
@@ -3422,7 +3416,7 @@ fn extract_content_from_xhtml(
 fn resolve_relative_path(base_dir: &str, relative: &str) -> String {
     if !relative.starts_with("../") && !relative.starts_with("./") {
         // Not a relative path, just join
-        return format!("{}{}", base_dir, relative);
+        return format!("{base_dir}{relative}");
     }
 
     // Split the base directory into components
