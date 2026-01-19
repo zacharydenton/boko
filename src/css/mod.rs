@@ -189,6 +189,8 @@ pub struct ParsedStyle {
     pub height: Option<CssValue>,
     /// Whether this style is for an image element (set when creating ContentItem::Image)
     pub is_image: bool,
+    /// Whether this style is for an inline element like a link (uses $127: $349 instead of $383)
+    pub is_inline: bool,
     /// Actual image width in pixels (set for image styles when dimensions are known)
     pub image_width_px: Option<u32>,
     /// Actual image height in pixels (set for image styles when dimensions are known)
@@ -270,6 +272,10 @@ impl ParsedStyle {
         // is_image is preserved if already set (once marked as image, stays image)
         if other.is_image {
             self.is_image = true;
+        }
+        // is_inline is preserved if already set (once marked as inline, stays inline)
+        if other.is_inline {
+            self.is_inline = true;
         }
         // Image dimensions - preserve if set
         if other.image_width_px.is_some() {
