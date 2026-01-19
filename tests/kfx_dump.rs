@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env;
 use std::fs::File;
 use std::io::{self, Read};
 
@@ -217,11 +216,19 @@ fn dump_kfx(path: &str) {
 
 #[test]
 fn inspect_kfx_styles() {
+    use boko::{read_epub, write_kfx};
+    use tempfile::TempDir;
+
     println!("--- REFERENCE KFX ---");
     dump_kfx("tests/fixtures/epictetus.kfx");
 
     println!("\n--- GENERATED KFX ---");
-    dump_kfx(
-        "/home/zach/.gemini/tmp/d2a74f6a5bc87717965512b496c0fd4bb6b6ddee37f38e5dfef6eb0de8c5a212/epictetus.kfx",
-    );
+    // Generate a KFX from the EPUB for comparison
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let generated_kfx = temp_dir.path().join("generated.kfx");
+
+    let book = read_epub("tests/fixtures/epictetus.epub").expect("Failed to read EPUB");
+    write_kfx(&book, &generated_kfx).expect("Failed to write KFX");
+
+    dump_kfx(generated_kfx.to_str().unwrap());
 }
