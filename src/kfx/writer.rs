@@ -915,6 +915,17 @@ impl KfxBookBuilder {
             }
         };
 
+        // Pre-intern border symbols to avoid borrowing self in the loop
+        let border_top_sym = self.symtab.get_or_intern("border-top");
+        let border_bottom_sym = self.symtab.get_or_intern("border-bottom");
+        let border_left_sym = self.symtab.get_or_intern("border-left");
+        let border_right_sym = self.symtab.get_or_intern("border-right");
+        let border_style_sym = self.symtab.get_or_intern("border-style");
+        
+        let solid_sym = self.symtab.get_or_intern("solid");
+        let dotted_sym = self.symtab.get_or_intern("dotted");
+        let dashed_sym = self.symtab.get_or_intern("dashed");
+
         let border_to_ion = |border: &Border| -> Option<IonValue> {
             if border.style == BorderStyle::None || border.style == BorderStyle::Hidden {
                 return None;
@@ -924,13 +935,13 @@ impl KfxBookBuilder {
 
             // Style
             let style_sym = match border.style {
-                BorderStyle::Solid => sym::BORDER_SOLID,
-                BorderStyle::Dotted => sym::BORDER_DOTTED,
-                BorderStyle::Dashed => sym::BORDER_DASHED,
+                BorderStyle::Solid => solid_sym,
+                BorderStyle::Dotted => dotted_sym,
+                BorderStyle::Dashed => dashed_sym,
                 // Fallback to solid for others
-                _ => sym::BORDER_SOLID,
+                _ => solid_sym,
             };
-            b_struct.insert(sym::BORDER_STYLE, IonValue::Symbol(style_sym));
+            b_struct.insert(border_style_sym, IonValue::Symbol(style_sym));
 
             // Width
             if let Some(ref w) = border.width {
@@ -938,8 +949,7 @@ impl KfxBookBuilder {
                     b_struct.insert(sym::VALUE, val);
                 }
             } else {
-                // Default width (medium ~ 3px)
-                // Use 1px as safe default for ebooks
+                // Default width (1px)
                 let mut val = HashMap::new();
                 val.insert(sym::VALUE, IonValue::Decimal(vec![0x21, 0x01])); // 1.0
                 val.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX));
@@ -1057,22 +1067,22 @@ impl KfxBookBuilder {
             if let Some(ref b) = style.border_top
                 && let Some(val) = border_to_ion(b)
             {
-                style_ion.insert(sym::BORDER_TOP, val);
+                style_ion.insert(border_top_sym, val);
             }
             if let Some(ref b) = style.border_right
                 && let Some(val) = border_to_ion(b)
             {
-                style_ion.insert(sym::BORDER_RIGHT, val);
+                style_ion.insert(border_right_sym, val);
             }
             if let Some(ref b) = style.border_bottom
                 && let Some(val) = border_to_ion(b)
             {
-                style_ion.insert(sym::BORDER_BOTTOM, val);
+                style_ion.insert(border_bottom_sym, val);
             }
             if let Some(ref b) = style.border_left
                 && let Some(val) = border_to_ion(b)
             {
-                style_ion.insert(sym::BORDER_LEFT, val);
+                style_ion.insert(border_left_sym, val);
             }
 
             self.fragments.push(KfxFragment::new(
