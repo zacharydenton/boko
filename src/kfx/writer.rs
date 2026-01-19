@@ -915,9 +915,10 @@ impl KfxBookBuilder {
             }
 
             if let Some(ref size) = style.font_size
-                && let Some(val) = css_to_ion(size) {
-                    style_ion.insert(sym::FONT_SIZE, val);
-                }
+                && let Some(val) = css_to_ion(size)
+            {
+                style_ion.insert(sym::FONT_SIZE, val);
+            }
 
             if let Some(align) = style.text_align {
                 let align_sym = match align {
@@ -930,45 +931,53 @@ impl KfxBookBuilder {
             }
 
             if let Some(ref weight) = style.font_weight
-                && weight.is_bold() {
-                    style_ion.insert(sym::BOLD, IonValue::Bool(true));
-                }
+                && weight.is_bold()
+            {
+                style_ion.insert(sym::BOLD, IonValue::Bool(true));
+            }
 
             if let Some(style_type) = style.font_style
                 && matches!(
                     style_type,
                     crate::css::FontStyle::Italic | crate::css::FontStyle::Oblique
-                ) {
-                    style_ion.insert(sym::ITALIC, IonValue::Bool(true));
-                }
+                )
+            {
+                style_ion.insert(sym::ITALIC, IonValue::Bool(true));
+            }
 
             if let Some(ref margin) = style.margin_top
-                && let Some(val) = css_to_ion(margin) {
-                    style_ion.insert(sym::MARGIN_TOP, val);
-                }
+                && let Some(val) = css_to_ion(margin)
+            {
+                style_ion.insert(sym::MARGIN_TOP, val);
+            }
             if let Some(ref margin) = style.margin_bottom
-                && let Some(val) = css_to_ion(margin) {
-                    style_ion.insert(sym::MARGIN_BOTTOM, val);
-                }
+                && let Some(val) = css_to_ion(margin)
+            {
+                style_ion.insert(sym::MARGIN_BOTTOM, val);
+            }
             if let Some(ref margin) = style.margin_left
-                && let Some(val) = css_to_ion(margin) {
-                    style_ion.insert(sym::MARGIN_LEFT, val);
-                }
+                && let Some(val) = css_to_ion(margin)
+            {
+                style_ion.insert(sym::MARGIN_LEFT, val);
+            }
             if let Some(ref margin) = style.margin_right
-                && let Some(val) = css_to_ion(margin) {
-                    style_ion.insert(sym::MARGIN_RIGHT, val);
-                }
+                && let Some(val) = css_to_ion(margin)
+            {
+                style_ion.insert(sym::MARGIN_RIGHT, val);
+            }
 
             if let Some(ref indent) = style.text_indent
-                && let Some(val) = css_to_ion(indent) {
-                    // P48 is text-indent
-                    style_ion.insert(48, val);
-                }
+                && let Some(val) = css_to_ion(indent)
+            {
+                // P48 is text-indent
+                style_ion.insert(48, val);
+            }
 
             if let Some(ref height) = style.line_height
-                && let Some(val) = css_to_ion(height) {
-                    style_ion.insert(sym::LINE_HEIGHT, val);
-                }
+                && let Some(val) = css_to_ion(height)
+            {
+                style_ion.insert(sym::LINE_HEIGHT, val);
+            }
 
             self.fragments.push(KfxFragment::new(
                 sym::STYLE,
@@ -1785,17 +1794,16 @@ fn extract_styled_text_from_xhtml(data: &[u8], stylesheet: &Stylesheet) -> Vec<S
             Ok(Event::Empty(e)) => {
                 // Handle empty tags like <br/>
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
-                if tag_name == "br"
-                    && !current_text.is_empty() {
-                        let text = clean_text(&current_text);
-                        if !text.is_empty() {
-                            result.push(StyledText {
-                                text,
-                                style: style_stack.last().cloned().unwrap_or_default(),
-                            });
-                        }
-                        current_text.clear();
+                if tag_name == "br" && !current_text.is_empty() {
+                    let text = clean_text(&current_text);
+                    if !text.is_empty() {
+                        result.push(StyledText {
+                            text,
+                            style: style_stack.last().cloned().unwrap_or_default(),
+                        });
                     }
+                    current_text.clear();
+                }
             }
             Ok(Event::Text(e)) => {
                 current_text.push_str(&String::from_utf8_lossy(e.as_ref()));
