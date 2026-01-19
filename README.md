@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/boko.svg)](https://crates.io/crates/boko)
 [![docs.rs](https://docs.rs/boko/badge.svg)](https://docs.rs/boko)
 
-A fast, lightweight Rust library for converting between EPUB and Kindle (AZW3/MOBI) ebook formats.
+A fast, lightweight Rust library for converting between EPUB and Kindle ebook formats (KFX, AZW3, MOBI).
 
 ## Features
 
@@ -46,11 +46,14 @@ boko = { version = "0.1", default-features = false }
 ### Command Line
 
 ```bash
+# Convert EPUB to KFX (latest Kindle format)
+boko book.epub book.kfx
+
 # Convert EPUB to AZW3
 boko book.epub book.azw3
 
-# Convert AZW3/MOBI to EPUB
-boko book.azw3 book.epub
+# Convert KFX/AZW3/MOBI to EPUB
+boko book.kfx book.epub
 
 # Show book metadata
 boko -i book.epub
@@ -63,10 +66,10 @@ use boko::Book;
 
 // Open and convert with automatic format detection
 let book = Book::open("input.epub")?;
-book.save("output.azw3")?;
+book.save("output.kfx")?;  // or .azw3, .mobi
 ```
 
-For explicit format control (Format: Epub, Azw3, Mobi):
+For explicit format control (Format: Epub, Kfx, Azw3, Mobi):
 
 ```rust
 use boko::{Book, Format};
@@ -104,8 +107,9 @@ book.add_resource(
 book.add_spine_item("ch1", "chapter1.xhtml", "application/xhtml+xml");
 book.toc.push(TocEntry::new("Chapter 1", "chapter1.xhtml"));
 
-// Save as EPUB or AZW3
+// Save in any format
 book.save("my-book.epub")?;
+book.save("my-book.kfx")?;
 book.save("my-book.azw3")?;
 ```
 
@@ -115,13 +119,14 @@ A browser-based converter is available at [zacharydenton.github.io/boko](https:/
 
 ## Supported Formats
 
-| Format | Read | Write |
-|--------|------|-------|
-| EPUB 2/3 | ✓ | ✓ |
-| AZW3 (KF8) | ✓ | ✓ |
-| MOBI | ✓ | ✓* |
+| Format | Read | Write | Notes |
+|--------|------|-------|-------|
+| EPUB 2/3 | ✓ | ✓ | |
+| KFX (KF10) | ✓ | ✓ | Latest Kindle format with enhanced typography |
+| AZW3 (KF8) | ✓ | ✓ | |
+| MOBI | ✓ | ✓ | Output uses KF8 format |
 
-*MOBI output uses the modern KF8 format (same as AZW3).
+KFX output includes real CSS parsing from EPUB stylesheets for accurate typography.
 
 ## Contributing
 
