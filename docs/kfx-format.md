@@ -71,19 +71,20 @@ Our generated KFX produces valid styles but with some differences from Kindle Pr
 - Color properties: color, background-color
 - Text decorations: underline, line-through
 - Display modes: block, inline
+- Language tags: `$10` (lang) from `lang` attribute (e.g., `en-us`, `la`, `grc`)
+- Font variant: small-caps via `$583`
 
 ### What Kindle Previewer Adds
-Kindle Previewer generates additional style variations that we don't:
+Kindle Previewer generates additional style properties that we don't:
 
-| Category | Description |
-|----------|-------------|
-| **Language tags** | Styles include `$10` (lang) with values like `en-us`, `en-gb`, `la` |
-| **Font variant** | More `small-caps` combinations with other properties |
-| **Kindle-specific** | Properties `$135`, `$761`, `$788`, `$89`, `$94` (purpose unknown) |
-| **Granular combinations** | Separate styles for each unique property combination |
+| Symbol | Property | Description |
+|--------|----------|-------------|
+| `$546` | image-fit | Added to all styles with value `$378` (none) |
+| `$761` | unknown | List property `['$760']` |
+| `$788`, `$135` | unknown | Kindle-specific flags |
 
 ### Impact
-These differences do not affect rendering. Kindle devices/apps handle both approaches correctly. The fixture (Kindle Previewer) typically has ~63 styles vs our ~57 for the same content.
+These differences do not affect rendering. Kindle devices/apps handle both approaches correctly. Style counts now match (63 vs 63 for epictetus.epub).
 
 ## Anchor Differences
 

@@ -64,6 +64,9 @@ pub fn style_to_ion(
         if let Some(ref lang) = style.lang {
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
+
+        // Image fit baseline ($546: $378) - Kindle Previewer adds this to all text styles
+        style_ion.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_NONE));
     }
 
     // Font size
