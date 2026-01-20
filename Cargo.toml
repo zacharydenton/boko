@@ -37,6 +37,9 @@ kuchiki = "0.8"
 # Base64 encoding for KFX raw media
 base64 = "0.22"
 
+# SHA1 hashing for KFX content hashes (minimal, WASM-compatible)
+sha1_smol = { version = "1.0", features = ["std"] }
+
 # CLI argument parsing (only for binary)
 clap = { version = "4", features = ["derive"], optional = true }
 

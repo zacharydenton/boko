@@ -95,6 +95,7 @@ def load_kfx(filepath):
 def load_kfx_manual(filepath):
     """Manually parse KFX container to extract fragments."""
     from kfxlib.ion_binary import IonBinary
+    from kfxlib.ion import IonSymbol
     from kfxlib.yj_symbol_catalog import YJ_SYMBOLS
 
     with open(filepath, 'rb') as f:
@@ -113,6 +114,19 @@ def load_kfx_manual(filepath):
     # Create symbol table that wraps YJ_SYMBOLS
     # YJ_SYMBOLS starts at symbol ID 10 (index 0 = "$10")
     class SymbolTableWrapper:
+        # Ion system symbol table (IDs 0-8)
+        ION_SYSTEM_SYMBOLS = [
+            "$ion",              # 0
+            "$ion_1_0",          # 1
+            "$ion_symbol_table", # 2
+            "name",              # 3
+            "version",           # 4
+            "imports",           # 5
+            "symbols",           # 6
+            "max_id",            # 7
+            "$ion_shared_symbol_table",  # 8
+        ]
+
         def __init__(self, shared):
             self.shared = shared
             self.local_symbols = {}
@@ -122,13 +136,16 @@ def load_kfx_manual(filepath):
         def get_symbol(self, sid):
             # Check local symbols first
             if sid in self.local_symbols:
-                return self.local_symbols[sid]
+                return IonSymbol(self.local_symbols[sid])
+            # Ion system symbols (0-8)
+            if 0 <= sid < len(self.ION_SYSTEM_SYMBOLS):
+                return IonSymbol(self.ION_SYSTEM_SYMBOLS[sid])
             # YJ_SYMBOLS: symbol ID 10 is at index 0, ID 11 at index 1, etc.
             idx = sid - self.shared_base
             if 0 <= idx < len(self.shared.symbols):
                 sym = self.shared.symbols[idx]
-                return f"${sid}" if sym is None else sym
-            return f"${sid}"
+                return IonSymbol(f"${sid}" if sym is None else sym)
+            return IonSymbol(f"${sid}")
 
         def add_symbol(self, sid, name):
             self.local_symbols[sid] = name
@@ -347,6 +364,7 @@ def main():
     parser.add_argument("--text", "-t", help="Search for fragments containing this text (case-insensitive)")
     parser.add_argument("--compare", "-c", help="Compare with another KFX file")
     parser.add_argument("--summary", "-s", action="store_true", help="Only show summary, not full content")
+    parser.add_argument("--order", "-o", type=int, default=0, help="Show first N fragments in file order (e.g., --order 30)")
     args = parser.parse_args()
 
     if not Path(args.kfx_file).exists():
@@ -365,6 +383,11 @@ def main():
     print(f"\nFragment types:")
     for t, c in sorted(types.items()):
         print(f"  {t}: {c}")
+
+    if args.order > 0:
+        print(f"\nFragment order (first {args.order}):")
+        for i, frag in enumerate(frags1[:args.order]):
+            print(f"  {i:3}: {frag.ftype} ({frag.fid})")
 
     if args.compare:
         if not Path(args.compare).exists():

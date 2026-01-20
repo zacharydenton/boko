@@ -9,6 +9,25 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent))
 
 from kfx_dump import load_kfx, format_value
+from kfx_symbols import format_symbol, get_symbol_names
+
+
+def format_kfx_value(v):
+    """Format a KFX value with symbol names where applicable."""
+    if isinstance(v, str) and v.startswith('$') and v[1:].isdigit():
+        return format_symbol(v)
+    elif isinstance(v, dict):
+        # Format dict values recursively
+        parts = []
+        for dk, dv in v.items():
+            dk_fmt = format_symbol(dk) if isinstance(dk, str) and dk.startswith('$') else dk
+            dv_fmt = format_kfx_value(dv)
+            parts.append(f"{dk_fmt}: {dv_fmt}")
+        return "{" + ", ".join(parts) + "}"
+    elif isinstance(v, list):
+        return "[" + ", ".join(format_kfx_value(item) for item in v) + "]"
+    else:
+        return str(v)
 
 
 def ion_to_dict(ion_val):
@@ -105,10 +124,10 @@ def main():
     baseline_style = styles.get(baseline_style_id, {})
 
     print("=" * 80)
-    print(f"BASELINE STYLE (ID: {baseline_style_id}):")
+    print(f"BASELINE STYLE (ID: {format_symbol(baseline_style_id)}):")
     print("-" * 40)
     for k, v in sorted(baseline_style.items()):
-        print(f"  {k}: {v}")
+        print(f"  {format_symbol(k)}: {format_kfx_value(v)}")
     print()
 
     # Create mapping: CSS property -> KFX symbols that differ from baseline
@@ -164,7 +183,7 @@ def main():
     for kfx_key, css_list in sorted(by_kfx_key.items(), key=lambda x: str(x[0])):
         # Get the diffs from the first item
         diffs = css_list[0][1]
-        kfx_str = ", ".join(f"{k}={v}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
+        kfx_str = ", ".join(f"{format_symbol(k)}={format_kfx_value(v)}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
         print(f"KFX: {kfx_str}")
         for css, _ in css_list:
             print(f"  <- {css}")
@@ -178,8 +197,51 @@ def main():
     print()
 
     for css, diffs, style_id in mappings:
-        kfx_str = ", ".join(f"{k}={v}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
+        kfx_str = ", ".join(f"{format_symbol(k)}={format_kfx_value(v)}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
         print(f"{css:45} -> {kfx_str}")
+
+    # Collect all symbols used in styles and identify unknown ones
+    print()
+    print("=" * 80)
+    print("SYMBOL ANALYSIS")
+    print("=" * 80)
+    print()
+
+    known_symbols = get_symbol_names()
+    all_style_symbols = set()
+
+    def collect_symbols(obj):
+        if isinstance(obj, str) and obj.startswith('$') and obj[1:].isdigit():
+            all_style_symbols.add(obj)
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(k, str) and k.startswith('$') and k[1:].isdigit():
+                    all_style_symbols.add(k)
+                collect_symbols(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                collect_symbols(item)
+
+    for style in styles.values():
+        collect_symbols(style)
+
+    unknown_symbols = [s for s in sorted(all_style_symbols, key=lambda x: int(x[1:])) if s not in known_symbols]
+    known_used = [s for s in sorted(all_style_symbols, key=lambda x: int(x[1:])) if s in known_symbols]
+
+    print(f"Total unique symbols in styles: {len(all_style_symbols)}")
+    print(f"Known symbols: {len(known_used)}")
+    print(f"Unknown symbols: {len(unknown_symbols)}")
+    print()
+
+    if unknown_symbols:
+        print("UNKNOWN SYMBOLS (need to add to writer.rs):")
+        for sym in unknown_symbols:
+            print(f"  {sym}")
+        print()
+
+    print("Known symbols used:")
+    for sym in known_used:
+        print(f"  {format_symbol(sym)}")
 
 if __name__ == "__main__":
     main()
