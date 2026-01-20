@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-KFX Smart Diff - Compare KFX files by matching similar fragments.
+KFX Smart Diff - Compare KFX files with semantic understanding.
 
-Unlike kfx_diff.py which compares by fragment ID, this tool matches
-fragments by their content structure and shows meaningful differences.
+Compares KFX files by matching fragments based on content rather than IDs,
+since symbol IDs are arbitrary and differ between generators.
 
 Usage:
-    python scripts/kfx_smart_diff.py reference.kfx generated.kfx [--section SECTION]
+    python scripts/kfx_smart_diff.py file1.kfx file2.kfx [--section SECTION]
 """
 
 import sys
@@ -21,22 +21,41 @@ from kfx_loader import load_kfx
 from kfx_symbols import format_symbol
 
 
+# ANSI colors (disabled if not a tty)
+if sys.stdout.isatty():
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    CYAN = "\033[36m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+else:
+    GREEN = RED = YELLOW = CYAN = BOLD = RESET = ""
+
+
 def sym(s):
     """Format symbol with readable name."""
     return format_symbol(s)
 
 
-def get_text_content(frag):
-    """Extract text from a content fragment."""
+def unwrap_annotation(val):
+    """Unwrap IonAnnotation to get inner value."""
+    if hasattr(val, 'value') and hasattr(val, 'annotations'):
+        return val.value
+    return val
+
+
+def extract_pure_text(frag):
+    """Extract actual text strings from a fragment, ignoring symbol IDs."""
     texts = []
 
     def extract(val):
+        val = unwrap_annotation(val)
         if isinstance(val, str):
-            texts.append(val)
+            # Skip symbol-like strings
+            if not val.startswith('$') and len(val) > 1:
+                texts.append(val)
         elif hasattr(val, 'keys'):  # dict-like
-            # Check for text field ($144)
-            if "$144" in val:
-                texts.append(str(val["$144"]))
             for v in val.values():
                 extract(v)
         elif isinstance(val, (list, tuple)):
@@ -44,40 +63,39 @@ def get_text_content(frag):
                 extract(item)
 
     extract(frag.value)
-    return " ".join(texts)
+    return texts
 
 
-def get_style_name(frag):
-    """Get style name from style fragment."""
-    if isinstance(frag.value, dict):
-        return frag.value.get("$173", str(frag.fid))
-    return str(frag.fid)
+def get_style_properties(frag):
+    """Get style properties as a normalized dict for comparison."""
+    val = unwrap_annotation(frag.value)
+    if not hasattr(val, 'keys'):
+        return {}
+
+    props = {}
+    # Skip name/id fields, keep actual style properties
+    skip_keys = {'$173', '$176', 'version'}  # style name, content name
+
+    for k, v in val.items():
+        k_str = str(k)
+        if k_str not in skip_keys:
+            props[k_str] = v
+
+    return props
 
 
-def get_section_name(frag):
-    """Get section identifier."""
-    if isinstance(frag.value, dict):
-        # Try to get section name or content name
-        name = frag.value.get("$174") or frag.value.get("$176")
-        if name:
-            return str(name)
-    return str(frag.fid)
-
-
-def get_storyline_structure(frag):
-    """Get storyline content structure for matching."""
-    if not isinstance(frag.value, dict):
-        return ""
-
-    content = frag.value.get("$146", [])
-    structure = []
-
-    for item in content:
-        if isinstance(item, dict):
-            ctype = str(item.get("$159", "?"))
-            structure.append(ctype)
-
-    return "|".join(structure)
+def props_signature(props):
+    """Create a signature from style properties for matching."""
+    # Sort keys and create a hashable representation
+    items = []
+    for k in sorted(props.keys()):
+        v = props[k]
+        if hasattr(v, 'keys'):
+            # For nested dicts, just use the keys
+            items.append((k, tuple(sorted(str(x) for x in v.keys()))))
+        else:
+            items.append((k, str(v)[:50]))
+    return tuple(items)
 
 
 def similarity(s1, s2):
@@ -89,91 +107,32 @@ def similarity(s1, s2):
     return SequenceMatcher(None, s1, s2).ratio()
 
 
-def match_fragments_by_content(frags1, frags2, ftype):
-    """Match fragments of a type by content similarity."""
-    list1 = frags1.get_all(ftype)
-    list2 = frags2.get_all(ftype)
-
-    if not list1 or not list2:
-        return [], list1, list2
-
-    # Get content signatures based on fragment type
-    def get_signature(frag):
-        if ftype == "$157":  # Style
-            return get_style_name(frag)
-        elif ftype == "$259":  # Storyline
-            return get_storyline_structure(frag)
-        elif ftype == "$260":  # Section
-            return get_section_name(frag)
-        elif ftype == "$145":  # Text content
-            return get_text_content(frag)[:500]
-        elif ftype == "$266":  # Anchor
-            if isinstance(frag.value, dict):
-                if "$186" in frag.value:  # External URL
-                    return f"ext:{frag.value['$186']}"
-                elif "$183" in frag.value:  # Internal
-                    pos = frag.value["$183"]
-                    return f"int:{pos.get('$155', '?')}"
-            return str(frag.fid)
-        else:
-            return str(frag.value)[:200]
-
-    sigs1 = [(frag, get_signature(frag)) for frag in list1]
-    sigs2 = [(frag, get_signature(frag)) for frag in list2]
-
-    matched = []
-    used2 = set()
-    unmatched1 = []
-
-    for frag1, sig1 in sigs1:
-        best_match = None
-        best_score = 0.5  # Minimum threshold
-        best_idx = -1
-
-        for idx, (frag2, sig2) in enumerate(sigs2):
-            if idx in used2:
-                continue
-            score = similarity(sig1, sig2)
-            if score > best_score:
-                best_score = score
-                best_match = frag2
-                best_idx = idx
-
-        if best_match:
-            matched.append((frag1, best_match, best_score))
-            used2.add(best_idx)
-        else:
-            unmatched1.append(frag1)
-
-    unmatched2 = [frag for idx, (frag, _) in enumerate(sigs2) if idx not in used2]
-
-    return matched, unmatched1, unmatched2
-
-
-def format_value_compact(val, max_depth=3, max_len=100):
+def format_value_compact(val, max_depth=2, max_len=80):
     """Format value compactly for display."""
+    val = unwrap_annotation(val)
+
     if max_depth <= 0:
         return "..."
 
-    if isinstance(val, dict):
+    if hasattr(val, 'keys'):
         if not val:
             return "{}"
         items = []
-        for k, v in list(val.items())[:5]:
+        for k, v in list(val.items())[:4]:
             k_str = sym(k) if str(k).startswith("$") else str(k)
             v_str = format_value_compact(v, max_depth - 1, max_len // 2)
             items.append(f"{k_str}: {v_str}")
         result = "{ " + ", ".join(items)
-        if len(val) > 5:
-            result += f", ...+{len(val)-5}"
+        if len(val) > 4:
+            result += f", ...+{len(val)-4}"
         result += " }"
         return result[:max_len] + "..." if len(result) > max_len else result
 
-    elif isinstance(val, list):
+    elif isinstance(val, (list, tuple)):
         if not val:
             return "[]"
-        if len(val) <= 3:
-            items = [format_value_compact(v, max_depth - 1, max_len // 3) for v in val]
+        if len(val) <= 2:
+            items = [format_value_compact(v, max_depth - 1, max_len // 2) for v in val]
             return "[" + ", ".join(items) + "]"
         return f"[{len(val)} items]"
 
@@ -181,357 +140,288 @@ def format_value_compact(val, max_depth=3, max_len=100):
         return f"<{len(val)} bytes>"
 
     elif isinstance(val, str):
-        if len(val) > 50:
-            return f'"{val[:50]}..."'
+        if val.startswith('$'):
+            return sym(val)
+        if len(val) > 40:
+            return f'"{val[:40]}..."'
         return f'"{val}"'
 
-    elif str(val).startswith("$"):
-        return sym(val)
-
     else:
-        s = repr(val)
+        s = str(val)
+        if s.startswith('$'):
+            return sym(s)
         return s[:max_len] + "..." if len(s) > max_len else s
 
 
-def diff_values(val1, val2, path="", max_depth=5):
-    """Deep diff two values, returning list of differences."""
-    diffs = []
-
-    if max_depth <= 0:
-        if val1 != val2:
-            diffs.append((path, "differs", format_value_compact(val1), format_value_compact(val2)))
-        return diffs
-
-    if type(val1) != type(val2):
-        diffs.append((path, "type_diff", type(val1).__name__, type(val2).__name__))
-        return diffs
-
-    if isinstance(val1, dict):
-        all_keys = set(val1.keys()) | set(val2.keys())
-        for k in sorted(all_keys, key=str):
-            k_str = sym(k) if str(k).startswith("$") else str(k)
-            k_path = f"{path}.{k_str}" if path else k_str
-
-            if k not in val1:
-                diffs.append((k_path, "added", None, format_value_compact(val2[k])))
-            elif k not in val2:
-                diffs.append((k_path, "removed", format_value_compact(val1[k]), None))
-            elif val1[k] != val2[k]:
-                diffs.extend(diff_values(val1[k], val2[k], k_path, max_depth - 1))
-
-    elif isinstance(val1, list):
-        if len(val1) != len(val2):
-            diffs.append((path, "length", len(val1), len(val2)))
-        # Compare element by element up to min length
-        for i in range(min(len(val1), len(val2), 10)):  # Limit to first 10
-            if val1[i] != val2[i]:
-                diffs.extend(diff_values(val1[i], val2[i], f"{path}[{i}]", max_depth - 1))
-
-    elif val1 != val2:
-        diffs.append((path, "value", format_value_compact(val1), format_value_compact(val2)))
-
-    return diffs
-
-
-def print_fragment_diff(frag1, frag2, score, show_detail=True):
-    """Print differences between two matched fragments."""
-    fid1 = str(frag1.fid) if frag1.fid else "?"
-    fid2 = str(frag2.fid) if frag2.fid else "?"
-
-    print(f"\n  [{fid1}] <-> [{fid2}] (similarity: {score:.1%})")
-
-    if not show_detail:
-        return
-
-    diffs = diff_values(frag1.value, frag2.value)
-
-    if not diffs:
-        print("    (identical content)")
-        return
-
-    for path, diff_type, v1, v2 in diffs[:15]:  # Limit output
-        if diff_type == "added":
-            print(f"    + {path}: {v2}")
-        elif diff_type == "removed":
-            print(f"    - {path}: {v1}")
-        elif diff_type == "length":
-            print(f"    ~ {path}: {v1} items vs {v2} items")
-        elif diff_type == "type_diff":
-            print(f"    ! {path}: type {v1} vs {v2}")
-        else:
-            print(f"    ~ {path}:")
-            print(f"        ref: {v1}")
-            print(f"        gen: {v2}")
-
-    if len(diffs) > 15:
-        print(f"    ... and {len(diffs) - 15} more differences")
-
-
 def analyze_text_content(frags1, frags2):
-    """Analyze text content differences in detail."""
-    print("\n" + "=" * 70)
-    print(" TEXT CONTENT ANALYSIS ($145)")
-    print("=" * 70)
+    """Analyze text content differences."""
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" TEXT CONTENT ($145)")
+    print(f"{'=' * 70}{RESET}")
 
-    # Get all text from each file
+    # Extract pure text from each file
     texts1 = []
     texts2 = []
 
     for frag in frags1.get_all("$145"):
-        text = get_text_content(frag)
-        if text:
-            texts1.append((str(frag.fid), text))
+        texts1.extend(extract_pure_text(frag))
 
     for frag in frags2.get_all("$145"):
-        text = get_text_content(frag)
-        if text:
-            texts2.append((str(frag.fid), text))
+        texts2.extend(extract_pure_text(frag))
 
-    print(f"\n  Reference: {len(texts1)} text blocks")
-    print(f"  Generated: {len(texts2)} text blocks")
+    n1, n2 = len(frags1.get_all("$145")), len(frags2.get_all("$145"))
+    print(f"\n  Text blocks: {n1} vs {n2}", end="")
+    if n1 == n2:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {YELLOW}({n2-n1:+d}){RESET}")
 
     # Total character count
-    total1 = sum(len(t) for _, t in texts1)
-    total2 = sum(len(t) for _, t in texts2)
-    print(f"\n  Total chars: {total1:,} vs {total2:,}")
+    total1 = sum(len(t) for t in texts1)
+    total2 = sum(len(t) for t in texts2)
+    print(f"  Total text: {total1:,} vs {total2:,} chars", end="")
+    if abs(total1 - total2) < 100:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {YELLOW}({total2-total1:+d}){RESET}")
 
-    # Combine all text and compare
-    full1 = " ".join(t for _, t in texts1)
-    full2 = " ".join(t for _, t in texts2)
+    # Compare actual text content
+    full1 = " ".join(texts1)
+    full2 = " ".join(texts2)
 
     if full1 == full2:
-        print("\n  Text content is IDENTICAL")
+        print(f"\n  {GREEN}Text content is IDENTICAL{RESET}")
     else:
         sim = similarity(full1, full2)
-        print(f"\n  Overall text similarity: {sim:.1%}")
+        color = GREEN if sim > 0.99 else YELLOW if sim > 0.9 else RED
+        print(f"\n  Text similarity: {color}{sim:.1%}{RESET}")
 
         # Find first difference
         for i, (c1, c2) in enumerate(zip(full1, full2)):
             if c1 != c2:
-                context1 = full1[max(0, i-20):i+50]
-                context2 = full2[max(0, i-20):i+50]
-                print(f"\n  First difference at char {i}:")
-                print(f"    ref: ...{context1}...")
-                print(f"    gen: ...{context2}...")
+                ctx1 = full1[max(0, i-30):i+30]
+                ctx2 = full2[max(0, i-30):i+30]
+                print(f"\n  First diff at char {i}:")
+                print(f"    file1: ...{ctx1}...")
+                print(f"    file2: ...{ctx2}...")
                 break
-
-        if len(full1) != len(full2):
-            print(f"\n  Length difference: {len(full1)} vs {len(full2)} ({len(full2) - len(full1):+d})")
 
 
 def analyze_styles(frags1, frags2):
-    """Analyze style differences in detail."""
-    print("\n" + "=" * 70)
-    print(" STYLE ANALYSIS ($157)")
-    print("=" * 70)
+    """Analyze style differences by property content, not symbol IDs."""
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" STYLES ($157)")
+    print(f"{'=' * 70}{RESET}")
 
-    styles1 = {get_style_name(f): f for f in frags1.get_all("$157")}
-    styles2 = {get_style_name(f): f for f in frags2.get_all("$157")}
+    styles1 = [(frag, get_style_properties(frag)) for frag in frags1.get_all("$157")]
+    styles2 = [(frag, get_style_properties(frag)) for frag in frags2.get_all("$157")]
 
-    print(f"\n  Reference styles: {len(styles1)}")
-    print(f"  Generated styles: {len(styles2)}")
+    n1, n2 = len(styles1), len(styles2)
+    print(f"\n  Style count: {n1} vs {n2}", end="")
+    if n1 == n2:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {YELLOW}({n2-n1:+d}){RESET}")
 
-    common = set(styles1.keys()) & set(styles2.keys())
-    only1 = set(styles1.keys()) - set(styles2.keys())
-    only2 = set(styles2.keys()) - set(styles1.keys())
+    # Group styles by their property signature
+    sigs1 = defaultdict(list)
+    sigs2 = defaultdict(list)
 
-    print(f"\n  Common: {len(common)}")
-    print(f"  Only in reference: {len(only1)}")
-    print(f"  Only in generated: {len(only2)}")
+    for frag, props in styles1:
+        sig = props_signature(props)
+        sigs1[sig].append((frag, props))
+
+    for frag, props in styles2:
+        sig = props_signature(props)
+        sigs2[sig].append((frag, props))
+
+    common_sigs = set(sigs1.keys()) & set(sigs2.keys())
+    only1 = set(sigs1.keys()) - set(sigs2.keys())
+    only2 = set(sigs2.keys()) - set(sigs1.keys())
+
+    # Count styles by signature match
+    matched1 = sum(len(sigs1[sig]) for sig in common_sigs)
+    matched2 = sum(len(sigs2[sig]) for sig in common_sigs)
+
+    print(f"  Matching style signatures: {len(common_sigs)}")
+    print(f"  Unique to file1: {len(only1)} ({sum(len(sigs1[s]) for s in only1)} styles)")
+    print(f"  Unique to file2: {len(only2)} ({sum(len(sigs2[s]) for s in only2)} styles)")
 
     if only1:
-        print(f"\n  Missing from generated:")
-        for name in sorted(only1)[:10]:
-            print(f"    - {name}")
-        if len(only1) > 10:
-            print(f"    ... and {len(only1) - 10} more")
+        print(f"\n  {YELLOW}Styles only in file1:{RESET}")
+        shown = 0
+        for sig in list(only1)[:3]:
+            for frag, props in sigs1[sig][:1]:
+                print(f"    - {format_value_compact(props)}")
+                shown += 1
+        remaining = sum(len(sigs1[s]) for s in only1) - shown
+        if remaining > 0:
+            print(f"    ... and {remaining} more")
 
     if only2:
-        print(f"\n  Extra in generated:")
-        for name in sorted(only2)[:10]:
-            print(f"    + {name}")
-        if len(only2) > 10:
-            print(f"    ... and {len(only2) - 10} more")
-
-    # Compare common styles
-    different = []
-    for name in common:
-        s1 = styles1[name].value
-        s2 = styles2[name].value
-        if s1 != s2:
-            different.append(name)
-
-    if different:
-        print(f"\n  Styles with different properties: {len(different)}")
-        for name in sorted(different)[:5]:
-            print(f"\n    Style '{name}':")
-            diffs = diff_values(styles1[name].value, styles2[name].value)
-            for path, diff_type, v1, v2 in diffs[:5]:
-                if diff_type == "added":
-                    print(f"      + {path}: {v2}")
-                elif diff_type == "removed":
-                    print(f"      - {path}: {v1}")
-                else:
-                    print(f"      ~ {path}: {v1} -> {v2}")
+        print(f"\n  {YELLOW}Styles only in file2:{RESET}")
+        shown = 0
+        for sig in list(only2)[:3]:
+            for frag, props in sigs2[sig][:1]:
+                print(f"    + {format_value_compact(props)}")
+                shown += 1
+        remaining = sum(len(sigs2[s]) for s in only2) - shown
+        if remaining > 0:
+            print(f"    ... and {remaining} more")
 
 
 def analyze_sections(frags1, frags2):
-    """Analyze section structure differences."""
-    print("\n" + "=" * 70)
-    print(" SECTION STRUCTURE ANALYSIS ($260)")
-    print("=" * 70)
+    """Analyze section structure."""
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" SECTIONS ($260)")
+    print(f"{'=' * 70}{RESET}")
 
     sections1 = frags1.get_all("$260")
     sections2 = frags2.get_all("$260")
 
-    print(f"\n  Reference sections: {len(sections1)}")
-    print(f"  Generated sections: {len(sections2)}")
+    n1, n2 = len(sections1), len(sections2)
+    print(f"\n  Section count: {n1} vs {n2}", end="")
+    if n1 == n2:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {RED}({n2-n1:+d}){RESET}")
 
-    # Match by index (assuming same order)
+    # Compare section by section
     for i, (s1, s2) in enumerate(zip(sections1, sections2)):
-        print(f"\n  Section {i}:")
+        v1 = unwrap_annotation(s1.value)
+        v2 = unwrap_annotation(s2.value)
 
-        # Compare templates
-        t1 = s1.value.get("$141", [])
-        t2 = s2.value.get("$141", [])
+        # Compare template counts
+        t1 = v1.get("$141", []) if hasattr(v1, 'get') else []
+        t2 = v2.get("$141", []) if hasattr(v2, 'get') else []
 
         if len(t1) != len(t2):
-            print(f"    Template count: {len(t1)} vs {len(t2)}")
-
-        for j, (tpl1, tpl2) in enumerate(zip(t1, t2)):
-            if tpl1 != tpl2:
-                print(f"    Template {j} differs:")
-                diffs = diff_values(tpl1, tpl2)
-                for path, diff_type, v1, v2 in diffs[:3]:
-                    print(f"      {path}: {v1} -> {v2}")
+            print(f"\n  Section {i}: template count {len(t1)} vs {len(t2)}")
 
 
 def analyze_storylines(frags1, frags2):
-    """Analyze storyline/content block differences."""
-    print("\n" + "=" * 70)
-    print(" STORYLINE ANALYSIS ($259)")
-    print("=" * 70)
+    """Analyze storyline content."""
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" STORYLINES ($259)")
+    print(f"{'=' * 70}{RESET}")
 
     stories1 = frags1.get_all("$259")
     stories2 = frags2.get_all("$259")
 
-    print(f"\n  Reference storylines: {len(stories1)}")
-    print(f"  Generated storylines: {len(stories2)}")
+    n1, n2 = len(stories1), len(stories2)
+    print(f"\n  Storyline count: {n1} vs {n2}", end="")
+    if n1 == n2:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {RED}({n2-n1:+d}){RESET}")
 
-    # Match by content structure
-    matched, unmatched1, unmatched2 = match_fragments_by_content(frags1, frags2, "$259")
+    # Compare content item counts
+    def get_content_count(frag):
+        val = unwrap_annotation(frag.value)
+        if hasattr(val, 'get'):
+            content = val.get("$146", [])
+            return len(content)
+        return 0
 
-    print(f"\n  Matched: {len(matched)}")
-    print(f"  Unmatched in reference: {len(unmatched1)}")
-    print(f"  Unmatched in generated: {len(unmatched2)}")
+    total1 = sum(get_content_count(s) for s in stories1)
+    total2 = sum(get_content_count(s) for s in stories2)
 
-    # Show matched pairs with differences
-    for frag1, frag2, score in matched[:5]:
-        content1 = frag1.value.get("$146", [])
-        content2 = frag2.value.get("$146", [])
-
-        if len(content1) != len(content2):
-            print(f"\n  [{frag1.fid}] <-> [{frag2.fid}] (match: {score:.1%})")
-            print(f"    Content items: {len(content1)} vs {len(content2)}")
-
-            # Show content type breakdown
-            types1 = defaultdict(int)
-            types2 = defaultdict(int)
-            for item in content1:
-                types1[str(item.get("$159", "?"))] += 1
-            for item in content2:
-                types2[str(item.get("$159", "?"))] += 1
-
-            all_types = set(types1.keys()) | set(types2.keys())
-            for t in sorted(all_types):
-                c1, c2 = types1.get(t, 0), types2.get(t, 0)
-                if c1 != c2:
-                    print(f"      {sym(t)}: {c1} vs {c2}")
+    print(f"  Total content items: {total1} vs {total2}", end="")
+    if total1 == total2:
+        print(f" {GREEN}✓{RESET}")
+    else:
+        pct = abs(total2 - total1) / max(total1, 1) * 100
+        color = YELLOW if pct < 10 else RED
+        print(f" {color}({total2-total1:+d}, {pct:.1f}%){RESET}")
 
 
 def analyze_anchors(frags1, frags2):
     """Analyze anchor differences."""
-    print("\n" + "=" * 70)
-    print(" ANCHOR ANALYSIS ($266)")
-    print("=" * 70)
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" ANCHORS ($266)")
+    print(f"{'=' * 70}{RESET}")
 
     anchors1 = frags1.get_all("$266")
     anchors2 = frags2.get_all("$266")
 
     # Categorize anchors
-    ext1, int1 = [], []
-    ext2, int2 = [], []
+    def categorize(anchors):
+        ext, internal = [], []
+        for frag in anchors:
+            val = unwrap_annotation(frag.value)
+            if hasattr(val, 'get'):
+                if "$186" in val:
+                    ext.append(val["$186"])
+                elif "$183" in val:
+                    internal.append(val["$183"])
+        return ext, internal
 
-    for frag in anchors1:
-        if isinstance(frag.value, dict):
-            if "$186" in frag.value:
-                ext1.append(frag.value["$186"])
-            elif "$183" in frag.value:
-                int1.append(frag.value["$183"])
+    ext1, int1 = categorize(anchors1)
+    ext2, int2 = categorize(anchors2)
 
-    for frag in anchors2:
-        if isinstance(frag.value, dict):
-            if "$186" in frag.value:
-                ext2.append(frag.value["$186"])
-            elif "$183" in frag.value:
-                int2.append(frag.value["$183"])
+    print(f"\n  External anchors: {len(ext1)} vs {len(ext2)}", end="")
+    if len(ext1) == len(ext2):
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {YELLOW}({len(ext2)-len(ext1):+d}){RESET}")
 
-    print(f"\n  Reference: {len(ext1)} external, {len(int1)} internal = {len(anchors1)} total")
-    print(f"  Generated: {len(ext2)} external, {len(int2)} internal = {len(anchors2)} total")
+    print(f"  Internal anchors: {len(int1)} vs {len(int2)}", end="")
+    if len(int1) == len(int2):
+        print(f" {GREEN}✓{RESET}")
+    else:
+        print(f" {YELLOW}({len(int2)-len(int1):+d}){RESET}")
 
-    # Compare external URLs
+    # Check external URL coverage
     ext1_set = set(ext1)
     ext2_set = set(ext2)
 
-    common_ext = ext1_set & ext2_set
-    only_ref = ext1_set - ext2_set
-    only_gen = ext2_set - ext1_set
+    missing = ext1_set - ext2_set
+    extra = ext2_set - ext1_set
 
-    print(f"\n  External URLs:")
-    print(f"    Common: {len(common_ext)}")
-    print(f"    Only in reference: {len(only_ref)}")
-    print(f"    Only in generated: {len(only_gen)}")
+    if missing:
+        print(f"\n  {RED}External URLs only in file1:{RESET}")
+        for url in list(missing)[:3]:
+            print(f"    - {url[:60]}...")
 
-    if only_ref:
-        print(f"\n    Missing external links:")
-        for url in list(only_ref)[:5]:
-            print(f"      - {url[:70]}...")
-
-    if only_gen:
-        print(f"\n    Extra external links:")
-        for url in list(only_gen)[:5]:
-            print(f"      + {url[:70]}...")
-
-    # Difference in internal anchors
-    print(f"\n  Internal anchors: {len(int1)} vs {len(int2)} ({len(int2) - len(int1):+d})")
+    if extra:
+        print(f"\n  {YELLOW}External URLs only in file2:{RESET}")
+        for url in list(extra)[:3]:
+            print(f"    + {url[:60]}...")
 
 
 def smart_diff(file1, file2, sections=None):
     """Perform smart diff between two KFX files."""
-    print(f"Smart KFX Diff")
-    print(f"  Reference: {file1}")
-    print(f"  Generated: {file2}")
+    print(f"{BOLD}KFX Smart Diff{RESET}")
+    print(f"  File 1: {file1}")
+    print(f"  File 2: {file2}")
     print()
 
     frags1, method1 = load_kfx(file1)
     frags2, method2 = load_kfx(file2)
 
-    print(f"  Loaded reference: {len(frags1.all_fragments)} fragments ({method1})")
-    print(f"  Loaded generated: {len(frags2.all_fragments)} fragments ({method2})")
+    print(f"  Loaded: {len(frags1.all_fragments)} vs {len(frags2.all_fragments)} fragments")
 
     # Fragment count summary
-    print("\n" + "=" * 70)
-    print(" FRAGMENT COUNT SUMMARY")
-    print("=" * 70)
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" FRAGMENT SUMMARY")
+    print(f"{'=' * 70}{RESET}")
 
     all_types = sorted(set(frags1.types()) | set(frags2.types()))
+    matches = 0
     for ftype in all_types:
         c1 = frags1.count(ftype)
         c2 = frags2.count(ftype)
         diff = c2 - c1
-        marker = " " if c1 == c2 else ("+" if diff > 0 else "-")
-        diff_str = f"({diff:+d})" if diff != 0 else ""
-        print(f"  {marker} {sym(ftype)}: {c1} vs {c2} {diff_str}")
+
+        if c1 == c2:
+            marker = f"{GREEN}✓{RESET}"
+            matches += 1
+        else:
+            marker = f"{YELLOW}{diff:+d}{RESET}" if abs(diff) < 10 else f"{RED}{diff:+d}{RESET}"
+
+        print(f"  {sym(ftype):.<30} {c1:>4} vs {c2:<4} {marker}")
+
+    print(f"\n  {matches}/{len(all_types)} fragment types match exactly")
 
     if sections is None or "all" in sections:
         sections = ["text", "styles", "sections", "storylines", "anchors"]
@@ -551,30 +441,30 @@ def smart_diff(file1, file2, sections=None):
     if "anchors" in sections:
         analyze_anchors(frags1, frags2)
 
-    print("\n" + "=" * 70)
-    print(" ANALYSIS COMPLETE")
-    print("=" * 70)
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" COMPLETE")
+    print(f"{'=' * 70}{RESET}")
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Smart KFX diff with content matching")
-    parser.add_argument("reference", help="Reference KFX file")
-    parser.add_argument("generated", help="Generated KFX file to compare")
+    parser = argparse.ArgumentParser(description="Smart KFX diff with semantic matching")
+    parser.add_argument("file1", help="First KFX file")
+    parser.add_argument("file2", help="Second KFX file to compare")
     parser.add_argument("--section", "-s", action="append",
                         choices=["text", "styles", "sections", "storylines", "anchors", "all"],
                         help="Section(s) to analyze (default: all)")
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.reference):
-        print(f"Error: {args.reference} not found")
+    if not os.path.exists(args.file1):
+        print(f"Error: {args.file1} not found")
         sys.exit(1)
-    if not os.path.exists(args.generated):
-        print(f"Error: {args.generated} not found")
+    if not os.path.exists(args.file2):
+        print(f"Error: {args.file2} not found")
         sys.exit(1)
 
-    smart_diff(args.reference, args.generated, args.section)
+    smart_diff(args.file1, args.file2, args.section)
 
 
 if __name__ == "__main__":
