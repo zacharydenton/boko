@@ -371,11 +371,8 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
-    /// YJ_symbols has ~850 symbols, local IDs start after
-    /// Local symbol IDs start here. This is calculated as:
-    /// SYSTEM_SYMBOL_TABLE (9 symbols, IDs 0-8) + YJ_SYMBOLS (842 symbols, IDs 10-851) + 1 = 852
-    /// Must match kfxlib's ion_symbol_table.local_min_id calculation
-    const LOCAL_MIN_ID: u64 = 852;
+    /// Local symbol IDs start here (after YJ_symbols shared table)
+    const LOCAL_MIN_ID: u64 = 860;
 
     pub fn new() -> Self {
         Self {
@@ -895,20 +892,11 @@ impl KfxBookBuilder {
             add_entry("cde_content_type", IonValue::String("PDOC".to_string()));
 
             // Add cover_image reference if available
+            // IMPORTANT: cover_image value must be a Symbol (not String) matching the $164 resource fid
             if let Some(cover_href) = &book.metadata.cover_image {
-                // Find the cover in resources and reference it
-                let mut resource_index = 0;
-                for (href, resource) in &book.resources {
-                    if is_image_media_type(&resource.media_type) {
-                        if href == cover_href {
-                            add_entry(
-                                "cover_image",
-                                IonValue::String(format!("rsrc{resource_index}")),
-                            );
-                            break;
-                        }
-                        resource_index += 1;
-                    }
+                // Find the cover in resources and get its symbol
+                if let Some(&cover_sym) = self.resource_symbols.get(cover_href) {
+                    add_entry("cover_image", IonValue::Symbol(cover_sym));
                 }
             }
 
