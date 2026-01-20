@@ -464,8 +464,9 @@ pub struct KfxBookBuilder {
     anchor_symbols: HashMap<String, u64>,
     /// Map from XHTML path to section EID (for internal link targets)
     section_eids: HashMap<String, i64>,
-    /// Map from full anchor href (path#fragment) to content item EID (for TOC navigation)
-    anchor_eids: HashMap<String, i64>,
+    /// Map from full anchor href (path#fragment) to (EID, offset) for TOC navigation
+    /// For block-level IDs, offset is 0. For inline IDs, offset is character position.
+    anchor_eids: HashMap<String, (i64, i64)>,
 }
 
 impl KfxBookBuilder {
@@ -1182,29 +1183,29 @@ impl KfxBookBuilder {
                 (entry.href.as_str(), None)
             };
 
-            // Look up the EID for this entry:
-            // 1. If there's a fragment, try anchor_eids first (path#fragment → EID)
-            // 2. Fall back to section_eids (path → section start EID)
-            let eid = if fragment.is_some() {
+            // Look up the (EID, offset) for this entry:
+            // 1. If there's a fragment, try anchor_eids first (path#fragment → (EID, offset))
+            // 2. Fall back to section_eids (path → section start EID, offset 0)
+            let eid_offset = if fragment.is_some() {
                 // Try full href with fragment first
                 self.anchor_eids
                     .get(&entry.href)
                     .copied()
-                    .or_else(|| self.section_eids.get(path).copied())
+                    .or_else(|| self.section_eids.get(path).map(|&eid| (eid, 0)))
             } else {
-                self.section_eids.get(path).copied()
+                self.section_eids.get(path).map(|&eid| (eid, 0))
             };
 
-            if let Some(eid) = eid {
+            if let Some((eid, offset)) = eid_offset {
                 // Nav title: { $244 (text): "Entry Title" }
                 let mut nav_title = HashMap::new();
                 nav_title.insert(sym::TEXT, IonValue::String(entry.title.clone()));
 
-                // Nav target: { $155 (position/eid): eid, $143 (offset): 0 }
+                // Nav target: { $155 (position/eid): eid, $143 (offset): offset }
                 // IMPORTANT: Field order matters for Kindle - $155 must come before $143
                 let nav_target = IonValue::OrderedStruct(vec![
                     (sym::POSITION, IonValue::Int(eid)),
-                    (sym::OFFSET, IonValue::Int(0)),
+                    (sym::OFFSET, IonValue::Int(offset)),
                 ]);
 
                 // Nav entry struct: { $241: nav_title, $246: nav_target }
@@ -2538,17 +2539,28 @@ impl KfxBookBuilder {
             let mut content_eid = eid_base + 1;
 
             /// Recursively collect element_ids and their EIDs from content items
+            /// For block-level IDs, offset is 0. For inline IDs (merged text), offset is tracked.
             fn collect_anchor_eids_recursive(
                 item: &ContentItem,
                 content_eid: &mut i64,
                 source_path: &str,
-                anchor_eids: &mut HashMap<String, i64>,
+                anchor_eids: &mut HashMap<String, (i64, i64)>,
             ) {
                 match item {
-                    ContentItem::Text { element_id, .. } => {
+                    ContentItem::Text { element_id, inline_runs, .. } => {
+                        // Block-level element ID on the Text item itself
                         if let Some(id) = element_id {
                             let key = format!("{}#{}", source_path, id);
-                            anchor_eids.insert(key, *content_eid);
+                            anchor_eids.insert(key, (*content_eid, 0));
+                        }
+                        // Check inline runs for element IDs (from inline elements like <a id="...">)
+                        // The offset is the character position within the merged text
+                        for run in inline_runs {
+                            if let Some(ref id) = run.element_id {
+                                let key = format!("{}#{}", source_path, id);
+                                // Only insert if not already present (first occurrence wins)
+                                anchor_eids.entry(key).or_insert((*content_eid, run.offset as i64));
+                            }
                         }
                         *content_eid += 1;
                     }
@@ -2572,7 +2584,7 @@ impl KfxBookBuilder {
                         // Container gets EID after its children
                         if let Some(id) = element_id {
                             let key = format!("{}#{}", source_path, id);
-                            anchor_eids.insert(key, *content_eid);
+                            anchor_eids.insert(key, (*content_eid, 0));
                         }
                         *content_eid += 1;
                     }
@@ -2637,11 +2649,12 @@ impl KfxBookBuilder {
 
     /// Add anchor fragments ($266) for external URLs and internal links
     /// External: $180 (anchor ID) + $186 (external URL)
-    /// Internal: $180 (anchor ID) + $183 (position info with $155 EID)
-    /// Must be called AFTER build_anchor_symbols and build_section_eids
+    /// Internal: $180 (anchor ID) + $183 (position info with $155 EID, optional $143 offset)
+    /// Must be called AFTER build_anchor_symbols, build_section_eids, and build_anchor_eids
     fn add_anchor_fragments(&mut self) {
-        // Clone section_eids to avoid borrowing issues
+        // Clone maps to avoid borrowing issues
         let section_eids = self.section_eids.clone();
+        let anchor_eids = self.anchor_eids.clone();
 
         // Create anchor fragments for each registered href
         for (href, anchor_sym) in &self.anchor_symbols {
@@ -2654,19 +2667,41 @@ impl KfxBookBuilder {
                 anchor_struct.insert(sym::EXTERNAL_URL, IonValue::String(href.clone()));
             } else {
                 // Internal link: use $183 (POSITION_INFO) with $155 (EID)
-                // Strip fragment identifier (e.g., "endnotes.xhtml#note-1" -> "endnotes.xhtml")
-                let path_without_fragment = if let Some(hash_pos) = href.find('#') {
-                    &href[..hash_pos]
+                // For links with fragment identifiers (e.g., "endnotes.xhtml#note-1"),
+                // try to find the specific element's EID first, then fall back to section EID
+
+                let (path_without_fragment, has_fragment) = if let Some(hash_pos) = href.find('#') {
+                    (&href[..hash_pos], true)
                 } else {
-                    href.as_str()
+                    (href.as_str(), false)
                 };
-                // Try to find the target section EID
-                if let Some(&target_eid) = section_eids.get(path_without_fragment) {
-                    let mut pos_info = HashMap::new();
-                    pos_info.insert(sym::POSITION, IonValue::Int(target_eid));
-                    anchor_struct.insert(sym::POSITION_INFO, IonValue::Struct(pos_info));
+
+                // Try to find target (EID, offset):
+                // 1. If href has fragment, try anchor_eids (full href -> (EID, offset))
+                // 2. Fall back to section_eids (path -> (section start EID, 0))
+                let target = if has_fragment {
+                    anchor_eids
+                        .get(href)
+                        .copied()
+                        .or_else(|| section_eids.get(path_without_fragment).map(|&e| (e, 0)))
                 } else {
-                    // Target not found - still create anchor but without position
+                    section_eids.get(path_without_fragment).map(|&e| (e, 0))
+                };
+
+                if let Some((eid, offset)) = target {
+                    // Use OrderedStruct to ensure $155 comes before $143 (field order matters)
+                    // Include offset only if non-zero (kfxlib removes $143 when offset is 0)
+                    let pos_info = if offset > 0 {
+                        IonValue::OrderedStruct(vec![
+                            (sym::POSITION, IonValue::Int(eid)),
+                            (sym::OFFSET, IonValue::Int(offset)),
+                        ])
+                    } else {
+                        IonValue::OrderedStruct(vec![(sym::POSITION, IonValue::Int(eid))])
+                    };
+                    anchor_struct.insert(sym::POSITION_INFO, pos_info);
+                } else {
+                    // Target not found - skip this anchor
                     // This can happen for links to non-spine items
                     continue;
                 }
@@ -2969,6 +3004,9 @@ struct StyleRun {
     style: ParsedStyle,
     /// Optional anchor href for hyperlinks in this range
     anchor_href: Option<String>,
+    /// Optional element ID from inline element (e.g., <a id="noteref-1">)
+    /// Used for anchor targets (back-links)
+    element_id: Option<String>,
 }
 
 /// A content item - text, image, or nested container
@@ -3518,28 +3556,28 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
 /// Merge consecutive Text items into a single Text item with inline style runs
 /// This combines text spans that have different inline styles (bold, italic, etc.)
 /// into a single paragraph with style runs specifying which ranges have which styles.
-/// Anchor hrefs are tracked in the inline runs themselves, not on the merged item.
+/// Anchor hrefs and inline element IDs are tracked in the inline runs.
 fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
     if items.is_empty() {
         return items;
     }
 
     let mut result = Vec::new();
-    // Track pending texts: (text, style, anchor_href)
-    let mut pending_texts: Vec<(String, ParsedStyle, Option<String>)> = Vec::new();
+    // Track pending texts: (text, style, anchor_href, element_id)
+    let mut pending_texts: Vec<(String, ParsedStyle, Option<String>, Option<String>)> = Vec::new();
 
     // Helper to flush pending text items into a merged item
     fn flush_pending(
-        pending: &mut Vec<(String, ParsedStyle, Option<String>)>,
+        pending: &mut Vec<(String, ParsedStyle, Option<String>, Option<String>)>,
         result: &mut Vec<ContentItem>,
     ) {
         if pending.is_empty() {
             return;
         }
 
-        if pending.len() == 1 && pending[0].2.is_none() {
-            // Single text item with no anchor, no inline runs needed
-            let (text, style, _) = pending.remove(0);
+        if pending.len() == 1 && pending[0].2.is_none() && pending[0].3.is_none() {
+            // Single text item with no anchor and no element_id, no inline runs needed
+            let (text, style, _, _) = pending.remove(0);
             result.push(ContentItem::Text {
                 text,
                 style,
@@ -3548,7 +3586,7 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                 element_id: None, // Text merged from inline elements doesn't have its own ID
             });
         } else {
-            // Multiple text items OR has anchors - merge with inline style runs
+            // Multiple text items OR has anchors/element_ids - merge with inline style runs
             // Find the most common style to use as base (or use first item's style)
             let base_style = pending[0].1.clone();
 
@@ -3556,19 +3594,20 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
             let mut combined_text = String::new();
             let mut inline_runs = Vec::new();
 
-            for (text, style, anchor_href) in pending.drain(..) {
+            for (text, style, anchor_href, element_id) in pending.drain(..) {
                 let offset = combined_text.chars().count();
                 let length = text.chars().count();
 
-                // Determine if we need an inline run and what style to use
+                // Determine if we need an inline run
                 let style_differs = style != base_style;
                 let has_anchor = anchor_href.is_some();
+                let has_element_id = element_id.is_some();
 
-                if style_differs || has_anchor {
+                if style_differs || has_anchor || has_element_id {
                     // Determine the style for this run:
                     // - If style differs from base (bold, italic, etc.), use the full style
-                    // - If only anchor differs (plain link), use a minimal inline style
-                    let run_style = if !style_differs && has_anchor {
+                    // - If only anchor/element_id differs (plain link), use a minimal inline style
+                    let run_style = if !style_differs && (has_anchor || has_element_id) {
                         // Anchor-only run: create minimal inline style
                         // This matches reference behavior where links use $127: $349 only
                         ParsedStyle {
@@ -3585,6 +3624,7 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                         length,
                         style: run_style,
                         anchor_href,
+                        element_id,
                     });
                 }
 
@@ -3607,10 +3647,11 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                 text,
                 style,
                 anchor_href,
+                element_id,
                 ..
             } => {
-                // Don't split on anchor changes - just accumulate all text
-                pending_texts.push((text, style, anchor_href));
+                // Accumulate text with style, anchor, and element_id for inline anchor targets
+                pending_texts.push((text, style, anchor_href, element_id));
             }
             other => {
                 // Non-text item: flush any pending texts first
@@ -3793,6 +3834,32 @@ fn extract_content_from_xhtml(
                 }
 
                 // Non-block elements (span, a, em, strong, etc.) pass through children
+                // IMPORTANT: Propagate element_id to first child if this inline element has an ID
+                // This handles cases like <a id="noteref-1">2</a> where the anchor tag has an ID
+                // that needs to be preserved for back-links
+                if let Some(id) = element_id {
+                    if let Some(first) = children.first_mut() {
+                        match first {
+                            ContentItem::Text {
+                                element_id: child_id,
+                                ..
+                            } => {
+                                if child_id.is_none() {
+                                    *child_id = Some(id);
+                                }
+                            }
+                            ContentItem::Container {
+                                element_id: child_id,
+                                ..
+                            } => {
+                                if child_id.is_none() {
+                                    *child_id = Some(id);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 children
             }
             NodeData::Text(text) => {
@@ -5004,8 +5071,8 @@ mod tests {
 
         // Print anchor_eids mapping (first 20)
         println!("\n=== ANCHOR_EIDS (first 20) ===");
-        for (key, eid) in kfx.anchor_eids.iter().take(20) {
-            println!("  {} -> EID {}", key, eid);
+        for (key, (eid, offset)) in kfx.anchor_eids.iter().take(20) {
+            println!("  {} -> EID {} (offset {})", key, eid, offset);
         }
 
         // Print TOC hrefs (first 20)
@@ -5028,7 +5095,7 @@ mod tests {
         fn check_toc_matches(
             entries: &[crate::book::TocEntry],
             section_eids: &std::collections::HashMap<String, i64>,
-            anchor_eids: &std::collections::HashMap<String, i64>,
+            anchor_eids: &std::collections::HashMap<String, (i64, i64)>,
             count: &mut usize,
         ) {
             for entry in entries {
@@ -5042,13 +5109,13 @@ mod tests {
                     (entry.href.as_str(), None)
                 };
 
-                let eid = if fragment.is_some() {
+                let eid_offset = if fragment.is_some() {
                     anchor_eids
                         .get(&entry.href)
                         .copied()
-                        .or_else(|| section_eids.get(path).copied())
+                        .or_else(|| section_eids.get(path).map(|&e| (e, 0)))
                 } else {
-                    section_eids.get(path).copied()
+                    section_eids.get(path).map(|&e| (e, 0))
                 };
 
                 let source = if fragment.is_some() && anchor_eids.contains_key(&entry.href) {
@@ -5062,7 +5129,7 @@ mod tests {
                 println!(
                     "  {} -> {} (from {})",
                     entry.href,
-                    eid.map(|e| e.to_string()).unwrap_or("NONE".to_string()),
+                    eid_offset.map(|(e, o)| format!("EID {} offset {}", e, o)).unwrap_or("NONE".to_string()),
                     source
                 );
                 *count += 1;
@@ -7633,10 +7700,24 @@ mod image_tests {
             .filter(|f| !f.fid.starts_with("template-")) // Exclude page templates
             .filter_map(|f| {
                 if let IonValue::Struct(s) = &f.value {
-                    if let Some(IonValue::Struct(pos_info)) = s.get(&sym::POSITION_INFO) {
-                        if let Some(IonValue::Int(eid)) = pos_info.get(&sym::POSITION) {
-                            return Some(*eid);
+                    // Handle both Struct and OrderedStruct for position info
+                    let pos_info = s.get(&sym::POSITION_INFO)?;
+                    match pos_info {
+                        IonValue::Struct(pos_map) => {
+                            if let Some(IonValue::Int(eid)) = pos_map.get(&sym::POSITION) {
+                                return Some(*eid);
+                            }
                         }
+                        IonValue::OrderedStruct(fields) => {
+                            for (k, v) in fields {
+                                if *k == sym::POSITION {
+                                    if let IonValue::Int(eid) = v {
+                                        return Some(*eid);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 None
@@ -7660,6 +7741,145 @@ mod image_tests {
             unique_anchor_eids.len() >= 3,
             "Should have internal anchors pointing to at least 3 different content items, found {}",
             unique_anchor_eids.len()
+        );
+    }
+
+    #[test]
+    fn test_fragment_links_use_anchor_eids() {
+        // Internal links with fragment identifiers (e.g., "text/the-enchiridion.xhtml#the-enchiridion-1")
+        // should use anchor_eids to get the specific element's EID, not fall back to section_eids.
+        // This ensures TOC navigation and hyperlinks to fragments land on the correct element.
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Verify anchor_eids contains fragment hrefs
+        let fragment_anchors: Vec<_> = kfx
+            .anchor_eids
+            .iter()
+            .filter(|(k, _)| k.contains('#'))
+            .collect();
+
+        assert!(
+            !fragment_anchors.is_empty(),
+            "anchor_eids should contain fragment identifiers"
+        );
+
+        // Check specific TOC entry with fragment: "the-enchiridion-1"
+        let target_href = "text/the-enchiridion.xhtml#the-enchiridion-1";
+        let fragment_eid = kfx.anchor_eids.get(target_href);
+        let section_eid = kfx.section_eids.get("text/the-enchiridion.xhtml");
+
+        assert!(
+            fragment_eid.is_some(),
+            "anchor_eids should have entry for {}", target_href
+        );
+        assert!(
+            section_eid.is_some(),
+            "section_eids should have entry for base path"
+        );
+
+        // The fragment EID should be DIFFERENT from the section EID
+        // (fragment points to specific element within section)
+        let (fragment_eid, fragment_offset) = fragment_eid.unwrap();
+        let section_eid = *section_eid.unwrap();
+
+        assert_ne!(
+            *fragment_eid, section_eid,
+            "Fragment EID ({}) should differ from section EID ({})",
+            fragment_eid, section_eid
+        );
+
+        // Fragment EID should be greater than section EID
+        // (content items within section come after section entry)
+        assert!(
+            *fragment_eid > section_eid,
+            "Fragment EID ({}) should be > section EID ({})",
+            fragment_eid, section_eid
+        );
+
+        // Print the offset for debugging
+        println!("Fragment offset: {}", fragment_offset);
+
+        // Verify the TOC navigation entry uses the fragment EID, not section EID
+        // Find the book_navigation fragment and check the nav entries
+        let nav_fragment = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::BOOK_NAVIGATION);
+
+        assert!(nav_fragment.is_some(), "Should have book_navigation fragment");
+
+        // Look for nav entry with title "I" (first chapter in The Enchiridion)
+        fn find_nav_target_eid(nav_value: &IonValue, title: &str) -> Option<i64> {
+            match nav_value {
+                IonValue::List(entries) => {
+                    for entry in entries {
+                        if let Some(eid) = find_nav_target_eid(entry, title) {
+                            return Some(eid);
+                        }
+                    }
+                }
+                IonValue::Struct(s) => {
+                    // Check if this entry has the target title
+                    if let Some(IonValue::Struct(nav_title)) = s.get(&sym::NAV_TITLE) {
+                        if let Some(IonValue::String(text)) = nav_title.get(&sym::TEXT) {
+                            if text == title {
+                                // Found it! Get the target EID
+                                if let Some(nav_target) = s.get(&sym::NAV_TARGET) {
+                                    match nav_target {
+                                        IonValue::Struct(t) => {
+                                            if let Some(IonValue::Int(eid)) = t.get(&sym::POSITION) {
+                                                return Some(*eid);
+                                            }
+                                        }
+                                        IonValue::OrderedStruct(fields) => {
+                                            for (k, v) in fields {
+                                                if *k == sym::POSITION {
+                                                    if let IonValue::Int(eid) = v {
+                                                        return Some(*eid);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Recurse into nav_container_ref ($392) for nav containers
+                    if let Some(containers) = s.get(&sym::NAV_CONTAINER_REF) {
+                        if let Some(eid) = find_nav_target_eid(containers, title) {
+                            return Some(eid);
+                        }
+                    }
+                    // Recurse into nested entries
+                    if let Some(nested) = s.get(&sym::NAV_ENTRIES) {
+                        if let Some(eid) = find_nav_target_eid(nested, title) {
+                            return Some(eid);
+                        }
+                    }
+                }
+                IonValue::Annotated(_, inner) => {
+                    return find_nav_target_eid(inner, title);
+                }
+                _ => {}
+            }
+            None
+        }
+
+        let nav_eid = find_nav_target_eid(&nav_fragment.unwrap().value, "I");
+        assert!(
+            nav_eid.is_some(),
+            "Should find nav entry with title 'I'"
+        );
+
+        // The nav entry EID should match the fragment EID (not section EID)
+        assert_eq!(
+            nav_eid.unwrap(),
+            *fragment_eid,
+            "Nav entry for 'I' should use fragment EID {}, not section EID {}",
+            *fragment_eid, section_eid
         );
     }
 
