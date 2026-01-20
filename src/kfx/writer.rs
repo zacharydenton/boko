@@ -637,9 +637,9 @@ impl KfxBookBuilder {
         builder.add_document_data(&chapters, has_cover);
 
         // Get first content EID for landmarks (first chapter's first content item)
-        let first_content_eid = chapters.first().and_then(|ch| {
-            builder.section_eids.get(&ch.source_path).copied()
-        });
+        let first_content_eid = chapters
+            .first()
+            .and_then(|ch| builder.section_eids.get(&ch.source_path).copied());
         builder.add_book_navigation(&book.toc, has_cover, first_content_eid);
         builder.add_nav_unit_list();
 
@@ -1150,12 +1150,7 @@ impl KfxBookBuilder {
     }
 
     /// Build a landmark navigation entry
-    fn build_landmark_entry(
-        &self,
-        title: &str,
-        eid: i64,
-        landmark_type: Option<u64>,
-    ) -> IonValue {
+    fn build_landmark_entry(&self, title: &str, eid: i64, landmark_type: Option<u64>) -> IonValue {
         let mut nav_title = HashMap::new();
         nav_title.insert(sym::TEXT, IonValue::String(title.to_string()));
 
@@ -2263,7 +2258,12 @@ impl KfxBookBuilder {
             // Content block entries - recursively process all items including nested
             let mut content_eid = eid_base + 1;
             for content_item in &chapter.content {
-                add_entries_recursive(content_item, &mut content_eid, &mut char_offset, &mut entries);
+                add_entries_recursive(
+                    content_item,
+                    &mut content_eid,
+                    &mut char_offset,
+                    &mut entries,
+                );
             }
 
             // Advance eid_base: +1 for section entry + total_items for content
@@ -7869,7 +7869,8 @@ mod image_tests {
         };
 
         // Count how many times each EID appears
-        let mut eid_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let mut eid_counts: std::collections::HashMap<i64, usize> =
+            std::collections::HashMap::new();
         for entry in entries {
             // Location entries use OrderedStruct to preserve field order
             let eid = match entry {
@@ -8080,7 +8081,10 @@ mod image_tests {
             }
         }
 
-        println!("Position map EIDs (first 20): {:?}", &pos_map_eids[..20.min(pos_map_eids.len())]);
+        println!(
+            "Position map EIDs (first 20): {:?}",
+            &pos_map_eids[..20.min(pos_map_eids.len())]
+        );
 
         // LOCAL_MIN_ID = 860, so:
         // - Cover section EID = 860, cover content EID = 861
