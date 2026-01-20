@@ -1983,10 +1983,7 @@ impl KfxBookBuilder {
         content_ref.insert(sym::SECTION_WIDTH, IonValue::Int(width as i64));
         content_ref.insert(sym::SECTION_HEIGHT, IonValue::Int(height as i64));
         content_ref.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTAINER_INFO));
-        content_ref.insert(
-            sym::DEFAULT_TEXT_ALIGN,
-            IonValue::Symbol(sym::ALIGN_CENTER),
-        );
+        content_ref.insert(sym::DEFAULT_TEXT_ALIGN, IonValue::Symbol(sym::ALIGN_CENTER));
         content_ref.insert(sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE));
 
         let mut section = HashMap::new();
@@ -2168,7 +2165,12 @@ impl KfxBookBuilder {
                         // Containers: process children FIRST (children-first EID order),
                         // then add entry for the container itself
                         for child in children {
-                            add_entries_recursive(child, content_eid, char_offset, location_entries);
+                            add_entries_recursive(
+                                child,
+                                content_eid,
+                                char_offset,
+                                location_entries,
+                            );
                         }
                         // Now add the container's entry with current offset
                         let mut entry = HashMap::new();
@@ -4437,19 +4439,19 @@ mod tests {
         let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
 
         // Verify the book has a hierarchical TOC structure
-        assert!(
-            book.toc.len() > 0,
-            "Book should have TOC entries"
-        );
+        assert!(book.toc.len() > 0, "Book should have TOC entries");
 
         // Count total TOC entries including children
         fn count_toc_entries(entries: &[crate::book::TocEntry]) -> usize {
-            entries.iter().fold(0, |acc, e| {
-                acc + 1 + count_toc_entries(&e.children)
-            })
+            entries
+                .iter()
+                .fold(0, |acc, e| acc + 1 + count_toc_entries(&e.children))
         }
         let total_toc_entries = count_toc_entries(&book.toc);
-        println!("Total TOC entries (including nested): {}", total_toc_entries);
+        println!(
+            "Total TOC entries (including nested): {}",
+            total_toc_entries
+        );
 
         // Build KFX
         let kfx = KfxBookBuilder::from_book(&book);
@@ -4494,10 +4496,7 @@ mod tests {
 
                     // Verify nav type is TOC ($212)
                     if let Some(IonValue::Symbol(nav_type)) = toc_struct.get(&sym::NAV_TYPE) {
-                        assert_eq!(
-                            *nav_type, sym::TOC,
-                            "Nav type should be $212 (TOC)"
-                        );
+                        assert_eq!(*nav_type, sym::TOC, "Nav type should be $212 (TOC)");
                     }
 
                     // Check nav entries ($247)
@@ -4505,10 +4504,7 @@ mod tests {
                         println!("KFX nav entries: {}", nav_entries.len());
 
                         // We should have nav entries for each TOC entry that maps to a valid section
-                        assert!(
-                            nav_entries.len() > 0,
-                            "Should have at least one nav entry"
-                        );
+                        assert!(nav_entries.len() > 0, "Should have at least one nav entry");
 
                         // Verify each nav entry has the required structure
                         for (i, entry) in nav_entries.iter().enumerate() {
@@ -4655,12 +4651,24 @@ mod tests {
         assert_eq!(sym::BACKGROUND_COLOR, 21, "BACKGROUND_COLOR should be $21");
         assert_eq!(sym::OPACITY, 72, "OPACITY should be $72");
         assert_eq!(sym::SPACE_AFTER, 49, "SPACE_AFTER should be $49");
-        assert_eq!(sym::CELL_PADDING_RIGHT, 53, "CELL_PADDING_RIGHT should be $53");
-        assert_eq!(sym::CELL_PADDING_LEFT, 55, "CELL_PADDING_LEFT should be $55");
+        assert_eq!(
+            sym::CELL_PADDING_RIGHT,
+            53,
+            "CELL_PADDING_RIGHT should be $53"
+        );
+        assert_eq!(
+            sym::CELL_PADDING_LEFT,
+            55,
+            "CELL_PADDING_LEFT should be $55"
+        );
         assert_eq!(sym::CELL_ALIGN, 633, "CELL_ALIGN should be $633");
         assert_eq!(sym::IMAGE_FIT_NONE, 378, "IMAGE_FIT_NONE should be $378");
         // Verify legacy alias points to correct value
-        assert_eq!(sym::MARGIN_BOTTOM, sym::SPACE_AFTER, "MARGIN_BOTTOM should alias SPACE_AFTER");
+        assert_eq!(
+            sym::MARGIN_BOTTOM,
+            sym::SPACE_AFTER,
+            "MARGIN_BOTTOM should alias SPACE_AFTER"
+        );
     }
 
     #[test]
@@ -4669,7 +4677,11 @@ mod tests {
         let mut book = crate::book::Book::default();
         book.metadata.title = "Test".to_string();
         let content = r#"<html><body><p style="background-color: red;">Test</p></body></html>"#;
-        book.add_resource("test.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+        book.add_resource(
+            "test.xhtml",
+            content.as_bytes().to_vec(),
+            "application/xhtml+xml",
+        );
         book.add_spine_item("test", "test.xhtml", "application/xhtml+xml");
 
         let kfx = KfxBookBuilder::from_book(&book);
@@ -4700,7 +4712,11 @@ mod tests {
         let mut book = crate::book::Book::default();
         book.metadata.title = "Test".to_string();
         let content = r#"<html><body><p style="margin-bottom: 2em;">Test</p></body></html>"#;
-        book.add_resource("test.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+        book.add_resource(
+            "test.xhtml",
+            content.as_bytes().to_vec(),
+            "application/xhtml+xml",
+        );
         book.add_spine_item("test", "test.xhtml", "application/xhtml+xml");
 
         let kfx = KfxBookBuilder::from_book(&book);
@@ -4727,7 +4743,6 @@ mod tests {
         // Verify the symbol value is 49
         assert_eq!(sym::MARGIN_BOTTOM, 49);
     }
-
 }
 
 #[cfg(test)]
@@ -5209,10 +5224,7 @@ mod image_tests {
         let cover_sym = cover_section_sym.unwrap();
 
         // Check $258 (METADATA) reading order
-        let metadata_258 = kfx
-            .fragments
-            .iter()
-            .find(|f| f.ftype == sym::METADATA);
+        let metadata_258 = kfx.fragments.iter().find(|f| f.ftype == sym::METADATA);
         assert!(metadata_258.is_some(), "Should have $258 metadata fragment");
 
         if let Some(fragment) = metadata_258 {
@@ -5220,10 +5232,7 @@ mod image_tests {
                 if let Some(IonValue::List(reading_orders)) = metadata.get(&sym::READING_ORDERS) {
                     if let Some(IonValue::Struct(ro)) = reading_orders.first() {
                         if let Some(IonValue::List(sections)) = ro.get(&sym::SECTIONS_LIST) {
-                            assert!(
-                                !sections.is_empty(),
-                                "Sections list should not be empty"
-                            );
+                            assert!(!sections.is_empty(), "Sections list should not be empty");
                             // First section should be cover
                             if let Some(IonValue::Symbol(first_sym)) = sections.first() {
                                 assert_eq!(
@@ -5238,21 +5247,18 @@ mod image_tests {
         }
 
         // Check $538 (DOCUMENT_DATA) reading order
-        let doc_data = kfx
-            .fragments
-            .iter()
-            .find(|f| f.ftype == sym::DOCUMENT_DATA);
-        assert!(doc_data.is_some(), "Should have $538 document data fragment");
+        let doc_data = kfx.fragments.iter().find(|f| f.ftype == sym::DOCUMENT_DATA);
+        assert!(
+            doc_data.is_some(),
+            "Should have $538 document data fragment"
+        );
 
         if let Some(fragment) = doc_data {
             if let IonValue::Struct(data) = &fragment.value {
                 if let Some(IonValue::List(reading_orders)) = data.get(&sym::READING_ORDERS) {
                     if let Some(IonValue::Struct(ro)) = reading_orders.first() {
                         if let Some(IonValue::List(sections)) = ro.get(&sym::SECTIONS_LIST) {
-                            assert!(
-                                !sections.is_empty(),
-                                "Sections list should not be empty"
-                            );
+                            assert!(!sections.is_empty(), "Sections list should not be empty");
                             // First section should be cover
                             if let Some(IonValue::Symbol(first_sym)) = sections.first() {
                                 assert_eq!(

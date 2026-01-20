@@ -225,7 +225,8 @@ fn test_kfx_structure_matches_reference() {
     );
 
     assert!(
-        stdout.contains("para_structure_match: true") || stdout.contains("para_structure_match:true"),
+        stdout.contains("para_structure_match: true")
+            || stdout.contains("para_structure_match:true"),
         "Generated KFX should have similar paragraph structure as reference.\n{}",
         stdout
     );
