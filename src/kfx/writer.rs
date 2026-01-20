@@ -59,24 +59,27 @@ pub mod sym {
     // Margin/padding (note: $47 is shared between margin-top/bottom and spacing)
     pub const SPACE_BEFORE: u64 = 47; // $47 - margin-top/space-before (multiplier)
     pub const MARGIN_LEFT: u64 = 48; // $48 - margin-left and padding-left (percent)
-    pub const SPACE_BEFORE_LINE_HEIGHT: u64 = 49; // $49 - space-before-line-height
+    pub const SPACE_AFTER: u64 = 49; // $49 - margin-bottom/space-after (multiplier)
     pub const MARGIN_RIGHT: u64 = 50; // $50 - margin-right and padding-right (percent)
     pub const PADDING_TOP: u64 = 52; // $52 - padding-top (multiplier)
+    pub const CELL_PADDING_RIGHT: u64 = 53; // $53 - table cell padding-right
     pub const PADDING_BOTTOM: u64 = 54; // $54 - padding-bottom (multiplier)
+    pub const CELL_PADDING_LEFT: u64 = 55; // $55 - table cell padding-left
 
     // Dimensions
     pub const STYLE_WIDTH: u64 = 56; // $56 - width in style
     pub const STYLE_HEIGHT: u64 = 57; // $57 - height in style
     pub const MAX_WIDTH: u64 = 65; // $65 - max-width (for em widths)
+    pub const OPACITY: u64 = 72; // $72 - opacity (0.0-1.0 decimal)
 
     // Legacy aliases for compatibility (will be removed)
     pub const MARGIN_TOP: u64 = 47; // alias for SPACE_BEFORE
-    pub const MARGIN_BOTTOM: u64 = 47; // alias for SPACE_BEFORE (same property)
+    pub const MARGIN_BOTTOM: u64 = 49; // alias for SPACE_AFTER
     pub const PADDING_LEFT: u64 = 48; // alias for MARGIN_LEFT
     pub const PADDING_RIGHT: u64 = 50; // alias for MARGIN_RIGHT
 
     // Background
-    pub const BACKGROUND_COLOR: u64 = 272; // $272 - background color
+    pub const BACKGROUND_COLOR: u64 = 21; // $21 - background color
 
     // ==========================================================================
     // UNIT TYPES ($306 values)
@@ -96,6 +99,11 @@ pub mod sym {
     pub const ALIGN_RIGHT: u64 = 61; // $61 - text-align: right
     pub const ALIGN_CENTER: u64 = 320; // $320 - text-align: center
     pub const ALIGN_JUSTIFY: u64 = 321; // $321 - text-align: justify
+
+    // ==========================================================================
+    // TABLE CELL ALIGNMENT
+    // ==========================================================================
+    pub const CELL_ALIGN: u64 = 633; // $633 - table cell alignment
 
     // ==========================================================================
     // FONT WEIGHT VALUES ($13)
@@ -143,6 +151,7 @@ pub mod sym {
     // ==========================================================================
     pub const IMAGE_FIT: u64 = 546; // $546 - image fit mode
     pub const IMAGE_FIT_CONTAIN: u64 = 377; // $377 - contain fit mode
+    pub const IMAGE_FIT_NONE: u64 = 378; // $378 - image fit: none (baseline)
     pub const IMAGE_LAYOUT: u64 = 580; // $580 - image/block layout
 
     // Block type symbols
@@ -4624,6 +4633,85 @@ mod tests {
         } else {
             panic!("Book navigation should be a list");
         }
+    }
+
+    #[test]
+    fn test_symbol_values_correct() {
+        // Verify the new symbol constants have the correct values per CSS-to-KFX mapping analysis
+        assert_eq!(sym::BACKGROUND_COLOR, 21, "BACKGROUND_COLOR should be $21");
+        assert_eq!(sym::OPACITY, 72, "OPACITY should be $72");
+        assert_eq!(sym::SPACE_AFTER, 49, "SPACE_AFTER should be $49");
+        assert_eq!(sym::CELL_PADDING_RIGHT, 53, "CELL_PADDING_RIGHT should be $53");
+        assert_eq!(sym::CELL_PADDING_LEFT, 55, "CELL_PADDING_LEFT should be $55");
+        assert_eq!(sym::CELL_ALIGN, 633, "CELL_ALIGN should be $633");
+        assert_eq!(sym::IMAGE_FIT_NONE, 378, "IMAGE_FIT_NONE should be $378");
+        // Verify legacy alias points to correct value
+        assert_eq!(sym::MARGIN_BOTTOM, sym::SPACE_AFTER, "MARGIN_BOTTOM should alias SPACE_AFTER");
+    }
+
+    #[test]
+    fn test_background_color_serialization() {
+        // Test that background-color is serialized with the correct symbol ($21)
+        let mut book = crate::book::Book::default();
+        book.metadata.title = "Test".to_string();
+        let content = r#"<html><body><p style="background-color: red;">Test</p></body></html>"#;
+        book.add_resource("test.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+        book.add_spine_item("test", "test.xhtml", "application/xhtml+xml");
+
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find styles that have $21 (BACKGROUND_COLOR)
+        let styles_with_bg: Vec<_> = kfx
+            .fragments
+            .iter()
+            .filter(|f| f.ftype == sym::STYLE)
+            .filter(|f| {
+                if let IonValue::Struct(s) = &f.value {
+                    s.contains_key(&sym::BACKGROUND_COLOR)
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        assert!(
+            !styles_with_bg.is_empty(),
+            "Should have at least one style with background-color ($21)"
+        );
+    }
+
+    #[test]
+    fn test_margin_bottom_uses_space_after_symbol() {
+        // Test that margin-bottom is serialized using SPACE_AFTER ($49)
+        let mut book = crate::book::Book::default();
+        book.metadata.title = "Test".to_string();
+        let content = r#"<html><body><p style="margin-bottom: 2em;">Test</p></body></html>"#;
+        book.add_resource("test.xhtml", content.as_bytes().to_vec(), "application/xhtml+xml");
+        book.add_spine_item("test", "test.xhtml", "application/xhtml+xml");
+
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find styles that have $49 (SPACE_AFTER / MARGIN_BOTTOM)
+        let styles_with_margin_bottom: Vec<_> = kfx
+            .fragments
+            .iter()
+            .filter(|f| f.ftype == sym::STYLE)
+            .filter(|f| {
+                if let IonValue::Struct(s) = &f.value {
+                    s.contains_key(&sym::MARGIN_BOTTOM) // Which is now 49
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        assert!(
+            !styles_with_margin_bottom.is_empty(),
+            "Should have at least one style with margin-bottom using $49 (SPACE_AFTER)"
+        );
+
+        // Verify the symbol value is 49
+        assert_eq!(sym::MARGIN_BOTTOM, 49);
     }
 
 }
