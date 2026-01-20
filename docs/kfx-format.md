@@ -79,20 +79,28 @@ Kindle Previewer generates additional style properties that we don't:
 
 | Symbol | Property | Description |
 |--------|----------|-------------|
-| `$546` | image-fit | Added to all styles with value `$378` (none) |
 | `$761` | unknown | List property `['$760']` |
 | `$788`, `$135` | unknown | Kindle-specific flags |
+| `$353` | unknown | Possibly vertical-align related |
 
 ### Impact
-These differences do not affect rendering. Kindle devices/apps handle both approaches correctly. Style counts now match (63 vs 63 for epictetus.epub).
+These differences do not affect rendering. Kindle devices/apps handle both approaches correctly.
 
-## Anchor Differences
+## Known Differences from Kindle Previewer
 
-We generate more internal anchors than Kindle Previewer:
-- **Ours**: ~263 anchors (more inline element IDs tracked)
-- **Kindle Previewer**: ~207 anchors
+### Structural Counts (epictetus.epub)
+These counts match Kindle Previewer output:
+- TEXT_CONTENT: 13 vs 13
+- STYLES: 63 vs 63
+- SECTIONS: 8 vs 8
+- STORYLINES: 8 vs 8
 
-This is because we create anchors for all elements with `id` attributes, while Kindle Previewer may optimize these.
+### Anchors
+We generate more internal anchors than Kindle Previewer (~263 vs ~207). We create anchors for all elements with `id` attributes, while Kindle Previewer optimizes these.
+
+### Images
+- We preserve original image formats (PNG, GIF) while Kindle Previewer may convert to JPEG
+- Image dimensions and quality are preserved
 
 ## Symbol Table
 
@@ -121,6 +129,7 @@ Key metrics that should match:
 - External anchor URLs
 
 Acceptable differences:
-- Style count (different deduplication strategies)
 - Internal anchor count (different ID tracking)
+- Image formats (we preserve originals, Kindle may convert)
 - Symbol IDs (arbitrary, file-specific)
+- Kindle-specific style properties ($760, $761, etc.)
