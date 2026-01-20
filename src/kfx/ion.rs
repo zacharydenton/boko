@@ -69,6 +69,9 @@ pub enum IonValue {
     Blob(Vec<u8>),
     List(Vec<IonValue>),
     Struct(HashMap<u64, IonValue>),
+    /// Ordered struct that preserves field insertion order
+    /// Used for navigation targets where field order matters ($155 before $143)
+    OrderedStruct(Vec<(u64, IonValue)>),
     /// Annotated value: (annotation symbol IDs, inner value)
     Annotated(Vec<u64>, Box<IonValue>),
     /// Raw decimal bytes (type code 0x5X will be computed from length)
@@ -377,6 +380,7 @@ impl IonWriter {
             IonValue::Blob(data) => self.write_blob(data),
             IonValue::List(items) => self.write_list(items),
             IonValue::Struct(fields) => self.write_struct(fields),
+            IonValue::OrderedStruct(fields) => self.write_ordered_struct(fields),
             IonValue::Annotated(annotations, inner) => self.write_annotated(annotations, inner),
             IonValue::Decimal(bytes) => self.write_decimal(bytes),
         }
@@ -470,13 +474,28 @@ impl IonWriter {
         // Serialize fields to temp buffer
         let mut inner = IonWriter::new();
 
-        // Sort keys in ascending order (matches Kindle reference files)
+        // Sort keys in ascending order
         let mut keys: Vec<_> = fields.keys().collect();
         keys.sort();
 
         for &key in &keys {
             inner.write_varuint(*key);
             inner.write_value(&fields[key]);
+        }
+        let inner_bytes = inner.into_bytes();
+
+        self.write_type_descriptor(13, inner_bytes.len());
+        self.buffer.extend_from_slice(&inner_bytes);
+    }
+
+    /// Write ordered struct value (preserves field order)
+    /// Used for navigation targets where Kindle expects specific field order
+    pub fn write_ordered_struct(&mut self, fields: &[(u64, IonValue)]) {
+        let mut inner = IonWriter::new();
+
+        for (key, value) in fields {
+            inner.write_varuint(*key);
+            inner.write_value(value);
         }
         let inner_bytes = inner.into_bytes();
 
@@ -839,6 +858,18 @@ mod tests {
                 }
             }
             IonValue::Struct(fields) => {
+                let inner: Vec<_> = fields
+                    .iter()
+                    .take(15)
+                    .map(|(k, v)| format!("${}:{}", k, summarize_value(v, depth + 1)))
+                    .collect();
+                if fields.len() > 15 {
+                    format!("{{{}, ... +{}}}", inner.join(", "), fields.len() - 15)
+                } else {
+                    format!("{{{}}}", inner.join(", "))
+                }
+            }
+            IonValue::OrderedStruct(fields) => {
                 let inner: Vec<_> = fields
                     .iter()
                     .take(15)

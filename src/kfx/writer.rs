@@ -189,7 +189,9 @@ pub mod sym {
     pub const COUNT: u64 = 144; // $144 - count/length
     pub const NAV_TYPE: u64 = 235; // $235 - navigation type
     pub const TOC: u64 = 212; // $212 - table of contents nav type
+    pub const LANDMARKS_NAV_TYPE: u64 = 236; // $236 - landmarks navigation type value
     pub const LANDMARKS: u64 = 237; // $237 - landmarks
+    pub const LANDMARK_TYPE: u64 = 238; // $238 - landmark type field
     pub const NAV_ID: u64 = 239; // $239 - nav container id reference
     pub const NAV_UNIT_REF: u64 = 240; // $240 - nav unit reference
     pub const NAV_TITLE: u64 = 241; // $241 - navigation title struct
@@ -232,7 +234,9 @@ pub mod sym {
     pub const LAYOUT_FULL_PAGE: u64 = 326; // $326 - full page layout value
 
     // Value/metadata symbols
+    pub const LANDMARK_COVER: u64 = 233; // $233 - cover landmark type
     pub const DEFAULT_READING_ORDER: u64 = 351; // $351 - default reading order name
+    pub const LANDMARK_BODYMATTER: u64 = 396; // $396 - bodymatter landmark type
 
     // Navigation fragment symbols
     pub const BOOK_NAVIGATION: u64 = 389; // $389 - book navigation fragment type
@@ -368,7 +372,10 @@ pub struct SymbolTable {
 
 impl SymbolTable {
     /// YJ_symbols has ~850 symbols, local IDs start after
-    const LOCAL_MIN_ID: u64 = 860;
+    /// Local symbol IDs start here. This is calculated as:
+    /// SYSTEM_SYMBOL_TABLE (9 symbols, IDs 0-8) + YJ_SYMBOLS (842 symbols, IDs 10-851) + 1 = 852
+    /// Must match kfxlib's ion_symbol_table.local_min_id calculation
+    const LOCAL_MIN_ID: u64 = 852;
 
     pub fn new() -> Self {
         Self {
@@ -460,6 +467,8 @@ pub struct KfxBookBuilder {
     anchor_symbols: HashMap<String, u64>,
     /// Map from XHTML path to section EID (for internal link targets)
     section_eids: HashMap<String, i64>,
+    /// Map from full anchor href (path#fragment) to content item EID (for TOC navigation)
+    anchor_eids: HashMap<String, i64>,
 }
 
 impl KfxBookBuilder {
@@ -474,6 +483,7 @@ impl KfxBookBuilder {
             section_to_resource: Vec::new(),
             anchor_symbols: HashMap::new(),
             section_eids: HashMap::new(),
+            anchor_eids: HashMap::new(),
         }
     }
 
@@ -615,6 +625,9 @@ impl KfxBookBuilder {
         // 3. Build section EID mapping first (needed for TOC navigation)
         builder.build_section_eids(&chapters, book.metadata.cover_image.is_some());
 
+        // 3.5 Build anchor EID mapping for TOC entries with fragment IDs
+        builder.build_anchor_eids(&chapters, book.metadata.cover_image.is_some());
+
         // 4. Build all fragments
         let has_cover = book.metadata.cover_image.is_some();
 
@@ -622,7 +635,12 @@ impl KfxBookBuilder {
         builder.add_metadata(book);
         builder.add_reading_order_metadata(&chapters, has_cover);
         builder.add_document_data(&chapters, has_cover);
-        builder.add_book_navigation(&book.toc);
+
+        // Get first content EID for landmarks (first chapter's first content item)
+        let first_content_eid = chapters.first().and_then(|ch| {
+            builder.section_eids.get(&ch.source_path).copied()
+        });
+        builder.add_book_navigation(&book.toc, has_cover, first_content_eid);
         builder.add_nav_unit_list();
 
         // 4. Collect all unique styles and add them as P157 fragments
@@ -690,9 +708,11 @@ impl KfxBookBuilder {
         }
 
         // Add position/location maps
-        builder.add_position_map(&chapters);
-        builder.add_position_id_map(&chapters);
-        builder.add_location_map(&chapters);
+        // CRITICAL: Must pass has_cover to correctly calculate EID bases after cover section
+        let has_cover = book.metadata.cover_image.is_some();
+        builder.add_position_map(&chapters, has_cover);
+        builder.add_position_id_map(&chapters, has_cover);
+        builder.add_location_map(&chapters, has_cover);
 
         // Add page templates (P266) for position tracking
         builder.add_page_templates(&chapters, book.metadata.cover_image.is_some());
@@ -1050,27 +1070,70 @@ impl KfxBookBuilder {
     ///
     /// Creates a complete TOC navigation structure with:
     /// - Reading order reference
-    /// - Nav container with type=toc
+    /// - Nav container with type=toc ($212)
+    /// - Nav container with type=landmarks ($236)
     /// - Nav entries with titles and section targets (using EIDs from section_eids map)
-    fn add_book_navigation(&mut self, toc: &[crate::book::TocEntry]) {
-        // Create nav container ID
-        let nav_container_id = "nav-toc";
-        let nav_container_sym = self.symtab.get_or_intern(nav_container_id);
+    fn add_book_navigation(
+        &mut self,
+        toc: &[crate::book::TocEntry],
+        has_cover: bool,
+        first_content_eid: Option<i64>,
+    ) {
+        let mut nav_containers = Vec::new();
 
-        // Flatten TOC entries (including nested children) and build nav entries
+        // === TOC Nav Container ===
+        let nav_toc_id = "nav-toc";
+        let nav_toc_sym = self.symtab.get_or_intern(nav_toc_id);
+
         let nav_entry_values = self.build_nav_entries_from_toc(toc);
 
-        // Nav container: { $235 (nav_type): $212 (toc), $239 (nav_id): nav_container_sym, $247 (nav_entries): [...] }
-        let mut nav_container = HashMap::new();
-        nav_container.insert(sym::NAV_TYPE, IonValue::Symbol(sym::TOC));
-        nav_container.insert(sym::NAV_ID, IonValue::Symbol(nav_container_sym));
-        nav_container.insert(sym::NAV_ENTRIES, IonValue::List(nav_entry_values));
+        let mut toc_container = HashMap::new();
+        toc_container.insert(sym::NAV_TYPE, IonValue::Symbol(sym::TOC));
+        toc_container.insert(sym::NAV_ID, IonValue::Symbol(nav_toc_sym));
+        toc_container.insert(sym::NAV_ENTRIES, IonValue::List(nav_entry_values));
 
-        // Annotate nav container with $391 (nav_container_type)
-        let annotated_nav_container = IonValue::Annotated(
+        nav_containers.push(IonValue::Annotated(
             vec![sym::NAV_CONTAINER_TYPE],
-            Box::new(IonValue::Struct(nav_container)),
-        );
+            Box::new(IonValue::Struct(toc_container)),
+        ));
+
+        // === Landmarks Nav Container ===
+        // Kindle requires landmarks navigation with at least cover and bodymatter entries
+        let nav_landmarks_id = "nav-landmarks";
+        let nav_landmarks_sym = self.symtab.get_or_intern(nav_landmarks_id);
+
+        let mut landmark_entries = Vec::new();
+
+        // Cover landmark (if cover exists)
+        if has_cover {
+            let cover_eid = SymbolTable::LOCAL_MIN_ID as i64 + 1; // First content item after section entry
+            landmark_entries.push(self.build_landmark_entry(
+                "cover-nav-unit",
+                cover_eid,
+                Some(sym::LANDMARK_COVER),
+            ));
+        }
+
+        // Bodymatter landmark (first content section)
+        if let Some(eid) = first_content_eid {
+            // Get the title of the first TOC entry for bodymatter
+            let bodymatter_title = toc.first().map(|e| e.title.as_str()).unwrap_or("Content");
+            landmark_entries.push(self.build_landmark_entry(
+                bodymatter_title,
+                eid,
+                Some(sym::LANDMARK_BODYMATTER),
+            ));
+        }
+
+        let mut landmarks_container = HashMap::new();
+        landmarks_container.insert(sym::NAV_TYPE, IonValue::Symbol(sym::LANDMARKS_NAV_TYPE));
+        landmarks_container.insert(sym::NAV_ID, IonValue::Symbol(nav_landmarks_sym));
+        landmarks_container.insert(sym::NAV_ENTRIES, IonValue::List(landmark_entries));
+
+        nav_containers.push(IonValue::Annotated(
+            vec![sym::NAV_CONTAINER_TYPE],
+            Box::new(IonValue::Struct(landmarks_container)),
+        ));
 
         // Book navigation root: { $178 (reading_order_name): $351, $392 (nav_containers): [...] }
         let mut nav = HashMap::new();
@@ -1078,15 +1141,44 @@ impl KfxBookBuilder {
             sym::READING_ORDER_NAME,
             IonValue::Symbol(sym::DEFAULT_READING_ORDER),
         );
-        nav.insert(
-            sym::NAV_CONTAINER_REF,
-            IonValue::List(vec![annotated_nav_container]),
-        );
+        nav.insert(sym::NAV_CONTAINER_REF, IonValue::List(nav_containers));
 
         self.fragments.push(KfxFragment::singleton(
             sym::BOOK_NAVIGATION,
             IonValue::List(vec![IonValue::Struct(nav)]),
         ));
+    }
+
+    /// Build a landmark navigation entry
+    fn build_landmark_entry(
+        &self,
+        title: &str,
+        eid: i64,
+        landmark_type: Option<u64>,
+    ) -> IonValue {
+        let mut nav_title = HashMap::new();
+        nav_title.insert(sym::TEXT, IonValue::String(title.to_string()));
+
+        // Nav target: { $155: eid, $143: 0 }
+        // IMPORTANT: Field order matters for Kindle - $155 must come before $143
+        let nav_target = IonValue::OrderedStruct(vec![
+            (sym::POSITION, IonValue::Int(eid)),
+            (sym::OFFSET, IonValue::Int(0)),
+        ]);
+
+        let mut nav_entry = HashMap::new();
+        nav_entry.insert(sym::NAV_TITLE, IonValue::Struct(nav_title));
+        nav_entry.insert(sym::NAV_TARGET, nav_target);
+
+        // Add landmark type if specified ($238 field)
+        if let Some(lt) = landmark_type {
+            nav_entry.insert(sym::LANDMARK_TYPE, IonValue::Symbol(lt));
+        }
+
+        IonValue::Annotated(
+            vec![sym::NAV_DEFINITION],
+            Box::new(IonValue::Struct(nav_entry)),
+        )
     }
 
     /// Build nav entries from TOC entries, preserving nested hierarchy
@@ -1101,28 +1193,41 @@ impl KfxBookBuilder {
 
         for entry in entries {
             // Parse the href to extract path and fragment
-            let (path, _fragment) = if let Some(hash_pos) = entry.href.find('#') {
+            let (path, fragment) = if let Some(hash_pos) = entry.href.find('#') {
                 (&entry.href[..hash_pos], Some(&entry.href[hash_pos + 1..]))
             } else {
                 (entry.href.as_str(), None)
             };
 
-            // Look up the EID for this path from section_eids
-            // If not found, skip this entry (it might reference a non-spine item)
-            if let Some(&eid) = self.section_eids.get(path) {
+            // Look up the EID for this entry:
+            // 1. If there's a fragment, try anchor_eids first (path#fragment → EID)
+            // 2. Fall back to section_eids (path → section start EID)
+            let eid = if fragment.is_some() {
+                // Try full href with fragment first
+                self.anchor_eids
+                    .get(&entry.href)
+                    .copied()
+                    .or_else(|| self.section_eids.get(path).copied())
+            } else {
+                self.section_eids.get(path).copied()
+            };
+
+            if let Some(eid) = eid {
                 // Nav title: { $244 (text): "Entry Title" }
                 let mut nav_title = HashMap::new();
                 nav_title.insert(sym::TEXT, IonValue::String(entry.title.clone()));
 
                 // Nav target: { $155 (position/eid): eid, $143 (offset): 0 }
-                let mut nav_target = HashMap::new();
-                nav_target.insert(sym::POSITION, IonValue::Int(eid));
-                nav_target.insert(sym::OFFSET, IonValue::Int(0));
+                // IMPORTANT: Field order matters for Kindle - $155 must come before $143
+                let nav_target = IonValue::OrderedStruct(vec![
+                    (sym::POSITION, IonValue::Int(eid)),
+                    (sym::OFFSET, IonValue::Int(0)),
+                ]);
 
                 // Nav entry struct: { $241: nav_title, $246: nav_target }
                 let mut nav_entry = HashMap::new();
                 nav_entry.insert(sym::NAV_TITLE, IonValue::Struct(nav_title));
-                nav_entry.insert(sym::NAV_TARGET, IonValue::Struct(nav_target));
+                nav_entry.insert(sym::NAV_TARGET, nav_target);
 
                 // Recursively build children and nest them via $247 (nav_entries)
                 if !entry.children.is_empty() {
@@ -2055,9 +2160,13 @@ impl KfxBookBuilder {
     /// Add position map fragment ($264)
     /// Maps each section to the list of EIDs it contains
     /// Structure: [ {$181: (section_eid, content_eid1, content_eid2, ...), $174: section_sym}, ... ]
-    fn add_position_map(&mut self, chapters: &[ChapterData]) {
+    fn add_position_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
         let mut entries = Vec::new();
-        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64; // Start EIDs after local symbol range
+        // Start EIDs after local symbol range, accounting for cover section if present
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
+        if has_cover {
+            eid_base += 2; // Cover section uses 2 EIDs (section entry + content)
+        }
 
         for chapter in chapters {
             let section_id = format!("section-{}", chapter.id);
@@ -2065,9 +2174,11 @@ impl KfxBookBuilder {
 
             // Generate list of EIDs for this section
             // Section content entry EID first, then content block EIDs
+            // Must use count_content_items to include nested containers
+            let total_items = count_content_items(&chapter.content);
             let mut eids = Vec::new();
             eids.push(IonValue::Int(eid_base)); // Section content entry EID
-            for i in 0..chapter.content.len() {
+            for i in 0..total_items {
                 eids.push(IonValue::Int(eid_base + 1 + i as i64)); // Content block EIDs
             }
 
@@ -2076,8 +2187,8 @@ impl KfxBookBuilder {
             entry.insert(sym::SECTION_NAME, IonValue::Symbol(section_sym));
             entries.push(IonValue::Struct(entry));
 
-            // +1 for section content entry, + content.len() for content blocks
-            eid_base += 1 + chapter.content.len() as i64;
+            // +1 for section content entry, + total_items for content blocks (including nested)
+            eid_base += 1 + total_items as i64;
         }
 
         self.fragments.push(KfxFragment::singleton(
@@ -2090,10 +2201,55 @@ impl KfxBookBuilder {
     /// Maps character offsets to EIDs
     /// Structure: [ {$184: char_offset, $185: eid}, ..., {$184: total_chars, $185: 0} ]
     /// Includes section content entry at position 0 (1 char), then content block entries
-    fn add_position_id_map(&mut self, chapters: &[ChapterData]) {
+    fn add_position_id_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
         let mut entries = Vec::new();
         let mut char_offset = 0i64;
+        // Start EIDs after local symbol range, accounting for cover section if present
         let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
+        if has_cover {
+            eid_base += 2; // Cover section uses 2 EIDs (section entry + content)
+        }
+
+        // Helper to recursively add entries for content items
+        fn add_entries_recursive(
+            item: &ContentItem,
+            eid: &mut i64,
+            char_offset: &mut i64,
+            entries: &mut Vec<IonValue>,
+        ) {
+            match item {
+                ContentItem::Text { text, .. } => {
+                    let mut entry = HashMap::new();
+                    entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
+                    entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
+                    entries.push(IonValue::Struct(entry));
+                    *char_offset += text.len() as i64;
+                    *eid += 1;
+                }
+                ContentItem::Image { .. } => {
+                    // Images take 1 character position
+                    let mut entry = HashMap::new();
+                    entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
+                    entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
+                    entries.push(IonValue::Struct(entry));
+                    *char_offset += 1;
+                    *eid += 1;
+                }
+                ContentItem::Container { children, .. } => {
+                    // Process children first (children-first EID order, matching content block)
+                    for child in children {
+                        add_entries_recursive(child, eid, char_offset, entries);
+                    }
+                    // Container itself gets 1 character position
+                    let mut entry = HashMap::new();
+                    entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
+                    entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
+                    entries.push(IonValue::Struct(entry));
+                    *char_offset += 1;
+                    *eid += 1;
+                }
+            }
+        }
 
         for chapter in chapters {
             // Section content entry at current position (1 char)
@@ -2104,21 +2260,14 @@ impl KfxBookBuilder {
             entries.push(IonValue::Struct(section_entry));
             char_offset += 1; // Section content entry takes 1 char
 
-            // Content block entries - count total items including nested containers
-            let total_items = count_content_items(&chapter.content);
-            for (i, content_item) in chapter.content.iter().enumerate() {
-                let content_eid = eid_base + 1 + i as i64;
-
-                let mut entry = HashMap::new();
-                entry.insert(sym::EID_INDEX, IonValue::Int(char_offset));
-                entry.insert(sym::EID_VALUE, IonValue::Int(content_eid));
-                entries.push(IonValue::Struct(entry));
-
-                // Add text length (containers use total_text_size to count all nested text)
-                char_offset += content_item.total_text_size() as i64;
+            // Content block entries - recursively process all items including nested
+            let mut content_eid = eid_base + 1;
+            for content_item in &chapter.content {
+                add_entries_recursive(content_item, &mut content_eid, &mut char_offset, &mut entries);
             }
 
-            // +1 for section content entry, + total_items for content blocks (including nested)
+            // Advance eid_base: +1 for section entry + total_items for content
+            let total_items = count_content_items(&chapter.content);
             eid_base += 1 + total_items as i64;
         }
 
@@ -2136,12 +2285,12 @@ impl KfxBookBuilder {
 
     /// Add location map fragment ($550)
     /// This creates the "virtual pages" for reading progress - needs granular entries
-    fn add_location_map(&mut self, chapters: &[ChapterData]) {
+    fn add_location_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
         // Location map structure: [ { P182: ( {P155: eid, P143: offset}, ... ) } ]
-        // Kindle uses ~150 characters per "location" for reading progress tracking.
+        // KFX_POSITIONS_PER_LOCATION = 110 (from kfxlib's yj_position_location.py)
         // Multiple location entries can reference the same content item (EID) with
         // different offsets, allowing granular progress tracking within paragraphs.
-        const CHARS_PER_LOCATION: usize = 150;
+        const CHARS_PER_LOCATION: usize = 110;
 
         // First pass: build a list of content items with their EIDs and character ranges
         #[derive(Debug)]
@@ -2152,7 +2301,11 @@ impl KfxBookBuilder {
         }
 
         let mut content_ranges: Vec<ContentRange> = Vec::new();
+        // Start EIDs after local symbol range, accounting for cover section if present
         let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
+        if has_cover {
+            eid_base += 2; // Cover section uses 2 EIDs (section entry + content)
+        }
         let mut total_chars: usize = 0;
 
         for chapter in chapters {
@@ -2214,23 +2367,36 @@ impl KfxBookBuilder {
             eid_base += 1 + total_items as i64;
         }
 
-        // Calculate total number of locations
-        let num_locations = (total_chars / CHARS_PER_LOCATION).max(1);
-
-        // Second pass: create location entries mapping each location to content items
+        // Second pass: create location entries
+        // Strategy: Include EVERY content item EID at offset 0 (for TOC navigation),
+        // plus additional entries at character boundaries for reading progress tracking.
         let mut location_entries = Vec::new();
+        let mut added_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
-        for loc_idx in 0..num_locations {
+        // First, add an entry for every content item at offset 0
+        // This ensures all TOC target EIDs are present in the LOCATION_MAP
+        for range in &content_ranges {
+            if !added_eids.contains(&range.eid) {
+                location_entries.push(IonValue::OrderedStruct(vec![
+                    (sym::POSITION, IonValue::Int(range.eid)),
+                    (sym::OFFSET, IonValue::Int(0)),
+                ]));
+                added_eids.insert(range.eid);
+            }
+        }
+
+        // Then, add additional entries at character position boundaries
+        // This provides granular reading progress tracking within long paragraphs
+        let num_locations = (total_chars / CHARS_PER_LOCATION).max(1);
+        for loc_idx in 1..num_locations {
+            // Start from 1 since offset 0 entries were added above
             let char_pos = loc_idx * CHARS_PER_LOCATION;
 
             // Find which content item this location falls within
             let range = content_ranges
                 .iter()
                 .find(|r| char_pos >= r.char_start && char_pos < r.char_end)
-                .or_else(|| {
-                    // If not found (e.g., past end), use the last content item
-                    content_ranges.last()
-                });
+                .or_else(|| content_ranges.last());
 
             if let Some(range) = range {
                 let offset_within_item = if char_pos >= range.char_start {
@@ -2239,10 +2405,13 @@ impl KfxBookBuilder {
                     0
                 };
 
-                let mut entry = HashMap::new();
-                entry.insert(sym::POSITION, IonValue::Int(range.eid));
-                entry.insert(sym::OFFSET, IonValue::Int(offset_within_item));
-                location_entries.push(IonValue::Struct(entry));
+                // Only add if this is a non-zero offset (zero offsets already added)
+                if offset_within_item > 0 {
+                    location_entries.push(IonValue::OrderedStruct(vec![
+                        (sym::POSITION, IonValue::Int(range.eid)),
+                        (sym::OFFSET, IonValue::Int(offset_within_item)),
+                    ]));
+                }
             }
         }
 
@@ -2318,16 +2487,20 @@ impl KfxBookBuilder {
         let template_sym = self.symtab.get_or_intern(&template_id);
 
         // Position info: { P155: eid, P143: offset (optional if 0) }
-        let mut pos_info = HashMap::new();
-        pos_info.insert(sym::POSITION, IonValue::Int(eid));
-        if offset > 0 {
-            pos_info.insert(sym::OFFSET, IonValue::Int(offset));
-        }
+        // IMPORTANT: Field order matters for Kindle - $155 must come before $143
+        let pos_info = if offset > 0 {
+            IonValue::OrderedStruct(vec![
+                (sym::POSITION, IonValue::Int(eid)),
+                (sym::OFFSET, IonValue::Int(offset)),
+            ])
+        } else {
+            IonValue::OrderedStruct(vec![(sym::POSITION, IonValue::Int(eid))])
+        };
 
         // Template content: { P180: template_sym, P183: pos_info }
         let mut template = HashMap::new();
         template.insert(sym::TEMPLATE_NAME, IonValue::Symbol(template_sym));
-        template.insert(sym::POSITION_INFO, IonValue::Struct(pos_info));
+        template.insert(sym::POSITION_INFO, pos_info);
 
         self.fragments.push(KfxFragment::new(
             sym::PAGE_TEMPLATE,
@@ -2337,7 +2510,8 @@ impl KfxBookBuilder {
     }
 
     /// Build section EID mapping for internal link targets
-    /// Maps XHTML paths to their section EIDs
+    /// Maps XHTML paths to their FIRST CONTENT ITEM EID (not section EID)
+    /// TOC navigation needs to point to content items, not section entries
     fn build_section_eids(&mut self, chapters: &[ChapterData], has_cover: bool) {
         let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
@@ -2346,14 +2520,87 @@ impl KfxBookBuilder {
             eid_base += 2;
         }
 
-        // Map each chapter's source path to its section EID
+        // Map each chapter's source path to its first content item EID
         for chapter in chapters {
-            // The section EID is eid_base (matches add_section which uses eid_base for POSITION)
+            // Content items start at eid_base + 1 (eid_base is the section entry)
+            // TOC entries should point to content items, not section entries
             self.section_eids
-                .insert(chapter.source_path.clone(), eid_base);
+                .insert(chapter.source_path.clone(), eid_base + 1);
 
             // Advance by section entry + content items (including nested items)
             // Must match calculation in add_page_templates and main chapter loop
+            let total_items = count_content_items(&chapter.content);
+            eid_base += 1 + total_items as i64;
+        }
+    }
+
+    /// Build anchor EID mapping for TOC navigation with fragment IDs
+    /// Maps "source_path#element_id" → content item EID
+    /// Must be called AFTER build_section_eids and uses same EID assignment logic
+    fn build_anchor_eids(&mut self, chapters: &[ChapterData], has_cover: bool) {
+        let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
+
+        // Cover section uses 2 EIDs (section + content)
+        if has_cover {
+            eid_base += 2;
+        }
+
+        for chapter in chapters {
+            // Content item EIDs start after section entry
+            let mut content_eid = eid_base + 1;
+
+            /// Recursively collect element_ids and their EIDs from content items
+            fn collect_anchor_eids_recursive(
+                item: &ContentItem,
+                content_eid: &mut i64,
+                source_path: &str,
+                anchor_eids: &mut HashMap<String, i64>,
+            ) {
+                match item {
+                    ContentItem::Text { element_id, .. } => {
+                        if let Some(id) = element_id {
+                            let key = format!("{}#{}", source_path, id);
+                            anchor_eids.insert(key, *content_eid);
+                        }
+                        *content_eid += 1;
+                    }
+                    ContentItem::Image { .. } => {
+                        *content_eid += 1;
+                    }
+                    ContentItem::Container {
+                        children,
+                        element_id,
+                        ..
+                    } => {
+                        // Process children first (children-first EID order)
+                        for child in children {
+                            collect_anchor_eids_recursive(
+                                child,
+                                content_eid,
+                                source_path,
+                                anchor_eids,
+                            );
+                        }
+                        // Container gets EID after its children
+                        if let Some(id) = element_id {
+                            let key = format!("{}#{}", source_path, id);
+                            anchor_eids.insert(key, *content_eid);
+                        }
+                        *content_eid += 1;
+                    }
+                }
+            }
+
+            for content_item in &chapter.content {
+                collect_anchor_eids_recursive(
+                    content_item,
+                    &mut content_eid,
+                    &chapter.source_path,
+                    &mut self.anchor_eids,
+                );
+            }
+
+            // Advance by section entry + content items
             let total_items = count_content_items(&chapter.content);
             eid_base += 1 + total_items as i64;
         }
@@ -2747,6 +2994,8 @@ enum ContentItem {
         inline_runs: Vec<StyleRun>,
         /// Optional anchor href for hyperlinks
         anchor_href: Option<String>,
+        /// Optional HTML element ID (for TOC anchor targets)
+        element_id: Option<String>,
     },
     /// Image reference with optional styling
     Image {
@@ -2764,6 +3013,8 @@ enum ContentItem {
         children: Vec<ContentItem>,
         /// Tag name for debugging/identification
         tag: String,
+        /// Optional HTML element ID (for TOC anchor targets)
+        element_id: Option<String>,
     },
 }
 
@@ -3156,6 +3407,7 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                     children,
                     style,
                     tag,
+                    element_id,
                 } => {
                     // First, recursively flatten children
                     let flattened_children = flatten_containers(children);
@@ -3164,7 +3416,35 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                     // their children are promoted to the parent level.
                     // This matches the reference KFX structure where <section> doesn't
                     // create an extra container layer.
+                    // IMPORTANT: Preserve element_id by propagating it to the first child
+                    // (used for TOC navigation with fragment IDs)
                     if is_structural_container(&tag) {
+                        if let Some(id) = element_id {
+                            // Propagate element_id to first child that can have it
+                            let mut children = flattened_children;
+                            if let Some(first) = children.first_mut() {
+                                match first {
+                                    ContentItem::Text {
+                                        element_id: child_id,
+                                        ..
+                                    } => {
+                                        if child_id.is_none() {
+                                            *child_id = Some(id);
+                                        }
+                                    }
+                                    ContentItem::Container {
+                                        element_id: child_id,
+                                        ..
+                                    } => {
+                                        if child_id.is_none() {
+                                            *child_id = Some(id);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            return children;
+                        }
                         return flattened_children;
                     }
 
@@ -3175,6 +3455,7 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                             children: flattened_children,
                             style,
                             tag,
+                            element_id,
                         }];
                     }
 
@@ -3192,15 +3473,19 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                                 inline_runs,
                                 anchor_href,
                                 style: child_style,
+                                element_id: child_element_id,
                             } => {
                                 // Merge container's style with child's style
                                 let mut merged_style = style;
                                 merged_style.merge(&child_style);
+                                // Prefer container's element_id, fall back to child's
+                                let merged_element_id = element_id.or(child_element_id);
                                 return vec![ContentItem::Text {
                                     text,
                                     style: merged_style,
                                     inline_runs,
                                     anchor_href,
+                                    element_id: merged_element_id,
                                 }];
                             }
                             // Single Container child - flatten if container has default style
@@ -3208,14 +3493,18 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                                 children: inner_children,
                                 style: inner_style,
                                 tag: inner_tag,
+                                element_id: inner_element_id,
                             } => {
                                 // Keep the inner container, but with merged style
                                 let mut merged_style = style;
                                 merged_style.merge(&inner_style);
+                                // Prefer outer element_id, fall back to inner
+                                let merged_element_id = element_id.or(inner_element_id);
                                 return vec![ContentItem::Container {
                                     children: inner_children,
                                     style: merged_style,
                                     tag: inner_tag,
+                                    element_id: merged_element_id,
                                 }];
                             }
                             // Single Image child - unwrap, keeping the image
@@ -3228,6 +3517,7 @@ fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
                         children: flattened_children,
                         style,
                         tag,
+                        element_id,
                     }]
                 }
                 // Non-containers pass through unchanged
@@ -3267,6 +3557,7 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                 style,
                 inline_runs: Vec::new(),
                 anchor_href: None,
+                element_id: None, // Text merged from inline elements doesn't have its own ID
             });
         } else {
             // Multiple text items OR has anchors - merge with inline style runs
@@ -3317,6 +3608,7 @@ fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> {
                 style: base_style,
                 inline_runs,
                 anchor_href: None, // Anchors are now in inline_runs
+                element_id: None,  // Merged text doesn't have element ID
             });
         }
     }
@@ -3449,6 +3741,9 @@ fn extract_content_from_xhtml(
                     return vec![];
                 }
 
+                // Extract element ID for anchor targets (used in TOC navigation)
+                let element_id = element.attributes.borrow().get("id").map(|s| s.to_string());
+
                 // Handle image elements specially
                 if tag_name == "img" {
                     let attrs = element.attributes.borrow();
@@ -3505,6 +3800,7 @@ fn extract_content_from_xhtml(
                         style: direct_with_inline,
                         children: merged_children,
                         tag: tag_name.to_string(),
+                        element_id,
                     }];
                 }
 
@@ -3520,6 +3816,7 @@ fn extract_content_from_xhtml(
                         style: parent_style.clone(),
                         inline_runs: Vec::new(),
                         anchor_href: anchor_href.map(|s| s.to_string()),
+                        element_id: None, // Text nodes don't have IDs (parent block does)
                     }]
                 } else {
                     vec![]
@@ -4581,19 +4878,27 @@ mod tests {
                             );
 
                             // Check nav_target ($246)
-                            if let Some(IonValue::Struct(target)) =
-                                entry_struct.get(&sym::NAV_TARGET)
-                            {
-                                // Should have position ($155)
+                            // Nav targets use OrderedStruct to preserve field order
+                            if let Some(nav_target) = entry_struct.get(&sym::NAV_TARGET) {
+                                // Extract position from either Struct or OrderedStruct
+                                let position = match nav_target {
+                                    IonValue::Struct(target) => target.get(&sym::POSITION).cloned(),
+                                    IonValue::OrderedStruct(fields) => fields
+                                        .iter()
+                                        .find(|(k, _)| *k == sym::POSITION)
+                                        .map(|(_, v)| v.clone()),
+                                    _ => None,
+                                };
+
                                 assert!(
-                                    target.contains_key(&sym::POSITION),
+                                    position.is_some(),
                                     "Nav target should have position ($155)"
                                 );
 
                                 // Verify EID is valid (> LOCAL_MIN_ID)
-                                if let Some(IonValue::Int(eid)) = target.get(&sym::POSITION) {
+                                if let Some(IonValue::Int(eid)) = position {
                                     assert!(
-                                        *eid >= SymbolTable::LOCAL_MIN_ID as i64,
+                                        eid >= SymbolTable::LOCAL_MIN_ID as i64,
                                         "Nav entry EID should be >= LOCAL_MIN_ID"
                                     );
                                 }
@@ -4693,6 +4998,97 @@ mod tests {
         } else {
             panic!("Book navigation should be a list");
         }
+    }
+
+    #[test]
+    fn test_toc_eid_mapping_debug() {
+        // Debug test to trace TOC EID mapping issues
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+
+        // Build KFX and inspect internal state
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Print section_eids mapping
+        println!("\n=== SECTION_EIDS ===");
+        for (path, eid) in &kfx.section_eids {
+            println!("  {} -> EID {}", path, eid);
+        }
+
+        // Print anchor_eids mapping (first 20)
+        println!("\n=== ANCHOR_EIDS (first 20) ===");
+        for (key, eid) in kfx.anchor_eids.iter().take(20) {
+            println!("  {} -> EID {}", key, eid);
+        }
+
+        // Print TOC hrefs (first 20)
+        println!("\n=== TOC HREFS (first 20) ===");
+        fn print_toc_hrefs(entries: &[crate::book::TocEntry], count: &mut usize) {
+            for entry in entries {
+                if *count >= 20 {
+                    return;
+                }
+                println!("  {}: {}", entry.title, entry.href);
+                *count += 1;
+                print_toc_hrefs(&entry.children, count);
+            }
+        }
+        let mut count = 0;
+        print_toc_hrefs(&book.toc, &mut count);
+
+        // Check which TOC entries match anchor_eids or section_eids
+        println!("\n=== TOC EID LOOKUP RESULTS ===");
+        fn check_toc_matches(
+            entries: &[crate::book::TocEntry],
+            section_eids: &std::collections::HashMap<String, i64>,
+            anchor_eids: &std::collections::HashMap<String, i64>,
+            count: &mut usize,
+        ) {
+            for entry in entries {
+                if *count >= 10 {
+                    return;
+                }
+
+                let (path, fragment) = if let Some(hash_pos) = entry.href.find('#') {
+                    (&entry.href[..hash_pos], Some(&entry.href[hash_pos + 1..]))
+                } else {
+                    (entry.href.as_str(), None)
+                };
+
+                let eid = if fragment.is_some() {
+                    anchor_eids
+                        .get(&entry.href)
+                        .copied()
+                        .or_else(|| section_eids.get(path).copied())
+                } else {
+                    section_eids.get(path).copied()
+                };
+
+                let source = if fragment.is_some() && anchor_eids.contains_key(&entry.href) {
+                    "anchor_eids"
+                } else if section_eids.contains_key(path) {
+                    "section_eids"
+                } else {
+                    "NOT FOUND"
+                };
+
+                println!(
+                    "  {} -> {} (from {})",
+                    entry.href,
+                    eid.map(|e| e.to_string()).unwrap_or("NONE".to_string()),
+                    source
+                );
+                *count += 1;
+                check_toc_matches(&entry.children, section_eids, anchor_eids, count);
+            }
+        }
+        let mut count = 0;
+        check_toc_matches(&book.toc, &kfx.section_eids, &kfx.anchor_eids, &mut count);
+
+        // Verify at least some anchor_eids exist
+        assert!(
+            !kfx.anchor_eids.is_empty(),
+            "anchor_eids should not be empty for book with fragment hrefs in TOC"
+        );
     }
 
     #[test]
@@ -7203,36 +7599,42 @@ mod image_tests {
 
     #[test]
     fn test_internal_link_eid_matches_target_section() {
-        // The internal anchor's $155 EID must match the target section's $155 EID
+        // The internal anchor's $155 EID must match a valid content item EID
+        // (TOC and internal links point to content items, not section entries)
         let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
         let kfx = KfxBookBuilder::from_book(&book);
 
-        // Find section EIDs - sections are $260 fragments
-        // The section name is like "section-N" where N is the chapter index
-        // The spine order is: titlepage, imprint, the-enchiridion, fragments, endnotes, colophon, uncopyright
-        // uncopyright.xhtml is the 7th item (index 6 after cover)
-        let section_eids: std::collections::HashMap<String, i64> = kfx
+        // Collect all content item EIDs from $259 (content block) fragments
+        let content_item_eids: std::collections::HashSet<i64> = kfx
             .fragments
             .iter()
-            .filter(|f| f.ftype == sym::SECTION)
-            .filter_map(|f| {
-                if let IonValue::Struct(s) = &f.value {
-                    // Get section name from $174
-                    let section_name = s.get(&sym::SECTION_NAME)?;
-                    // Get section content list from $141
-                    if let Some(IonValue::List(content_list)) = s.get(&sym::SECTION_CONTENT) {
-                        if let Some(IonValue::Struct(content_ref)) = content_list.first() {
-                            if let Some(IonValue::Int(eid)) = content_ref.get(&sym::POSITION) {
-                                return Some((format!("{:?}", section_name), *eid));
+            .filter(|f| f.ftype == sym::CONTENT_BLOCK)
+            .flat_map(|f| {
+                let mut eids = Vec::new();
+                fn collect_eids(value: &IonValue, eids: &mut Vec<i64>) {
+                    match value {
+                        IonValue::Struct(s) => {
+                            if let Some(IonValue::Int(eid)) = s.get(&sym::POSITION) {
+                                eids.push(*eid);
+                            }
+                            for v in s.values() {
+                                collect_eids(v, eids);
                             }
                         }
+                        IonValue::List(list) => {
+                            for v in list {
+                                collect_eids(v, eids);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                None
+                collect_eids(&f.value, &mut eids);
+                eids
             })
             .collect();
 
-        println!("Section EIDs: {:?}", section_eids);
+        println!("Content item EIDs count: {}", content_item_eids.len());
 
         // Find internal anchor fragments (those with $183 position info, but NOT page templates)
         // Page templates have IDs like "template-N", anchors have IDs like "$1234" or "anchor0"
@@ -7255,28 +7657,21 @@ mod image_tests {
 
         println!("Internal anchor target EIDs: {:?}", internal_anchors);
 
-        // Each internal anchor EID must exist in the section EIDs
-        let valid_section_eids: std::collections::HashSet<i64> =
-            section_eids.values().copied().collect();
-
+        // Each internal anchor EID must point to a valid content item
         for anchor_eid in &internal_anchors {
             assert!(
-                valid_section_eids.contains(anchor_eid),
-                "Internal anchor points to EID {} which is not a valid section EID. Valid EIDs: {:?}",
-                anchor_eid,
-                valid_section_eids
+                content_item_eids.contains(anchor_eid),
+                "Internal anchor points to EID {} which is not a valid content item EID",
+                anchor_eid
             );
         }
 
-        // Specifically check that uncopyright.xhtml (the last section) is correctly targeted
-        // The last section should have the highest EID
-        let max_section_eid = *valid_section_eids.iter().max().unwrap();
-        let has_uncopyright_anchor = internal_anchors.iter().any(|eid| *eid == max_section_eid);
-
+        // Verify we have internal anchors pointing to different sections
+        let unique_anchor_eids: std::collections::HashSet<_> = internal_anchors.iter().collect();
         assert!(
-            has_uncopyright_anchor,
-            "Should have internal anchor pointing to uncopyright.xhtml section (EID {})",
-            max_section_eid
+            unique_anchor_eids.len() >= 3,
+            "Should have internal anchors pointing to at least 3 different content items, found {}",
+            unique_anchor_eids.len()
         );
     }
 
@@ -7476,10 +7871,17 @@ mod image_tests {
         // Count how many times each EID appears
         let mut eid_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
         for entry in entries {
-            if let IonValue::Struct(entry_struct) = entry {
-                if let Some(IonValue::Int(eid)) = entry_struct.get(&sym::POSITION) {
-                    *eid_counts.entry(*eid).or_insert(0) += 1;
-                }
+            // Location entries use OrderedStruct to preserve field order
+            let eid = match entry {
+                IonValue::Struct(entry_struct) => entry_struct.get(&sym::POSITION).cloned(),
+                IonValue::OrderedStruct(fields) => fields
+                    .iter()
+                    .find(|(k, _)| *k == sym::POSITION)
+                    .map(|(_, v)| v.clone()),
+                _ => None,
+            };
+            if let Some(IonValue::Int(eid)) = eid {
+                *eid_counts.entry(eid).or_insert(0) += 1;
             }
         }
 
@@ -7503,6 +7905,409 @@ mod image_tests {
             entries.len() > 100,
             "Should have substantial number of location entries, got {}",
             entries.len()
+        );
+    }
+
+    #[test]
+    fn test_toc_eids_in_location_map() {
+        // Test that TOC navigation EIDs exist in the LOCATION_MAP.
+        // Kindle uses LOCATION_MAP for navigation - if TOC EIDs aren't present,
+        // navigation to those positions may fail.
+        //
+        // Reference file (epictetus.kfx) has ~34% of TOC EIDs in LOCATION_MAP.
+        // We should have at least 25% coverage for reliable navigation.
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Extract TOC EIDs from book navigation ($389)
+        let nav_fragment = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::BOOK_NAVIGATION)
+            .expect("Should have book navigation");
+
+        let mut toc_eids: Vec<i64> = Vec::new();
+        fn extract_nav_eids(value: &IonValue, eids: &mut Vec<i64>) {
+            match value {
+                IonValue::List(items) => {
+                    for item in items {
+                        extract_nav_eids(item, eids);
+                    }
+                }
+                IonValue::Struct(map) => {
+                    // Check if this is a nav_target ($246)
+                    if let Some(target) = map.get(&sym::NAV_TARGET) {
+                        if let IonValue::OrderedStruct(fields) = target {
+                            for (k, v) in fields {
+                                if *k == sym::POSITION {
+                                    if let IonValue::Int(eid) = v {
+                                        eids.push(*eid);
+                                    }
+                                }
+                            }
+                        } else if let IonValue::Struct(target_map) = target {
+                            if let Some(IonValue::Int(eid)) = target_map.get(&sym::POSITION) {
+                                eids.push(*eid);
+                            }
+                        }
+                    }
+                    // Recurse into nav_entries ($247)
+                    if let Some(entries) = map.get(&sym::NAV_ENTRIES) {
+                        extract_nav_eids(entries, eids);
+                    }
+                    // Recurse into nav_containers ($392)
+                    if let Some(containers) = map.get(&sym::NAV_CONTAINER_REF) {
+                        extract_nav_eids(containers, eids);
+                    }
+                }
+                IonValue::Annotated(_, inner) => {
+                    extract_nav_eids(inner, eids);
+                }
+                _ => {}
+            }
+        }
+        extract_nav_eids(&nav_fragment.value, &mut toc_eids);
+
+        println!("Found {} TOC EIDs", toc_eids.len());
+
+        // Extract LOCATION_MAP EIDs
+        let location_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::LOCATION_MAP)
+            .expect("Should have location map");
+
+        let mut location_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        fn extract_location_eids(value: &IonValue, eids: &mut std::collections::HashSet<i64>) {
+            match value {
+                IonValue::List(items) => {
+                    for item in items {
+                        extract_location_eids(item, eids);
+                    }
+                }
+                IonValue::Struct(map) => {
+                    if let Some(IonValue::Int(eid)) = map.get(&sym::POSITION) {
+                        eids.insert(*eid);
+                    }
+                    if let Some(entries) = map.get(&sym::LOCATION_ENTRIES) {
+                        extract_location_eids(entries, eids);
+                    }
+                }
+                IonValue::OrderedStruct(fields) => {
+                    for (k, v) in fields {
+                        if *k == sym::POSITION {
+                            if let IonValue::Int(eid) = v {
+                                eids.insert(*eid);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        extract_location_eids(&location_map.value, &mut location_eids);
+
+        println!("Found {} unique LOCATION_MAP EIDs", location_eids.len());
+
+        // Count how many TOC EIDs are in LOCATION_MAP
+        let toc_in_location: Vec<_> = toc_eids
+            .iter()
+            .filter(|eid| location_eids.contains(eid))
+            .collect();
+
+        let coverage = if toc_eids.is_empty() {
+            0.0
+        } else {
+            100.0 * toc_in_location.len() as f64 / toc_eids.len() as f64
+        };
+
+        println!(
+            "TOC EIDs in LOCATION_MAP: {}/{} ({:.1}%)",
+            toc_in_location.len(),
+            toc_eids.len(),
+            coverage
+        );
+
+        // Print missing EIDs for debugging
+        let missing: Vec<_> = toc_eids
+            .iter()
+            .filter(|eid| !location_eids.contains(eid))
+            .take(10)
+            .collect();
+        println!("Missing TOC EIDs (first 10): {:?}", missing);
+
+        // Require at least 25% coverage (reference has ~34%)
+        assert!(
+            coverage >= 25.0,
+            "TOC EIDs should have at least 25% coverage in LOCATION_MAP, got {:.1}%",
+            coverage
+        );
+    }
+
+    /// Test that position maps correctly account for cover section EIDs
+    /// When a book has a cover, the cover uses EIDs 750-751, so chapters start at 752
+    #[test]
+    fn test_position_map_eids_with_cover() {
+        // Load epictetus.epub which has a cover image
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        assert!(
+            book.metadata.cover_image.is_some(),
+            "epictetus.epub should have a cover image"
+        );
+
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find position map ($264)
+        let pos_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::POSITION_MAP)
+            .expect("Should have position map");
+
+        // Extract EIDs from position map
+        let mut pos_map_eids: Vec<i64> = Vec::new();
+        if let IonValue::List(entries) = &pos_map.value {
+            for entry in entries {
+                if let IonValue::Struct(map) = entry {
+                    if let Some(IonValue::List(eids)) = map.get(&sym::ENTITY_ID_LIST) {
+                        for eid in eids {
+                            if let IonValue::Int(e) = eid {
+                                pos_map_eids.push(*e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("Position map EIDs (first 20): {:?}", &pos_map_eids[..20.min(pos_map_eids.len())]);
+
+        // LOCAL_MIN_ID = 860, so:
+        // - Cover section EID = 860, cover content EID = 861
+        // - First chapter section EID = 862
+        let expected_first_chapter_eid = SymbolTable::LOCAL_MIN_ID as i64 + 2; // 862
+
+        assert!(
+            pos_map_eids.contains(&expected_first_chapter_eid),
+            "With cover, first chapter section EID should be {}, got: {:?}",
+            expected_first_chapter_eid,
+            &pos_map_eids[..20.min(pos_map_eids.len())]
+        );
+    }
+
+    /// Test that position ID map ($265) correctly accounts for cover section
+    #[test]
+    fn test_position_id_map_eids_with_cover() {
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        assert!(book.metadata.cover_image.is_some());
+
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find position ID map ($265)
+        let pos_id_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::POSITION_ID_MAP)
+            .expect("Should have position ID map");
+
+        // Extract EIDs from position ID map
+        let mut pos_id_map_eids: Vec<i64> = Vec::new();
+        if let IonValue::List(entries) = &pos_id_map.value {
+            for entry in entries {
+                if let IonValue::Struct(map) = entry {
+                    if let Some(IonValue::Int(eid)) = map.get(&sym::EID_VALUE) {
+                        pos_id_map_eids.push(*eid);
+                    }
+                }
+            }
+        }
+
+        println!(
+            "Position ID map EIDs (first 20): {:?}",
+            &pos_id_map_eids[..20.min(pos_id_map_eids.len())]
+        );
+
+        // LOCAL_MIN_ID = 860, so with cover: first chapter section EID = 862
+        let expected_first_chapter_eid = SymbolTable::LOCAL_MIN_ID as i64 + 2;
+
+        assert!(
+            pos_id_map_eids.contains(&expected_first_chapter_eid),
+            "Position ID map should contain chapter section EID {}, got: {:?}",
+            expected_first_chapter_eid,
+            &pos_id_map_eids[..20.min(pos_id_map_eids.len())]
+        );
+    }
+
+    /// CRITICAL TEST: book navigation ($389) nav_target EIDs must exist in location map ($550)
+    /// This ensures TOC entries can be navigated to on Kindle
+    #[test]
+    fn test_nav_targets_must_exist_in_location_map() {
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Extract nav_target EIDs from book navigation ($389)
+        let nav_frag = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::BOOK_NAVIGATION)
+            .expect("Should have book navigation");
+
+        let mut nav_eids: Vec<i64> = Vec::new();
+        fn extract_nav_eids(val: &IonValue, eids: &mut Vec<i64>) {
+            match val {
+                IonValue::List(items) => {
+                    for item in items {
+                        extract_nav_eids(item, eids);
+                    }
+                }
+                IonValue::Struct(map) => {
+                    if let Some(target) = map.get(&sym::NAV_TARGET) {
+                        match target {
+                            IonValue::OrderedStruct(fields) => {
+                                for (k, v) in fields {
+                                    if *k == sym::POSITION {
+                                        if let IonValue::Int(eid) = v {
+                                            eids.push(*eid);
+                                        }
+                                    }
+                                }
+                            }
+                            IonValue::Struct(target_map) => {
+                                if let Some(IonValue::Int(eid)) = target_map.get(&sym::POSITION) {
+                                    eids.push(*eid);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    for v in map.values() {
+                        extract_nav_eids(v, eids);
+                    }
+                }
+                _ => {}
+            }
+        }
+        extract_nav_eids(&nav_frag.value, &mut nav_eids);
+
+        println!("Navigation EIDs: {:?}", nav_eids);
+
+        // Extract EIDs from location map ($550)
+        let loc_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::LOCATION_MAP)
+            .expect("Should have location map");
+
+        let mut loc_map_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        fn extract_loc_eids(val: &IonValue, eids: &mut std::collections::HashSet<i64>) {
+            match val {
+                IonValue::List(items) => {
+                    for item in items {
+                        extract_loc_eids(item, eids);
+                    }
+                }
+                IonValue::Struct(map) => {
+                    if let Some(IonValue::Int(eid)) = map.get(&sym::POSITION) {
+                        eids.insert(*eid);
+                    }
+                    for v in map.values() {
+                        extract_loc_eids(v, eids);
+                    }
+                }
+                IonValue::OrderedStruct(fields) => {
+                    for (k, v) in fields {
+                        if *k == sym::POSITION {
+                            if let IonValue::Int(eid) = v {
+                                eids.insert(*eid);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        extract_loc_eids(&loc_map.value, &mut loc_map_eids);
+
+        println!("Location map has {} unique EIDs", loc_map_eids.len());
+
+        // CRITICAL: Every nav_target EID must exist in the location map
+        let mut missing = Vec::new();
+        for nav_eid in &nav_eids {
+            if !loc_map_eids.contains(nav_eid) {
+                missing.push(*nav_eid);
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "Navigation target EIDs missing from location map: {:?}. All nav EIDs: {:?}",
+            missing,
+            nav_eids
+        );
+    }
+
+    /// Test EID consistency between position_map ($264) and position_id_map ($265)
+    #[test]
+    fn test_position_maps_eid_consistency() {
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Extract EIDs from position map ($264)
+        let pos_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::POSITION_MAP)
+            .expect("Should have position map");
+
+        let mut pos_map_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        if let IonValue::List(entries) = &pos_map.value {
+            for entry in entries {
+                if let IonValue::Struct(map) = entry {
+                    if let Some(IonValue::List(eids)) = map.get(&sym::ENTITY_ID_LIST) {
+                        for eid in eids {
+                            if let IonValue::Int(e) = eid {
+                                pos_map_eids.insert(*e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Extract EIDs from position ID map ($265)
+        let pos_id_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::POSITION_ID_MAP)
+            .expect("Should have position ID map");
+
+        let mut pos_id_map_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        if let IonValue::List(entries) = &pos_id_map.value {
+            for entry in entries {
+                if let IonValue::Struct(map) = entry {
+                    if let Some(IonValue::Int(eid)) = map.get(&sym::EID_VALUE) {
+                        if *eid != 0 {
+                            // Skip terminator entry
+                            pos_id_map_eids.insert(*eid);
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("Position map has {} EIDs", pos_map_eids.len());
+        println!("Position ID map has {} EIDs", pos_id_map_eids.len());
+
+        // Every EID in position_map should be in position_id_map
+        let missing: Vec<_> = pos_map_eids
+            .iter()
+            .filter(|eid| !pos_id_map_eids.contains(eid))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "EIDs in position_map but not in position_id_map: {:?}",
+            missing
         );
     }
 }
