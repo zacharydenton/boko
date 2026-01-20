@@ -200,6 +200,9 @@ COMMON_SYMBOLS = {
     "$269": "CONTENT_PARAGRAPH",
     "$271": "IMAGE_CONTENT",
 
+    # Content item fields
+    "$790": "CONTENT_ROLE",  # 2=first, 3=normal, 4=endnote
+
     # Values
     "$320": "ALIGN_CENTER",
     "$321": "ALIGN_JUSTIFY",

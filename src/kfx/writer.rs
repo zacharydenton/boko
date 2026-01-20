@@ -210,6 +210,13 @@ pub mod sym {
     pub const PAGE_TEMPLATE: u64 = 266; // $266 - page template
     pub const CONTENT_PARAGRAPH: u64 = 269; // $269 - paragraph content type
 
+    // Content item role/position indicator ($790)
+    // This field appears on paragraph content items and indicates their role:
+    // - 2: First paragraph in content block (index 0)
+    // - 3: Normal paragraph
+    // - 4: Special paragraph (endnotes, back matter)
+    pub const CONTENT_ROLE: u64 = 790; // $790 - content item role indicator
+
     // Page template / anchor symbols
     pub const ANCHOR_REF: u64 = 179; // $179 - reference to anchor fragment in inline style runs
     pub const TEMPLATE_NAME: u64 = 180; // $180 - template name/id (also anchor ID)
@@ -1758,7 +1765,7 @@ impl KfxBookBuilder {
 
                     // Add inline style runs ($142) if present
                     // Each run can have a style and/or an anchor reference
-                    if !inline_runs.is_empty() {
+                    let has_inline_runs = if !inline_runs.is_empty() {
                         let runs: Vec<IonValue> = inline_runs
                             .iter()
                             .filter_map(|run| {
@@ -1783,7 +1790,20 @@ impl KfxBookBuilder {
 
                         if !runs.is_empty() {
                             item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                            true
+                        } else {
+                            false
                         }
+                    } else {
+                        false
+                    };
+
+                    // Add content role indicator ($790)
+                    // Only on items WITHOUT inline style runs
+                    // First item in content block gets 2, normal paragraphs get 3
+                    if !has_inline_runs {
+                        let role = if state.global_idx == 0 { 2 } else { 3 };
+                        item.insert(sym::CONTENT_ROLE, IonValue::Int(role));
                     }
 
                     state.text_idx_in_chunk += 1;
@@ -1821,6 +1841,7 @@ impl KfxBookBuilder {
                 } => {
                     // Container: create nested $146 array with children
                     item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+                    // Note: Containers do NOT get $790 - only leaf text items do
 
                     // Build nested content array
                     let nested_items: Vec<IonValue> = children
