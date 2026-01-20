@@ -871,25 +871,25 @@ impl KfxBookBuilder {
                 add_entry("description", IonValue::String(description.clone()));
             }
 
-            // Use a unique content_id for the book (not ASIN - that's for store books)
-            let content_id = if !book.metadata.identifier.is_empty() {
-                book.metadata.identifier.clone()
-            } else {
-                // Generate a unique ID based on title/author
-                format!("boko_{:x}", {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut h = DefaultHasher::new();
-                    book.metadata.title.hash(&mut h);
-                    book.metadata.authors.hash(&mut h);
-                    h.finish()
-                })
+            // Generate ASIN-like identifier for the book
+            // kfxlib uses a random 32-char alphanumeric ID for both PDOC and EBOK
+            // Both ASIN and content_id must be set to the same value for cover thumbnails to work
+            let asin = {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut h = DefaultHasher::new();
+                book.metadata.title.hash(&mut h);
+                book.metadata.authors.hash(&mut h);
+                // Use identifier if available for more uniqueness
+                book.metadata.identifier.hash(&mut h);
+                format!("{:032X}", h.finish())
             };
-            add_entry("content_id", IonValue::String(content_id));
+            add_entry("ASIN", IonValue::String(asin.clone()));
+            add_entry("content_id", IonValue::String(asin));
 
-            // PDOC = Personal Document (sideloaded, no store verification)
-            // EBOK = store-purchased eBook (triggers store lookup)
-            add_entry("cde_content_type", IonValue::String("PDOC".to_string()));
+            // PDOC = Personal Document (sideloaded)
+            // EBOK = store-purchased eBook (enables cover thumbnails in library view)
+            add_entry("cde_content_type", IonValue::String("EBOK".to_string()));
 
             // Add cover_image reference if available
             // IMPORTANT: cover_image value must be a Symbol (not String) matching the $164 resource fid
