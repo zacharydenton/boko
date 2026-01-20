@@ -2547,7 +2547,11 @@ impl KfxBookBuilder {
                 anchor_eids: &mut HashMap<String, (i64, i64)>,
             ) {
                 match item {
-                    ContentItem::Text { element_id, inline_runs, .. } => {
+                    ContentItem::Text {
+                        element_id,
+                        inline_runs,
+                        ..
+                    } => {
                         // Block-level element ID on the Text item itself
                         if let Some(id) = element_id {
                             let key = format!("{}#{}", source_path, id);
@@ -2559,7 +2563,9 @@ impl KfxBookBuilder {
                             if let Some(ref id) = run.element_id {
                                 let key = format!("{}#{}", source_path, id);
                                 // Only insert if not already present (first occurrence wins)
-                                anchor_eids.entry(key).or_insert((*content_eid, run.offset as i64));
+                                anchor_eids
+                                    .entry(key)
+                                    .or_insert((*content_eid, run.offset as i64));
                             }
                         }
                         *content_eid += 1;
@@ -3851,27 +3857,27 @@ fn extract_content_from_xhtml(
                 // IMPORTANT: Propagate element_id to first child if this inline element has an ID
                 // This handles cases like <a id="noteref-1">2</a> where the anchor tag has an ID
                 // that needs to be preserved for back-links
-                if let Some(id) = element_id {
-                    if let Some(first) = children.first_mut() {
-                        match first {
-                            ContentItem::Text {
-                                element_id: child_id,
-                                ..
-                            } => {
-                                if child_id.is_none() {
-                                    *child_id = Some(id);
-                                }
+                if let Some(id) = element_id
+                    && let Some(first) = children.first_mut()
+                {
+                    match first {
+                        ContentItem::Text {
+                            element_id: child_id,
+                            ..
+                        } => {
+                            if child_id.is_none() {
+                                *child_id = Some(id);
                             }
-                            ContentItem::Container {
-                                element_id: child_id,
-                                ..
-                            } => {
-                                if child_id.is_none() {
-                                    *child_id = Some(id);
-                                }
-                            }
-                            _ => {}
                         }
+                        ContentItem::Container {
+                            element_id: child_id,
+                            ..
+                        } => {
+                            if child_id.is_none() {
+                                *child_id = Some(id);
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 children
@@ -5143,7 +5149,9 @@ mod tests {
                 println!(
                     "  {} -> {} (from {})",
                     entry.href,
-                    eid_offset.map(|(e, o)| format!("EID {} offset {}", e, o)).unwrap_or("NONE".to_string()),
+                    eid_offset
+                        .map(|(e, o)| format!("EID {} offset {}", e, o))
+                        .unwrap_or("NONE".to_string()),
                     source
                 );
                 *count += 1;
@@ -7785,7 +7793,8 @@ mod image_tests {
 
         assert!(
             fragment_eid.is_some(),
-            "anchor_eids should have entry for {}", target_href
+            "anchor_eids should have entry for {}",
+            target_href
         );
         assert!(
             section_eid.is_some(),
@@ -7808,7 +7817,8 @@ mod image_tests {
         assert!(
             *fragment_eid > section_eid,
             "Fragment EID ({}) should be > section EID ({})",
-            fragment_eid, section_eid
+            fragment_eid,
+            section_eid
         );
 
         // Print the offset for debugging
@@ -7821,7 +7831,10 @@ mod image_tests {
             .iter()
             .find(|f| f.ftype == sym::BOOK_NAVIGATION);
 
-        assert!(nav_fragment.is_some(), "Should have book_navigation fragment");
+        assert!(
+            nav_fragment.is_some(),
+            "Should have book_navigation fragment"
+        );
 
         // Look for nav entry with title "I" (first chapter in The Enchiridion)
         fn find_nav_target_eid(nav_value: &IonValue, title: &str) -> Option<i64> {
@@ -7842,7 +7855,8 @@ mod image_tests {
                                 if let Some(nav_target) = s.get(&sym::NAV_TARGET) {
                                     match nav_target {
                                         IonValue::Struct(t) => {
-                                            if let Some(IonValue::Int(eid)) = t.get(&sym::POSITION) {
+                                            if let Some(IonValue::Int(eid)) = t.get(&sym::POSITION)
+                                            {
                                                 return Some(*eid);
                                             }
                                         }
@@ -7883,17 +7897,15 @@ mod image_tests {
         }
 
         let nav_eid = find_nav_target_eid(&nav_fragment.unwrap().value, "I");
-        assert!(
-            nav_eid.is_some(),
-            "Should find nav entry with title 'I'"
-        );
+        assert!(nav_eid.is_some(), "Should find nav entry with title 'I'");
 
         // The nav entry EID should match the fragment EID (not section EID)
         assert_eq!(
             nav_eid.unwrap(),
             *fragment_eid,
             "Nav entry for 'I' should use fragment EID {}, not section EID {}",
-            *fragment_eid, section_eid
+            *fragment_eid,
+            section_eid
         );
     }
 
