@@ -70,7 +70,7 @@ pub fn style_to_ion(
     }
 
     // Font size
-    add_font_size(&mut style_ion, style);
+    add_font_size(&mut style_ion, style, is_image_style);
 
     // Text align
     if let Some(align) = style.text_align {
@@ -128,7 +128,7 @@ pub fn style_to_ion(
     add_text_indent(&mut style_ion, style);
 
     // Line height
-    add_line_height(&mut style_ion, style);
+    add_line_height(&mut style_ion, style, is_image_style);
 
     // Colors
     if let Some(ref color) = style.color {
@@ -198,53 +198,40 @@ pub fn style_to_ion(
     IonValue::Struct(style_ion)
 }
 
-fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref size) = style.font_size {
-        let size_val: Option<f32> = match size {
-            CssValue::Em(v) | CssValue::Rem(v) => {
-                if (v - 1.0).abs() < 0.001 {
-                    None // 1em is baseline, omit
-                } else {
-                    Some(*v)
-                }
-            }
-            CssValue::Percent(v) => {
-                if (v - 100.0).abs() < 0.001 {
-                    None // 100% is baseline, omit
-                } else {
-                    Some(*v / 100.0)
-                }
-            }
-            CssValue::Keyword(k) => match k.as_str() {
-                "smaller" => Some(0.833333),
-                "larger" => Some(1.2),
-                "xx-small" => Some(0.5625),
-                "x-small" => Some(0.625),
-                "small" => Some(0.8125),
-                "medium" => None, // baseline
-                "large" => Some(1.125),
-                "x-large" => Some(1.5),
-                "xx-large" => Some(2.0),
-                _ => None,
-            },
-            CssValue::Px(v) => {
-                // Approximate: assume 16px = 1em
-                let em_val = *v / 16.0;
-                if (em_val - 1.0).abs() < 0.001 {
-                    None
-                } else {
-                    Some(em_val)
-                }
-            }
-            _ => None,
-        };
-        if let Some(val) = size_val {
-            let mut s = HashMap::new();
-            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
-            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
-            style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
-        }
+fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is_image_style: bool) {
+    // Images don't get font-size
+    if is_image_style {
+        return;
     }
+
+    let size_val: f32 = if let Some(ref size) = style.font_size {
+        match size {
+            CssValue::Em(v) | CssValue::Rem(v) => *v,
+            CssValue::Percent(v) => *v / 100.0,
+            CssValue::Keyword(k) => match k.as_str() {
+                "smaller" => 0.833333,
+                "larger" => 1.2,
+                "xx-small" => 0.5625,
+                "x-small" => 0.625,
+                "small" => 0.8125,
+                "medium" => 1.0,
+                "large" => 1.125,
+                "x-large" => 1.5,
+                "xx-large" => 2.0,
+                _ => 1.0,
+            },
+            CssValue::Px(v) => *v / 16.0, // Assume 16px = 1em
+            _ => 1.0,
+        }
+    } else {
+        // Default font-size: 1em for text styles (matches Kindle Previewer)
+        1.0
+    };
+
+    let mut s = HashMap::new();
+    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
+    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
+    style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
 }
 
 fn add_font_weight(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
@@ -371,21 +358,30 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
     }
 }
 
-fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref height) = style.line_height {
-        let kfx_val: Option<f32> = match height {
-            CssValue::Number(v) => Some(*v * 0.833333),
-            CssValue::Percent(v) => Some(*v / 100.0 * 0.833333),
-            CssValue::Em(v) | CssValue::Rem(v) => Some(*v * 0.833333),
-            CssValue::Px(v) => Some(*v / 16.0 * 0.833333),
+fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is_image_style: bool) {
+    // Images don't get line-height
+    if is_image_style {
+        return;
+    }
+
+    let kfx_val: Option<f32> = if let Some(ref height) = style.line_height {
+        match height {
+            CssValue::Number(v) => Some(*v),
+            CssValue::Percent(v) => Some(*v / 100.0),
+            CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
+            CssValue::Px(v) => Some(*v / 16.0),
             _ => None,
-        };
-        if let Some(val) = kfx_val {
-            let mut s = HashMap::new();
-            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
-            style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
         }
+    } else {
+        // Default line-height: 1em for text styles (matches Kindle Previewer)
+        Some(1.0)
+    };
+
+    if let Some(val) = kfx_val {
+        let mut s = HashMap::new();
+        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+        style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
     }
 }
 
