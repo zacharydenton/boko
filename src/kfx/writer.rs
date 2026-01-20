@@ -541,7 +541,7 @@ impl KfxBookBuilder {
                 }
             }
 
-            let stylesheet = Stylesheet::parse(&combined_css);
+            let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
             let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
 
             if content.is_empty() {
@@ -3378,6 +3378,7 @@ fn is_block_element(tag: &str) -> bool {
             | "footer"
             | "nav"
             | "aside"
+            | "hgroup"
             | "p"
             | "h1"
             | "h2"
@@ -3416,7 +3417,20 @@ fn is_structural_container(tag: &str) -> bool {
 fn is_semantic_container(tag: &str) -> bool {
     matches!(
         tag,
-        "header" | "footer" | "nav" | "aside" | "figure" | "figcaption" | "blockquote"
+        "header"
+            | "footer"
+            | "nav"
+            | "aside"
+            | "figure"
+            | "figcaption"
+            | "blockquote"
+            | "hgroup"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
     )
 }
 

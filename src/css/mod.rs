@@ -340,6 +340,20 @@ pub struct CssRule {
     pub style: ParsedStyle,
 }
 
+/// User-agent stylesheet with browser default styles.
+/// These are applied at lowest specificity before document styles.
+/// Based on standard browser defaults for HTML elements.
+const USER_AGENT_CSS: &str = r#"
+h1 { font-size: 2em; font-weight: bold; }
+h2 { font-size: 1.5em; font-weight: bold; }
+h3 { font-size: 1.17em; font-weight: bold; }
+h4 { font-size: 1em; font-weight: bold; }
+h5 { font-size: 0.83em; font-weight: bold; }
+h6 { font-size: 0.67em; font-weight: bold; }
+b, strong { font-weight: bold; }
+i, em { font-style: italic; }
+"#;
+
 /// Parsed stylesheet containing all rules
 #[derive(Debug, Default)]
 pub struct Stylesheet {
@@ -373,6 +387,14 @@ impl Stylesheet {
             .collect();
 
         Stylesheet { rules }
+    }
+
+    /// Parse a CSS stylesheet with browser default styles prepended.
+    /// User-agent styles are applied at lowest specificity, so document
+    /// styles will override them.
+    pub fn parse_with_defaults(css: &str) -> Self {
+        let combined = format!("{}\n{}", USER_AGENT_CSS, css);
+        Self::parse(&combined)
     }
 
     /// Parse an inline style attribute (style="...")
