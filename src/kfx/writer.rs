@@ -2138,83 +2138,112 @@ impl KfxBookBuilder {
     /// This creates the "virtual pages" for reading progress - needs granular entries
     fn add_location_map(&mut self, chapters: &[ChapterData]) {
         // Location map structure: [ { P182: ( {P155: eid, P143: offset}, ... ) } ]
-        // Include entries for each content block to enable granular reading positions
-        let mut location_entries = Vec::new();
+        // Kindle uses ~150 characters per "location" for reading progress tracking.
+        // Multiple location entries can reference the same content item (EID) with
+        // different offsets, allowing granular progress tracking within paragraphs.
+        const CHARS_PER_LOCATION: usize = 150;
+
+        // First pass: build a list of content items with their EIDs and character ranges
+        #[derive(Debug)]
+        struct ContentRange {
+            eid: i64,
+            char_start: usize,
+            char_end: usize,
+        }
+
+        let mut content_ranges: Vec<ContentRange> = Vec::new();
         let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
+        let mut total_chars: usize = 0;
 
         for chapter in chapters {
-            // Section content entry EID at offset 0
-            let section_eid = eid_base;
-            let mut section_entry = HashMap::new();
-            section_entry.insert(sym::POSITION, IonValue::Int(section_eid));
-            section_entry.insert(sym::OFFSET, IonValue::Int(0));
-            location_entries.push(IonValue::Struct(section_entry));
-
-            // Content block entries - iterate over ALL items including nested ones
-            // EIDs are assigned sequentially to flattened content items
             let mut content_eid = eid_base + 1;
-            let mut char_offset = 0i64;
 
-            fn add_entries_recursive(
+            fn collect_ranges_recursive(
                 item: &ContentItem,
                 content_eid: &mut i64,
-                char_offset: &mut i64,
-                location_entries: &mut Vec<IonValue>,
+                char_pos: &mut usize,
+                ranges: &mut Vec<ContentRange>,
             ) {
-                // IMPORTANT: EIDs are assigned in children-first order to match
-                // add_content_block_chunked. For containers, children get EIDs first,
-                // then the container itself.
                 match item {
                     ContentItem::Text { text, .. } => {
-                        // Text items: add entry, then increment char_offset
-                        let mut entry = HashMap::new();
-                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
-                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
-                        location_entries.push(IonValue::Struct(entry));
+                        let start = *char_pos;
+                        let end = start + text.len();
+                        ranges.push(ContentRange {
+                            eid: *content_eid,
+                            char_start: start,
+                            char_end: end,
+                        });
                         *content_eid += 1;
-                        *char_offset += text.len() as i64;
+                        *char_pos = end;
                     }
                     ContentItem::Image { .. } => {
-                        // Images: add entry but don't update char_offset
-                        let mut entry = HashMap::new();
-                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
-                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
-                        location_entries.push(IonValue::Struct(entry));
+                        // Images don't contribute to character count but need an entry
+                        ranges.push(ContentRange {
+                            eid: *content_eid,
+                            char_start: *char_pos,
+                            char_end: *char_pos,
+                        });
                         *content_eid += 1;
                     }
                     ContentItem::Container { children, .. } => {
-                        // Containers: process children FIRST (children-first EID order),
-                        // then add entry for the container itself
+                        // Process children first (children-first EID order)
                         for child in children {
-                            add_entries_recursive(
-                                child,
-                                content_eid,
-                                char_offset,
-                                location_entries,
-                            );
+                            collect_ranges_recursive(child, content_eid, char_pos, ranges);
                         }
-                        // Now add the container's entry with current offset
-                        let mut entry = HashMap::new();
-                        entry.insert(sym::POSITION, IonValue::Int(*content_eid));
-                        entry.insert(sym::OFFSET, IonValue::Int(*char_offset));
-                        location_entries.push(IonValue::Struct(entry));
+                        // Container itself gets an entry at current position
+                        ranges.push(ContentRange {
+                            eid: *content_eid,
+                            char_start: *char_pos,
+                            char_end: *char_pos,
+                        });
                         *content_eid += 1;
                     }
                 }
             }
 
             for content_item in &chapter.content {
-                add_entries_recursive(
+                collect_ranges_recursive(
                     content_item,
                     &mut content_eid,
-                    &mut char_offset,
-                    &mut location_entries,
+                    &mut total_chars,
+                    &mut content_ranges,
                 );
             }
 
-            // Advance eid_base by section entry + all content items (including nested)
             let total_items = count_content_items(&chapter.content);
             eid_base += 1 + total_items as i64;
+        }
+
+        // Calculate total number of locations
+        let num_locations = (total_chars / CHARS_PER_LOCATION).max(1);
+
+        // Second pass: create location entries mapping each location to content items
+        let mut location_entries = Vec::new();
+
+        for loc_idx in 0..num_locations {
+            let char_pos = loc_idx * CHARS_PER_LOCATION;
+
+            // Find which content item this location falls within
+            let range = content_ranges
+                .iter()
+                .find(|r| char_pos >= r.char_start && char_pos < r.char_end)
+                .or_else(|| {
+                    // If not found (e.g., past end), use the last content item
+                    content_ranges.last()
+                });
+
+            if let Some(range) = range {
+                let offset_within_item = if char_pos >= range.char_start {
+                    (char_pos - range.char_start) as i64
+                } else {
+                    0
+                };
+
+                let mut entry = HashMap::new();
+                entry.insert(sym::POSITION, IonValue::Int(range.eid));
+                entry.insert(sym::OFFSET, IonValue::Int(offset_within_item));
+                location_entries.push(IonValue::Struct(entry));
+            }
         }
 
         // Wrap in { P182: entries }
@@ -7404,5 +7433,76 @@ mod image_tests {
         }
 
         panic!("Could not find imprint style in KFX output");
+    }
+
+    #[test]
+    fn test_location_map_has_multiple_entries_per_eid() {
+        // Test that LOCATION_MAP creates multiple entries per content item (EID)
+        // based on character positions (~150 chars per location).
+        // This is required for proper reading progress tracking on Kindle.
+        //
+        // Previously, we created one entry per content item, which caused:
+        // - "Learning reading speed..." stuck message
+        // - Position always showing "100% read"
+        // - Incorrect TOC page numbers
+        let book = crate::epub::read_epub("tests/fixtures/epictetus.epub").expect("parse EPUB");
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find the LOCATION_MAP fragment ($550)
+        let location_map = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::LOCATION_MAP)
+            .expect("Should have LOCATION_MAP fragment");
+
+        // Extract the location entries
+        let entries = match &location_map.value {
+            IonValue::List(outer) => {
+                if let Some(IonValue::Struct(wrapper)) = outer.first() {
+                    wrapper
+                        .get(&sym::LOCATION_ENTRIES)
+                        .and_then(|v| match v {
+                            IonValue::List(entries) => Some(entries),
+                            _ => None,
+                        })
+                        .expect("Should have location entries")
+                } else {
+                    panic!("LOCATION_MAP should have wrapper struct")
+                }
+            }
+            _ => panic!("LOCATION_MAP value should be a list"),
+        };
+
+        // Count how many times each EID appears
+        let mut eid_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for entry in entries {
+            if let IonValue::Struct(entry_struct) = entry {
+                if let Some(IonValue::Int(eid)) = entry_struct.get(&sym::POSITION) {
+                    *eid_counts.entry(*eid).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Find the max count - at least one EID should appear multiple times
+        let max_count = eid_counts.values().max().copied().unwrap_or(0);
+        println!("Max EID frequency: {}", max_count);
+        println!("Total unique EIDs: {}", eid_counts.len());
+        println!("Total location entries: {}", entries.len());
+
+        // With ~150 chars per location and typical paragraph lengths,
+        // we expect some EIDs to appear 10+ times (for long paragraphs)
+        assert!(
+            max_count >= 5,
+            "At least one EID should appear 5+ times for long content items, max was {}",
+            max_count
+        );
+
+        // Also verify we have a reasonable number of location entries
+        // (epictetus.epub should have ~500 locations)
+        assert!(
+            entries.len() > 100,
+            "Should have substantial number of location entries, got {}",
+            entries.len()
+        );
     }
 }
