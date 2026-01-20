@@ -3,9 +3,9 @@
 //! KFX is Amazon's latest Kindle format, successor to KF8/AZW3.
 //! It uses Amazon's Ion binary format for structured data.
 
-mod ion;
+pub(crate) mod ion;
 mod reader;
-mod writer;
+pub mod writer;
 
 pub use reader::{read_kfx, read_kfx_from_reader};
 pub use writer::{write_kfx, write_kfx_to_writer};
