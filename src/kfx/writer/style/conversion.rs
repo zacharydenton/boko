@@ -256,9 +256,8 @@ fn add_font_weight(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
                 crate::css::FontWeight::Bold => sym::FONT_WEIGHT_BOLD,
             }
         };
-        if weight_sym != sym::FONT_WEIGHT_NORMAL {
-            style_ion.insert(sym::FONT_WEIGHT, IonValue::Symbol(weight_sym));
-        }
+        // Include font-weight (Kindle Previewer includes normal explicitly)
+        style_ion.insert(sym::FONT_WEIGHT, IonValue::Symbol(weight_sym));
     }
 }
 
@@ -269,9 +268,8 @@ fn add_font_style(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
             crate::css::FontStyle::Oblique => sym::FONT_STYLE_OBLIQUE,
             crate::css::FontStyle::Normal => sym::FONT_STYLE_NORMAL,
         };
-        if style_sym != sym::FONT_STYLE_NORMAL {
-            style_ion.insert(sym::FONT_STYLE, IonValue::Symbol(style_sym));
-        }
+        // Include font-style (Kindle Previewer includes normal explicitly)
+        style_ion.insert(sym::FONT_STYLE, IonValue::Symbol(style_sym));
     }
 }
 
