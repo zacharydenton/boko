@@ -145,6 +145,73 @@ pub mod sym {
     // ==========================================================================
     pub const DECORATION_PRESENT: u64 = 328; // $328 - decoration is present
     pub const TEXT_DECORATION_OVERLINE: u64 = 554; // $554 - text-decoration: overline
+    pub const DECORATION_BOX_CLONE: u64 = 99; // $99 - decoration-break: clone
+
+    // ==========================================================================
+    // VERTICAL ALIGN VALUES ($44)
+    // ==========================================================================
+    pub const VERTICAL_ALIGN: u64 = 44; // $44 - vertical-align property
+    pub const VERTICAL_TOP: u64 = 58; // $58 - vertical-align: top
+    pub const VERTICAL_BOTTOM: u64 = 60; // $60 - vertical-align: bottom
+    pub const VERTICAL_SUPER: u64 = 370; // $370 - vertical-align: super
+    pub const VERTICAL_SUB: u64 = 371; // $371 - vertical-align: sub
+    pub const VERTICAL_TEXT_TOP: u64 = 447; // $447 - vertical-align: text-top
+    pub const VERTICAL_TEXT_BOTTOM: u64 = 449; // $449 - vertical-align: text-bottom
+    // Note: $350 (FONT_WEIGHT_NORMAL) = baseline, $320 (ALIGN_CENTER) = middle
+
+    // ==========================================================================
+    // LAYOUT PROPERTIES
+    // ==========================================================================
+    pub const MIN_HEIGHT: u64 = 62; // $62 - min-height (also used for height in some contexts)
+    pub const MIN_WIDTH: u64 = 63; // $63 - min-width
+    pub const VISIBILITY: u64 = 68; // $68 - visibility (boolean: true = visible)
+    pub const OVERFLOW_CLIP: u64 = 476; // $476 - overflow: hidden/clip (boolean: true = clip)
+
+    // ==========================================================================
+    // CLEAR PROPERTY ($628)
+    // ==========================================================================
+    pub const CLEAR: u64 = 628; // $628 - clear property
+    pub const CLEAR_BOTH: u64 = 421; // $421 - clear: both
+    // Note: $349 (TEXT_TRANSFORM_NONE) = none, $59 (ALIGN_LEFT) = left, $61 (ALIGN_RIGHT) = right
+
+    // ==========================================================================
+    // WORD BREAK ($569)
+    // ==========================================================================
+    pub const WORD_BREAK: u64 = 569; // $569 - word-break property
+    pub const WORD_BREAK_ALL: u64 = 570; // $570 - word-break: break-all
+    // Note: $350 (FONT_WEIGHT_NORMAL) = normal
+
+    // ==========================================================================
+    // PAGE BREAK CONTROL
+    // ==========================================================================
+    pub const BREAK_INSIDE: u64 = 135; // $135 - break-inside property
+    pub const BREAK_AFTER: u64 = 788; // $788 - break-after property
+    pub const BREAK_BEFORE: u64 = 789; // $789 - break-before property
+    pub const BREAK_AVOID: u64 = 353; // $353 - avoid value for break properties
+    // Note: $383 (BLOCK_TYPE_BLOCK) = auto
+
+    // ==========================================================================
+    // BORDER RADIUS ($459-$462)
+    // ==========================================================================
+    pub const BORDER_RADIUS_TL: u64 = 459; // $459 - border-top-left-radius
+    pub const BORDER_RADIUS_TR: u64 = 460; // $460 - border-top-right-radius
+    pub const BORDER_RADIUS_BR: u64 = 461; // $461 - border-bottom-right-radius
+    pub const BORDER_RADIUS_BL: u64 = 462; // $462 - border-bottom-left-radius
+
+    // ==========================================================================
+    // BORDER PROPERTIES (additional)
+    // ==========================================================================
+    pub const BORDER_TOP_COLOR: u64 = 83; // $83 - border-top-color
+    pub const BORDER_RIGHT_COLOR: u64 = 84; // $84 - border-right-color
+    pub const BORDER_BOTTOM_COLOR: u64 = 89; // $89 - border-bottom-color
+    pub const BORDER_LEFT_COLOR: u64 = 94; // $94 - border-left-color
+    pub const BORDER_TOP_PRESENT: u64 = 88; // $88 - border-top decoration present
+    pub const BORDER_TOP_WIDTH: u64 = 93; // $93 - border-top-width
+
+    // ==========================================================================
+    // TABLE PROPERTIES
+    // ==========================================================================
+    pub const CAPTION_SIDE: u64 = 453; // $453 - caption-side property
 
     // ==========================================================================
     // IMAGE/BLOCK LAYOUT
@@ -1750,6 +1817,227 @@ impl KfxBookBuilder {
                 && let Some(val) = border_to_ion(b)
             {
                 style_ion.insert(border_left_sym, val);
+            }
+
+            // Vertical align - $44 with alignment symbol
+            if let Some(align) = style.vertical_align {
+                use crate::css::VerticalAlign;
+                let align_sym = match align {
+                    VerticalAlign::Baseline => sym::FONT_WEIGHT_NORMAL, // $350 = baseline
+                    VerticalAlign::Top => sym::VERTICAL_TOP,            // $58
+                    VerticalAlign::Middle => sym::ALIGN_CENTER,         // $320 = middle
+                    VerticalAlign::Bottom => sym::VERTICAL_BOTTOM,      // $60
+                    VerticalAlign::Super => sym::VERTICAL_SUPER,        // $370
+                    VerticalAlign::Sub => sym::VERTICAL_SUB,            // $371
+                    VerticalAlign::TextTop => sym::VERTICAL_TEXT_TOP,   // $447
+                    VerticalAlign::TextBottom => sym::VERTICAL_TEXT_BOTTOM, // $449
+                };
+                // Only add if not baseline (default)
+                if align != VerticalAlign::Baseline {
+                    style_ion.insert(sym::VERTICAL_ALIGN, IonValue::Symbol(align_sym));
+                }
+            }
+
+            // Letter spacing - $32 with em units
+            if let Some(ref spacing) = style.letter_spacing {
+                let em_val: Option<f32> = match spacing {
+                    CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
+                    CssValue::Px(v) => Some(*v * 0.45 / 1.0), // px to em approximation based on mapping
+                    CssValue::Keyword(k) if k == "normal" => Some(0.0),
+                    _ => None,
+                };
+                if let Some(val) = em_val {
+                    let mut s = HashMap::new();
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+                    style_ion.insert(sym::LETTER_SPACING, IonValue::Struct(s));
+                }
+            }
+
+            // Word spacing - $33 with em units
+            if let Some(ref spacing) = style.word_spacing {
+                let em_val: Option<f32> = match spacing {
+                    CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
+                    CssValue::Px(v) => Some(*v * 0.45 / 1.0), // px to em approximation
+                    CssValue::Keyword(k) if k == "normal" => Some(0.0),
+                    _ => None,
+                };
+                if let Some(val) = em_val {
+                    let mut s = HashMap::new();
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+                    style_ion.insert(sym::WORD_SPACING, IonValue::Struct(s));
+                }
+            }
+
+            // White space nowrap - $45 boolean
+            if let Some(nowrap) = style.white_space_nowrap {
+                style_ion.insert(sym::WHITE_SPACE_NOWRAP, IonValue::Bool(nowrap));
+            }
+
+            // Text decorations
+            if style.text_decoration_underline {
+                style_ion.insert(
+                    sym::TEXT_DECORATION_UNDERLINE,
+                    IonValue::Symbol(sym::DECORATION_PRESENT),
+                );
+            }
+            if style.text_decoration_overline {
+                style_ion.insert(
+                    sym::TEXT_DECORATION_OVERLINE,
+                    IonValue::Symbol(sym::DECORATION_PRESENT),
+                );
+            }
+            if style.text_decoration_line_through {
+                style_ion.insert(
+                    sym::TEXT_DECORATION_LINE_THROUGH,
+                    IonValue::Symbol(sym::DECORATION_PRESENT),
+                );
+            }
+
+            // Opacity - $72 decimal
+            if let Some(opacity) = style.opacity {
+                let val = (opacity as f32) / 100.0;
+                style_ion.insert(sym::OPACITY, IonValue::Decimal(encode_kfx_decimal(val)));
+            }
+
+            // Min/max dimensions
+            if let Some(ref val) = style.min_width {
+                if let Some(ion_val) = css_to_ion(val) {
+                    style_ion.insert(sym::MIN_WIDTH, ion_val);
+                }
+            }
+            if let Some(ref val) = style.min_height {
+                if let Some(ion_val) = css_to_ion(val) {
+                    style_ion.insert(sym::MIN_HEIGHT, ion_val);
+                }
+            }
+            if let Some(ref val) = style.max_width {
+                if let Some(ion_val) = css_to_ion(val) {
+                    style_ion.insert(sym::MAX_WIDTH, ion_val);
+                }
+            }
+            if let Some(ref val) = style.max_height {
+                // max_height uses same conversion as other dimensions
+                if let Some(ion_val) = css_to_ion(val) {
+                    // Note: There's no specific MAX_HEIGHT symbol, height is used
+                    style_ion.insert(sym::STYLE_HEIGHT, ion_val);
+                }
+            }
+
+            // Clear - $628
+            if let Some(clear) = style.clear {
+                use crate::css::Clear;
+                let clear_sym = match clear {
+                    Clear::None => sym::TEXT_TRANSFORM_NONE, // $349
+                    Clear::Left => sym::ALIGN_LEFT,          // $59
+                    Clear::Right => sym::ALIGN_RIGHT,        // $61
+                    Clear::Both => sym::CLEAR_BOTH,          // $421
+                };
+                if clear != Clear::None {
+                    style_ion.insert(sym::CLEAR, IonValue::Symbol(clear_sym));
+                }
+            }
+
+            // Word break - $569
+            if let Some(word_break) = style.word_break {
+                use crate::css::WordBreak;
+                let break_sym = match word_break {
+                    WordBreak::Normal => sym::FONT_WEIGHT_NORMAL, // $350
+                    WordBreak::BreakAll => sym::WORD_BREAK_ALL,   // $570
+                    WordBreak::KeepAll => sym::FONT_WEIGHT_NORMAL, // Fallback to normal
+                };
+                if word_break != WordBreak::Normal {
+                    style_ion.insert(sym::WORD_BREAK, IonValue::Symbol(break_sym));
+                }
+            }
+
+            // Overflow - $476 (hidden)
+            if let Some(overflow) = style.overflow {
+                use crate::css::Overflow;
+                if matches!(overflow, Overflow::Hidden | Overflow::Clip) {
+                    style_ion.insert(sym::OVERFLOW_CLIP, IonValue::Bool(true));
+                }
+            }
+
+            // Visibility - $68
+            if let Some(visibility) = style.visibility {
+                use crate::css::Visibility;
+                style_ion.insert(
+                    sym::VISIBILITY,
+                    IonValue::Bool(visibility == Visibility::Visible),
+                );
+            }
+
+            // Break properties
+            if let Some(break_val) = style.break_before {
+                use crate::css::BreakValue;
+                let break_sym = match break_val {
+                    BreakValue::Auto => sym::BLOCK_TYPE_BLOCK, // $383
+                    BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => {
+                        sym::BREAK_AVOID // $353
+                    }
+                    _ => sym::BLOCK_TYPE_BLOCK, // Default to auto
+                };
+                style_ion.insert(sym::BREAK_BEFORE, IonValue::Symbol(break_sym));
+            }
+            if let Some(break_val) = style.break_after {
+                use crate::css::BreakValue;
+                let break_sym = match break_val {
+                    BreakValue::Auto => sym::BLOCK_TYPE_BLOCK,
+                    BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => {
+                        sym::BREAK_AVOID
+                    }
+                    _ => sym::BLOCK_TYPE_BLOCK,
+                };
+                style_ion.insert(sym::BREAK_AFTER, IonValue::Symbol(break_sym));
+            }
+            if let Some(break_val) = style.break_inside {
+                use crate::css::BreakValue;
+                let break_sym = match break_val {
+                    BreakValue::Auto => sym::BLOCK_TYPE_BLOCK,
+                    BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => {
+                        sym::BREAK_AVOID
+                    }
+                    _ => sym::BLOCK_TYPE_BLOCK,
+                };
+                style_ion.insert(sym::BREAK_INSIDE, IonValue::Symbol(break_sym));
+            }
+
+            // Border radius - $459-$462 with px units
+            let radius_to_ion = |val: &CssValue| -> Option<IonValue> {
+                let px_val = match val {
+                    CssValue::Px(v) => Some(*v * 0.45), // Convert to KFX px
+                    CssValue::Em(v) | CssValue::Rem(v) => Some(*v * 16.0 * 0.45), // em to px
+                    CssValue::Percent(v) => Some(*v * 45.0), // percent to px approximation
+                    _ => None,
+                };
+                px_val.map(|v| {
+                    let mut s = HashMap::new();
+                    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX));
+                    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(v)));
+                    IonValue::Struct(s)
+                })
+            };
+            if let Some(ref val) = style.border_radius_tl {
+                if let Some(ion_val) = radius_to_ion(val) {
+                    style_ion.insert(sym::BORDER_RADIUS_TL, ion_val);
+                }
+            }
+            if let Some(ref val) = style.border_radius_tr {
+                if let Some(ion_val) = radius_to_ion(val) {
+                    style_ion.insert(sym::BORDER_RADIUS_TR, ion_val);
+                }
+            }
+            if let Some(ref val) = style.border_radius_br {
+                if let Some(ion_val) = radius_to_ion(val) {
+                    style_ion.insert(sym::BORDER_RADIUS_BR, ion_val);
+                }
+            }
+            if let Some(ref val) = style.border_radius_bl {
+                if let Some(ion_val) = radius_to_ion(val) {
+                    style_ion.insert(sym::BORDER_RADIUS_BL, ion_val);
+                }
             }
 
             self.fragments.push(KfxFragment::new(

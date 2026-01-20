@@ -156,6 +156,73 @@ pub enum Position {
     Fixed,
 }
 
+/// Vertical alignment
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum VerticalAlign {
+    #[default]
+    Baseline,
+    Top,
+    Middle,
+    Bottom,
+    Super,
+    Sub,
+    TextTop,
+    TextBottom,
+}
+
+/// Clear property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Clear {
+    #[default]
+    None,
+    Left,
+    Right,
+    Both,
+}
+
+/// Word break property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WordBreak {
+    #[default]
+    Normal,
+    BreakAll,
+    KeepAll,
+}
+
+/// Break (page/column) value
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BreakValue {
+    #[default]
+    Auto,
+    Avoid,
+    AvoidPage,
+    Page,
+    Left,
+    Right,
+    Column,
+    AvoidColumn,
+}
+
+/// Overflow property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Overflow {
+    #[default]
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+    Clip,
+}
+
+/// Visibility property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Visibility {
+    #[default]
+    Visible,
+    Hidden,
+    Collapse,
+}
+
 /// Parsed CSS style properties
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ParsedStyle {
@@ -182,6 +249,30 @@ pub struct ParsedStyle {
     pub left: Option<CssValue>,
     pub width: Option<CssValue>,
     pub height: Option<CssValue>,
+    pub min_width: Option<CssValue>,
+    pub min_height: Option<CssValue>,
+    pub max_width: Option<CssValue>,
+    pub max_height: Option<CssValue>,
+    pub vertical_align: Option<VerticalAlign>,
+    pub clear: Option<Clear>,
+    pub word_break: Option<WordBreak>,
+    pub overflow: Option<Overflow>,
+    pub visibility: Option<Visibility>,
+    pub break_before: Option<BreakValue>,
+    pub break_after: Option<BreakValue>,
+    pub break_inside: Option<BreakValue>,
+    pub border_radius_tl: Option<CssValue>,
+    pub border_radius_tr: Option<CssValue>,
+    pub border_radius_br: Option<CssValue>,
+    pub border_radius_bl: Option<CssValue>,
+    pub letter_spacing: Option<CssValue>,
+    pub word_spacing: Option<CssValue>,
+    pub white_space_nowrap: Option<bool>,
+    pub text_decoration_underline: bool,
+    pub text_decoration_overline: bool,
+    pub text_decoration_line_through: bool,
+    /// Opacity as integer 0-100 (representing 0.0-1.0)
+    pub opacity: Option<u8>,
     /// Whether this style is for an image element (set when creating ContentItem::Image)
     pub is_image: bool,
     /// Whether this style is for an inline element like a link (uses $127: $349 instead of $383)
@@ -263,6 +354,75 @@ impl ParsedStyle {
         }
         if other.height.is_some() {
             self.height.clone_from(&other.height);
+        }
+        if other.min_width.is_some() {
+            self.min_width.clone_from(&other.min_width);
+        }
+        if other.min_height.is_some() {
+            self.min_height.clone_from(&other.min_height);
+        }
+        if other.max_width.is_some() {
+            self.max_width.clone_from(&other.max_width);
+        }
+        if other.max_height.is_some() {
+            self.max_height.clone_from(&other.max_height);
+        }
+        if other.vertical_align.is_some() {
+            self.vertical_align = other.vertical_align;
+        }
+        if other.clear.is_some() {
+            self.clear = other.clear;
+        }
+        if other.word_break.is_some() {
+            self.word_break = other.word_break;
+        }
+        if other.overflow.is_some() {
+            self.overflow = other.overflow;
+        }
+        if other.visibility.is_some() {
+            self.visibility = other.visibility;
+        }
+        if other.break_before.is_some() {
+            self.break_before = other.break_before;
+        }
+        if other.break_after.is_some() {
+            self.break_after = other.break_after;
+        }
+        if other.break_inside.is_some() {
+            self.break_inside = other.break_inside;
+        }
+        if other.border_radius_tl.is_some() {
+            self.border_radius_tl.clone_from(&other.border_radius_tl);
+        }
+        if other.border_radius_tr.is_some() {
+            self.border_radius_tr.clone_from(&other.border_radius_tr);
+        }
+        if other.border_radius_br.is_some() {
+            self.border_radius_br.clone_from(&other.border_radius_br);
+        }
+        if other.border_radius_bl.is_some() {
+            self.border_radius_bl.clone_from(&other.border_radius_bl);
+        }
+        if other.letter_spacing.is_some() {
+            self.letter_spacing.clone_from(&other.letter_spacing);
+        }
+        if other.word_spacing.is_some() {
+            self.word_spacing.clone_from(&other.word_spacing);
+        }
+        if other.white_space_nowrap.is_some() {
+            self.white_space_nowrap = other.white_space_nowrap;
+        }
+        if other.text_decoration_underline {
+            self.text_decoration_underline = true;
+        }
+        if other.text_decoration_overline {
+            self.text_decoration_overline = true;
+        }
+        if other.text_decoration_line_through {
+            self.text_decoration_line_through = true;
+        }
+        if other.opacity.is_some() {
+            self.opacity = other.opacity;
         }
         // is_image is preserved if already set (once marked as image, stays image)
         if other.is_image {
@@ -674,6 +834,106 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "height" => {
             style.height = parse_length_value(values);
         }
+        "min-width" => {
+            style.min_width = parse_length_value(values);
+        }
+        "min-height" => {
+            style.min_height = parse_length_value(values);
+        }
+        "max-width" => {
+            style.max_width = parse_length_value(values);
+        }
+        "max-height" => {
+            style.max_height = parse_length_value(values);
+        }
+        "vertical-align" => {
+            style.vertical_align = parse_vertical_align(values);
+        }
+        "clear" => {
+            style.clear = parse_clear(values);
+        }
+        "word-break" => {
+            style.word_break = parse_word_break(values);
+        }
+        "overflow" | "overflow-x" | "overflow-y" => {
+            style.overflow = parse_overflow(values);
+        }
+        "visibility" => {
+            style.visibility = parse_visibility(values);
+        }
+        "break-before" | "page-break-before" => {
+            style.break_before = parse_break_value(values);
+        }
+        "break-after" | "page-break-after" => {
+            style.break_after = parse_break_value(values);
+        }
+        "break-inside" | "page-break-inside" => {
+            style.break_inside = parse_break_value(values);
+        }
+        "border-radius" => {
+            // Shorthand: 1-4 values (for simplicity, apply to all corners)
+            if let Some(val) = parse_length_value(values) {
+                style.border_radius_tl = Some(val.clone());
+                style.border_radius_tr = Some(val.clone());
+                style.border_radius_br = Some(val.clone());
+                style.border_radius_bl = Some(val);
+            }
+        }
+        "border-top-left-radius" => {
+            style.border_radius_tl = parse_length_value(values);
+        }
+        "border-top-right-radius" => {
+            style.border_radius_tr = parse_length_value(values);
+        }
+        "border-bottom-right-radius" => {
+            style.border_radius_br = parse_length_value(values);
+        }
+        "border-bottom-left-radius" => {
+            style.border_radius_bl = parse_length_value(values);
+        }
+        "letter-spacing" => {
+            style.letter_spacing = parse_length_value(values);
+        }
+        "word-spacing" => {
+            style.word_spacing = parse_length_value(values);
+        }
+        "white-space" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                match val.to_ascii_lowercase().as_str() {
+                    "nowrap" | "pre" => style.white_space_nowrap = Some(true),
+                    "normal" | "pre-wrap" | "pre-line" => style.white_space_nowrap = Some(false),
+                    _ => {}
+                }
+            }
+        }
+        "text-decoration" | "text-decoration-line" => {
+            for token in values {
+                if let Token::Ident(val) = token {
+                    match val.to_ascii_lowercase().as_str() {
+                        "underline" => style.text_decoration_underline = true,
+                        "overline" => style.text_decoration_overline = true,
+                        "line-through" => style.text_decoration_line_through = true,
+                        "none" => {
+                            style.text_decoration_underline = false;
+                            style.text_decoration_overline = false;
+                            style.text_decoration_line_through = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        "opacity" => {
+            if let Some(Token::Number { value, .. }) = values.first() {
+                // Clamp to 0-1 and convert to 0-100
+                let clamped = value.clamp(0.0, 1.0);
+                style.opacity = Some((clamped * 100.0) as u8);
+            } else if let Some(Token::Percentage { unit_value, .. }) = values.first() {
+                // unit_value is already 0-1 for percentage
+                let clamped = unit_value.clamp(0.0, 1.0);
+                style.opacity = Some((clamped * 100.0) as u8);
+            }
+        }
         _ => {
             // Ignore unsupported properties
         }
@@ -915,6 +1175,105 @@ fn parse_single_length(token: &Token) -> Option<CssValue> {
         }
         _ => None,
     }
+}
+
+fn parse_vertical_align(values: &[Token]) -> Option<VerticalAlign> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "baseline" => return Some(VerticalAlign::Baseline),
+                "top" => return Some(VerticalAlign::Top),
+                "middle" => return Some(VerticalAlign::Middle),
+                "bottom" => return Some(VerticalAlign::Bottom),
+                "super" => return Some(VerticalAlign::Super),
+                "sub" => return Some(VerticalAlign::Sub),
+                "text-top" => return Some(VerticalAlign::TextTop),
+                "text-bottom" => return Some(VerticalAlign::TextBottom),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+fn parse_clear(values: &[Token]) -> Option<Clear> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "none" => return Some(Clear::None),
+                "left" => return Some(Clear::Left),
+                "right" => return Some(Clear::Right),
+                "both" => return Some(Clear::Both),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+fn parse_word_break(values: &[Token]) -> Option<WordBreak> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "normal" => return Some(WordBreak::Normal),
+                "break-all" => return Some(WordBreak::BreakAll),
+                "keep-all" => return Some(WordBreak::KeepAll),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+fn parse_overflow(values: &[Token]) -> Option<Overflow> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "visible" => return Some(Overflow::Visible),
+                "hidden" => return Some(Overflow::Hidden),
+                "scroll" => return Some(Overflow::Scroll),
+                "auto" => return Some(Overflow::Auto),
+                "clip" => return Some(Overflow::Clip),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+fn parse_visibility(values: &[Token]) -> Option<Visibility> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "visible" => return Some(Visibility::Visible),
+                "hidden" => return Some(Visibility::Hidden),
+                "collapse" => return Some(Visibility::Collapse),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+fn parse_break_value(values: &[Token]) -> Option<BreakValue> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "auto" => return Some(BreakValue::Auto),
+                "avoid" => return Some(BreakValue::Avoid),
+                "avoid-page" => return Some(BreakValue::AvoidPage),
+                "page" => return Some(BreakValue::Page),
+                "left" => return Some(BreakValue::Left),
+                "right" => return Some(BreakValue::Right),
+                "column" => return Some(BreakValue::Column),
+                "avoid-column" => return Some(BreakValue::AvoidColumn),
+                // Legacy page-break-* value mapping
+                "always" => return Some(BreakValue::Page),
+                _ => continue,
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
