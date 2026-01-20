@@ -3,11 +3,12 @@
 KFX Smart Diff - Deep semantic comparison of KFX files.
 
 Compares KFX files by matching fragments based on content rather than IDs,
-since symbol IDs are arbitrary and differ between generators. Shows full
-deep diffs of all differences.
+since symbol IDs are arbitrary and differ between generators. Shows ALL
+differences with full deep diffs.
 
 Usage:
     python scripts/kfx_smart_diff.py file1.kfx file2.kfx [--section SECTION]
+    python scripts/kfx_smart_diff.py file1.kfx file2.kfx -s styles  # only styles
 """
 
 import sys
@@ -303,7 +304,7 @@ def print_diff(path, val1, val2, indent=4):
         print(f"{prefix}    {GREEN}+ {v2_str}{RESET}")
 
 
-def analyze_fragment_type(frags1, frags2, ftype, name, show_all=False):
+def analyze_fragment_type(frags1, frags2, ftype, name):
     """Analyze a fragment type with deep diff."""
     print(f"\n{BOLD}{'=' * 70}")
     print(f" {name} ({ftype})")
@@ -331,15 +332,9 @@ def analyze_fragment_type(frags1, frags2, ftype, name, show_all=False):
         diffs = deep_diff(v1, v2)
         if diffs:
             different_count += 1
-            if show_all or different_count <= 5:
-                print(f"\n  {CYAN}Match ({score:.0%}): {f1.fid} <-> {f2.fid}{RESET}")
-                for path, d1, d2 in diffs[:10]:
-                    print_diff(path, d1, d2)
-                if len(diffs) > 10:
-                    print(f"      ... and {len(diffs) - 10} more differences")
-
-    if different_count > 5 and not show_all:
-        print(f"\n  {DIM}... {different_count - 5} more fragments with differences{RESET}")
+            print(f"\n  {CYAN}Match ({score:.0%}): {f1.fid} <-> {f2.fid}{RESET}")
+            for path, d1, d2 in diffs:
+                print_diff(path, d1, d2)
 
     if different_count == 0 and matched:
         print(f"  {GREEN}All matched fragments are identical{RESET}")
@@ -347,21 +342,17 @@ def analyze_fragment_type(frags1, frags2, ftype, name, show_all=False):
     # Show unmatched
     if only1:
         print(f"\n  {RED}Only in file1: {len(only1)}{RESET}")
-        for f, v in only1[:3] if not show_all else only1:
+        for f, v in only1:
             print(f"    - {f.fid}")
             if ftype == "$157":  # Show style details
-                print(f"      {format_value(v, 3, 70)[:200]}")
-        if len(only1) > 3 and not show_all:
-            print(f"    ... and {len(only1) - 3} more")
+                print(f"      {format_value(v, 3, 70)}")
 
     if only2:
         print(f"\n  {GREEN}Only in file2: {len(only2)}{RESET}")
-        for f, v in only2[:3] if not show_all else only2:
+        for f, v in only2:
             print(f"    + {f.fid}")
             if ftype == "$157":  # Show style details
-                print(f"      {format_value(v, 3, 70)[:200]}")
-        if len(only2) > 3 and not show_all:
-            print(f"    ... and {len(only2) - 3} more")
+                print(f"      {format_value(v, 3, 70)}")
 
 
 def analyze_text_content(frags1, frags2):
@@ -463,23 +454,20 @@ def analyze_text_content(frags1, frags2):
 
     if truly_only1:
         print(f"\n  {RED}Paragraphs only in file1: {len(truly_only1)}{RESET}")
-        for p in truly_only1[:5]:
-            preview = p[:80].replace('\n', ' ')
-            print(f"    - \"{preview}{'...' if len(p) > 80 else ''}\"")
-        if len(truly_only1) > 5:
-            print(f"    ... and {len(truly_only1) - 5} more")
+        for p in truly_only1:
+            preview = p[:120].replace('\n', ' ')
+            print(f"    - \"{preview}{'...' if len(p) > 120 else ''}\"")
 
     if truly_only2:
         print(f"\n  {GREEN}Paragraphs only in file2: {len(truly_only2)}{RESET}")
-        for norm_p in truly_only2[:5]:
+        for norm_p in truly_only2:
             p = norm2[norm_p]
-            preview = p[:80].replace('\n', ' ')
-            print(f"    + \"{preview}{'...' if len(p) > 80 else ''}\"")
-        if len(truly_only2) > 5:
-            print(f"    ... and {len(truly_only2) - 5} more")
+            preview = p[:120].replace('\n', ' ')
+            print(f"    + \"{preview}{'...' if len(p) > 120 else ''}\"")
 
 
-def analyze_styles(frags1, frags2, show_all=False):
+
+def analyze_styles(frags1, frags2):
     """Deep analysis of style differences."""
     print(f"\n{BOLD}{'=' * 70}")
     print(f" STYLES ($157)")
@@ -539,38 +527,28 @@ def analyze_styles(frags1, frags2, show_all=False):
     print(f"    Different: {different}")
 
     # Show differences in matched styles
-    diff_shown = 0
     for f1, p1, f2, p2, score in matched:
         if p1 == p2:
             continue
         diffs = deep_diff(p1, p2)
         if diffs:
-            diff_shown += 1
-            if show_all or diff_shown <= 10:
-                print(f"\n  {CYAN}Style match ({score:.0%}):{RESET}")
-                for path, d1, d2 in diffs:
-                    print_diff(path, d1, d2)
-
-    if diff_shown > 10 and not show_all:
-        print(f"\n  {DIM}... {diff_shown - 10} more styles with differences (use --all to see all){RESET}")
+            print(f"\n  {CYAN}Style match ({score:.0%}):{RESET}")
+            for path, d1, d2 in diffs:
+                print_diff(path, d1, d2)
 
     # Show unmatched styles
     if only1:
         print(f"\n  {RED}Styles only in file1: {len(only1)}{RESET}")
-        for f, p in (only1 if show_all else only1[:5]):
-            print(f"    - {format_value(p, 3, 80)[:100]}")
-        if len(only1) > 5 and not show_all:
-            print(f"    ... and {len(only1) - 5} more")
+        for f, p in only1:
+            print(f"    - {format_value(p, 3, 80)}")
 
     if only2:
         print(f"\n  {GREEN}Styles only in file2: {len(only2)}{RESET}")
-        for f, p in (only2 if show_all else only2[:5]):
-            print(f"    + {format_value(p, 3, 80)[:100]}")
-        if len(only2) > 5 and not show_all:
-            print(f"    ... and {len(only2) - 5} more")
+        for f, p in only2:
+            print(f"    + {format_value(p, 3, 80)}")
 
 
-def smart_diff(file1, file2, sections=None, show_all=False):
+def smart_diff(file1, file2, sections=None):
     """Perform smart diff between two KFX files."""
     print(f"{BOLD}KFX Smart Diff{RESET}")
     print(f"  File 1: {file1}")
@@ -611,16 +589,16 @@ def smart_diff(file1, file2, sections=None, show_all=False):
         analyze_text_content(frags1, frags2)
 
     if "styles" in sections:
-        analyze_styles(frags1, frags2, show_all)
+        analyze_styles(frags1, frags2)
 
     if "sections" in sections:
-        analyze_fragment_type(frags1, frags2, "$260", "SECTIONS", show_all)
+        analyze_fragment_type(frags1, frags2, "$260", "SECTIONS")
 
     if "storylines" in sections:
-        analyze_fragment_type(frags1, frags2, "$259", "STORYLINES", show_all)
+        analyze_fragment_type(frags1, frags2, "$259", "STORYLINES")
 
     if "anchors" in sections:
-        analyze_fragment_type(frags1, frags2, "$266", "ANCHORS", show_all)
+        analyze_fragment_type(frags1, frags2, "$266", "ANCHORS")
 
     print(f"\n{BOLD}{'=' * 70}")
     print(f" COMPLETE")
@@ -635,8 +613,6 @@ def main():
     parser.add_argument("--section", "-s", action="append",
                         choices=["text", "styles", "sections", "storylines", "anchors", "all"],
                         help="Section(s) to analyze (default: all)")
-    parser.add_argument("--all", "-a", action="store_true",
-                        help="Show all differences (not just first few)")
 
     args = parser.parse_args()
 
@@ -647,7 +623,7 @@ def main():
         print(f"Error: {args.file2} not found")
         sys.exit(1)
 
-    smart_diff(args.file1, args.file2, args.section, args.all)
+    smart_diff(args.file1, args.file2, args.section)
 
 
 if __name__ == "__main__":
