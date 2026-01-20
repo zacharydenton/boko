@@ -281,6 +281,8 @@ pub struct ParsedStyle {
     pub image_width_px: Option<u32>,
     /// Actual image height in pixels (set for image styles when dimensions are known)
     pub image_height_px: Option<u32>,
+    /// Language tag from xml:lang or lang attribute (e.g., "en-us", "la")
+    pub lang: Option<String>,
 }
 
 impl ParsedStyle {
@@ -438,6 +440,10 @@ impl ParsedStyle {
         }
         if other.image_height_px.is_some() {
             self.image_height_px = other.image_height_px;
+        }
+        // Language - child overrides parent
+        if other.lang.is_some() {
+            self.lang.clone_from(&other.lang);
         }
     }
 

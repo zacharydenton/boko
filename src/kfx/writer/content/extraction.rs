@@ -434,6 +434,14 @@ fn extract_from_node(
             // Extract element ID for anchor targets (used in TOC navigation)
             let element_id = element.attributes.borrow().get("id").map(|s| s.to_string());
 
+            // Extract lang attribute and merge into styles
+            // Language cascades to children via computed_style
+            if let Some(lang) = element.attributes.borrow().get("lang") {
+                let lang = lang.to_string();
+                direct_with_inline.lang = Some(lang.clone());
+                computed_style.lang = Some(lang);
+            }
+
             // Handle image elements specially
             if tag_name == "img" {
                 let attrs = element.attributes.borrow();
@@ -646,4 +654,57 @@ fn decode_html_entities(text: &str) -> String {
         .replace("&#8221;", "\"")
         .replace("&#160;", " ")
         .replace("&nbsp;", " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::Stylesheet;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_lang_attribute_extraction_from_fixture() {
+        // Test lang extraction from actual EPUB fixture
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+
+        // Collect all lang values found in content
+        let mut langs_found = HashSet::new();
+
+        fn collect_langs(item: &ContentItem, langs: &mut HashSet<String>) {
+            match item {
+                ContentItem::Text { style, .. } | ContentItem::Image { style, .. } => {
+                    if let Some(ref lang) = style.lang {
+                        langs.insert(lang.clone());
+                    }
+                }
+                ContentItem::Container { style, children, .. } => {
+                    if let Some(ref lang) = style.lang {
+                        langs.insert(lang.clone());
+                    }
+                    for child in children {
+                        collect_langs(child, langs);
+                    }
+                }
+            }
+        }
+
+        // Extract content from each spine item
+        for spine_item in &book.spine {
+            if let Some(resource) = book.resources.get(&spine_item.href) {
+                let stylesheet = Stylesheet::default();
+                let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
+                for item in &content {
+                    collect_langs(item, &mut langs_found);
+                }
+            }
+        }
+
+        // The Epictetus EPUB contains Greek (grc) and Latin (la) text
+        assert!(
+            langs_found.contains("grc") || langs_found.contains("la") || langs_found.contains("en"),
+            "Should find language tags in EPUB content, found: {:?}",
+            langs_found
+        );
+    }
 }

@@ -59,6 +59,11 @@ pub fn style_to_ion(
                 IonValue::Symbol(sym::BLOCK_TYPE_BLOCK),
             );
         }
+
+        // Language tag ($10) from xml:lang or lang attribute
+        if let Some(ref lang) = style.lang {
+            style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
+        }
     }
 
     // Font size
