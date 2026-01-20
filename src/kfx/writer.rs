@@ -609,10 +609,12 @@ impl KfxBookBuilder {
         builder.build_section_eids(&chapters, book.metadata.cover_image.is_some());
 
         // 4. Build all fragments
+        let has_cover = book.metadata.cover_image.is_some();
+
         builder.add_format_capabilities();
         builder.add_metadata(book);
-        builder.add_metadata_258(&chapters);
-        builder.add_document_data(&chapters);
+        builder.add_reading_order_metadata(&chapters, has_cover);
+        builder.add_document_data(&chapters, has_cover);
         builder.add_book_navigation(&book.toc);
         builder.add_nav_unit_list();
 
@@ -936,15 +938,21 @@ impl KfxBookBuilder {
     }
 
     /// Add $258 metadata fragment with reading orders (must be called after sections are added)
-    fn add_metadata_258(&mut self, chapters: &[ChapterData]) {
-        let section_refs: Vec<IonValue> = chapters
-            .iter()
-            .map(|ch| {
-                let section_id = format!("section-{}", ch.id);
-                let sym_id = self.symtab.get_or_intern(&section_id);
-                IonValue::Symbol(sym_id)
-            })
-            .collect();
+    fn add_reading_order_metadata(&mut self, chapters: &[ChapterData], has_cover: bool) {
+        let mut section_refs: Vec<IonValue> = Vec::new();
+
+        // Add cover section first if present
+        if has_cover {
+            let cover_section_sym = self.symtab.get_or_intern("cover-section");
+            section_refs.push(IonValue::Symbol(cover_section_sym));
+        }
+
+        // Add chapter sections
+        for ch in chapters {
+            let section_id = format!("section-{}", ch.id);
+            let sym_id = self.symtab.get_or_intern(&section_id);
+            section_refs.push(IonValue::Symbol(sym_id));
+        }
 
         let mut reading_order = HashMap::new();
         reading_order.insert(
@@ -966,15 +974,21 @@ impl KfxBookBuilder {
     }
 
     /// Add document data fragment ($538) with reading orders and document properties
-    fn add_document_data(&mut self, chapters: &[ChapterData]) {
-        let section_refs: Vec<IonValue> = chapters
-            .iter()
-            .map(|ch| {
-                let section_id = format!("section-{}", ch.id);
-                let sym_id = self.symtab.get_or_intern(&section_id);
-                IonValue::Symbol(sym_id)
-            })
-            .collect();
+    fn add_document_data(&mut self, chapters: &[ChapterData], has_cover: bool) {
+        let mut section_refs: Vec<IonValue> = Vec::new();
+
+        // Add cover section first if present
+        if has_cover {
+            let cover_section_sym = self.symtab.get_or_intern("cover-section");
+            section_refs.push(IonValue::Symbol(cover_section_sym));
+        }
+
+        // Add chapter sections
+        for ch in chapters {
+            let section_id = format!("section-{}", ch.id);
+            let sym_id = self.symtab.get_or_intern(&section_id);
+            section_refs.push(IonValue::Symbol(sym_id));
+        }
 
         let mut reading_order = HashMap::new();
         reading_order.insert(
@@ -1971,7 +1985,7 @@ impl KfxBookBuilder {
         content_ref.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTAINER_INFO));
         content_ref.insert(
             sym::DEFAULT_TEXT_ALIGN,
-            IonValue::Symbol(sym::ALIGN_JUSTIFY),
+            IonValue::Symbol(sym::ALIGN_CENTER),
         );
         content_ref.insert(sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE));
 
@@ -5001,6 +5015,254 @@ mod image_tests {
                 let has_deps = map.contains_key(&sym::ENTITY_DEPS);
                 println!("P419 has P253 entity deps: {}", has_deps);
                 assert!(has_deps, "P419 should have P253 entity dependencies");
+            }
+        }
+    }
+
+    #[test]
+    fn test_cover_image_content_fragment() {
+        // Verify the cover IMAGE_CONTENT fragment structure matches reference KFX
+        // Reference structure:
+        //   $259 content block with $146 array containing:
+        //     - $155 (POSITION): EID
+        //     - $157 (STYLE): style reference
+        //     - $159 (CONTENT_TYPE): $271 (IMAGE_CONTENT)
+        //     - $175 (RESOURCE_NAME): resource reference
+        use crate::epub::read_epub;
+
+        let book = read_epub("tests/fixtures/epictetus.epub").unwrap();
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find cover resource symbol (largest portrait image)
+        let mut cover_resource_sym = None;
+        for fragment in &kfx.fragments {
+            if fragment.ftype == sym::RESOURCE {
+                if let IonValue::Struct(res) = &fragment.value {
+                    if let (Some(IonValue::Int(w)), Some(IonValue::Int(h))) =
+                        (res.get(&sym::WIDTH), res.get(&sym::HEIGHT))
+                    {
+                        if *h > *w && *h > 1000 {
+                            if let Some(IonValue::Symbol(sym)) = res.get(&sym::RESOURCE_NAME) {
+                                cover_resource_sym = Some(*sym);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            cover_resource_sym.is_some(),
+            "Should find cover resource symbol"
+        );
+        let cover_sym = cover_resource_sym.unwrap();
+
+        // Find content block ($259) with IMAGE_CONTENT ($271) referencing the cover
+        let mut found_cover_content = false;
+        let mut cover_block_sym = None;
+        for fragment in &kfx.fragments {
+            if fragment.ftype == sym::CONTENT_BLOCK {
+                if let IonValue::Struct(block) = &fragment.value {
+                    if let Some(IonValue::List(content_array)) = block.get(&sym::CONTENT_ARRAY) {
+                        for item in content_array {
+                            if let IonValue::Struct(item_struct) = item {
+                                // Check if this is IMAGE_CONTENT referencing our cover
+                                let is_image_content = matches!(
+                                    item_struct.get(&sym::CONTENT_TYPE),
+                                    Some(IonValue::Symbol(s)) if *s == sym::IMAGE_CONTENT
+                                );
+                                let refs_cover = matches!(
+                                    item_struct.get(&sym::RESOURCE_NAME),
+                                    Some(IonValue::Symbol(s)) if *s == cover_sym
+                                );
+
+                                if is_image_content && refs_cover {
+                                    found_cover_content = true;
+
+                                    // Verify required fields
+                                    assert!(
+                                        item_struct.contains_key(&sym::POSITION),
+                                        "Cover IMAGE_CONTENT should have $155 (POSITION)"
+                                    );
+                                    assert!(
+                                        item_struct.contains_key(&sym::STYLE),
+                                        "Cover IMAGE_CONTENT should have $157 (STYLE)"
+                                    );
+
+                                    // Cover should NOT have alt text (per reference)
+                                    assert!(
+                                        !item_struct.contains_key(&sym::IMAGE_ALT_TEXT),
+                                        "Cover IMAGE_CONTENT should NOT have $584 (IMAGE_ALT_TEXT)"
+                                    );
+
+                                    // Get the content block symbol for section verification
+                                    if let Some(IonValue::Symbol(sym)) =
+                                        block.get(&sym::CONTENT_NAME)
+                                    {
+                                        cover_block_sym = Some(*sym);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            found_cover_content,
+            "Should have content block with IMAGE_CONTENT ($271) for cover image"
+        );
+
+        // Verify section ($260) references the cover content block
+        let cover_block = cover_block_sym.unwrap();
+        let mut found_cover_section = false;
+        for fragment in &kfx.fragments {
+            if fragment.ftype == sym::SECTION {
+                if let IonValue::Struct(section) = &fragment.value {
+                    if let Some(IonValue::List(content_list)) = section.get(&sym::SECTION_CONTENT) {
+                        for content_ref in content_list {
+                            if let IonValue::Struct(ref_struct) = content_ref {
+                                // Check if this section references our cover content block
+                                let refs_cover_block = matches!(
+                                    ref_struct.get(&sym::CONTENT_NAME),
+                                    Some(IonValue::Symbol(s)) if *s == cover_block
+                                );
+
+                                if refs_cover_block {
+                                    found_cover_section = true;
+
+                                    // Verify cover section has dimensions
+                                    assert!(
+                                        ref_struct.contains_key(&sym::SECTION_WIDTH),
+                                        "Cover section should have $66 (SECTION_WIDTH)"
+                                    );
+                                    assert!(
+                                        ref_struct.contains_key(&sym::SECTION_HEIGHT),
+                                        "Cover section should have $67 (SECTION_HEIGHT)"
+                                    );
+
+                                    // Verify content type is CONTAINER_INFO ($270)
+                                    assert!(
+                                        matches!(
+                                            ref_struct.get(&sym::CONTENT_TYPE),
+                                            Some(IonValue::Symbol(s)) if *s == sym::CONTAINER_INFO
+                                        ),
+                                        "Cover section content type should be $270 (CONTAINER_INFO)"
+                                    );
+
+                                    // Verify page layout is full page ($326)
+                                    assert!(
+                                        ref_struct.contains_key(&sym::PAGE_LAYOUT),
+                                        "Cover section should have $156 (PAGE_LAYOUT)"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            found_cover_section,
+            "Should have section ($260) referencing the cover content block"
+        );
+    }
+
+    #[test]
+    fn test_cover_section_first_in_reading_order() {
+        // Verify that when a book has a cover image, the cover section is first in reading order
+        // Reference KFX has cover section at position 0 in $170 (SECTIONS_LIST)
+        use crate::epub::read_epub;
+
+        let book = read_epub("tests/fixtures/epictetus.epub").unwrap();
+        assert!(
+            book.metadata.cover_image.is_some(),
+            "Test book should have cover image"
+        );
+
+        let kfx = KfxBookBuilder::from_book(&book);
+
+        // Find cover section symbol (the one with dimensions)
+        let mut cover_section_sym = None;
+        for fragment in &kfx.fragments {
+            if fragment.ftype == sym::SECTION {
+                if let IonValue::Struct(section) = &fragment.value {
+                    if let Some(IonValue::List(content_list)) = section.get(&sym::SECTION_CONTENT) {
+                        if let Some(IonValue::Struct(content_ref)) = content_list.first() {
+                            // Cover section has dimensions
+                            if content_ref.contains_key(&sym::SECTION_WIDTH)
+                                && content_ref.contains_key(&sym::SECTION_HEIGHT)
+                            {
+                                if let Some(IonValue::Symbol(sym)) = section.get(&sym::SECTION_NAME)
+                                {
+                                    cover_section_sym = Some(*sym);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            cover_section_sym.is_some(),
+            "Should find cover section with dimensions"
+        );
+        let cover_sym = cover_section_sym.unwrap();
+
+        // Check $258 (METADATA) reading order
+        let metadata_258 = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::METADATA);
+        assert!(metadata_258.is_some(), "Should have $258 metadata fragment");
+
+        if let Some(fragment) = metadata_258 {
+            if let IonValue::Struct(metadata) = &fragment.value {
+                if let Some(IonValue::List(reading_orders)) = metadata.get(&sym::READING_ORDERS) {
+                    if let Some(IonValue::Struct(ro)) = reading_orders.first() {
+                        if let Some(IonValue::List(sections)) = ro.get(&sym::SECTIONS_LIST) {
+                            assert!(
+                                !sections.is_empty(),
+                                "Sections list should not be empty"
+                            );
+                            // First section should be cover
+                            if let Some(IonValue::Symbol(first_sym)) = sections.first() {
+                                assert_eq!(
+                                    *first_sym, cover_sym,
+                                    "Cover section should be first in $258 reading order"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check $538 (DOCUMENT_DATA) reading order
+        let doc_data = kfx
+            .fragments
+            .iter()
+            .find(|f| f.ftype == sym::DOCUMENT_DATA);
+        assert!(doc_data.is_some(), "Should have $538 document data fragment");
+
+        if let Some(fragment) = doc_data {
+            if let IonValue::Struct(data) = &fragment.value {
+                if let Some(IonValue::List(reading_orders)) = data.get(&sym::READING_ORDERS) {
+                    if let Some(IonValue::Struct(ro)) = reading_orders.first() {
+                        if let Some(IonValue::List(sections)) = ro.get(&sym::SECTIONS_LIST) {
+                            assert!(
+                                !sections.is_empty(),
+                                "Sections list should not be empty"
+                            );
+                            // First section should be cover
+                            if let Some(IonValue::Symbol(first_sym)) = sections.first() {
+                                assert_eq!(
+                                    *first_sym, cover_sym,
+                                    "Cover section should be first in $538 reading order"
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
