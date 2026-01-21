@@ -52,8 +52,11 @@ pub fn style_to_ion(
             style_ion.insert(sym::FONT_FAMILY, IonValue::String(family_str));
         }
 
-        // Note: display:block is the default, so we don't include STYLE_BLOCK_TYPE for block elements
-        // Reference KFX omits STYLE_BLOCK_TYPE for block elements, only includes it for inline
+        // Add STYLE_BLOCK_TYPE for block elements to match reference KFX
+        style_ion.insert(
+            sym::STYLE_BLOCK_TYPE,
+            IonValue::Symbol(sym::BLOCK_TYPE_BLOCK),
+        );
 
         // Language tag ($10) from xml:lang or lang attribute
         if let Some(ref lang) = style.lang {
