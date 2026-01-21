@@ -28,6 +28,33 @@ use super::serialization::{
     serialize_container_v2, SerializedEntity,
 };
 use super::style::style_to_ion;
+
+/// State for tracking text indexing across content chunks
+struct ContentState {
+    global_idx: usize,
+    text_idx_in_chunk: i64,
+    current_content_sym: u64,
+}
+
+/// Normalize text for KFX output based on verse context.
+/// - Verse: split by newlines to create separate paragraph entries
+/// - Non-verse: keep text as-is (preserve newlines for proper inline run offset alignment)
+fn normalize_text_for_kfx(text: &str, is_verse: bool) -> Vec<String> {
+    if is_verse {
+        text.split('\n')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        // Keep text as-is, including newlines - this preserves inline run offsets
+        // The Kindle reader interprets \n as line breaks within the paragraph
+        if text.trim().is_empty() {
+            vec![]
+        } else {
+            vec![text.to_string()]
+        }
+    }
+}
 use super::symbols::{sym, SymbolTable};
 
 /// Builder for creating a complete KFX book
@@ -204,6 +231,7 @@ impl KfxBookBuilder {
             }
 
             let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
+
             let content =
                 extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
 
@@ -610,106 +638,101 @@ impl KfxBookBuilder {
         let content_id = format!("content-{}", chunk.id);
         let content_sym = self.symtab.get_or_intern(&content_id);
 
-        let mut text_items = Vec::new();
-        fn collect_texts(item: &ContentItem, texts: &mut Vec<String>) {
-            match item {
-                ContentItem::Text { text, .. } => {
-                    if !text.is_empty() {
-                        texts.push(text.clone());
-                    }
+        // Use flatten() to extract text from nested containers
+        // Normalize based on verse context (see normalize_text_for_kfx)
+        let text_values: Vec<IonValue> = chunk
+            .items
+            .iter()
+            .flat_map(|item| item.flatten())
+            .flat_map(|item| {
+                if let ContentItem::Text { text, is_verse, .. } = item {
+                    normalize_text_for_kfx(text, *is_verse)
+                        .into_iter()
+                        .map(IonValue::String)
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![]
                 }
-                ContentItem::Image { .. } => {}
-                ContentItem::Container { children, .. } => {
-                    for child in children {
-                        collect_texts(child, texts);
-                    }
-                }
-            }
-        }
-        for item in &chunk.items {
-            collect_texts(item, &mut text_items);
+            })
+            .collect();
+
+        // Don't create an empty text content fragment
+        if text_values.is_empty() {
+            return;
         }
 
-        let mut text_content = HashMap::new();
-        text_content.insert(sym::CONTENT_NAME, IonValue::Symbol(content_sym));
-        text_content.insert(
-            sym::CONTENT_ARRAY,
-            IonValue::List(text_items.into_iter().map(IonValue::String).collect()),
-        );
+        let mut content = HashMap::new();
+        content.insert(sym::ID, IonValue::Symbol(content_sym));
+        content.insert(sym::CONTENT_ARRAY, IonValue::List(text_values));
 
         self.fragments.push(KfxFragment::new(
             sym::TEXT_CONTENT,
             &content_id,
-            IonValue::Struct(text_content),
+            IonValue::Struct(content),
         ));
     }
 
     fn add_cover_section(&mut self, cover_sym: u64, width: u32, height: u32, eid_base: i64) {
-        let section_id = "cover-section";
-        let section_sym = self.symtab.get_or_intern(section_id);
-        let content_id = "cover-content";
-        let content_sym = self.symtab.get_or_intern(content_id);
+        let cover_block_id = "cover-block";
+        let cover_block_sym = self.symtab.get_or_intern(cover_block_id);
+        let cover_section_id = "cover-section";
+        let cover_section_sym = self.symtab.get_or_intern(cover_section_id);
+        let cover_style_id = "cover-style";
+        let cover_style_sym = self.symtab.get_or_intern(cover_style_id);
 
+        // Create cover image style
         let mut cover_style = HashMap::new();
+        cover_style.insert(sym::STYLE_NAME, IonValue::Symbol(cover_style_sym));
         cover_style.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_CONTAIN));
         cover_style.insert(sym::IMAGE_LAYOUT, IonValue::Symbol(sym::ALIGN_CENTER));
 
-        let style_id = "cover-style";
-        let style_sym = self.symtab.get_or_intern(style_id);
-        cover_style.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
-
         self.fragments.push(KfxFragment::new(
             sym::STYLE,
-            style_id,
+            cover_style_id,
             IonValue::Struct(cover_style),
         ));
 
-        let mut content_block = HashMap::new();
-        content_block.insert(sym::CONTENT_NAME, IonValue::Symbol(content_sym));
+        // Create content block with the cover image
+        let mut image_item = HashMap::new();
+        image_item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
+        image_item.insert(sym::RESOURCE_NAME, IonValue::Symbol(cover_sym));
+        image_item.insert(sym::STYLE_NAME, IonValue::Symbol(cover_style_sym));
 
-        let mut image_entry = HashMap::new();
-        image_entry.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
-        image_entry.insert(sym::RESOURCE_NAME, IonValue::Symbol(cover_sym));
-        image_entry.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
-
-        content_block.insert(
+        let mut block = HashMap::new();
+        block.insert(sym::CONTENT_NAME, IonValue::Symbol(cover_block_sym));
+        block.insert(
             sym::CONTENT_ARRAY,
-            IonValue::List(vec![IonValue::Annotated(
-                vec![sym::CONTENT_PARAGRAPH],
-                Box::new(IonValue::Struct(image_entry)),
-            )]),
+            IonValue::List(vec![IonValue::Struct(image_item)]),
         );
 
         self.fragments.push(KfxFragment::new(
             sym::CONTENT_BLOCK,
-            content_id,
-            IonValue::Struct(content_block),
+            cover_block_id,
+            IonValue::Struct(block),
         ));
 
-        let section_content_eid = eid_base;
-        let _content_eid = eid_base + 1;
-
+        // Create section referencing the cover content block
         let mut section = HashMap::new();
-        section.insert(sym::SECTION_NAME, IonValue::Symbol(section_sym));
+        section.insert(sym::SECTION_NAME, IonValue::Symbol(cover_section_sym));
         section.insert(sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE));
         section.insert(sym::SECTION_WIDTH, IonValue::Int(width as i64));
         section.insert(sym::SECTION_HEIGHT, IonValue::Int(height as i64));
-
         section.insert(
             sym::SECTION_CONTENT,
             IonValue::List(vec![IonValue::OrderedStruct(vec![
-                (sym::POSITION, IonValue::Int(section_content_eid)),
-                (sym::CONTENT_NAME, IonValue::Symbol(content_sym)),
+                (sym::POSITION, IonValue::Int(eid_base)),
+                (sym::CONTENT_NAME, IonValue::Symbol(cover_block_sym)),
             ])]),
         );
 
         self.fragments.push(KfxFragment::new(
             sym::SECTION,
-            section_id,
+            cover_section_id,
             IonValue::Struct(section),
         ));
 
-        self.section_to_resource.push((section_sym, cover_sym));
+        // Track section -> resource dependency for P253
+        self.section_to_resource.push((cover_section_sym, cover_sym));
     }
 
     fn add_content_block_chunked(
@@ -721,32 +744,188 @@ impl KfxBookBuilder {
         let block_id = format!("block-{}", chapter.id);
         let block_sym = self.symtab.get_or_intern(&block_id);
 
-        let mut content_block = HashMap::new();
-        content_block.insert(sym::CONTENT_NAME, IonValue::Symbol(block_sym));
+        // Create content items referencing text content chunks or images
+        let mut content_items = Vec::new();
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: 0,
+        };
 
-        let mut content_array = Vec::new();
-        let mut eid = eid_base + 1;
-        let mut first_item = true;
+        for chunk in chunks.iter() {
+            let content_id = format!("content-{}", chunk.id);
+            state.current_content_sym = self.symtab.get_or_intern(&content_id);
+            state.text_idx_in_chunk = 0;
 
-        for chunk in chunks {
-            for item in &chunk.items {
-                let (items, new_eid) = self.content_item_to_ion(item, eid, first_item);
-                content_array.extend(items);
-                eid = new_eid;
-                first_item = false;
+            for content_item in chunk.items.iter() {
+                let ion_items =
+                    self.build_content_items(content_item, &mut state, eid_base);
+                content_items.extend(ion_items);
             }
         }
 
-        content_block.insert(sym::CONTENT_ARRAY, IonValue::List(content_array));
+        let mut block = HashMap::new();
+        block.insert(sym::CONTENT_NAME, IonValue::Symbol(block_sym));
+        block.insert(sym::CONTENT_ARRAY, IonValue::List(content_items));
 
         self.fragments.push(KfxFragment::new(
             sym::CONTENT_BLOCK,
             &block_id,
-            IonValue::Struct(content_block),
+            IonValue::Struct(block),
         ));
     }
 
-    fn content_item_to_ion(
+    /// Build content items (Text, Image, or Container) with proper TEXT_CONTENT references
+    /// Returns Vec because Text items with newlines become multiple paragraphs
+    fn build_content_items(
+        &mut self,
+        content_item: &ContentItem,
+        state: &mut ContentState,
+        eid_base: i64,
+    ) -> Vec<IonValue> {
+        match content_item {
+            ContentItem::Text {
+                text,
+                style,
+                inline_runs,
+                is_verse,
+                ..
+            } => {
+                // Normalize text based on verse context (see normalize_text_for_kfx)
+                // IMPORTANT: Don't collapse whitespace - inline run offsets depend on
+                // character positions matching the original text (with \n -> space being 1:1)
+                let lines = normalize_text_for_kfx(text, *is_verse);
+
+                let mut items = Vec::new();
+
+                for (i, _line) in lines.iter().enumerate() {
+                    let mut item = HashMap::new();
+
+                    // Text content: reference the text chunk
+                    let mut text_ref = HashMap::new();
+                    text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
+                    text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
+
+                    item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+                    item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+
+                    // Add base style reference
+                    if let Some(style_sym) = self.style_map.get(style).copied() {
+                        if style_sym != 0 {
+                            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                        }
+                    }
+
+                    // Add inline style runs ($142) only for the first line
+                    // (inline runs reference character offsets in the original combined text)
+                    let has_inline_runs = if i == 0 && !inline_runs.is_empty() {
+                        let runs = self.build_inline_runs(inline_runs);
+                        if !runs.is_empty() {
+                            item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    // Add content role indicator ($790)
+                    // Only on items WITHOUT inline style runs
+                    // First item in content block gets 2, normal paragraphs get 3
+                    if !has_inline_runs {
+                        let role = if state.global_idx == 0 { 2 } else { 3 };
+                        item.insert(sym::CONTENT_ROLE, IonValue::Int(role));
+                    }
+
+                    // Use consistent EID that matches position maps
+                    item.insert(
+                        sym::POSITION,
+                        IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                    );
+
+                    state.text_idx_in_chunk += 1;
+                    state.global_idx += 1;
+                    items.push(IonValue::Struct(item));
+                }
+
+                items
+            }
+            ContentItem::Image {
+                resource_href,
+                style,
+                alt,
+            } => {
+                let mut item = HashMap::new();
+
+                // Image content: reference the resource directly
+                let resource_sym = self
+                    .resource_symbols
+                    .get(resource_href)
+                    .copied()
+                    .unwrap_or(0);
+
+                item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
+                item.insert(sym::RESOURCE_NAME, IonValue::Symbol(resource_sym));
+
+                // $584 = IMAGE_ALT_TEXT for accessibility
+                let alt_text = alt.clone().unwrap_or_default();
+                item.insert(sym::IMAGE_ALT_TEXT, IonValue::String(alt_text));
+
+                // Add style reference if present
+                if let Some(style_sym) = self.style_map.get(style).copied() {
+                    if style_sym != 0 {
+                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                    }
+                }
+
+                // Use consistent EID that matches position maps
+                item.insert(
+                    sym::POSITION,
+                    IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                );
+                state.global_idx += 1;
+
+                vec![IonValue::Struct(item)]
+            }
+            ContentItem::Container {
+                style, children, ..
+            } => {
+                let mut item = HashMap::new();
+
+                // Container: create nested $146 array with children
+                item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+                // Note: Containers do NOT get $790 - only leaf text items do
+
+                // Build nested content array
+                let nested_items: Vec<IonValue> = children
+                    .iter()
+                    .flat_map(|child| self.build_content_items(child, state, eid_base))
+                    .collect();
+
+                item.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
+
+                // Add style reference for the container
+                if let Some(style_sym) = self.style_map.get(style).copied() {
+                    if style_sym != 0 {
+                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                    }
+                }
+
+                // Use consistent EID that matches position maps
+                item.insert(
+                    sym::POSITION,
+                    IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                );
+                state.global_idx += 1;
+
+                vec![IonValue::Struct(item)]
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn content_item_to_ion_deprecated(
         &mut self,
         item: &ContentItem,
         eid: i64,
@@ -761,27 +940,51 @@ impl KfxBookBuilder {
             } => {
                 let style_sym = self.style_map.get(style).copied().unwrap_or(0);
 
-                let mut para = HashMap::new();
-                para.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
-                para.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
-                para.insert(sym::TEXT_OFFSET, IonValue::Int(0));
-                para.insert(sym::COUNT, IonValue::Int(text.chars().count() as i64));
-                para.insert(sym::POSITION, IonValue::Int(eid));
+                // Split text by newlines (from BR tags) to create separate paragraphs
+                let lines: Vec<&str> = text.split('\n').collect();
+                let mut all_items = Vec::new();
+                let mut current_eid = eid;
+                let mut is_first_para = is_first;
 
-                let role = if is_first { 2 } else { 3 };
-                para.insert(sym::CONTENT_ROLE, IonValue::Int(role));
+                for line in lines {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
 
-                if !inline_runs.is_empty() {
-                    let runs = self.build_inline_runs(inline_runs);
-                    para.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                    let mut para = HashMap::new();
+                    para.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+                    para.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
+                    para.insert(sym::TEXT_OFFSET, IonValue::Int(0));
+                    para.insert(sym::COUNT, IonValue::Int(trimmed.chars().count() as i64));
+                    para.insert(sym::POSITION, IonValue::Int(current_eid));
+
+                    let role = if is_first_para { 2 } else { 3 };
+                    para.insert(sym::CONTENT_ROLE, IonValue::Int(role));
+
+                    // Only apply inline runs to first paragraph (they're relative to original text)
+                    // Note: This is a simplification; proper inline run handling would need adjustment
+                    if is_first_para && !inline_runs.is_empty() {
+                        let runs = self.build_inline_runs(inline_runs);
+                        para.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                    }
+
+                    let annotated = IonValue::Annotated(
+                        vec![sym::CONTENT_PARAGRAPH],
+                        Box::new(IonValue::Struct(para)),
+                    );
+
+                    all_items.push(annotated);
+                    current_eid += 1;
+                    is_first_para = false;
                 }
 
-                let annotated = IonValue::Annotated(
-                    vec![sym::CONTENT_PARAGRAPH],
-                    Box::new(IonValue::Struct(para)),
-                );
-
-                (vec![annotated], eid + 1)
+                // If no lines were produced, still increment eid to maintain consistency
+                if all_items.is_empty() {
+                    (all_items, eid)
+                } else {
+                    (all_items, current_eid)
+                }
             }
             ContentItem::Image {
                 resource_href,
@@ -796,6 +999,10 @@ impl KfxBookBuilder {
                 img.insert(sym::RESOURCE_NAME, IonValue::Symbol(resource_sym));
                 img.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
                 img.insert(sym::POSITION, IonValue::Int(eid));
+
+                // CONTENT_ROLE: 2=first, 3=normal
+                let role = if is_first { 2 } else { 3 };
+                img.insert(sym::CONTENT_ROLE, IonValue::Int(role));
 
                 if let Some(alt_text) = alt {
                     img.insert(sym::IMAGE_ALT_TEXT, IonValue::String(alt_text.clone()));
@@ -819,7 +1026,7 @@ impl KfxBookBuilder {
 
                 for child in children {
                     let (child_items, new_eid) =
-                        self.content_item_to_ion(child, current_eid, is_first_child);
+                        self.content_item_to_ion_deprecated(child, current_eid, is_first_child);
                     all_items.extend(child_items);
                     current_eid = new_eid;
                     is_first_child = false;
@@ -831,6 +1038,10 @@ impl KfxBookBuilder {
                 container.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_BLOCK));
                 container.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
                 container.insert(sym::POSITION, IonValue::Int(container_eid));
+
+                // CONTENT_ROLE: 2=first, 3=normal (containers use the same role as their first child)
+                let role = if is_first { 2 } else { 3 };
+                container.insert(sym::CONTENT_ROLE, IonValue::Int(role));
 
                 let first_child_eid = eid;
                 let last_child_eid = container_eid - 1;
@@ -856,21 +1067,23 @@ impl KfxBookBuilder {
 
     fn build_inline_runs(&mut self, runs: &[StyleRun]) -> Vec<IonValue> {
         runs.iter()
-            .map(|run| {
-                let style_sym = self.style_map.get(&run.style).copied().unwrap_or(0);
+            .filter_map(|run| {
+                // Get style symbol (required for run)
+                let style_sym = self.style_map.get(&run.style).copied()?;
 
                 let mut run_struct = HashMap::new();
-                run_struct.insert(sym::TEXT_OFFSET, IonValue::Int(run.offset as i64));
+                run_struct.insert(sym::OFFSET, IonValue::Int(run.offset as i64));
                 run_struct.insert(sym::COUNT, IonValue::Int(run.length as i64));
-                run_struct.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
+                run_struct.insert(sym::STYLE, IonValue::Symbol(style_sym));
 
+                // Add anchor reference ($179) if this run has a hyperlink
                 if let Some(ref href) = run.anchor_href {
                     if let Some(&anchor_sym) = self.anchor_symbols.get(href) {
                         run_struct.insert(sym::ANCHOR_REF, IonValue::Symbol(anchor_sym));
                     }
                 }
 
-                IonValue::Struct(run_struct)
+                Some(IonValue::Struct(run_struct))
             })
             .collect()
     }

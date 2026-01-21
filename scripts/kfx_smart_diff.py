@@ -605,6 +605,89 @@ def smart_diff(file1, file2, sections=None):
     print(f"{'=' * 70}{RESET}")
 
 
+def full_fragment_diff(file1, file2):
+    """
+    Comprehensive fragment-by-fragment diff.
+    Goes through every fragment in file1, finds matching fragment in file2,
+    and shows detailed diff or full fragment if unmatched.
+    """
+    print(f"{BOLD}KFX Full Fragment Diff{RESET}")
+    print(f"  File 1 (source): {file1}")
+    print(f"  File 2 (target): {file2}")
+    print()
+
+    frags1, _ = load_kfx(file1)
+    frags2, _ = load_kfx(file2)
+
+    print(f"  Loaded: {len(frags1.all_fragments)} vs {len(frags2.all_fragments)} fragments")
+
+    # Group fragments by type
+    all_types = sorted(set(frags1.types()) | set(frags2.types()))
+
+    total_identical = 0
+    total_different = 0
+    total_only1 = 0
+    total_only2 = 0
+
+    for ftype in all_types:
+        list1 = list(frags1.get_all(ftype))
+        list2 = list(frags2.get_all(ftype))
+
+        if not list1 and not list2:
+            continue
+
+        print(f"\n{BOLD}{'=' * 70}")
+        print(f" {sym(ftype)} ({ftype}): {len(list1)} vs {len(list2)}")
+        print(f"{'=' * 70}{RESET}")
+
+        matched, only1, only2 = match_fragments(frags1, frags2, ftype)
+
+        # Count identical vs different
+        identical = 0
+        different = 0
+
+        for f1, v1, f2, v2, score in matched:
+            diffs = deep_diff(v1, v2)
+            if not diffs:
+                identical += 1
+            else:
+                different += 1
+                print(f"\n  {CYAN}Fragment {f1.fid} <-> {f2.fid} (match: {score:.0%}){RESET}")
+                for path, d1, d2 in diffs[:20]:  # Limit to first 20 diffs
+                    print_diff(path, d1, d2)
+                if len(diffs) > 20:
+                    print(f"    {DIM}... and {len(diffs) - 20} more differences{RESET}")
+
+        # Show unmatched from file1 (missing in file2)
+        for f, v in only1:
+            print(f"\n  {RED}ONLY IN FILE1: {f.fid}{RESET}")
+            print(f"    {format_value(v, 2, 100)}")
+
+        # Show unmatched from file2 (missing in file1)
+        for f, v in only2:
+            print(f"\n  {GREEN}ONLY IN FILE2: {f.fid}{RESET}")
+            print(f"    {format_value(v, 2, 100)}")
+
+        if identical == len(matched) and not only1 and not only2:
+            print(f"  {GREEN}All {identical} fragments identical{RESET}")
+        else:
+            print(f"\n  Summary: {identical} identical, {different} different, "
+                  f"{len(only1)} only in file1, {len(only2)} only in file2")
+
+        total_identical += identical
+        total_different += different
+        total_only1 += len(only1)
+        total_only2 += len(only2)
+
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" SUMMARY")
+    print(f"{'=' * 70}{RESET}")
+    print(f"  Identical fragments: {total_identical}")
+    print(f"  Different fragments: {total_different}")
+    print(f"  Only in file1: {total_only1}")
+    print(f"  Only in file2: {total_only2}")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Smart KFX diff with semantic matching and deep diffs")
@@ -613,6 +696,8 @@ def main():
     parser.add_argument("--section", "-s", action="append",
                         choices=["text", "styles", "sections", "storylines", "anchors", "all"],
                         help="Section(s) to analyze (default: all)")
+    parser.add_argument("--full", "-f", action="store_true",
+                        help="Full fragment-by-fragment diff (comprehensive)")
 
     args = parser.parse_args()
 
@@ -623,7 +708,10 @@ def main():
         print(f"Error: {args.file2} not found")
         sys.exit(1)
 
-    smart_diff(args.file1, args.file2, args.section)
+    if args.full:
+        full_fragment_diff(args.file1, args.file2)
+    else:
+        smart_diff(args.file1, args.file2, args.section)
 
 
 if __name__ == "__main__":

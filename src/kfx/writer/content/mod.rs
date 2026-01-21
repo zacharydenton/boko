@@ -44,6 +44,8 @@ pub enum ContentItem {
         anchor_href: Option<String>,
         /// Optional HTML element ID (for TOC anchor targets)
         element_id: Option<String>,
+        /// Whether this text is from a verse/poetry block (affects line break handling)
+        is_verse: bool,
     },
     /// Image reference with optional styling
     Image {

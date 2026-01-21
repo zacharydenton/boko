@@ -17,11 +17,13 @@ _RUST_SOURCE = None
 
 
 def _find_rust_source():
-    """Find the writer.rs file relative to this script."""
+    """Find the symbols.rs file relative to this script."""
     script_dir = Path(__file__).parent
-    # Try relative to scripts directory
+    # Try relative to scripts directory - check symbols.rs first (refactored location)
     candidates = [
+        script_dir.parent / "src" / "kfx" / "writer" / "symbols.rs",
         script_dir.parent / "src" / "kfx" / "writer.rs",
+        script_dir / ".." / "src" / "kfx" / "writer" / "symbols.rs",
         script_dir / ".." / "src" / "kfx" / "writer.rs",
     ]
     for path in candidates:

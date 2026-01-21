@@ -583,6 +583,45 @@ fn write_varuint_to(buf: &mut Vec<u8>, value: u64) {
     }
 }
 
+/// Decode a KFX/Ion decimal to f64 (for testing)
+#[cfg(test)]
+fn decode_kfx_decimal(bytes: &[u8]) -> f64 {
+    if bytes.is_empty() || bytes == [0x80] {
+        return 0.0;
+    }
+
+    // Parse exponent (first byte, VarInt Signed)
+    let exp_byte = bytes[0];
+    let exp_sign = if (exp_byte & 0x40) != 0 { -1 } else { 1 };
+    let exp_mag = (exp_byte & 0x3F) as i32;
+    let exp = exp_sign * exp_mag;
+
+    // Parse coefficient (remaining bytes, Int Signed)
+    if bytes.len() == 1 {
+        return 0.0;
+    }
+
+    let coef_bytes = &bytes[1..];
+    let is_neg = (coef_bytes[0] & 0x80) != 0;
+
+    let mut coef: i64 = 0;
+    for &b in coef_bytes {
+        coef = (coef << 8) | (b as i64);
+    }
+
+    // Remove sign bit if set
+    if is_neg {
+        // Clear the sign bit
+        let mask = !((0x80u64 as i64) << ((coef_bytes.len() - 1) * 8));
+        coef &= mask;
+        coef = -coef;
+    }
+
+    // Compute result: coef * 10^exp
+    let result = (coef as f64) * 10f64.powi(exp);
+    result
+}
+
 /// Encode a float as a KFX/Ion decimal (exponent + coefficient)
 /// Uses a fixed precision of 2 decimal places (e.g., 1.25 -> 125 * 10^-2)
 pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
@@ -759,6 +798,33 @@ mod tests {
         let map = value.as_struct().unwrap();
         assert_eq!(map.get(&100).and_then(|v| v.as_string()), Some("value1"));
         assert_eq!(map.get(&200).and_then(|v| v.as_int()), Some(999));
+    }
+
+    #[test]
+    fn test_encode_decimal_precision() {
+        // 0.833333 should encode with full precision, not truncated to 0.83
+        let encoded = encode_kfx_decimal(0.833333);
+        let decoded = decode_kfx_decimal(&encoded);
+
+        // Should preserve at least 6 significant digits
+        assert!(
+            (decoded - 0.833333).abs() < 0.000001,
+            "Expected ~0.833333, got {}",
+            decoded
+        );
+    }
+
+    #[test]
+    fn test_encode_decimal_one_third() {
+        // 1/3 represented as 0.333333
+        let encoded = encode_kfx_decimal(1.0 / 3.0);
+        let decoded = decode_kfx_decimal(&encoded);
+
+        assert!(
+            (decoded - 0.333333).abs() < 0.000001,
+            "Expected ~0.333333, got {}",
+            decoded
+        );
     }
 
     #[test]
