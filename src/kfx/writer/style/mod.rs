@@ -200,6 +200,51 @@ pub fn spacing_to_ion(spacing: &CssValue) -> Option<IonValue> {
     })
 }
 
+/// Convert margin-top/bottom to UNIT_MULTIPLIER format for space-before/space-after
+/// Reference KFX uses UNIT_MULTIPLIER with em values for vertical spacing
+pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
+    let multiplier_val: Option<f32> = match spacing {
+        CssValue::Em(v) | CssValue::Rem(v) => {
+            if v.abs() < 0.001 {
+                None
+            } else {
+                Some(*v)
+            }
+        }
+        CssValue::Px(v) => {
+            let em = *v / 16.0; // Convert px to em (16px = 1em)
+            if em.abs() < 0.001 {
+                None
+            } else {
+                Some(em)
+            }
+        }
+        CssValue::Percent(v) => {
+            // Percent of line-height, approximate as multiplier
+            let mult = *v / 100.0;
+            if mult.abs() < 0.001 {
+                None
+            } else {
+                Some(mult)
+            }
+        }
+        CssValue::Number(v) => {
+            if v.abs() < 0.001 {
+                None
+            } else {
+                Some(*v)
+            }
+        }
+        _ => None,
+    };
+    multiplier_val.map(|val| {
+        let mut s = HashMap::new();
+        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+        IonValue::Struct(s)
+    })
+}
+
 /// Convert break property value to symbol
 pub fn break_value_to_symbol(break_val: crate::css::BreakValue) -> u64 {
     use crate::css::BreakValue;

@@ -8,7 +8,7 @@ use crate::css::{CssValue, FontVariant, ParsedStyle, TextAlign};
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
 
 use super::{
-    border_to_ion, break_value_to_symbol, radius_to_ion, spacing_to_ion, FourSided, FourSidedSyms,
+    border_to_ion, break_value_to_symbol, radius_to_ion, spacing_to_ion, spacing_to_multiplier,
     ToKfxIon,
 };
 use crate::kfx::writer::fragment::KfxFragment;
@@ -52,21 +52,15 @@ pub fn style_to_ion(
             style_ion.insert(sym::FONT_FAMILY, IonValue::String(family_str));
         }
 
-        // Add display:block ($127: $383) for text block elements
-        if style.display == Some(crate::css::Display::Block) {
-            style_ion.insert(
-                sym::STYLE_BLOCK_TYPE,
-                IonValue::Symbol(sym::BLOCK_TYPE_BLOCK),
-            );
-        }
+        // Note: display:block is the default, so we don't include STYLE_BLOCK_TYPE for block elements
+        // Reference KFX omits STYLE_BLOCK_TYPE for block elements, only includes it for inline
 
         // Language tag ($10) from xml:lang or lang attribute
         if let Some(ref lang) = style.lang {
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
 
-        // Image fit baseline ($546: $378) - Kindle Previewer adds this to all text styles
-        style_ion.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_NONE));
+        // Note: IMAGE_FIT baseline removed - reference KFX doesn't include it for text styles
     }
 
     // Font size
@@ -97,20 +91,29 @@ pub fn style_to_ion(
         );
     }
 
-    // Margins using FourSided abstraction
-    let margin_syms = FourSidedSyms {
-        top: sym::MARGIN_TOP,
-        right: sym::MARGIN_RIGHT,
-        bottom: sym::MARGIN_BOTTOM,
-        left: sym::MARGIN_LEFT,
-    };
-    FourSided {
-        top: style.margin_top.as_ref(),
-        right: style.margin_right.as_ref(),
-        bottom: style.margin_bottom.as_ref(),
-        left: style.margin_left.as_ref(),
+    // Margins: top/bottom use UNIT_MULTIPLIER (space-before/after), left/right use UNIT_PERCENT
+    // This matches Kindle Previewer's output format
+    if let Some(ref val) = style.margin_top {
+        if let Some(ion_val) = spacing_to_multiplier(val) {
+            style_ion.insert(sym::SPACE_BEFORE, ion_val);
+        }
     }
-    .add_to_style(&mut style_ion, &margin_syms);
+    if let Some(ref val) = style.margin_bottom {
+        if let Some(ion_val) = spacing_to_multiplier(val) {
+            style_ion.insert(sym::SPACE_AFTER, ion_val);
+        }
+    }
+    // Left/right margins use percent (unchanged)
+    if let Some(ref val) = style.margin_left {
+        if let Some(ion_val) = val.to_kfx_ion() {
+            style_ion.insert(sym::MARGIN_LEFT, ion_val);
+        }
+    }
+    if let Some(ref val) = style.margin_right {
+        if let Some(ion_val) = val.to_kfx_ion() {
+            style_ion.insert(sym::MARGIN_RIGHT, ion_val);
+        }
+    }
 
     // Width and height
     add_dimensions(&mut style_ion, style);
@@ -204,8 +207,9 @@ fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is
         return;
     }
 
-    let size_val: f32 = if let Some(ref size) = style.font_size {
-        match size {
+    // Only add font-size if explicitly set (reference omits default 1em)
+    if let Some(ref size) = style.font_size {
+        let size_val: f32 = match size {
             CssValue::Em(v) | CssValue::Rem(v) => *v,
             CssValue::Percent(v) => *v / 100.0,
             CssValue::Keyword(k) => match k.as_str() {
@@ -218,20 +222,22 @@ fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is
                 "large" => 1.125,
                 "x-large" => 1.5,
                 "xx-large" => 2.0,
-                _ => 1.0,
+                _ => return, // Unknown keyword, skip
             },
             CssValue::Px(v) => *v / 16.0, // Assume 16px = 1em
-            _ => 1.0,
-        }
-    } else {
-        // Default font-size: 1em for text styles (matches Kindle Previewer)
-        1.0
-    };
+            _ => return,
+        };
 
-    let mut s = HashMap::new();
-    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
-    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
-    style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
+        // Skip if value is effectively 1.0 (default)
+        if (size_val - 1.0).abs() < 0.001 {
+            return;
+        }
+
+        let mut s = HashMap::new();
+        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
+        style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
+    }
 }
 
 fn add_font_weight(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
@@ -325,18 +331,17 @@ fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
 fn add_margin_auto_centering(
     style_ion: &mut HashMap<u64, IonValue>,
     style: &ParsedStyle,
-    is_image_style: bool,
+    _is_image_style: bool,
 ) {
-    let has_margin_auto_centering = matches!(
+    // Note: Reference KFX doesn't include IMAGE_FIT/IMAGE_LAYOUT for margin:auto centering
+    // on text styles. This function is kept for potential future use but currently does nothing
+    // for text elements. Image styles get IMAGE_FIT/IMAGE_LAYOUT added separately.
+    let _has_margin_auto_centering = matches!(
         (&style.margin_left, &style.margin_right),
         (Some(CssValue::Keyword(l)), Some(CssValue::Keyword(r)))
         if l == "auto" && r == "auto"
     );
-
-    if has_margin_auto_centering && !is_image_style {
-        style_ion.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_CONTAIN));
-        style_ion.insert(sym::IMAGE_LAYOUT, IonValue::Symbol(sym::ALIGN_CENTER));
-    }
+    // Intentionally not adding IMAGE_FIT/IMAGE_LAYOUT for text styles
 }
 
 fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
@@ -348,6 +353,11 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
             _ => None,
         };
         if let Some(val) = em_val {
+            // Skip if value is effectively 0 (default)
+            if val.abs() < 0.001 {
+                return;
+            }
+
             let mut s = HashMap::new();
             s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
             s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
@@ -362,24 +372,27 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
         return;
     }
 
-    let kfx_val: Option<f32> = if let Some(ref height) = style.line_height {
-        match height {
+    // Only add line-height if explicitly set (reference omits default 1.0)
+    if let Some(ref height) = style.line_height {
+        let kfx_val: Option<f32> = match height {
             CssValue::Number(v) => Some(*v),
             CssValue::Percent(v) => Some(*v / 100.0),
             CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
             CssValue::Px(v) => Some(*v / 16.0),
             _ => None,
-        }
-    } else {
-        // Default line-height: 1em for text styles (matches Kindle Previewer)
-        Some(1.0)
-    };
+        };
 
-    if let Some(val) = kfx_val {
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
-        style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
+        if let Some(val) = kfx_val {
+            // Skip if value is effectively 1.0 (default)
+            if (val - 1.0).abs() < 0.001 {
+                return;
+            }
+
+            let mut s = HashMap::new();
+            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+            style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
+        }
     }
 }
 
@@ -594,4 +607,56 @@ pub fn collect_and_create_styles(
     }
 
     fragments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::ParsedStyle;
+
+    #[test]
+    fn test_text_style_no_image_fit_baseline() {
+        // Text styles should NOT include IMAGE_FIT ($546) baseline property
+        // Reference KFX doesn't include it for non-image styles
+        let style = ParsedStyle {
+            font_size: Some(crate::css::CssValue::Em(1.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        // Should NOT have IMAGE_FIT for text styles
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+        assert!(
+            !ion_map.contains_key(&sym::IMAGE_FIT),
+            "Text styles should not have IMAGE_FIT baseline property"
+        );
+    }
+
+    #[test]
+    fn test_image_style_has_image_fit() {
+        // Image styles SHOULD include IMAGE_FIT
+        let style = ParsedStyle {
+            is_image: true,
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+        assert!(
+            ion_map.contains_key(&sym::IMAGE_FIT),
+            "Image styles should have IMAGE_FIT property"
+        );
+    }
 }

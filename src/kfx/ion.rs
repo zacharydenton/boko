@@ -630,9 +630,9 @@ pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
     }
 
     // Convert to coefficient and exponent
-    // Start with precision 2
-    let mut coef = (val * 100.0).round() as i64;
-    let mut exp: i32 = -2;
+    // Start with precision 6 to match Kindle Previewer output (e.g., 0.833333)
+    let mut coef = (val * 1_000_000.0).round() as i64;
+    let mut exp: i32 = -6;
 
     // Normalize: remove trailing zeros
     while coef != 0 && coef % 10 == 0 {

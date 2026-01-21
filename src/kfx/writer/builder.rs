@@ -10,8 +10,8 @@ use crate::css::{ParsedStyle, Stylesheet};
 use crate::kfx::ion::IonValue;
 
 use super::content::{
-    count_content_items, extract_content_from_xhtml, extract_css_hrefs_from_xhtml, ChapterData,
-    ContentChunk, ContentItem, ListType, StyleRun,
+    collect_referenced_images, count_content_items, extract_content_from_xhtml,
+    extract_css_hrefs_from_xhtml, ChapterData, ContentChunk, ContentItem, ListType, StyleRun,
 };
 use super::fragment::KfxFragment;
 use super::navigation::{build_anchor_symbols, build_book_navigation, build_nav_unit_list};
@@ -184,15 +184,22 @@ impl KfxBookBuilder {
         builder.add_position_id_map(&chapters, has_cover);
         builder.add_location_map(&chapters, has_cover);
 
-        // Add page templates
-        builder.add_page_templates(&chapters, has_cover);
+        // Note: Pagination anchors (add_page_templates) removed - reference KFX doesn't use them.
+        // Kindle relies on POSITION_MAP for location tracking instead.
+        // builder.add_page_templates(&chapters, has_cover);
 
         // Add anchor fragments
         builder.add_anchor_fragments();
 
-        // Add resources
+        // Collect referenced images from content (skip unreferenced mobi fallbacks)
+        let mut referenced_hrefs = std::collections::HashSet::new();
+        for chapter in &chapters {
+            referenced_hrefs.extend(collect_referenced_images(&chapter.content));
+        }
+
+        // Add resources (only referenced images, cover, and fonts)
         let (resource_fragments, resource_to_media) =
-            create_resource_fragments(book, &mut builder.symtab, &builder.resource_symbols);
+            create_resource_fragments(book, &mut builder.symtab, &builder.resource_symbols, &referenced_hrefs);
         builder.fragments.extend(resource_fragments);
         builder.resource_to_media = resource_to_media;
 
@@ -1309,7 +1316,7 @@ impl KfxBookBuilder {
             let mut anchor_struct = HashMap::new();
             anchor_struct.insert(sym::TEMPLATE_NAME, IonValue::Symbol(*anchor_sym));
 
-            if href.starts_with("http://") || href.starts_with("https://") {
+            if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
                 anchor_struct.insert(sym::EXTERNAL_URL, IonValue::String(href.clone()));
             } else {
                 let (path_without_fragment, has_fragment) = if let Some(hash_pos) = href.find('#') {
@@ -1621,5 +1628,138 @@ mod tests {
         } else {
             panic!("Expected List for CONTENT_ARRAY");
         }
+    }
+
+    #[test]
+    fn test_verse_text_splits_into_separate_entries() {
+        // Create a chapter with verse text containing newlines
+        let verse_text = ContentItem::Text {
+            text: "Line one\nLine two\nLine three".to_string(),
+            style: ParsedStyle::default(),
+            inline_runs: Vec::new(),
+            anchor_href: None,
+            element_id: None,
+            is_verse: true, // Mark as verse so it should be split
+        };
+
+        let container = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![verse_text],
+            tag: "p".to_string(),
+            element_id: None,
+            list_type: None,
+        };
+
+        let chapter = ChapterData {
+            id: "test-chapter".to_string(),
+            title: "Test Chapter".to_string(),
+            content: vec![container],
+            source_path: "test.xhtml".to_string(),
+        };
+
+        // Create chunks and verify text content
+        let chunks = chapter.into_chunks();
+        assert_eq!(chunks.len(), 1, "Should have 1 chunk");
+
+        let chunk = &chunks[0];
+
+        // Collect all text from the chunk using flatten (same as add_text_content_chunk)
+        let mut all_texts: Vec<String> = Vec::new();
+        for item in chunk.items.iter().flat_map(|i| i.flatten()) {
+            if let ContentItem::Text { text, is_verse, .. } = item {
+                println!("DEBUG: Found text item: is_verse={}, text={:?}", is_verse, text);
+                // Use normalize_text_for_kfx logic
+                if *is_verse {
+                    for line in text.split('\n') {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            all_texts.push(trimmed.to_string());
+                        }
+                    }
+                } else {
+                    if !text.trim().is_empty() {
+                        all_texts.push(text.clone());
+                    }
+                }
+            }
+        }
+
+        println!("DEBUG: Collected texts: {:?}", all_texts);
+
+        assert_eq!(
+            all_texts.len(),
+            3,
+            "Verse text should be split into 3 separate entries, got: {:?}",
+            all_texts
+        );
+        assert_eq!(all_texts[0], "Line one");
+        assert_eq!(all_texts[1], "Line two");
+        assert_eq!(all_texts[2], "Line three");
+    }
+
+    #[test]
+    fn test_epictetus_poetry_is_verse() {
+        // Test with actual EPUB content to verify is_verse is set correctly
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+
+        // Build using extract_chapters (same as from_book)
+        let mut builder = KfxBookBuilder::new();
+        builder.resource_symbols = build_resource_symbols(&book, &mut builder.symtab);
+
+        let toc_titles: std::collections::HashMap<&str, &str> = book
+            .toc
+            .iter()
+            .map(|entry| (entry.href.as_str(), entry.title.as_str()))
+            .collect();
+
+        let chapters = builder.extract_chapters(&book, &toc_titles);
+
+        // Find the chapter with the Zeus poetry (The Enchiridion)
+        let enchiridion_chapter = chapters.iter().find(|c| c.source_path.contains("enchiridion"));
+        assert!(enchiridion_chapter.is_some(), "Should find Enchiridion chapter");
+        let chapter = enchiridion_chapter.unwrap();
+
+        // Find all text items with "Zeus" and check is_verse
+        fn find_zeus_texts(item: &ContentItem, results: &mut Vec<(String, bool)>) {
+            match item {
+                ContentItem::Text { text, is_verse, .. } => {
+                    if text.contains("Zeus") || text.contains('\n') && text.contains("Destiny") {
+                        results.push((text.clone(), *is_verse));
+                    }
+                }
+                ContentItem::Container { children, .. } => {
+                    for child in children {
+                        find_zeus_texts(child, results);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut zeus_results = Vec::new();
+        for item in &chapter.content {
+            find_zeus_texts(item, &mut zeus_results);
+        }
+
+        println!("Found {} Zeus-related text items:", zeus_results.len());
+        for (text, is_verse) in &zeus_results {
+            let display = if text.len() > 80 {
+                format!("{}...", &text[..80])
+            } else {
+                text.clone()
+            };
+            println!("  is_verse={}: {:?}", is_verse, display);
+        }
+
+        // At least one should have newlines and is_verse=true
+        let verse_with_newlines = zeus_results.iter()
+            .any(|(text, is_verse)| text.contains('\n') && *is_verse);
+
+        assert!(
+            verse_with_newlines,
+            "Poetry with newlines should have is_verse=true. Results: {:?}",
+            zeus_results.iter().map(|(t, v)| (t.len(), v)).collect::<Vec<_>>()
+        );
     }
 }

@@ -112,11 +112,16 @@ pub fn build_resource_symbols(
 }
 
 /// Add media resources (images and fonts) from the book
+/// Only includes resources that are:
+/// - Referenced in content (in `referenced_hrefs`)
+/// - The cover image
+/// - Fonts (always included)
 /// Returns (fragments, resource_to_media mappings)
 pub fn create_resource_fragments(
     book: &Book,
     symtab: &mut SymbolTable,
     resource_symbols: &HashMap<String, u64>,
+    referenced_hrefs: &std::collections::HashSet<String>,
 ) -> (Vec<KfxFragment>, Vec<(u64, u64)>) {
     let mut fragments = Vec::new();
     let mut resource_to_media = Vec::new();
@@ -132,6 +137,12 @@ pub fn create_resource_fragments(
         }
 
         let is_cover = cover_href == Some(href.as_str());
+
+        // Skip images that are not referenced in content (e.g., mobi fallback images)
+        // Always include: cover, fonts, and images referenced in content
+        if is_image && !is_cover && !referenced_hrefs.contains(href) {
+            continue;
+        }
         let resource_id = format!("rsrc{resource_index}");
         let resource_sym = resource_symbols
             .get(href)

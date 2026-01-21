@@ -126,6 +126,29 @@ pub fn count_content_items(items: &[ContentItem]) -> usize {
     items.iter().map(|item| item.count_items()).sum()
 }
 
+/// Collect all referenced image hrefs from content items
+pub fn collect_referenced_images(items: &[ContentItem]) -> std::collections::HashSet<String> {
+    let mut hrefs = std::collections::HashSet::new();
+    for item in items {
+        collect_images_recursive(item, &mut hrefs);
+    }
+    hrefs
+}
+
+fn collect_images_recursive(item: &ContentItem, hrefs: &mut std::collections::HashSet<String>) {
+    match item {
+        ContentItem::Image { resource_href, .. } => {
+            hrefs.insert(resource_href.clone());
+        }
+        ContentItem::Container { children, .. } => {
+            for child in children {
+                collect_images_recursive(child, hrefs);
+            }
+        }
+        ContentItem::Text { .. } => {}
+    }
+}
+
 /// Data for a single chapter/section
 pub struct ChapterData {
     /// Unique identifier for this chapter

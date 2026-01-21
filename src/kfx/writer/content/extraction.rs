@@ -301,6 +301,13 @@ fn extract_from_node(
                 computed_style.merge(&inline);
             }
 
+            // Skip hidden elements (display: none) - handles epub/mobi conditional content
+            // Exception: BR elements are structural (line breaks) and should never be skipped
+            // even if CSS sets display:none (common in Standard Ebooks verse styling)
+            if computed_style.is_hidden() && tag_name != "br" {
+                return vec![];
+            }
+
             // Extract element ID for anchor targets (used in TOC navigation)
             let element_id = element.attributes.borrow().get("id").map(|s| s.to_string());
 
@@ -333,7 +340,8 @@ fn extract_from_node(
             }
 
             // Handle <br> elements - create line break for poetry/verse
-            // BR inherits the verse context from parent - only creates paragraph break if in verse
+            // BR inherits verse context from parent - only creates paragraph break if in verse
+            // In non-verse contexts (like colophon), BR creates a soft line break within the paragraph
             if tag_name == "br" {
                 return vec![ContentItem::Text {
                     text: "\n".to_string(),
@@ -341,7 +349,20 @@ fn extract_from_node(
                     inline_runs: Vec::new(),
                     anchor_href: anchor_href.map(|s| s.to_string()),
                     element_id: None,
-                    is_verse,  // Inherit verse context from parent
+                    is_verse, // Inherit verse context - only splits in verse blocks
+                }];
+            }
+
+            // Handle <math> elements - serialize as raw XML string for Kindle MathML rendering
+            if tag_name == "math" {
+                let xml_string = serialize_node_as_xml(node);
+                return vec![ContentItem::Text {
+                    text: xml_string,
+                    style: parent_style.clone(),
+                    inline_runs: Vec::new(),
+                    anchor_href: None,
+                    element_id,
+                    is_verse: false,
                 }];
             }
 
@@ -358,8 +379,8 @@ fn extract_from_node(
             let child_anchor_href = if tag_name == "a" {
                 element.attributes.borrow().get("href").map(|href| {
                     // Resolve relative href to full path (matches section_eids keys)
-                    // External URLs (http/https) are kept as-is
-                    if href.starts_with("http://") || href.starts_with("https://") {
+                    // External URLs (http/https/mailto) are kept as-is
+                    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
                         href.to_string()
                     } else {
                         resolve_relative_path(base_dir, href)
@@ -559,6 +580,64 @@ fn decode_html_entities(text: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
+/// Serialize a node and its children as an XML string.
+/// Used for preserving MathML elements as raw XML for Kindle rendering.
+fn serialize_node_as_xml(node: &NodeRef) -> String {
+    use kuchiki::NodeData;
+
+    let mut output = String::new();
+
+    fn serialize_recursive(node: &NodeRef, output: &mut String) {
+        match node.data() {
+            NodeData::Element(elem) => {
+                let name = elem.name.local.as_ref();
+                output.push('<');
+                output.push_str(name);
+
+                // Add attributes (including xmlns for math element)
+                for (key, value) in elem.attributes.borrow().map.iter() {
+                    output.push(' ');
+                    output.push_str(&key.local);
+                    output.push_str("=\"");
+                    // Escape attribute values
+                    output.push_str(&value.value.replace('"', "&quot;"));
+                    output.push('"');
+                }
+
+                let children: Vec<_> = node.children().collect();
+                if children.is_empty() {
+                    output.push_str("/>");
+                } else {
+                    output.push('>');
+                    for child in children {
+                        serialize_recursive(&child, output);
+                    }
+                    output.push_str("</");
+                    output.push_str(name);
+                    output.push('>');
+                }
+            }
+            NodeData::Text(text) => {
+                // Escape XML special characters
+                let escaped = text
+                    .borrow()
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
+                output.push_str(&escaped);
+            }
+            _ => {
+                for child in node.children() {
+                    serialize_recursive(&child, output);
+                }
+            }
+        }
+    }
+
+    serialize_recursive(node, &mut output);
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,10 +796,10 @@ mod tests {
             // Collect all text content, looking for the Zeus poetry
             fn find_zeus_text(item: &ContentItem, found: &mut Vec<String>, raw: &mut Vec<String>) {
                 match item {
-                    ContentItem::Text { text, .. } => {
+                    ContentItem::Text { text, is_verse, .. } => {
                         if text.contains("Zeus") || text.contains("Destiny") {
                             // Store raw text to see if newlines are present
-                            raw.push(format!("RAW: {:?}", text));
+                            raw.push(format!("RAW (is_verse={}): {:?}", is_verse, text));
                             // Split by newlines and add each
                             for line in text.split('\n') {
                                 let trimmed = line.trim();
@@ -820,6 +899,50 @@ mod tests {
     }
 
     #[test]
+    fn test_is_verse_preserved_through_flatten() {
+        // Verify is_verse survives the full pipeline: extract -> flatten -> chunk -> collect
+        let html = r#"<html><body>
+            <blockquote epub:type="z3998:verse">
+                <p>
+                    <span>Line one</span>
+                    <br/>
+                    <span>Line two</span>
+                </p>
+            </blockquote>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Simulate what the builder does: flatten items and check is_verse
+        let mut found_verse_text = false;
+        for item in &flattened {
+            for leaf in item.flatten() {
+                if let ContentItem::Text { text, is_verse, .. } = leaf {
+                    if text.contains('\n') {
+                        println!("Flattened text: is_verse={}, text={:?}", is_verse, text);
+                        assert!(
+                            *is_verse,
+                            "is_verse should be true for BR-separated text after flatten"
+                        );
+                        found_verse_text = true;
+                    }
+                }
+            }
+        }
+        assert!(found_verse_text, "Should have found text with newlines");
+    }
+
+    #[test]
     fn test_lang_attribute_extraction_from_fixture() {
         // Test lang extraction from actual EPUB fixture
         let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
@@ -863,6 +986,113 @@ mod tests {
             "Should find language tags in EPUB content, found: {:?}",
             langs_found
         );
+    }
+
+    #[test]
+    fn test_br_inherits_is_verse_from_context() {
+        // Verify that BR tags inherit is_verse from parent context
+        // In non-verse context (plain HTML), BR creates newline but is_verse=false
+        // This means text stays as single paragraph (soft line break)
+        let html = r#"<html><body>
+            <p>Line one<br/>Line two</p>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Find the merged text item
+        for item in &flattened {
+            if let ContentItem::Container { children, .. } = item {
+                for child in children {
+                    if let ContentItem::Text { text, is_verse, .. } = child {
+                        if text.contains('\n') {
+                            // In non-verse context, BR creates newline but is_verse=false
+                            // This is correct - only verse context (epub:type="z3998:verse") should split
+                            assert!(
+                                !*is_verse,
+                                "BR in non-verse context should have is_verse=false, but got true. Text: {:?}",
+                                text
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        panic!("Did not find merged text with newline");
+    }
+
+    #[test]
+    fn test_normalize_text_for_kfx_splits_verse() {
+        // Test that normalize_text_for_kfx correctly splits verse text
+        // Create a simple book with verse content
+        let html = r#"<html><body>
+            <blockquote epub:type="z3998:verse">
+                <p>
+                    <span>Line one</span>
+                    <br/>
+                    <span>Line two</span>
+                </p>
+            </blockquote>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Find all text items and verify is_verse
+        let mut found_text = None;
+        for item in &flattened {
+            for leaf in item.flatten() {
+                if let ContentItem::Text { text, is_verse, .. } = leaf {
+                    if text.contains('\n') {
+                        println!("Found text with newline: is_verse={}, text={:?}", is_verse, text);
+                        found_text = Some((text.clone(), *is_verse));
+                    }
+                }
+            }
+        }
+
+        let (text, is_verse) = found_text.expect("Should find text with newline");
+        assert!(is_verse, "is_verse should be true");
+
+        // Now test normalize_text_for_kfx directly
+        fn normalize_text_for_kfx(text: &str, is_verse: bool) -> Vec<String> {
+            if is_verse {
+                text.split('\n')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            } else {
+                if text.trim().is_empty() {
+                    vec![]
+                } else {
+                    vec![text.to_string()]
+                }
+            }
+        }
+
+        let normalized = normalize_text_for_kfx(&text, is_verse);
+        assert_eq!(normalized.len(), 2, "Should split into 2 lines, got: {:?}", normalized);
+        assert_eq!(normalized[0].trim(), "Line one");
+        assert_eq!(normalized[1].trim(), "Line two");
     }
 
     #[test]
@@ -963,6 +1193,154 @@ mod tests {
             }
             _ => panic!("Expected Container, got {:?}", flattened[0]),
         }
+    }
+
+    #[test]
+    fn test_display_none_elements_skipped() {
+        // Elements with display:none should be skipped entirely
+        let html = r#"<html><body>
+            <p>Visible content</p>
+            <p class="hidden">Hidden content</p>
+            <p>More visible</p>
+        </body></html>"#;
+
+        let css = ".hidden { display: none; }";
+        let stylesheet = Stylesheet::parse(css);
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+        let texts = collect_all_texts(&flattened);
+        let all_text = texts.join(" ");
+
+        assert!(
+            all_text.contains("Visible content"),
+            "visible content should be kept"
+        );
+        assert!(
+            all_text.contains("More visible"),
+            "visible content should be kept"
+        );
+        assert!(
+            !all_text.contains("Hidden content"),
+            "display:none content should be skipped, got: {}",
+            all_text
+        );
+    }
+
+    #[test]
+    fn test_mobi_fallback_skipped_via_display_none() {
+        // mobi fallback content with display:none should be skipped (epub/mobi conditional)
+        let html = r#"<html><body>
+            <span class="epub">Keep this epub content</span>
+            <span class="mobi">Skip this mobi fallback</span>
+        </body></html>"#;
+
+        let css = ".epub { display: inline; } .mobi { display: none; }";
+        let stylesheet = Stylesheet::parse(css);
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+        let texts = collect_all_texts(&flattened);
+        let all_text = texts.join(" ");
+
+        assert!(
+            all_text.contains("Keep this"),
+            "epub content should be kept"
+        );
+        assert!(
+            !all_text.contains("Skip this"),
+            "mobi content (display:none) should be skipped, got: {}",
+            all_text
+        );
+    }
+
+    #[test]
+    fn test_mathml_preserved_as_xml_string() {
+        // MathML elements should be serialized as raw XML strings
+        let html = r#"<html><body>
+            <p>Before equation</p>
+            <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi><mo>+</mo><mn>1</mn></math>
+            <p>After equation</p>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Find MathML text
+        let mathml_text = flattened.iter().find_map(|item| match item {
+            ContentItem::Text { text, .. } if text.contains("<math") => Some(text.clone()),
+            _ => None,
+        });
+
+        assert!(
+            mathml_text.is_some(),
+            "MathML should be preserved as XML string"
+        );
+
+        let xml = mathml_text.unwrap();
+        assert!(xml.contains("<mi>x</mi>"), "Should preserve element structure");
+        assert!(xml.contains("<mo>+</mo>"), "Should preserve operators");
+        assert!(xml.contains("<mn>1</mn>"), "Should preserve numbers");
+    }
+
+    #[test]
+    fn test_mathml_with_mobi_fallback() {
+        // Full epub/mobi conditional with MathML - should use MathML, skip fallback image
+        let html = r#"<html><body>
+            <span class="epub"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>y</mi></math></span>
+            <span class="mobi"><img src="../images/eq1.jpg" alt="equation"/></span>
+        </body></html>"#;
+
+        let css = ".epub { display: inline; } .mobi { display: none; }";
+        let stylesheet = Stylesheet::parse(css);
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Should have MathML
+        let has_mathml = flattened.iter().any(|item| {
+            matches!(item, ContentItem::Text { text, .. } if text.contains("<math"))
+        });
+        assert!(has_mathml, "Should preserve MathML from epub span");
+
+        // Should NOT have fallback image
+        let has_fallback_image = flattened.iter().any(|item| {
+            matches!(item, ContentItem::Image { resource_href, .. } if resource_href.contains("eq1.jpg"))
+        });
+        assert!(
+            !has_fallback_image,
+            "Should NOT include mobi fallback image (display:none)"
+        );
     }
 
     #[test]

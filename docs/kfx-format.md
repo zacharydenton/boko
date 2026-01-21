@@ -183,15 +183,101 @@ These counts match Kindle Previewer output:
 - CONTENT_BLOCKS: 8 vs 8
 - List structure (ol/ul): Matches reference
 
+### Structural Counts (kotlin_clean.epub - with MathML)
+Significant differences due to MathML and pagination handling:
+
+| Category | Boko | Reference | Delta | Notes |
+|----------|------|-----------|-------|-------|
+| TEXT_CONTENT blocks | 24 | 107 | +83 | Different chunking strategy |
+| Total characters | 792,922 | 885,752 | -92,830 | MathML converted to plain text |
+| Styles | 334 | 271 | -63 | Extra baseline properties |
+| Anchors | 1,099 | 719 | -380 | Pagination anchors not needed |
+| Resources | 157 | 75 | -82 | Fonts as images, equation images |
+| Sections | 26 | 26 | ✓ | Matches |
+| Storylines | 26 | 26 | ✓ | Matches |
+
+### MathML Handling
+
+EPUBs with mathematical content often use dual-format markup:
+
+```html
+<span class="epub"><math xmlns="http://www.w3.org/1998/Math/MathML">...</math></span>
+<span class="mobi"><img src="../images/eq9-1-2.jpg" alt=""/></span>
+```
+
+**Kindle Previewer behavior**: Preserves MathML as raw XML strings in TEXT_CONTENT paragraphs. The entire `<math>` element is serialized as a string and stored as a paragraph.
+
+**Current boko behavior**: Converts MathML to plain Unicode text (e.g., `"ωt+1=ωt−glsinθtδt"`).
+
+**Impact**: ~93k character difference in books with many equations (78 MathML elements = significant loss).
+
+**Decision**: Match Kindle Previewer - preserve MathML as raw XML strings. Since Kindle Previewer outputs MathML this way, modern Kindle devices must support rendering it.
+
+**Conditional content via CSS**:
+EPUBs use CSS to show/hide content for different targets:
+```css
+.epub { display: inline; }  /* Shown in modern readers */
+.mobi { display: none; }    /* Hidden - fallback for legacy */
+```
+
+**Generic solution**: Skip elements with `display: none` computed style. This handles:
+- `class="mobi"` fallback content
+- Any other conditionally hidden content
+- Already supported via `ParsedStyle::is_hidden()` method
+
+**Exception**: `<br>` elements are NEVER skipped even if CSS sets `display: none`. Standard Ebooks uses CSS like:
+```css
+.epub-type-contains-word-z3998-verse p > span + br {
+    display: none;
+}
+```
+This is to control line breaks for different rendering contexts. Kindle Previewer ignores `display: none` for BR elements, treating them as structural line breaks regardless.
+
+**Implementation**:
+1. After computing element style, check `computed_style.is_hidden()`
+2. If hidden (`display: none`) AND tag is not `br`, skip element and all children
+3. When encountering a `<math>` element, serialize it as raw XML string
+4. Store that XML string as a paragraph in TEXT_CONTENT
+
+### Pagination Anchors
+
+Boko generates pagination anchors every 2000 characters via `add_page_templates()` for Kindle location tracking.
+
+**Kindle Previewer behavior**: Does NOT generate these anchors; relies on POSITION_MAP instead.
+
+**Impact**: 380+ extra anchors in typical books.
+
+**Recommended fix**: Remove or disable pagination anchor generation.
+
 ### Styles
-We generate more styles (~84 vs ~63) due to different CSS parsing and style deduplication.
+We generate more styles (~334 vs ~271 in kotlin example) due to:
+
+1. **Unnecessary baseline properties** always included:
+   - `$1043-$1046` (border-left/right/top/bottom)
+   - `$546: $378` (IMAGE_FIT: IMAGE_FIT_NONE)
+
+2. **Missing properties**:
+   - `$10` (LANGUAGE) - should be added from `lang` attribute
+   - `$761` - list marker property
+
+3. **Value differences**:
+   - Font family: `"noto serif"` should be `"default,serif"`
+   - Line height: Using `1.75` where reference uses `1.0`
+   - Space after: Using `UNIT_PERCENT` where reference uses `UNIT_MULTIPLIER`
 
 ### Anchors
-We generate more internal anchors than Kindle Previewer (~263 vs ~207). We create anchors for all elements with `id` attributes, while Kindle Previewer optimizes these.
+We generate more internal anchors than Kindle Previewer (~1099 vs ~719 in kotlin example):
 
-### Images
-- We preserve original image formats (PNG, GIF) while Kindle Previewer may convert to JPEG
-- Image dimensions and quality are preserved
+1. **Pagination anchors** (~380 extra): Generated every 2000 chars, not needed
+2. **Element ID anchors**: Created for all elements with `id` attributes
+3. **Missing protocols**: `mailto:` URLs not handled as external
+
+### Resources (Images/Fonts)
+
+Current issues:
+1. **Fonts treated as images**: `.otf`/`.ttf` files incorrectly added as RAW_MEDIA with 0x0 dimensions
+2. **Equation images included**: Reference excludes small equation fallback images when MathML is present
+3. **Icon images included**: Small decorative images (<100px) that reference excludes
 
 ## Symbol Table
 
