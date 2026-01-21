@@ -145,8 +145,8 @@ pub fn style_to_ion(
         }
     }
 
-    // Borders
-    add_borders(&mut style_ion, style, symtab);
+    // Borders - disabled: reference KFX doesn't include border styles
+    // add_borders(&mut style_ion, style, symtab);
 
     // Vertical align
     add_vertical_align(&mut style_ion, style);
