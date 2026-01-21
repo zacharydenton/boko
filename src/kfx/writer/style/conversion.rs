@@ -383,8 +383,8 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
         };
 
         if let Some(val) = kfx_val {
-            // Skip if value is effectively 1.0 (default)
-            if (val - 1.0).abs() < 0.001 {
+            // Skip if value is effectively 1.0 (default) or 0 (Kindle normalizes 0 to 1)
+            if (val - 1.0).abs() < 0.001 || val.abs() < 0.001 {
                 return;
             }
 
