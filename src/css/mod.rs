@@ -224,7 +224,9 @@ pub enum Visibility {
 }
 
 /// Parsed CSS style properties
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+/// Note: Custom Hash/Eq implementation excludes image_width_px and image_height_px
+/// since they don't affect KFX style output and would cause duplicate styles.
+#[derive(Debug, Clone, Default)]
 pub struct ParsedStyle {
     pub font_family: Option<String>,
     pub font_size: Option<CssValue>,
@@ -494,6 +496,151 @@ impl ParsedStyle {
             && self.display.is_none()
             && self.position.is_none()
             && self.left.is_none()
+    }
+}
+
+// Helper to normalize CssValue - treat zero values as None (default)
+fn normalize_spacing(val: &Option<CssValue>) -> Option<&CssValue> {
+    match val {
+        Some(CssValue::Px(v)) if v.abs() < 0.001 => None,
+        Some(CssValue::Em(v)) if v.abs() < 0.001 => None,
+        Some(CssValue::Percent(v)) if v.abs() < 0.001 => None,
+        Some(v) => Some(v),
+        None => None,
+    }
+}
+
+// Helper to normalize display - Block is the default, treat as None
+fn normalize_display(val: &Option<Display>) -> Option<Display> {
+    match val {
+        Some(Display::Block) => None, // Block is default
+        other => *other,
+    }
+}
+
+// Helper to normalize font_style - Normal is the default, treat as None
+fn normalize_font_style(val: &Option<FontStyle>) -> Option<FontStyle> {
+    match val {
+        Some(FontStyle::Normal) => None, // Normal is default
+        other => *other,
+    }
+}
+
+// Custom PartialEq that normalizes values for style deduplication
+// - Excludes image dimensions (don't affect KFX output)
+// - Treats display:block as default (None)
+// - Treats font-style:normal as default (None)
+// - Treats zero spacing values as default (None)
+impl PartialEq for ParsedStyle {
+    fn eq(&self, other: &Self) -> bool {
+        self.font_family == other.font_family
+            && self.font_size == other.font_size
+            && self.font_weight == other.font_weight
+            && normalize_font_style(&self.font_style) == normalize_font_style(&other.font_style)
+            && self.font_variant == other.font_variant
+            && self.text_align == other.text_align
+            && normalize_spacing(&self.text_indent) == normalize_spacing(&other.text_indent)
+            && self.line_height == other.line_height
+            && normalize_spacing(&self.margin_top) == normalize_spacing(&other.margin_top)
+            && normalize_spacing(&self.margin_bottom) == normalize_spacing(&other.margin_bottom)
+            && normalize_spacing(&self.margin_left) == normalize_spacing(&other.margin_left)
+            && normalize_spacing(&self.margin_right) == normalize_spacing(&other.margin_right)
+            && self.color == other.color
+            && self.background_color == other.background_color
+            && self.border_top == other.border_top
+            && self.border_bottom == other.border_bottom
+            && self.border_left == other.border_left
+            && self.border_right == other.border_right
+            && normalize_display(&self.display) == normalize_display(&other.display)
+            && self.position == other.position
+            && self.left == other.left
+            && self.width == other.width
+            && self.height == other.height
+            && self.min_width == other.min_width
+            && self.min_height == other.min_height
+            && self.max_width == other.max_width
+            && self.max_height == other.max_height
+            && self.vertical_align == other.vertical_align
+            && self.clear == other.clear
+            && self.word_break == other.word_break
+            && self.overflow == other.overflow
+            && self.visibility == other.visibility
+            && self.break_before == other.break_before
+            && self.break_after == other.break_after
+            && self.break_inside == other.break_inside
+            && self.border_radius_tl == other.border_radius_tl
+            && self.border_radius_tr == other.border_radius_tr
+            && self.border_radius_br == other.border_radius_br
+            && self.border_radius_bl == other.border_radius_bl
+            && self.letter_spacing == other.letter_spacing
+            && self.word_spacing == other.word_spacing
+            && self.white_space_nowrap == other.white_space_nowrap
+            && self.text_decoration_underline == other.text_decoration_underline
+            && self.text_decoration_overline == other.text_decoration_overline
+            && self.text_decoration_line_through == other.text_decoration_line_through
+            && self.opacity == other.opacity
+            && self.is_image == other.is_image
+            && self.is_inline == other.is_inline
+            // Note: image_width_px and image_height_px are intentionally excluded
+            && self.lang == other.lang
+    }
+}
+
+impl Eq for ParsedStyle {}
+
+// Custom Hash that normalizes values to match PartialEq
+impl std::hash::Hash for ParsedStyle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.font_family.hash(state);
+        self.font_size.hash(state);
+        self.font_weight.hash(state);
+        normalize_font_style(&self.font_style).hash(state);
+        self.font_variant.hash(state);
+        self.text_align.hash(state);
+        normalize_spacing(&self.text_indent).hash(state);
+        self.line_height.hash(state);
+        normalize_spacing(&self.margin_top).hash(state);
+        normalize_spacing(&self.margin_bottom).hash(state);
+        normalize_spacing(&self.margin_left).hash(state);
+        normalize_spacing(&self.margin_right).hash(state);
+        self.color.hash(state);
+        self.background_color.hash(state);
+        self.border_top.hash(state);
+        self.border_bottom.hash(state);
+        self.border_left.hash(state);
+        self.border_right.hash(state);
+        normalize_display(&self.display).hash(state);
+        self.position.hash(state);
+        self.left.hash(state);
+        self.width.hash(state);
+        self.height.hash(state);
+        self.min_width.hash(state);
+        self.min_height.hash(state);
+        self.max_width.hash(state);
+        self.max_height.hash(state);
+        self.vertical_align.hash(state);
+        self.clear.hash(state);
+        self.word_break.hash(state);
+        self.overflow.hash(state);
+        self.visibility.hash(state);
+        self.break_before.hash(state);
+        self.break_after.hash(state);
+        self.break_inside.hash(state);
+        self.border_radius_tl.hash(state);
+        self.border_radius_tr.hash(state);
+        self.border_radius_br.hash(state);
+        self.border_radius_bl.hash(state);
+        self.letter_spacing.hash(state);
+        self.word_spacing.hash(state);
+        self.white_space_nowrap.hash(state);
+        self.text_decoration_underline.hash(state);
+        self.text_decoration_overline.hash(state);
+        self.text_decoration_line_through.hash(state);
+        self.opacity.hash(state);
+        self.is_image.hash(state);
+        self.is_inline.hash(state);
+        // Note: image_width_px and image_height_px are intentionally excluded
+        self.lang.hash(state);
     }
 }
 
