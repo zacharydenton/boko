@@ -96,6 +96,20 @@ pub fn border_to_ion(
         return None;
     }
 
+    // Skip borders with 0 width
+    if let Some(ref w) = border.width {
+        let is_zero = match w {
+            CssValue::Px(v) => v.abs() < 0.001,
+            CssValue::Em(v) | CssValue::Rem(v) => v.abs() < 0.001,
+            CssValue::Percent(v) => v.abs() < 0.001,
+            CssValue::Number(v) => v.abs() < 0.001,
+            _ => false,
+        };
+        if is_zero {
+            return None;
+        }
+    }
+
     let mut b_struct = HashMap::new();
 
     // Style
