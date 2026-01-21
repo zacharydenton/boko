@@ -86,14 +86,105 @@ Kindle Previewer generates additional style properties that we don't:
 ### Impact
 These differences do not affect rendering. Kindle devices/apps handle both approaches correctly.
 
+## List Support (ol/ul)
+
+KFX represents HTML ordered and unordered lists using container elements with the `$100` property.
+
+### List Container Structure
+
+When processing an `<ol>` or `<ul>` element, a list container is created with:
+
+```ion
+{
+  $155: position_id,        // Position
+  $100: $343,               // List type (decimal for <ol>)
+  $157: style_symbol,       // Style reference
+  $159: $276,               // Content type: CONTENT_LIST
+  $146: [                   // Children (list items)
+    { ... },                // First <li> content item
+    { ... },                // Second <li> content item
+    ...
+  ]
+}
+```
+
+### Content Types
+
+| Symbol | Value | Description |
+|--------|-------|-------------|
+| `$276` | CONTENT_LIST | Content type for list containers (ol/ul) |
+| `$277` | CONTENT_LIST_ITEM | Content type for list items (li) |
+
+### List Type Values ($100)
+
+| Value | HTML | Description |
+|-------|------|-------------|
+| `$343` | `<ol>` | Decimal numbered list (1, 2, 3...) |
+| TBD | `<ul>` | Bullet/disc list |
+| TBD | `list-style-type: upper-roman` | Roman numerals (I, II, III...) |
+
+Note: Only `$343` (decimal) has been confirmed from reference files. Other list types need investigation.
+
+### List Item Structure
+
+Each `<li>` becomes a child content item within the list container with direct text reference:
+
+```ion
+{
+  $155: position_id,
+  $157: style_symbol,       // List item style
+  $159: $277,               // Content type: CONTENT_LIST_ITEM
+  $145: {                   // Direct text reference (not nested $146)
+    $4: $text_content_symbol,
+    $403: offset            // Index in TEXT_CONTENT array
+  }
+}
+```
+
+Key difference from regular paragraphs: List items use `$159: $277` (CONTENT_LIST_ITEM) instead of `$159: $269` (CONTENT_PARAGRAPH), and directly contain the `$145` text reference without nested `$146` containers.
+
+### Example: Endnotes List
+
+For an `<ol>` with 98 endnotes:
+
+```ion
+// List container
+{
+  $155: 1234,
+  $100: $343,               // Decimal numbered list
+  $157: $list_style,
+  $159: $269,
+  $146: [
+    // 98 list items, each referencing text content
+    { $155: 1235, $157: $item_style, $145: { version: $1082, $403: 0 } },
+    { $155: 1236, $157: $item_style, $145: { version: $1082, $403: 1 } },
+    ...
+  ]
+}
+```
+
+### Related Style Properties
+
+List-related styles may include:
+
+| Symbol | Property | Description |
+|--------|----------|-------------|
+| `$761` | unknown | List marker property, value `[$760]` |
+| `$100` | list-type | On content items, not styles |
+
+The `$761: [$760]` property appears on header styles in reference files, possibly related to list numbering reset or marker styling.
+
 ## Known Differences from Kindle Previewer
 
 ### Structural Counts (epictetus.epub)
 These counts match Kindle Previewer output:
 - TEXT_CONTENT: 13 vs 13
-- STYLES: 63 vs 63
 - SECTIONS: 8 vs 8
-- STORYLINES: 8 vs 8
+- CONTENT_BLOCKS: 8 vs 8
+- List structure (ol/ul): Matches reference
+
+### Styles
+We generate more styles (~84 vs ~63) due to different CSS parsing and style deduplication.
 
 ### Anchors
 We generate more internal anchors than Kindle Previewer (~263 vs ~207). We create anchors for all elements with `id` attributes, while Kindle Previewer optimizes these.

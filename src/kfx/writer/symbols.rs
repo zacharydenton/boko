@@ -213,6 +213,13 @@ pub mod sym {
     pub const BLOCK_TYPE_BLOCK: u64 = 383; // $383 - block display value
     pub const BLOCK_TYPE_INLINE: u64 = 349; // $349 - inline display value
 
+    // List symbols (for ol/ul)
+    pub const LIST_TYPE: u64 = 100; // $100 - list type property on container
+    pub const LIST_TYPE_DECIMAL: u64 = 343; // $343 - decimal numbered list (ol)
+    pub const CONTENT_LIST: u64 = 276; // $276 - content type for list container (ol/ul)
+    pub const CONTENT_LIST_ITEM: u64 = 277; // $277 - content type for list item (li)
+    // Note: Unordered list (ul) bullet type symbol TBD - needs investigation
+
     // Content symbols
     pub const SECTION_CONTENT: u64 = 141; // $141 - section content list
     pub const INLINE_STYLE_RUNS: u64 = 142; // $142 - inline style runs array

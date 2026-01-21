@@ -14,6 +14,15 @@ use crate::css::ParsedStyle;
 
 use super::symbols::sym;
 
+/// List type for ordered/unordered lists
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListType {
+    /// Ordered list (ol) - decimal numbered
+    Ordered,
+    /// Unordered list (ul) - bullet points
+    Unordered,
+}
+
 /// An inline style run within a paragraph
 /// Specifies that a range of characters has a different style
 #[derive(Debug, Clone)]
@@ -65,6 +74,8 @@ pub enum ContentItem {
         tag: String,
         /// Optional HTML element ID (for TOC anchor targets)
         element_id: Option<String>,
+        /// List type if this is an ol/ul container
+        list_type: Option<ListType>,
     },
 }
 

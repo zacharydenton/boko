@@ -11,7 +11,7 @@ use crate::kfx::ion::IonValue;
 
 use super::content::{
     count_content_items, extract_content_from_xhtml, extract_css_hrefs_from_xhtml, ChapterData,
-    ContentChunk, ContentItem, StyleRun,
+    ContentChunk, ContentItem, ListType, StyleRun,
 };
 use super::fragment::KfxFragment;
 use super::navigation::{build_anchor_symbols, build_book_navigation, build_nav_unit_list};
@@ -889,39 +889,117 @@ impl KfxBookBuilder {
                 vec![IonValue::Struct(item)]
             }
             ContentItem::Container {
-                style, children, ..
+                style,
+                children,
+                list_type,
+                tag,
+                ..
             } => {
                 let mut item = HashMap::new();
 
-                // Container: create nested $146 array with children
-                item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+                // Determine content type based on container type
+                let content_type = if list_type.is_some() {
+                    // ol/ul list container uses $276 (CONTENT_LIST)
+                    sym::CONTENT_LIST
+                } else if tag == "li" {
+                    // li list item uses $277 (CONTENT_LIST_ITEM)
+                    sym::CONTENT_LIST_ITEM
+                } else {
+                    // Regular container uses $269 (CONTENT_PARAGRAPH)
+                    sym::CONTENT_PARAGRAPH
+                };
+                item.insert(sym::CONTENT_TYPE, IonValue::Symbol(content_type));
                 // Note: Containers do NOT get $790 - only leaf text items do
 
-                // Build nested content array
-                let nested_items: Vec<IonValue> = children
-                    .iter()
-                    .flat_map(|child| self.build_content_items(child, state, eid_base))
-                    .collect();
-
-                item.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
-
-                // Add style reference for the container
-                if let Some(style_sym) = self.style_map.get(style).copied() {
-                    if style_sym != 0 {
-                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
-                    }
+                // Add list type property for ol/ul containers
+                if let Some(lt) = list_type {
+                    let list_type_sym = match lt {
+                        ListType::Ordered => sym::LIST_TYPE_DECIMAL,
+                        ListType::Unordered => sym::LIST_TYPE_DECIMAL, // TODO: find correct symbol for bullet list
+                    };
+                    item.insert(sym::LIST_TYPE, IonValue::Symbol(list_type_sym));
                 }
 
-                // Use consistent EID that matches position maps
-                item.insert(
-                    sym::POSITION,
-                    IonValue::Int(eid_base + 1 + state.global_idx as i64),
-                );
-                state.global_idx += 1;
+                // For list items (li), directly reference text content with $145
+                // instead of creating nested $146 array
+                if tag == "li" {
+                    // Build list item with direct text reference
+                    self.build_list_item(&mut item, children, state, style, eid_base);
+                } else {
+                    // Build nested content array for regular containers
+                    let nested_items: Vec<IonValue> = children
+                        .iter()
+                        .flat_map(|child| self.build_content_items(child, state, eid_base))
+                        .collect();
+
+                    item.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
+
+                    // Add style reference for the container
+                    if let Some(style_sym) = self.style_map.get(style).copied() {
+                        if style_sym != 0 {
+                            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                        }
+                    }
+
+                    // Use consistent EID that matches position maps
+                    item.insert(
+                        sym::POSITION,
+                        IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                    );
+                    state.global_idx += 1;
+                }
 
                 vec![IonValue::Struct(item)]
             }
         }
+    }
+
+    /// Build a list item (li) with direct $145 text reference
+    /// List items in KFX directly reference their text content, not nested containers
+    fn build_list_item(
+        &mut self,
+        item: &mut HashMap<u64, IonValue>,
+        children: &[ContentItem],
+        state: &mut ContentState,
+        style: &ParsedStyle,
+        eid_base: i64,
+    ) {
+        // Extract text from the list item's children
+        // List items typically have a single Text child or nested inline elements
+        // We flatten to get all text content
+        let text_content: Vec<&ContentItem> = children
+            .iter()
+            .flat_map(|c| c.flatten())
+            .filter(|c| matches!(c, ContentItem::Text { .. }))
+            .collect();
+
+        // Create direct text reference ($145) for the first text item
+        // This matches reference KFX where list items directly contain text ref
+        if !text_content.is_empty() {
+            let mut text_ref = HashMap::new();
+            text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
+            text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
+            item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+
+            // Increment text index for each text item in the list item
+            for _ in &text_content {
+                state.text_idx_in_chunk += 1;
+            }
+        }
+
+        // Add style reference for the list item
+        if let Some(style_sym) = self.style_map.get(style).copied() {
+            if style_sym != 0 {
+                item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+            }
+        }
+
+        // Use consistent EID that matches position maps
+        item.insert(
+            sym::POSITION,
+            IonValue::Int(eid_base + 1 + state.global_idx as i64),
+        );
+        state.global_idx += 1;
     }
 
     #[allow(dead_code)]
@@ -1403,4 +1481,145 @@ pub fn write_kfx_to_writer<W: Write>(book: &Book, mut writer: W) -> io::Result<(
     let builder = KfxBookBuilder::from_book(book);
     let data = builder.build();
     writer.write_all(&data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::ParsedStyle;
+
+    /// Helper to find a value in an IonValue::Struct by key
+    fn get_struct_field(value: &IonValue, key: u64) -> Option<&IonValue> {
+        match value {
+            IonValue::Struct(map) => map.get(&key),
+            _ => None,
+        }
+    }
+
+    /// Helper to get symbol value from IonValue
+    fn get_symbol_value(value: &IonValue) -> Option<u64> {
+        match value {
+            IonValue::Symbol(s) => Some(*s),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_list_container_uses_content_list_type() {
+        // Create a list container with list items
+        let list_item_1 = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "First item".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+            }],
+            tag: "li".to_string(),
+            element_id: None,
+            list_type: None, // li elements don't have list_type
+        };
+
+        let list_item_2 = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "Second item".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+            }],
+            tag: "li".to_string(),
+            element_id: None,
+            list_type: None,
+        };
+
+        let list_container = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![list_item_1, list_item_2],
+            tag: "ol".to_string(),
+            element_id: None,
+            list_type: Some(ListType::Ordered),
+        };
+
+        // Build the content items
+        let mut builder = KfxBookBuilder::new();
+        // Add a default style to the style_map
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&list_container, &mut state, 860);
+
+        // Should have one list container
+        assert_eq!(ion_items.len(), 1, "Should produce one list container");
+
+        let list_ion = &ion_items[0];
+
+        // Verify list container has content type $276 (CONTENT_LIST)
+        let content_type = get_struct_field(list_ion, sym::CONTENT_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            content_type,
+            Some(sym::CONTENT_LIST),
+            "List container should have content type $276 (CONTENT_LIST), got {:?}",
+            content_type
+        );
+
+        // Verify list container has $100 (LIST_TYPE) property
+        let list_type_prop = get_struct_field(list_ion, sym::LIST_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            list_type_prop,
+            Some(sym::LIST_TYPE_DECIMAL),
+            "List container should have $100: $343 (decimal list type)"
+        );
+
+        // Get the children ($146 CONTENT_ARRAY)
+        let children = get_struct_field(list_ion, sym::CONTENT_ARRAY);
+        assert!(children.is_some(), "List container should have $146 (CONTENT_ARRAY)");
+
+        if let Some(IonValue::List(child_items)) = children {
+            assert_eq!(child_items.len(), 2, "List should have 2 items");
+
+            // Verify each list item has content type $277 (CONTENT_LIST_ITEM)
+            for (i, child_ion) in child_items.iter().enumerate() {
+                let child_content_type = get_struct_field(child_ion, sym::CONTENT_TYPE)
+                    .and_then(get_symbol_value);
+                assert_eq!(
+                    child_content_type,
+                    Some(sym::CONTENT_LIST_ITEM),
+                    "List item {} should have content type $277 (CONTENT_LIST_ITEM), got {:?}",
+                    i,
+                    child_content_type
+                );
+
+                // Verify list item has $145 (TEXT_CONTENT) directly, not nested $146
+                let text_ref = get_struct_field(child_ion, sym::TEXT_CONTENT);
+                assert!(
+                    text_ref.is_some(),
+                    "List item {} should have $145 (TEXT_CONTENT) directly",
+                    i
+                );
+
+                // Verify list item does NOT have nested $146 (CONTENT_ARRAY)
+                let nested_array = get_struct_field(child_ion, sym::CONTENT_ARRAY);
+                assert!(
+                    nested_array.is_none(),
+                    "List item {} should NOT have nested $146 (CONTENT_ARRAY)",
+                    i
+                );
+            }
+        } else {
+            panic!("Expected List for CONTENT_ARRAY");
+        }
+    }
 }

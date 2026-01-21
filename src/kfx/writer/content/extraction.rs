@@ -7,7 +7,7 @@ use kuchiki::traits::*;
 
 use crate::css::{NodeRef, ParsedStyle, Stylesheet};
 
-use super::{ContentItem, StyleRun};
+use super::{ContentItem, ListType, StyleRun};
 
 /// Check if a tag is a block-level element that should become a Container
 fn is_block_element(tag: &str) -> bool {
@@ -386,11 +386,20 @@ fn extract_from_node(
             if is_block_element(tag_name) && !children.is_empty() {
                 // Merge consecutive text items with inline style runs
                 let merged_children = merge_text_with_inline_runs(children);
+
+                // Detect list type for ol/ul elements
+                let list_type = match tag_name {
+                    "ol" => Some(ListType::Ordered),
+                    "ul" => Some(ListType::Unordered),
+                    _ => None,
+                };
+
                 return vec![ContentItem::Container {
                     style: direct_with_inline,
                     children: merged_children,
                     tag: tag_name.to_string(),
                     element_id,
+                    list_type,
                 }];
             }
 
@@ -854,5 +863,168 @@ mod tests {
             "Should find language tags in EPUB content, found: {:?}",
             langs_found
         );
+    }
+
+    #[test]
+    fn test_ordered_list_creates_container_with_list_type() {
+        // Test that <ol> creates a Container with list_type: Ordered
+        let html = r#"<html><body>
+            <ol>
+                <li>First item</li>
+                <li>Second item</li>
+                <li>Third item</li>
+            </ol>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Should have one Container for the <ol>
+        assert_eq!(flattened.len(), 1, "Should have one top-level item (the ol container)");
+
+        // The container should have list_type: Ordered
+        match &flattened[0] {
+            ContentItem::Container {
+                tag,
+                children,
+                list_type,
+                ..
+            } => {
+                assert_eq!(tag, "ol", "Container should be an ol element");
+                assert_eq!(
+                    *list_type,
+                    Some(ListType::Ordered),
+                    "ol should have list_type: Ordered"
+                );
+                // Should have 3 children (li items)
+                assert_eq!(children.len(), 3, "ol should have 3 li children");
+
+                // Each li should be a Container with its text
+                for (i, child) in children.iter().enumerate() {
+                    match child {
+                        ContentItem::Container { tag, .. } => {
+                            assert_eq!(tag, "li", "Child {} should be an li element", i);
+                        }
+                        _ => panic!("Child {} should be a Container (li), got {:?}", i, child),
+                    }
+                }
+            }
+            _ => panic!("Expected Container, got {:?}", flattened[0]),
+        }
+    }
+
+    #[test]
+    fn test_unordered_list_creates_container_with_list_type() {
+        // Test that <ul> creates a Container with list_type: Unordered
+        let html = r#"<html><body>
+            <ul>
+                <li>Bullet one</li>
+                <li>Bullet two</li>
+            </ul>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        assert_eq!(flattened.len(), 1, "Should have one top-level item (the ul container)");
+
+        match &flattened[0] {
+            ContentItem::Container {
+                tag,
+                children,
+                list_type,
+                ..
+            } => {
+                assert_eq!(tag, "ul", "Container should be a ul element");
+                assert_eq!(
+                    *list_type,
+                    Some(ListType::Unordered),
+                    "ul should have list_type: Unordered"
+                );
+                assert_eq!(children.len(), 2, "ul should have 2 li children");
+            }
+            _ => panic!("Expected Container, got {:?}", flattened[0]),
+        }
+    }
+
+    #[test]
+    fn test_endnotes_list_from_fixture() {
+        // Test that actual endnotes from EPUB are extracted as list container
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+
+        // Find endnotes.xhtml
+        let endnotes = book
+            .resources
+            .iter()
+            .find(|(k, _)| k.contains("endnotes"))
+            .map(|(k, v)| (k.clone(), v));
+
+        let (endnotes_path, resource) = endnotes.expect("Should find endnotes.xhtml");
+
+        // Extract content
+        let stylesheet = Stylesheet::default();
+        let content = extract_content_from_xhtml(&resource.data, &stylesheet, &endnotes_path);
+
+        // Find the ol container
+        fn find_list_container(items: &[ContentItem]) -> Option<&ContentItem> {
+            for item in items {
+                match item {
+                    ContentItem::Container {
+                        list_type: Some(_),
+                        ..
+                    } => return Some(item),
+                    ContentItem::Container { children, .. } => {
+                        if let Some(found) = find_list_container(children) {
+                            return Some(found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let list = find_list_container(&content);
+        assert!(list.is_some(), "Should find a list container in endnotes");
+
+        if let Some(ContentItem::Container {
+            tag,
+            list_type,
+            children,
+            ..
+        }) = list
+        {
+            assert_eq!(tag, "ol", "Endnotes list should be an ol");
+            assert_eq!(
+                *list_type,
+                Some(ListType::Ordered),
+                "Endnotes should have Ordered list type"
+            );
+            // Epictetus has 98+ endnotes
+            assert!(
+                children.len() > 90,
+                "Endnotes should have many li items, got {}",
+                children.len()
+            );
+        }
     }
 }

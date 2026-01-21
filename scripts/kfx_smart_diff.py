@@ -9,10 +9,13 @@ differences with full deep diffs.
 Usage:
     python scripts/kfx_smart_diff.py file1.kfx file2.kfx [--section SECTION]
     python scripts/kfx_smart_diff.py file1.kfx file2.kfx -s styles  # only styles
+    python scripts/kfx_smart_diff.py file1.kfx file2.kfx --content endnotes  # focus on endnotes
 """
 
 import sys
 import os
+import zipfile
+import re
 from pathlib import Path
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -605,6 +608,304 @@ def smart_diff(file1, file2, sections=None):
     print(f"{'=' * 70}{RESET}")
 
 
+def show_epub_section(epub_path, section_name):
+    """Extract and display EPUB content for a section with matching CSS rules."""
+    if not epub_path or not os.path.exists(epub_path):
+        return
+
+    print(f"\n  {BOLD}Source EPUB content:{RESET}")
+
+    try:
+        with zipfile.ZipFile(epub_path, 'r') as z:
+            # First, collect all CSS files
+            css_content = {}
+            for name in z.namelist():
+                if name.endswith('.css'):
+                    css_content[name] = z.read(name).decode('utf-8')
+
+            # Find the XHTML file for this section
+            xhtml_file = None
+            xhtml_content = None
+            for name in z.namelist():
+                if section_name.lower() in name.lower() and name.endswith(('.xhtml', '.html')):
+                    xhtml_file = name
+                    xhtml_content = z.read(name).decode('utf-8')
+                    break
+
+            if not xhtml_content:
+                print(f"    {YELLOW}No XHTML file found matching '{section_name}'{RESET}")
+                return
+
+            print(f"    {CYAN}XHTML file: {xhtml_file}{RESET}")
+
+            # Extract classes and IDs used in the document
+            classes_used = set(re.findall(r'class="([^"]+)"', xhtml_content))
+            ids_used = set(re.findall(r'id="([^"]+)"', xhtml_content))
+            elements_used = set(re.findall(r'<(\w+)[>\s]', xhtml_content))
+
+            # Show relevant HTML structure
+            body_match = re.search(r'<body[^>]*>(.*?)</body>', xhtml_content, re.DOTALL)
+            if body_match:
+                body = body_match.group(1)
+                print(f"\n    {CYAN}HTML structure:{RESET}")
+                lines = body.strip().split('\n')
+                for line in lines[:25]:
+                    line = line.rstrip()
+                    if line.strip():
+                        # Truncate long lines
+                        if len(line) > 120:
+                            line = line[:117] + '...'
+                        print(f"      {line}")
+                if len(lines) > 25:
+                    print(f"      ... ({len(lines) - 25} more lines)")
+
+            # Show matching CSS rules
+            print(f"\n    {CYAN}Matching CSS rules:{RESET}")
+
+            # Flatten all classes
+            all_classes = set()
+            for class_str in classes_used:
+                all_classes.update(class_str.split())
+
+            for css_file, css in css_content.items():
+                relevant_rules = []
+
+                # Find rules that match elements, classes, or IDs in this section
+                # Split CSS into rules (simplified)
+                rules = re.findall(r'([^{}]+)\{([^{}]+)\}', css)
+
+                for selector, properties in rules:
+                    selector = selector.strip()
+                    properties = properties.strip()
+
+                    # Check if selector matches anything in this section
+                    matched = False
+
+                    # Check element selectors (ol, li, etc.)
+                    for elem in ['ol', 'li', 'ul', 'section', 'p', 'a', 'h2']:
+                        if elem in elements_used and re.search(rf'\b{elem}\b', selector):
+                            matched = True
+                            break
+
+                    # Check class selectors
+                    for cls in all_classes:
+                        if f'.{cls}' in selector or cls in selector:
+                            matched = True
+                            break
+
+                    # Check ID selectors
+                    for id_ in ids_used:
+                        if f'#{id_}' in selector:
+                            matched = True
+                            break
+
+                    # Highlight list-related rules
+                    if 'list' in selector.lower() or 'list' in properties.lower():
+                        matched = True
+
+                    if matched:
+                        # Clean up the rule for display
+                        props_clean = '; '.join(p.strip() for p in properties.split(';') if p.strip())
+                        if len(props_clean) > 80:
+                            props_clean = props_clean[:77] + '...'
+                        relevant_rules.append((selector, props_clean))
+
+                if relevant_rules:
+                    print(f"\n      From {css_file}:")
+                    for selector, props in relevant_rules[:15]:
+                        # Highlight list-style properties
+                        if 'list' in props.lower():
+                            print(f"        {YELLOW}{selector} {{ {props} }}{RESET}")
+                        else:
+                            print(f"        {selector} {{ {props} }}")
+                    if len(relevant_rules) > 15:
+                        print(f"        ... ({len(relevant_rules) - 15} more rules)")
+
+    except Exception as e:
+        print(f"    {RED}Error reading EPUB: {e}{RESET}")
+
+
+def analyze_content_section(frags1, frags2, section_name, epub_path=None):
+    """
+    Analyze a specific content section by name (e.g., 'endnotes', 'colophon').
+    Finds TEXT_CONTENT containing the section and shows detailed structure comparison.
+    """
+    # Show source EPUB content first if provided
+    if epub_path:
+        show_epub_section(epub_path, section_name)
+
+    print(f"\n{BOLD}{'=' * 70}")
+    print(f" CONTENT SECTION: {section_name}")
+    print(f"{'=' * 70}{RESET}")
+
+    def find_section_text(frags, name):
+        """Find TEXT_CONTENT fragments containing the section name."""
+        results = []
+        name_lower = name.lower()
+        for frag in frags.get_all("$145"):
+            val = frag.value
+            # Check both $145 and $146 keys for text arrays
+            texts = val.get('$145', []) or val.get('$146', [])
+            for i, t in enumerate(texts):
+                if isinstance(t, str) and name_lower in t.lower():
+                    results.append((frag, i, t))
+                    break
+        return results
+
+    def get_all_texts(frags, frag_id):
+        """Get all texts from a TEXT_CONTENT fragment."""
+        for frag in frags.get_all("$145"):
+            if str(frag.fid) == str(frag_id):
+                val = frag.value
+                return val.get('$145', []) or val.get('$146', [])
+        return []
+
+    def find_content_items(frags, text_frag_id):
+        """Find CONTENT_BLOCK items that reference a TEXT_CONTENT fragment."""
+        items = []
+        for frag in frags.get_all("$259"):
+            content_array = frag.value.get('$146', [])
+
+            def search(item, depth=0, path=""):
+                if isinstance(item, dict):
+                    text_ref = item.get('$145')
+                    if text_ref and isinstance(text_ref, dict):
+                        version = text_ref.get('version')
+                        if str(version) == str(text_frag_id):
+                            items.append({
+                                'depth': depth,
+                                'path': path,
+                                'offset': text_ref.get('$403', 0),
+                                'style': item.get('$157'),
+                                'keys': list(item.keys()),
+                                'item': item
+                            })
+
+                    nested = item.get('$146', [])
+                    for i, child in enumerate(nested):
+                        search(child, depth + 1, f"{path}[{i}]")
+
+            for i, item in enumerate(content_array):
+                search(item, 0, f"[{i}]")
+
+        return sorted(items, key=lambda x: x['offset'])
+
+    # Find sections in both files
+    sections1 = find_section_text(frags1, section_name)
+    sections2 = find_section_text(frags2, section_name)
+
+    print(f"\n  Found in file1: {len(sections1)} TEXT_CONTENT fragment(s)")
+    print(f"  Found in file2: {len(sections2)} TEXT_CONTENT fragment(s)")
+
+    if not sections1 and not sections2:
+        print(f"\n  {YELLOW}Section '{section_name}' not found in either file{RESET}")
+        return
+
+    # Show text content comparison
+    for frag1, idx1, text1 in sections1:
+        print(f"\n  {CYAN}File1 TEXT_CONTENT: {frag1.fid}{RESET}")
+        texts1 = get_all_texts(frags1, frag1.fid)
+        print(f"    Paragraphs: {len(texts1)}")
+        for i, t in enumerate(texts1[:10]):
+            preview = str(t)[:80].replace('\n', '\\n')
+            print(f"      [{i}]: {preview}{'...' if len(str(t)) > 80 else ''}")
+        if len(texts1) > 10:
+            print(f"      ... and {len(texts1) - 10} more")
+
+        # Find content items for this text
+        items1 = find_content_items(frags1, frag1.fid)
+        print(f"\n    Content items referencing this text: {len(items1)}")
+
+        # Show structure of first few items
+        for ci in items1[:5]:
+            style_str = sym(str(ci['style'])) if ci['style'] else 'None'
+            keys = [sym(str(k)) for k in ci['keys'] if str(k) not in ['$145', '$146', '$155', '$157', '$159']]
+            extra = f", extra: {keys}" if keys else ""
+            print(f"      offset={ci['offset']}, depth={ci['depth']}, style={style_str}{extra}")
+
+            # Check for list-related properties
+            item = ci['item']
+            for k in ['$100', '$761', '$762', '$763']:
+                if k in item or any(str(key) == k for key in item.keys()):
+                    v = item.get(k) or item.get(int(k[1:]))
+                    print(f"        {YELLOW}{sym(k)}: {v}{RESET}")
+
+    for frag2, idx2, text2 in sections2:
+        print(f"\n  {CYAN}File2 TEXT_CONTENT: {frag2.fid}{RESET}")
+        texts2 = get_all_texts(frags2, frag2.fid)
+        print(f"    Paragraphs: {len(texts2)}")
+        for i, t in enumerate(texts2[:10]):
+            preview = str(t)[:80].replace('\n', '\\n')
+            print(f"      [{i}]: {preview}{'...' if len(str(t)) > 80 else ''}")
+        if len(texts2) > 10:
+            print(f"      ... and {len(texts2) - 10} more")
+
+        # Find content items for this text
+        items2 = find_content_items(frags2, frag2.fid)
+        print(f"\n    Content items referencing this text: {len(items2)}")
+
+        for ci in items2[:5]:
+            style_str = sym(str(ci['style'])) if ci['style'] else 'None'
+            keys = [sym(str(k)) for k in ci['keys'] if str(k) not in ['$145', '$146', '$155', '$157', '$159']]
+            extra = f", extra: {keys}" if keys else ""
+            print(f"      offset={ci['offset']}, depth={ci['depth']}, style={style_str}{extra}")
+
+            item = ci['item']
+            for k in ['$100', '$761', '$762', '$763']:
+                if k in item or any(str(key) == k for key in item.keys()):
+                    v = item.get(k) or item.get(int(k[1:]))
+                    print(f"        {YELLOW}{sym(k)}: {v}{RESET}")
+
+    # Collect ALL styles used in this section from both files
+    all_items1 = []
+    all_items2 = []
+
+    for frag1, _, _ in sections1:
+        all_items1.extend(find_content_items(frags1, frag1.fid))
+    for frag2, _, _ in sections2:
+        all_items2.extend(find_content_items(frags2, frag2.fid))
+
+    styles1 = set(str(ci['style']) for ci in all_items1 if ci['style'])
+    styles2 = set(str(ci['style']) for ci in all_items2 if ci['style'])
+
+    print(f"\n  {BOLD}All styles used in this section:{RESET}")
+    print(f"    File1: {len(styles1)} unique styles")
+    print(f"    File2: {len(styles2)} unique styles")
+
+    # Show ALL styles from file1
+    if styles1:
+        print(f"\n  {CYAN}File1 styles:{RESET}")
+        for style_id in sorted(styles1):
+            for sf in frags1.get_all('$157'):
+                if str(sf.fid) == style_id:
+                    print(f"\n    {style_id}:")
+                    for k, v in sf.value.items():
+                        k_str = sym(str(k))
+                        v_str = sym(str(v)) if str(v).startswith('$') else str(v)
+                        # Highlight list-related properties
+                        if '76' in str(k) or '100' in str(k):
+                            print(f"      {YELLOW}{k_str}: {v_str}{RESET}")
+                        else:
+                            print(f"      {k_str}: {v_str}")
+                    break
+
+    # Show ALL styles from file2
+    if styles2:
+        print(f"\n  {CYAN}File2 styles:{RESET}")
+        for style_id in sorted(styles2):
+            for sf in frags2.get_all('$157'):
+                if str(sf.fid) == style_id:
+                    print(f"\n    {style_id}:")
+                    for k, v in sf.value.items():
+                        k_str = sym(str(k))
+                        v_str = sym(str(v)) if str(v).startswith('$') else str(v)
+                        if '76' in str(k) or '100' in str(k):
+                            print(f"      {YELLOW}{k_str}: {v_str}{RESET}")
+                        else:
+                            print(f"      {k_str}: {v_str}")
+                    break
+
+
 def full_fragment_diff(file1, file2):
     """
     Comprehensive fragment-by-fragment diff.
@@ -696,6 +997,10 @@ def main():
     parser.add_argument("--section", "-s", action="append",
                         choices=["text", "styles", "sections", "storylines", "anchors", "all"],
                         help="Section(s) to analyze (default: all)")
+    parser.add_argument("--content", "-c", type=str,
+                        help="Focus on specific content section by name (e.g., 'endnotes', 'colophon')")
+    parser.add_argument("--epub", "-e", type=str,
+                        help="Source EPUB file to show original XHTML and CSS (use with --content)")
     parser.add_argument("--full", "-f", action="store_true",
                         help="Full fragment-by-fragment diff (comprehensive)")
 
@@ -708,7 +1013,23 @@ def main():
         print(f"Error: {args.file2} not found")
         sys.exit(1)
 
-    if args.full:
+    if args.content:
+        # Focus on specific content section
+        print(f"{BOLD}KFX Content Section Diff{RESET}")
+        print(f"  File 1: {args.file1}")
+        print(f"  File 2: {args.file2}")
+        print(f"  Content filter: {args.content}")
+        if args.epub:
+            print(f"  Source EPUB: {args.epub}")
+        print()
+
+        frags1, _ = load_kfx(args.file1)
+        frags2, _ = load_kfx(args.file2)
+
+        print(f"  Loaded: {len(frags1.all_fragments)} vs {len(frags2.all_fragments)} fragments")
+
+        analyze_content_section(frags1, frags2, args.content, args.epub)
+    elif args.full:
         full_fragment_diff(args.file1, args.file2)
     else:
         smart_diff(args.file1, args.file2, args.section)
