@@ -75,8 +75,9 @@ impl ToKfxIon for Color {
     fn to_kfx_ion(&self) -> Option<IonValue> {
         match self {
             Color::Rgba(r, g, b, _a) => {
-                // Serialize as integer 0x00RRGGBB
-                let val = ((*r as i64) << 16) | ((*g as i64) << 8) | (*b as i64);
+                // Serialize as ARGB integer 0xFFRRGGBB (alpha=255 for opaque)
+                // Reference KFX uses this format for text colors
+                let val = (0xFFi64 << 24) | ((*r as i64) << 16) | ((*g as i64) << 8) | (*b as i64);
                 Some(IonValue::Int(val))
             }
             _ => None,
@@ -141,8 +142,8 @@ pub fn border_to_ion(
             b_struct.insert(sym::COLOR, val);
         }
     } else {
-        // Default to black
-        b_struct.insert(sym::COLOR, IonValue::Int(0));
+        // Default to black (ARGB format with alpha=255)
+        b_struct.insert(sym::COLOR, IonValue::Int(0xFF000000u32 as i64));
     }
 
     Some(IonValue::Struct(b_struct))
@@ -272,5 +273,57 @@ pub fn break_value_to_symbol(break_val: crate::css::BreakValue) -> u64 {
         BreakValue::Auto => sym::BLOCK_TYPE_BLOCK, // $383
         BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => sym::BREAK_AVOID, // $353
         _ => sym::BLOCK_TYPE_BLOCK, // Default to auto
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_color_uses_argb_format() {
+        // Reference KFX uses ARGB format 0xFFRRGGBB for colors
+        // This ensures alpha channel is set to 255 (opaque)
+        let red = Color::Rgba(255, 0, 0, 255);
+        let ion = red.to_kfx_ion().expect("Should produce ION value");
+
+        match ion {
+            IonValue::Int(val) => {
+                // Should be 0xFFFF0000 = 4294901760
+                assert_eq!(val, 0xFFFF0000u32 as i64, "Red color should be 0xFFFF0000");
+            }
+            _ => panic!("Expected Int value"),
+        }
+    }
+
+    #[test]
+    fn test_color_black_uses_argb_format() {
+        // Black should be 0xFF000000, not 0x00000000
+        let black = Color::Rgba(0, 0, 0, 255);
+        let ion = black.to_kfx_ion().expect("Should produce ION value");
+
+        match ion {
+            IonValue::Int(val) => {
+                // Should be 0xFF000000 = 4278190080
+                assert_eq!(val, 0xFF000000u32 as i64, "Black color should be 0xFF000000");
+            }
+            _ => panic!("Expected Int value"),
+        }
+    }
+
+    #[test]
+    fn test_color_preserves_rgb_values() {
+        // Test that RGB values are correctly encoded in ARGB format
+        let color = Color::Rgba(0x12, 0x34, 0x56, 255);
+        let ion = color.to_kfx_ion().expect("Should produce ION value");
+
+        match ion {
+            IonValue::Int(val) => {
+                // Should be 0xFF123456
+                let expected = 0xFF123456i64;
+                assert_eq!(val, expected, "Color #123456 should be 0xFF123456");
+            }
+            _ => panic!("Expected Int value"),
+        }
     }
 }
