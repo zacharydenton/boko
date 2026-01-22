@@ -338,8 +338,8 @@ fn parse_break_value(ion: &IonValue) -> Option<BreakValue> {
     };
 
     match sym_id {
-        sym::BLOCK_TYPE_BLOCK => Some(BreakValue::Auto), // $383 = auto
-        sym::BREAK_AVOID => Some(BreakValue::Avoid),     // $353 = avoid
+        sym::BREAK_AUTO => Some(BreakValue::Auto),   // $383 = auto
+        sym::BREAK_AVOID => Some(BreakValue::Avoid), // $353 = avoid
         _ => None,
     }
 }

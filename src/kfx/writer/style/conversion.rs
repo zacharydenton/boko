@@ -55,13 +55,9 @@ pub fn style_to_ion(
     let is_image_style = style.is_image;
     let is_inline_style = style.is_inline;
 
-    // Inline styles (for links/anchors) are minimal - just block type
-    // Reference uses $127: $349 for inline elements
+    // Inline styles (for links/anchors) are minimal
+    // Note: $127 is hyphens property, not block type - don't output unless hyphens is specified
     if is_inline_style {
-        style_ion.insert(
-            sym::STYLE_BLOCK_TYPE,
-            IonValue::Symbol(sym::BLOCK_TYPE_INLINE),
-        );
         return IonValue::Struct(style_ion);
     }
 
@@ -80,36 +76,14 @@ pub fn style_to_ion(
             style_ion.insert(sym::FONT_FAMILY, IonValue::String(family_str));
         }
 
-        // Add STYLE_BLOCK_TYPE based on style content
-        // Reference KFX behavior:
-        // - BLOCK_TYPE_BLOCK ($383) only for styles with actual layout properties
-        // - No BLOCK_TYPE at all for font-only styles (reference omits it)
-        // - BLOCK_TYPE_INLINE ($349) only for explicit inline elements (handled above)
-        // Note: We check for non-zero values since margin: 0 shouldn't count as a layout property
-        let has_layout_props = has_nonzero_value(&style.margin_top)
-            || has_nonzero_value(&style.margin_bottom)
-            || has_nonzero_value(&style.margin_left)
-            || has_nonzero_value(&style.margin_right)
-            || has_nonzero_value(&style.text_indent)
-            || style.width.is_some()
-            || style.height.is_some()
-            || style.max_width.is_some()
-            || style.break_before.is_some()
-            || style.break_after.is_some()
-            || style.break_inside.is_some();
-
-        // Only set BLOCK_TYPE when style has layout properties
-        // Font-only styles don't get BLOCK_TYPE (matches reference behavior)
-        if has_layout_props {
-            style_ion.insert(sym::STYLE_BLOCK_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_BLOCK));
-        }
-
         // Language tag ($10) from xml:lang or lang attribute
         if let Some(ref lang) = style.lang {
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
 
-        // Note: IMAGE_FIT baseline removed - reference KFX doesn't include it for text styles
+        // Note: $127 is hyphens property (not block type as previously thought)
+        // Only output when CSS hyphens is explicitly specified
+        // Reference KFX doesn't add hyphens as a default for all styles
     }
 
     // Font size
@@ -984,7 +958,7 @@ fn add_column_count(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle)
     if let Some(count) = style.column_count {
         match count {
             ColumnCount::Auto => {
-                // auto uses $383 (same as BLOCK_TYPE_BLOCK)
+                // auto uses $383 (shared with hyphens, break values)
                 style_ion.insert(sym::COLUMN_COUNT, IonValue::Symbol(sym::COLUMN_COUNT_AUTO));
             }
             ColumnCount::Count(n) => {
@@ -1289,17 +1263,18 @@ mod tests {
             _ => panic!("Expected struct"),
         };
 
-        // Font-only styles should NOT have BLOCK_TYPE at all (matches reference)
+        // Font-only styles should NOT have HYPHENS at all (matches reference)
+        // Note: $127 is CSS hyphens property, not block type
         assert!(
-            !ion_map.contains_key(&sym::STYLE_BLOCK_TYPE),
-            "Font-only style should not have BLOCK_TYPE"
+            !ion_map.contains_key(&sym::HYPHENS),
+            "Font-only style should not have HYPHENS"
         );
     }
 
     #[test]
-    fn test_layout_style_uses_block_block_type() {
-        // Styles with layout properties (margins, text-indent) should use
-        // BLOCK_TYPE_BLOCK ($383)
+    fn test_layout_style_does_not_have_hyphens() {
+        // Layout styles should NOT have $127 (hyphens) by default
+        // $127 is only output when CSS hyphens property is explicitly set
         let style = ParsedStyle {
             margin_top: Some(crate::css::CssValue::Em(1.0)),
             ..Default::default()
@@ -1314,24 +1289,17 @@ mod tests {
             _ => panic!("Expected struct"),
         };
 
-        // Should have STYLE_BLOCK_TYPE = BLOCK ($383)
-        match ion_map.get(&sym::STYLE_BLOCK_TYPE) {
-            Some(IonValue::Symbol(s)) => {
-                assert_eq!(
-                    *s,
-                    sym::BLOCK_TYPE_BLOCK,
-                    "Layout style should use BLOCK_TYPE_BLOCK ($383), got ${}",
-                    s
-                );
-            }
-            _ => panic!("Expected STYLE_BLOCK_TYPE symbol"),
-        }
+        // Should NOT have $127 (hyphens) unless CSS explicitly sets it
+        assert!(
+            !ion_map.contains_key(&sym::HYPHENS),
+            "Layout style should not have HYPHENS by default"
+        );
     }
 
     #[test]
-    fn test_zero_margin_omits_block_type() {
-        // Styles with margin: 0 should NOT have BLOCK_TYPE
-        // because margin: 0 doesn't affect layout (same as font-only)
+    fn test_zero_margin_omits_hyphens() {
+        // Styles with margin: 0 should NOT have HYPHENS
+        // $127 is CSS hyphens property, not block type indicator
         let style = ParsedStyle {
             font_style: Some(crate::css::FontStyle::Italic),
             margin_top: Some(crate::css::CssValue::Px(0.0)),
@@ -1350,10 +1318,10 @@ mod tests {
             _ => panic!("Expected struct"),
         };
 
-        // Should NOT have BLOCK_TYPE because margins are zero
+        // Should NOT have HYPHENS
         assert!(
-            !ion_map.contains_key(&sym::STYLE_BLOCK_TYPE),
-            "Style with margin: 0 should not have BLOCK_TYPE"
+            !ion_map.contains_key(&sym::HYPHENS),
+            "Style should not have HYPHENS by default"
         );
     }
 

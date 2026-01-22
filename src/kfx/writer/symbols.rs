@@ -197,7 +197,7 @@ pub mod sym {
     pub const BREAK_AFTER: u64 = 788; // $788 - break-after property
     pub const BREAK_BEFORE: u64 = 789; // $789 - break-before property
     pub const BREAK_AVOID: u64 = 353; // $353 - avoid value for break properties
-    // Note: $383 (BLOCK_TYPE_BLOCK) = auto
+    pub const BREAK_AUTO: u64 = 383; // $383 - auto value for break properties
 
     // ==========================================================================
     // SHADOW PROPERTIES ($496, $497) - P4 improvement
@@ -334,10 +334,12 @@ pub mod sym {
     pub const IMAGE_FIT_NONE: u64 = 378; // $378 - image fit: none (baseline)
     pub const IMAGE_LAYOUT: u64 = 580; // $580 - image/block layout
 
-    // Block type symbols
-    pub const STYLE_BLOCK_TYPE: u64 = 127; // $127 - block type/display mode for styles
-    pub const BLOCK_TYPE_BLOCK: u64 = 383; // $383 - block display value
-    pub const BLOCK_TYPE_INLINE: u64 = 349; // $349 - inline display value
+    // Hyphens property ($127)
+    // Note: Previously incorrectly named STYLE_BLOCK_TYPE - $127 is actually CSS "hyphens"
+    pub const HYPHENS: u64 = 127; // $127 - CSS hyphens property
+    pub const HYPHENS_AUTO: u64 = 383; // $383 - hyphens: auto
+    pub const HYPHENS_MANUAL: u64 = 384; // $384 - hyphens: manual
+    pub const HYPHENS_NONE: u64 = 349; // $349 - hyphens: none
 
     // ==========================================================================
     // LIST STYLE TYPE VALUES ($100) - P1 improvement

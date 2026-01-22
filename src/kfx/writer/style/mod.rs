@@ -362,9 +362,9 @@ pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
 pub fn break_value_to_symbol(break_val: crate::css::BreakValue) -> u64 {
     use crate::css::BreakValue;
     match break_val {
-        BreakValue::Auto => sym::BLOCK_TYPE_BLOCK, // $383
+        BreakValue::Auto => sym::BREAK_AUTO, // $383
         BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => sym::BREAK_AVOID, // $353
-        _ => sym::BLOCK_TYPE_BLOCK, // Default to auto
+        _ => sym::BREAK_AUTO, // Default to auto
     }
 }
 

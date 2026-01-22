@@ -1154,7 +1154,7 @@ impl KfxBookBuilder {
                 let container_eid = current_eid;
 
                 let mut container = HashMap::new();
-                container.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_BLOCK));
+                container.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
                 container.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
                 container.insert(sym::POSITION, IonValue::Int(container_eid));
 
