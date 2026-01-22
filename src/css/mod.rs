@@ -497,6 +497,200 @@ impl ParsedStyle {
             && self.position.is_none()
             && self.left.is_none()
     }
+
+    /// Convert this style to a CSS declaration string.
+    /// Returns a string like "font-size: 1.17em; font-weight: bold; text-align: center"
+    pub fn to_css_string(&self) -> String {
+        let mut props = Vec::new();
+
+        if let Some(ref family) = self.font_family {
+            props.push(format!("font-family: {}", family));
+        }
+        if let Some(ref size) = self.font_size {
+            props.push(format!("font-size: {}", css_value_to_string(size)));
+        }
+        if let Some(weight) = self.font_weight {
+            let val = match weight {
+                FontWeight::Normal => "normal",
+                FontWeight::Bold => "bold",
+                FontWeight::Weight(w) => return format!("font-weight: {}", w),
+            };
+            props.push(format!("font-weight: {}", val));
+        }
+        if let Some(style) = self.font_style {
+            let val = match style {
+                FontStyle::Normal => "normal",
+                FontStyle::Italic => "italic",
+                FontStyle::Oblique => "oblique",
+            };
+            props.push(format!("font-style: {}", val));
+        }
+        if let Some(variant) = self.font_variant {
+            if variant == FontVariant::SmallCaps {
+                props.push("font-variant: small-caps".to_string());
+            }
+        }
+        if let Some(align) = self.text_align {
+            let val = match align {
+                TextAlign::Left => "left",
+                TextAlign::Right => "right",
+                TextAlign::Center => "center",
+                TextAlign::Justify => "justify",
+            };
+            props.push(format!("text-align: {}", val));
+        }
+        if let Some(ref indent) = self.text_indent {
+            props.push(format!("text-indent: {}", css_value_to_string(indent)));
+        }
+        if let Some(ref lh) = self.line_height {
+            props.push(format!("line-height: {}", css_value_to_string(lh)));
+        }
+        if let Some(ref v) = self.margin_top {
+            props.push(format!("margin-top: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.margin_right {
+            props.push(format!("margin-right: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.margin_bottom {
+            props.push(format!("margin-bottom: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.margin_left {
+            props.push(format!("margin-left: {}", css_value_to_string(v)));
+        }
+        if let Some(ref color) = self.color {
+            if let Some(css) = color_to_css(color) {
+                props.push(format!("color: {}", css));
+            }
+        }
+        if let Some(ref color) = self.background_color {
+            if let Some(css) = color_to_css(color) {
+                props.push(format!("background-color: {}", css));
+            }
+        }
+        if let Some(ref v) = self.width {
+            props.push(format!("width: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.height {
+            props.push(format!("height: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.max_width {
+            props.push(format!("max-width: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.max_height {
+            props.push(format!("max-height: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.min_width {
+            props.push(format!("min-width: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.min_height {
+            props.push(format!("min-height: {}", css_value_to_string(v)));
+        }
+        if let Some(valign) = self.vertical_align {
+            let val = match valign {
+                VerticalAlign::Baseline => "baseline",
+                VerticalAlign::Top => "top",
+                VerticalAlign::Middle => "middle",
+                VerticalAlign::Bottom => "bottom",
+                VerticalAlign::Super => "super",
+                VerticalAlign::Sub => "sub",
+                VerticalAlign::TextTop => "text-top",
+                VerticalAlign::TextBottom => "text-bottom",
+            };
+            props.push(format!("vertical-align: {}", val));
+        }
+        if self.white_space_nowrap == Some(true) {
+            props.push("white-space: nowrap".to_string());
+        }
+        if self.text_decoration_underline {
+            props.push("text-decoration: underline".to_string());
+        }
+        if self.text_decoration_line_through {
+            props.push("text-decoration: line-through".to_string());
+        }
+        if self.text_decoration_overline {
+            props.push("text-decoration: overline".to_string());
+        }
+        if let Some(brk) = self.break_before {
+            if brk != BreakValue::Auto {
+                props.push(format!("break-before: {}", break_value_to_css(brk)));
+            }
+        }
+        if let Some(brk) = self.break_after {
+            if brk != BreakValue::Auto {
+                props.push(format!("break-after: {}", break_value_to_css(brk)));
+            }
+        }
+        if let Some(brk) = self.break_inside {
+            if brk != BreakValue::Auto {
+                props.push(format!("break-inside: {}", break_value_to_css(brk)));
+            }
+        }
+        if let Some(ref v) = self.letter_spacing {
+            props.push(format!("letter-spacing: {}", css_value_to_string(v)));
+        }
+        if let Some(ref v) = self.word_spacing {
+            props.push(format!("word-spacing: {}", css_value_to_string(v)));
+        }
+        if let Some(opacity) = self.opacity {
+            let val = opacity as f32 / 100.0;
+            props.push(format!("opacity: {}", val));
+        }
+
+        props.join("; ")
+    }
+}
+
+/// Convert CssValue to CSS string representation
+fn css_value_to_string(val: &CssValue) -> String {
+    match val {
+        CssValue::Px(v) => format!("{}px", format_number(*v)),
+        CssValue::Em(v) => format!("{}em", format_number(*v)),
+        CssValue::Rem(v) => format!("{}rem", format_number(*v)),
+        CssValue::Percent(v) => format!("{}%", format_number(*v)),
+        CssValue::Number(v) => format_number(*v),
+        CssValue::Keyword(k) => k.clone(),
+    }
+}
+
+/// Format a float, removing unnecessary trailing zeros
+fn format_number(v: f32) -> String {
+    if (v - v.round()).abs() < 0.0001 {
+        format!("{}", v as i32)
+    } else {
+        format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Convert Color to CSS string
+fn color_to_css(color: &Color) -> Option<String> {
+    match color {
+        Color::Rgba(r, g, b, 255) => {
+            if *r == 0 && *g == 0 && *b == 0 {
+                Some("black".to_string())
+            } else if *r == 255 && *g == 255 && *b == 255 {
+                Some("white".to_string())
+            } else {
+                Some(format!("#{:02x}{:02x}{:02x}", r, g, b))
+            }
+        }
+        Color::Rgba(r, g, b, a) => Some(format!("rgba({}, {}, {}, {})", r, g, b, *a as f32 / 255.0)),
+        Color::Current => Some("currentColor".to_string()),
+        Color::Transparent => Some("transparent".to_string()),
+    }
+}
+
+/// Convert BreakValue to CSS string
+fn break_value_to_css(brk: BreakValue) -> &'static str {
+    match brk {
+        BreakValue::Auto => "auto",
+        BreakValue::Avoid => "avoid",
+        BreakValue::AvoidPage => "avoid-page",
+        BreakValue::Page => "page",
+        BreakValue::Left => "left",
+        BreakValue::Right => "right",
+        BreakValue::Column => "column",
+        BreakValue::AvoidColumn => "avoid-column",
+    }
 }
 
 // Helper to normalize CssValue - treat zero values as None (default)
