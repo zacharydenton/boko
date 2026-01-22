@@ -47,6 +47,7 @@ fn is_block_element(tag: &str) -> bool {
             | "main"
             | "address"
             | "pre"
+            | "hr"
     )
 }
 
@@ -394,6 +395,21 @@ fn extract_from_node(
                     element_id,
                     is_verse: false,
                     is_noteref: false, // Math elements aren't noterefs
+                }];
+            }
+
+            // Handle <hr> elements - horizontal rule (self-closing, no children)
+            // Creates an empty container with tag "hr" for KFX content type $596
+            if tag_name == "hr" {
+                return vec![ContentItem::Container {
+                    style: direct_with_inline,
+                    children: Vec::new(),
+                    tag: "hr".to_string(),
+                    element_id,
+                    list_type: None,
+                    colspan: None,
+                    rowspan: None,
+                    classification: None,
                 }];
             }
 
@@ -2098,5 +2114,43 @@ mod tests {
             Some(true),
             "<h2> element should have is_heading=true on its style"
         );
+    }
+
+    #[test]
+    fn test_horizontal_rule_creates_container() {
+        // <hr> elements should create an empty Container with tag "hr"
+        let html = r#"<html><body>
+            <p>Before</p>
+            <hr />
+            <p>After</p>
+        </body></html>"#;
+
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let stylesheet = Stylesheet::default();
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+        let flattened = flatten_containers(items);
+
+        // Should have 3 items: p, hr, p
+        assert_eq!(flattened.len(), 3, "Should have 3 items (p, hr, p)");
+
+        // Find the hr container
+        let hr_item = flattened.iter().find(|item| {
+            matches!(item, ContentItem::Container { tag, .. } if tag == "hr")
+        });
+
+        assert!(hr_item.is_some(), "Should find an <hr> container");
+
+        // Verify hr container has no children
+        if let Some(ContentItem::Container { children, tag, .. }) = hr_item {
+            assert_eq!(tag, "hr");
+            assert!(children.is_empty(), "HR container should have no children");
+        }
     }
 }

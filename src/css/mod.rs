@@ -577,6 +577,52 @@ pub enum ColumnCount {
     Count(u32),
 }
 
+/// Unicode bidirectional text algorithm control
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum UnicodeBidi {
+    /// Normal (default) - no embedding
+    #[default]
+    Normal,
+    /// Embed - embeds text direction
+    Embed,
+    /// Isolate - isolates text from surrounding
+    Isolate,
+    /// BidiOverride - forces direction
+    BidiOverride,
+    /// IsolateOverride - isolate with forced direction
+    IsolateOverride,
+    /// Plaintext - determine direction from content
+    Plaintext,
+}
+
+/// Line breaking rules (primarily for CJK text)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LineBreak {
+    /// Auto (default) - browser determines
+    #[default]
+    Auto,
+    /// Normal - standard line breaking
+    Normal,
+    /// Loose - least restrictive CJK rules
+    Loose,
+    /// Strict - most restrictive CJK rules
+    Strict,
+    /// Anywhere - can break anywhere
+    Anywhere,
+}
+
+/// Text orientation in vertical writing mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextOrientation {
+    /// Mixed (default) - rotate horizontal scripts
+    #[default]
+    Mixed,
+    /// Upright - all characters upright
+    Upright,
+    /// Sideways - all characters sideways
+    Sideways,
+}
+
 /// Parsed CSS style properties
 /// Note: Custom Hash/Eq implementation excludes image_width_px and image_height_px
 /// since they don't affect KFX style output and would cause duplicate styles.
@@ -688,6 +734,12 @@ pub struct ParsedStyle {
     pub hyphens: Option<Hyphens>,
     /// CSS box-sizing property
     pub box_sizing: Option<BoxSizing>,
+    /// CSS unicode-bidi property for bidirectional text
+    pub unicode_bidi: Option<UnicodeBidi>,
+    /// CSS line-break property for CJK line breaking rules
+    pub line_break: Option<LineBreak>,
+    /// CSS text-orientation property for vertical writing mode
+    pub text_orientation: Option<TextOrientation>,
 }
 
 impl ParsedStyle {
@@ -955,6 +1007,18 @@ impl ParsedStyle {
         if other.box_sizing.is_some() {
             self.box_sizing = other.box_sizing;
         }
+        // CSS unicode-bidi property
+        if other.unicode_bidi.is_some() {
+            self.unicode_bidi = other.unicode_bidi;
+        }
+        // CSS line-break property
+        if other.line_break.is_some() {
+            self.line_break = other.line_break;
+        }
+        // CSS text-orientation property
+        if other.text_orientation.is_some() {
+            self.text_orientation = other.text_orientation;
+        }
     }
 
     /// Check if this style indicates the element is hidden/invisible
@@ -1055,6 +1119,12 @@ impl ParsedStyle {
             && self.hyphens.is_none()
             // Box sizing
             && self.box_sizing.is_none()
+            // Unicode bidi
+            && self.unicode_bidi.is_none()
+            // Line break
+            && self.line_break.is_none()
+            // Text orientation
+            && self.text_orientation.is_none()
             // Table properties
             && self.border_collapse.is_none()
             && self.border_spacing_horizontal.is_none()
@@ -1408,6 +1478,12 @@ impl PartialEq for ParsedStyle {
             && self.hyphens == other.hyphens
             // CSS box-sizing property
             && self.box_sizing == other.box_sizing
+            // CSS unicode-bidi property
+            && self.unicode_bidi == other.unicode_bidi
+            // CSS line-break property
+            && self.line_break == other.line_break
+            // CSS text-orientation property
+            && self.text_orientation == other.text_orientation
     }
 }
 
@@ -2183,6 +2259,44 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                     "content-box" => Some(BoxSizing::ContentBox),
                     "border-box" => Some(BoxSizing::BorderBox),
                     "padding-box" => Some(BoxSizing::PaddingBox),
+                    _ => None,
+                };
+            }
+        }
+        // CSS unicode-bidi property
+        "unicode-bidi" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.unicode_bidi = match val.to_ascii_lowercase().as_str() {
+                    "normal" => Some(UnicodeBidi::Normal),
+                    "embed" => Some(UnicodeBidi::Embed),
+                    "isolate" => Some(UnicodeBidi::Isolate),
+                    "bidi-override" => Some(UnicodeBidi::BidiOverride),
+                    "isolate-override" => Some(UnicodeBidi::IsolateOverride),
+                    "plaintext" => Some(UnicodeBidi::Plaintext),
+                    _ => None,
+                };
+            }
+        }
+        // CSS line-break property (CJK line breaking rules)
+        "line-break" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.line_break = match val.to_ascii_lowercase().as_str() {
+                    "auto" => Some(LineBreak::Auto),
+                    "normal" => Some(LineBreak::Normal),
+                    "loose" => Some(LineBreak::Loose),
+                    "strict" => Some(LineBreak::Strict),
+                    "anywhere" => Some(LineBreak::Anywhere),
+                    _ => None,
+                };
+            }
+        }
+        // CSS text-orientation property (vertical writing mode)
+        "text-orientation" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.text_orientation = match val.to_ascii_lowercase().as_str() {
+                    "mixed" => Some(TextOrientation::Mixed),
+                    "upright" => Some(TextOrientation::Upright),
+                    "sideways" | "sideways-right" => Some(TextOrientation::Sideways),
                     _ => None,
                 };
             }

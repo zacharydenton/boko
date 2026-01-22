@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, BoxSizing, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens,
+    BorderCollapse, BoxSizing, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens, LineBreak,
     ListStylePosition, ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign,
-    TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
+    TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, TextOrientation, UnicodeBidi,
+    WritingMode,
 };
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
@@ -271,6 +272,15 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
 
     // CSS box-sizing property ($546)
     add_box_sizing(&mut style_ion, style);
+
+    // CSS unicode-bidi property ($674)
+    add_unicode_bidi(&mut style_ion, style);
+
+    // CSS line-break property ($780)
+    add_line_break(&mut style_ion, style);
+
+    // CSS text-orientation property ($706)
+    add_text_orientation(&mut style_ion, style);
 
     // Table properties
     add_border_collapse(&mut style_ion, style);
@@ -1149,6 +1159,53 @@ fn add_box_sizing(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
             BoxSizing::PaddingBox => sym::BOX_SIZING_PADDING_BOX, // $379
         };
         style_ion.insert(sym::BOX_SIZING, IonValue::Symbol(box_sizing_sym));
+    }
+}
+
+/// CSS unicode-bidi property ($674) for bidirectional text control
+fn add_unicode_bidi(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Only output unicode-bidi if CSS explicitly specifies it
+    // Normal is the default and should not be output
+    if let Some(bidi) = style.unicode_bidi {
+        let bidi_sym = match bidi {
+            UnicodeBidi::Normal => return, // Default, don't output
+            UnicodeBidi::Embed => sym::BIDI_EMBED,                   // $675
+            UnicodeBidi::Isolate => sym::BIDI_ISOLATE,               // $676
+            UnicodeBidi::BidiOverride => sym::BIDI_OVERRIDE,         // $677
+            UnicodeBidi::IsolateOverride => sym::BIDI_ISOLATE_OVERRIDE, // $678
+            UnicodeBidi::Plaintext => sym::BIDI_PLAINTEXT,           // $679
+        };
+        style_ion.insert(sym::UNICODE_BIDI, IonValue::Symbol(bidi_sym));
+    }
+}
+
+/// CSS line-break property ($780) for CJK line breaking rules
+fn add_line_break(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Only output line-break if CSS explicitly specifies it
+    // Auto is the default and should not be output
+    if let Some(lb) = style.line_break {
+        let lb_sym = match lb {
+            LineBreak::Auto => return, // Default, don't output
+            LineBreak::Normal => sym::FONT_WEIGHT_NORMAL, // $350 (shared symbol)
+            LineBreak::Loose => sym::LINE_BREAK_LOOSE,    // $781
+            LineBreak::Strict => sym::LINE_BREAK_STRICT,  // $782
+            LineBreak::Anywhere => sym::LINE_BREAK_ANYWHERE, // $783
+        };
+        style_ion.insert(sym::LINE_BREAK, IonValue::Symbol(lb_sym));
+    }
+}
+
+/// CSS text-orientation property ($706) for vertical writing mode
+fn add_text_orientation(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Only output text-orientation if CSS explicitly specifies it
+    // Mixed is the default and should not be output
+    if let Some(orient) = style.text_orientation {
+        let orient_sym = match orient {
+            TextOrientation::Mixed => return, // Default, don't output
+            TextOrientation::Upright => sym::TEXT_ORIENTATION_UPRIGHT,   // $779
+            TextOrientation::Sideways => sym::TEXT_ORIENTATION_SIDEWAYS, // $778
+        };
+        style_ion.insert(sym::TEXT_ORIENTATION, IonValue::Symbol(orient_sym));
     }
 }
 
@@ -2970,5 +3027,224 @@ mod tests {
         if let Some(IonValue::Symbol(s)) = ion_map.get(&sym::PAGE_BREAK_BEFORE) {
             assert_eq!(*s, sym::BREAK_AUTO, "auto should map to $383");
         }
+    }
+
+    // ==========================================================================
+    // TDD Tests: Unicode-bidi, line-break, text-orientation conversions
+    // ==========================================================================
+
+    /// Helper to extract symbol value from IonValue map
+    fn get_sym(ion_map: &HashMap<u64, IonValue>, key: u64) -> Option<u64> {
+        match ion_map.get(&key) {
+            Some(IonValue::Symbol(s)) => Some(*s),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_unicode_bidi_embed() {
+        let style = ParsedStyle {
+            unicode_bidi: Some(crate::css::UnicodeBidi::Embed),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::UNICODE_BIDI),
+            Some(sym::BIDI_EMBED),
+            "unicode-bidi: embed should output $674: $675"
+        );
+    }
+
+    #[test]
+    fn test_unicode_bidi_isolate() {
+        let style = ParsedStyle {
+            unicode_bidi: Some(crate::css::UnicodeBidi::Isolate),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::UNICODE_BIDI),
+            Some(sym::BIDI_ISOLATE),
+            "unicode-bidi: isolate should output $674: $676"
+        );
+    }
+
+    #[test]
+    fn test_unicode_bidi_normal_not_output() {
+        // Normal is the default and should not be output
+        let style = ParsedStyle {
+            unicode_bidi: Some(crate::css::UnicodeBidi::Normal),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::UNICODE_BIDI),
+            "unicode-bidi: normal should not be output (it's the default)"
+        );
+    }
+
+    #[test]
+    fn test_line_break_strict() {
+        let style = ParsedStyle {
+            line_break: Some(crate::css::LineBreak::Strict),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::LINE_BREAK),
+            Some(sym::LINE_BREAK_STRICT),
+            "line-break: strict should output $780: $782"
+        );
+    }
+
+    #[test]
+    fn test_line_break_loose() {
+        let style = ParsedStyle {
+            line_break: Some(crate::css::LineBreak::Loose),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::LINE_BREAK),
+            Some(sym::LINE_BREAK_LOOSE),
+            "line-break: loose should output $780: $781"
+        );
+    }
+
+    #[test]
+    fn test_line_break_auto_not_output() {
+        // Auto is the default and should not be output
+        let style = ParsedStyle {
+            line_break: Some(crate::css::LineBreak::Auto),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::LINE_BREAK),
+            "line-break: auto should not be output (it's the default)"
+        );
+    }
+
+    #[test]
+    fn test_text_orientation_upright() {
+        let style = ParsedStyle {
+            text_orientation: Some(crate::css::TextOrientation::Upright),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::TEXT_ORIENTATION),
+            Some(sym::TEXT_ORIENTATION_UPRIGHT),
+            "text-orientation: upright should output $706: $779"
+        );
+    }
+
+    #[test]
+    fn test_text_orientation_sideways() {
+        let style = ParsedStyle {
+            text_orientation: Some(crate::css::TextOrientation::Sideways),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert_eq!(
+            get_sym(&ion_map, sym::TEXT_ORIENTATION),
+            Some(sym::TEXT_ORIENTATION_SIDEWAYS),
+            "text-orientation: sideways should output $706: $778"
+        );
+    }
+
+    #[test]
+    fn test_text_orientation_mixed_not_output() {
+        // Mixed is the default and should not be output
+        let style = ParsedStyle {
+            text_orientation: Some(crate::css::TextOrientation::Mixed),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(m) => m,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::TEXT_ORIENTATION),
+            "text-orientation: mixed should not be output (it's the default)"
+        );
     }
 }

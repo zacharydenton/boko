@@ -934,6 +934,9 @@ impl KfxBookBuilder {
                 } else if tag == "tfoot" {
                     // tfoot uses $455 (CONTENT_TFOOT)
                     sym::CONTENT_TFOOT
+                } else if tag == "hr" {
+                    // horizontal rule uses $596 (HORIZONTAL_RULE)
+                    sym::HORIZONTAL_RULE
                 } else {
                     // Regular container (td, th, div, etc.) uses $269 (CONTENT_PARAGRAPH)
                     sym::CONTENT_PARAGRAPH

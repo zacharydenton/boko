@@ -274,6 +274,33 @@ pub mod sym {
     pub const TEXT_COMBINE_UPRIGHT: u64 = 561; // $561 - text-combine-upright property
 
     // ==========================================================================
+    // UNICODE-BIDI ($674) - Bidirectional text control
+    // ==========================================================================
+    pub const UNICODE_BIDI: u64 = 674; // $674 - unicode-bidi property
+    pub const BIDI_EMBED: u64 = 675; // $675 - unicode-bidi: embed
+    pub const BIDI_ISOLATE: u64 = 676; // $676 - unicode-bidi: isolate
+    pub const BIDI_OVERRIDE: u64 = 677; // $677 - unicode-bidi: bidi-override
+    pub const BIDI_ISOLATE_OVERRIDE: u64 = 678; // $678 - unicode-bidi: isolate-override
+    pub const BIDI_PLAINTEXT: u64 = 679; // $679 - unicode-bidi: plaintext
+
+    // ==========================================================================
+    // TEXT-ORIENTATION ($706) - Vertical text orientation
+    // ==========================================================================
+    pub const TEXT_ORIENTATION: u64 = 706; // $706 - text-orientation property
+    pub const TEXT_ORIENTATION_MIXED: u64 = 383; // $383 - text-orientation: mixed (uses BREAK_AUTO)
+    pub const TEXT_ORIENTATION_UPRIGHT: u64 = 779; // $779 - text-orientation: upright
+    pub const TEXT_ORIENTATION_SIDEWAYS: u64 = 778; // $778 - text-orientation: sideways
+
+    // ==========================================================================
+    // LINE-BREAK ($780) - Line break rules for CJK text
+    // ==========================================================================
+    pub const LINE_BREAK: u64 = 780; // $780 - line-break property
+    pub const LINE_BREAK_LOOSE: u64 = 781; // $781 - line-break: loose
+    pub const LINE_BREAK_STRICT: u64 = 782; // $782 - line-break: strict
+    pub const LINE_BREAK_ANYWHERE: u64 = 783; // $783 - line-break: anywhere
+    // LINE_BREAK_AUTO uses $383 (BREAK_AUTO), LINE_BREAK_NORMAL uses $350 (FONT_WEIGHT_NORMAL)
+
+    // ==========================================================================
     // RUBY ANNOTATION PROPERTIES (P1 Phase 2)
     // ==========================================================================
     pub const RUBY_POSITION: u64 = 762; // $762 - ruby-position property
@@ -460,6 +487,10 @@ pub mod sym {
     // List content types
     pub const CONTENT_LIST: u64 = 276; // $276 - content type for list container (ol/ul)
     pub const CONTENT_LIST_ITEM: u64 = 277; // $277 - content type for list item (li)
+
+    // Additional content types
+    pub const HIDDEN_CONTAINER: u64 = 439; // $439 - hidden container (display: none)
+    pub const HORIZONTAL_RULE: u64 = 596; // $596 - horizontal rule (<hr>)
 
     // Content symbols
     pub const SECTION_CONTENT: u64 = 141; // $141 - section content list
@@ -732,5 +763,41 @@ mod tests {
 
         // Same symbol should return same ID
         assert_eq!(symtab.get_or_intern("section-1"), id1);
+    }
+
+    #[test]
+    fn test_unicode_bidi_symbols_exist() {
+        // Verify unicode-bidi symbols are defined correctly (TDD Phase 1.1)
+        assert_eq!(sym::UNICODE_BIDI, 674);
+        assert_eq!(sym::BIDI_EMBED, 675);
+        assert_eq!(sym::BIDI_ISOLATE, 676);
+        assert_eq!(sym::BIDI_OVERRIDE, 677);
+        assert_eq!(sym::BIDI_ISOLATE_OVERRIDE, 678);
+        assert_eq!(sym::BIDI_PLAINTEXT, 679);
+    }
+
+    #[test]
+    fn test_line_break_symbols_exist() {
+        // Verify line-break symbols are defined correctly (TDD Phase 1.2)
+        assert_eq!(sym::LINE_BREAK, 780);
+        assert_eq!(sym::LINE_BREAK_LOOSE, 781);
+        assert_eq!(sym::LINE_BREAK_STRICT, 782);
+        assert_eq!(sym::LINE_BREAK_ANYWHERE, 783);
+    }
+
+    #[test]
+    fn test_text_orientation_symbols_exist() {
+        // Verify text-orientation symbols are defined correctly (TDD Phase 1.3)
+        assert_eq!(sym::TEXT_ORIENTATION, 706);
+        assert_eq!(sym::TEXT_ORIENTATION_UPRIGHT, 779);
+        assert_eq!(sym::TEXT_ORIENTATION_SIDEWAYS, 778);
+        assert_eq!(sym::TEXT_ORIENTATION_MIXED, 383); // Reuses BREAK_AUTO
+    }
+
+    #[test]
+    fn test_content_type_symbols_exist() {
+        // Verify content type symbols for hr and hidden container (TDD Phase 3)
+        assert_eq!(sym::HORIZONTAL_RULE, 596);
+        assert_eq!(sym::HIDDEN_CONTAINER, 439);
     }
 }
