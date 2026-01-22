@@ -9,6 +9,9 @@ use crate::css::{NodeRef, ParsedStyle, Stylesheet};
 
 use super::{ContentItem, ListType, StyleRun};
 
+/// Pending text item: (text, style, anchor_href, element_id, is_verse)
+type PendingText = (String, ParsedStyle, Option<String>, Option<String>, bool);
+
 /// Check if a tag is a block-level element that should become a Container
 fn is_block_element(tag: &str) -> bool {
     matches!(
@@ -75,15 +78,10 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
     }
 
     let mut result = Vec::new();
-    // Track pending texts: (text, style, anchor_href, element_id, is_verse)
-    let mut pending_texts: Vec<(String, ParsedStyle, Option<String>, Option<String>, bool)> =
-        Vec::new();
+    let mut pending_texts: Vec<PendingText> = Vec::new();
 
     // Helper to flush pending text items into a merged item
-    fn flush_pending(
-        pending: &mut Vec<(String, ParsedStyle, Option<String>, Option<String>, bool)>,
-        result: &mut Vec<ContentItem>,
-    ) {
+    fn flush_pending(pending: &mut Vec<PendingText>, result: &mut Vec<ContentItem>) {
         if pending.is_empty() {
             return;
         }

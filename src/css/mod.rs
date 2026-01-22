@@ -436,6 +436,7 @@ pub enum BorderCollapse {
 
 /// CSS box-sizing property
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[allow(clippy::enum_variant_names)]
 pub enum BoxSizing {
     /// content-box: width/height only include content (CSS default)
     #[default]

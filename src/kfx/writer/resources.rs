@@ -104,11 +104,13 @@ pub fn build_resource_symbols(book: &Book, symtab: &mut SymbolTable) -> HashMap<
     resource_symbols
 }
 
-/// Add media resources (images and fonts) from the book
+/// Add media resources (images and fonts) from the book.
+///
 /// Only includes resources that are:
 /// - Referenced in content (in `referenced_hrefs`)
 /// - The cover image
 /// - Fonts (always included)
+///
 /// Returns (fragments, resource_to_media mappings)
 pub fn create_resource_fragments(
     book: &Book,

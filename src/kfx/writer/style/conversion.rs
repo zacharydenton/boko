@@ -623,25 +623,24 @@ fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     ];
 
     for (border, width_sym, style_sym, color_sym) in borders {
-        if let Some(b) = border {
-            // Only output if style is not none/hidden
-            if let Some(style_val) = border_style_to_symbol(b.style) {
-                // Output width if present
-                if let Some(ref width) = b.width {
-                    if let Some(width_ion) = width.to_kfx_ion() {
-                        style_ion.insert(width_sym, width_ion);
-                    }
-                }
+        if let Some(b) = border
+            && let Some(style_val) = border_style_to_symbol(b.style)
+        {
+            // Output width if present
+            if let Some(ref width) = b.width
+                && let Some(width_ion) = width.to_kfx_ion()
+            {
+                style_ion.insert(width_sym, width_ion);
+            }
 
-                // Output style
-                style_ion.insert(style_sym, IonValue::Symbol(style_val));
+            // Output style
+            style_ion.insert(style_sym, IonValue::Symbol(style_val));
 
-                // Output color if present
-                if let Some(ref color) = b.color {
-                    if let Some(color_ion) = color_to_ion(color) {
-                        style_ion.insert(color_sym, color_ion);
-                    }
-                }
+            // Output color if present
+            if let Some(ref color) = b.color
+                && let Some(color_ion) = color_to_ion(color)
+            {
+                style_ion.insert(color_sym, color_ion);
             }
         }
     }
