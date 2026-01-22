@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Analyze CSS-to-KFX symbol mappings from a test KFX file."""
+"""Analyze CSS-to-KFX symbol mappings from a test KFX file.
+
+Outputs KFX styles as CSS for easy comparison with input CSS.
+
+Usage:
+    python analyze_css_mapping.py <kfx_file>           # Full analysis
+    python analyze_css_mapping.py <kfx_file> --css     # Just output CSS styles
+"""
 
 import sys
 from pathlib import Path
@@ -8,8 +15,9 @@ from collections import defaultdict
 # Add scripts to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from kfx_dump import load_kfx, format_value
+from kfx_loader import load_kfx
 from kfx_symbols import format_symbol, get_symbol_names
+from kfx_to_css import KfxStyleConverter, kfx_style_to_css_string
 
 
 def format_kfx_value(v):
@@ -53,13 +61,59 @@ def ion_to_dict(ion_val):
         return ion_val
 
 
+def output_css_only(kfx_path):
+    """Output all styles as CSS classes."""
+    frags, _ = load_kfx(kfx_path)
+    converter = KfxStyleConverter()
+
+    print(f"/* Styles from {kfx_path} */")
+    print()
+
+    for frag in frags.get_all("$157"):  # STYLE fragments
+        style_data = {}
+        raw_val = frag.value
+        if hasattr(raw_val, 'value'):
+            raw_val = raw_val.value
+
+        if hasattr(raw_val, 'items'):
+            for k, v in raw_val.items():
+                key_str = str(k)
+                if key_str.startswith('$'):
+                    try:
+                        key_int = int(key_str[1:])
+                        style_data[key_int] = v
+                    except ValueError:
+                        pass
+
+        # Get style name
+        style_name = style_data.get(173, frag.fid)
+        if isinstance(style_name, str) and style_name.startswith('$'):
+            class_name = style_name[1:]
+        else:
+            class_name = str(style_name).replace('$', '')
+
+        # Convert to CSS
+        css_str = converter.to_css_string(style_data)
+        if css_str:
+            print(f".{class_name} {{ {css_str}; }}")
+        else:
+            print(f".{class_name} {{ /* empty */ }}")
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: analyze_css_mapping.py <kfx_file>")
+        print("Usage: analyze_css_mapping.py <kfx_file> [--css]")
         sys.exit(1)
 
     kfx_path = sys.argv[1]
-    fragments, method = load_kfx(kfx_path)
+
+    # Simple --css mode
+    if "--css" in sys.argv:
+        output_css_only(kfx_path)
+        return
+
+    frags, method = load_kfx(kfx_path)
+    fragments = list(frags.all())
     print(f"Loaded {len(fragments)} fragments using {method}")
 
     # Build fragment lookup by ID
@@ -119,20 +173,45 @@ def main():
     print(f"Found {len(styles)} style fragments")
     print()
 
+    # Convert styles to int keys for kfx_to_css
+    def normalize_style(style_dict):
+        """Convert $NNN string keys to int keys for kfx_to_css."""
+        result = {}
+        for k, v in style_dict.items():
+            if isinstance(k, str) and k.startswith('$'):
+                try:
+                    key = int(k[1:])
+                except ValueError:
+                    key = k
+            else:
+                key = k
+            # Recursively normalize nested dicts
+            if isinstance(v, dict):
+                v = normalize_style(v)
+            result[key] = v
+        return result
+
+    converter = KfxStyleConverter()
+
     # Find the baseline style (first paragraph, no CSS)
     baseline_style_id = text_to_style.get(0)
     baseline_style = styles.get(baseline_style_id, {})
+    baseline_normalized = normalize_style(baseline_style)
+    baseline_css = converter.to_css_string(baseline_normalized)
 
     print("=" * 80)
     print(f"BASELINE STYLE (ID: {format_symbol(baseline_style_id)}):")
     print("-" * 40)
+    print(f"  CSS: {baseline_css if baseline_css else '(empty)'}")
+    print()
+    print("  Raw KFX properties:")
     for k, v in sorted(baseline_style.items()):
-        print(f"  {format_symbol(k)}: {format_kfx_value(v)}")
+        print(f"    {format_symbol(k)}: {format_kfx_value(v)}")
     print()
 
     # Create mapping: CSS property -> KFX symbols that differ from baseline
     print("=" * 80)
-    print("CSS PROPERTY TO KFX SYMBOL MAPPING")
+    print("CSS INPUT → CSS OUTPUT (from KFX)")
     print("=" * 80)
     print()
 
@@ -147,6 +226,8 @@ def main():
             continue
 
         style = styles.get(style_id, {})
+        style_normalized = normalize_style(style)
+        style_css = converter.to_css_string(style_normalized)
 
         # Parse CSS from text
         # Format: "class-name: property-name: value"
@@ -167,38 +248,37 @@ def main():
                     diffs[k] = "(removed)"
 
             if diffs:
-                mappings.append((css_prop_value, diffs, style_id))
+                mappings.append((css_prop_value, diffs, style_id, style_css))
 
     # Sort by CSS property
     mappings.sort(key=lambda x: x[0])
 
-    # Group by KFX property for cleaner output
-    by_kfx_key = defaultdict(list)
-    for css, diffs, style_id in mappings:
-        # Convert to string key since dict values aren't hashable
-        key = str(sorted(diffs.items(), key=lambda x: str(x)))
-        by_kfx_key[key].append((css, diffs))
+    # Group by output CSS for cleaner output
+    by_css_output = defaultdict(list)
+    for css_input, diffs, style_id, css_output in mappings:
+        by_css_output[css_output].append((css_input, diffs))
 
-    # Print grouped results
-    for kfx_key, css_list in sorted(by_kfx_key.items(), key=lambda x: str(x[0])):
-        # Get the diffs from the first item
-        diffs = css_list[0][1]
-        kfx_str = ", ".join(f"{format_symbol(k)}={format_kfx_value(v)}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
-        print(f"KFX: {kfx_str}")
-        for css, _ in css_list:
-            print(f"  <- {css}")
+    # Print grouped results - show which CSS inputs produce the same output
+    for css_output, css_list in sorted(by_css_output.items(), key=lambda x: x[0]):
+        print(f"OUTPUT: {css_output if css_output else '(no CSS properties)'}")
+        for css_input, _ in css_list:
+            print(f"  <- INPUT: {css_input}")
         print()
 
     # Also print a direct table
     print()
     print("=" * 80)
-    print("DIRECT TABLE (CSS -> KFX)")
+    print("DIRECT TABLE (CSS INPUT → CSS OUTPUT)")
     print("=" * 80)
     print()
 
-    for css, diffs, style_id in mappings:
-        kfx_str = ", ".join(f"{format_symbol(k)}={format_kfx_value(v)}" for k, v in sorted(diffs.items(), key=lambda x: str(x)))
-        print(f"{css:45} -> {kfx_str}")
+    for css_input, diffs, style_id, css_output in mappings:
+        # Show input vs output CSS
+        print(f"IN:  {css_input}")
+        print(f"OUT: {css_output if css_output else '(empty)'}")
+        if css_input.strip() == css_output.strip():
+            print("     ✓ MATCH")
+        print()
 
     # Collect all symbols used in styles and identify unknown ones
     print()
