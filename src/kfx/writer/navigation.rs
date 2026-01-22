@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::book::TocEntry;
 use crate::kfx::ion::IonValue;
 
-use super::symbols::{sym, SymbolTable};
+use super::symbols::{SymbolTable, sym};
 
 /// Build the book navigation fragment ($389)
 ///
@@ -193,10 +193,10 @@ pub fn build_anchor_symbols(
         match item {
             ContentItem::Text { inline_runs, .. } => {
                 for run in inline_runs {
-                    if let Some(ref href) = run.anchor_href {
-                        if !href.starts_with('#') {
-                            hrefs.insert(href.clone());
-                        }
+                    if let Some(ref href) = run.anchor_href
+                        && !href.starts_with('#')
+                    {
+                        hrefs.insert(href.clone());
                     }
                 }
             }

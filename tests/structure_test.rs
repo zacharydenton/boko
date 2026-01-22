@@ -609,7 +609,8 @@ fn test_kfx_poetry_has_separate_lines() {
         let end = (i + 200).min(kfx_str.len());
         let context = &kfx_str[start..end];
         // Extract just printable ASCII for readability
-        let printable: String = context.chars()
+        let printable: String = context
+            .chars()
             .filter(|c| c.is_ascii() && (*c >= ' ' || *c == '\n'))
             .collect();
         if !printable.is_empty() {
@@ -622,9 +623,9 @@ fn test_kfx_poetry_has_separate_lines() {
     // Check if the poetry is split or merged
     // If merged, we'd see "Lead me, O Zeus...The way that I am bid" in one context
     // If split, "The way that I am bid" should be in a separate entry
-    let has_merged = zeus_contexts.iter().any(|ctx|
-        ctx.contains("Zeus") && ctx.contains("The way that I am bid")
-    );
+    let has_merged = zeus_contexts
+        .iter()
+        .any(|ctx| ctx.contains("Zeus") && ctx.contains("The way that I am bid"));
 
     if has_merged {
         println!("WARNING: Poetry appears to be merged in KFX output");

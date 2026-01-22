@@ -76,7 +76,8 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
 
     let mut result = Vec::new();
     // Track pending texts: (text, style, anchor_href, element_id, is_verse)
-    let mut pending_texts: Vec<(String, ParsedStyle, Option<String>, Option<String>, bool)> = Vec::new();
+    let mut pending_texts: Vec<(String, ParsedStyle, Option<String>, Option<String>, bool)> =
+        Vec::new();
 
     // Helper to flush pending text items into a merged item
     fn flush_pending(
@@ -107,7 +108,8 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
             // This ensures styled inline elements (like <i>Short Works</i>) become runs,
             // not the base style for the entire paragraph
             let base_style = {
-                let mut style_counts: std::collections::HashMap<&ParsedStyle, usize> = std::collections::HashMap::new();
+                let mut style_counts: std::collections::HashMap<&ParsedStyle, usize> =
+                    std::collections::HashMap::new();
                 for (text, style, _, _, _) in pending.iter() {
                     *style_counts.entry(style).or_insert(0) += text.chars().count();
                 }
@@ -258,7 +260,14 @@ pub fn extract_content_from_xhtml(
         .map(|n| n.as_node().clone())
         .unwrap_or_else(|| document.clone());
 
-    let items = extract_from_node(&body, stylesheet, &ParsedStyle::default(), base_dir, None, false);
+    let items = extract_from_node(
+        &body,
+        stylesheet,
+        &ParsedStyle::default(),
+        base_dir,
+        None,
+        false,
+    );
     // Flatten unnecessary container nesting (section wrappers, paragraph wrappers, etc.)
     flatten_containers(items)
 }
@@ -374,7 +383,8 @@ fn extract_from_node(
             // Check if this element starts a verse block (z3998:verse)
             let child_is_verse = is_verse || {
                 let attrs = element.attributes.borrow();
-                attrs.get("epub:type")
+                attrs
+                    .get("epub:type")
                     .map(|t| t.contains("z3998:verse"))
                     .unwrap_or(false)
             };
@@ -385,7 +395,10 @@ fn extract_from_node(
                 element.attributes.borrow().get("href").map(|href| {
                     // Resolve relative href to full path (matches section_eids keys)
                     // External URLs (http/https/mailto) are kept as-is
-                    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
+                    if href.starts_with("http://")
+                        || href.starts_with("https://")
+                        || href.starts_with("mailto:")
+                    {
                         href.to_string()
                     } else {
                         resolve_relative_path(base_dir, href)
@@ -808,7 +821,8 @@ mod tests {
 
             // Use the same stylesheet parsing as the builder
             let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
-            let content = extract_content_from_xhtml(&resource.data, &stylesheet, &enchiridion_path);
+            let content =
+                extract_content_from_xhtml(&resource.data, &stylesheet, &enchiridion_path);
 
             // Collect all text content, looking for the Zeus poetry
             fn find_zeus_text(item: &ContentItem, found: &mut Vec<String>, raw: &mut Vec<String>) {
@@ -910,7 +924,12 @@ mod tests {
         }
 
         println!("Builder collect_texts produced: {:?}", texts);
-        assert_eq!(texts.len(), 2, "Should produce 2 separate text entries, got: {:?}", texts);
+        assert_eq!(
+            texts.len(),
+            2,
+            "Should produce 2 separate text entries, got: {:?}",
+            texts
+        );
         assert_eq!(texts[0], "Lead me, O Zeus, and thou O Destiny,");
         assert_eq!(texts[1], "The way that I am bid by you to go:");
     }
@@ -975,7 +994,9 @@ mod tests {
                         langs.insert(lang.clone());
                     }
                 }
-                ContentItem::Container { style, children, .. } => {
+                ContentItem::Container {
+                    style, children, ..
+                } => {
                     if let Some(ref lang) = style.lang {
                         langs.insert(lang.clone());
                     }
@@ -990,7 +1011,8 @@ mod tests {
         for spine_item in &book.spine {
             if let Some(resource) = book.resources.get(&spine_item.href) {
                 let stylesheet = Stylesheet::default();
-                let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
+                let content =
+                    extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
                 for item in &content {
                     collect_langs(item, &mut langs_found);
                 }
@@ -1080,7 +1102,10 @@ mod tests {
             for leaf in item.flatten() {
                 if let ContentItem::Text { text, is_verse, .. } = leaf {
                     if text.contains('\n') {
-                        println!("Found text with newline: is_verse={}, text={:?}", is_verse, text);
+                        println!(
+                            "Found text with newline: is_verse={}, text={:?}",
+                            is_verse, text
+                        );
                         found_text = Some((text.clone(), *is_verse));
                     }
                 }
@@ -1107,7 +1132,12 @@ mod tests {
         }
 
         let normalized = normalize_text_for_kfx(&text, is_verse);
-        assert_eq!(normalized.len(), 2, "Should split into 2 lines, got: {:?}", normalized);
+        assert_eq!(
+            normalized.len(),
+            2,
+            "Should split into 2 lines, got: {:?}",
+            normalized
+        );
         assert_eq!(normalized[0].trim(), "Line one");
         assert_eq!(normalized[1].trim(), "Line two");
     }
@@ -1136,7 +1166,11 @@ mod tests {
         let flattened = flatten_containers(items);
 
         // Should have one Container for the <ol>
-        assert_eq!(flattened.len(), 1, "Should have one top-level item (the ol container)");
+        assert_eq!(
+            flattened.len(),
+            1,
+            "Should have one top-level item (the ol container)"
+        );
 
         // The container should have list_type: Ordered
         match &flattened[0] {
@@ -1191,7 +1225,11 @@ mod tests {
         let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
         let flattened = flatten_containers(items);
 
-        assert_eq!(flattened.len(), 1, "Should have one top-level item (the ul container)");
+        assert_eq!(
+            flattened.len(),
+            1,
+            "Should have one top-level item (the ul container)"
+        );
 
         match &flattened[0] {
             ContentItem::Container {
@@ -1318,7 +1356,10 @@ mod tests {
         );
 
         let xml = mathml_text.unwrap();
-        assert!(xml.contains("<mi>x</mi>"), "Should preserve element structure");
+        assert!(
+            xml.contains("<mi>x</mi>"),
+            "Should preserve element structure"
+        );
         assert!(xml.contains("<mo>+</mo>"), "Should preserve operators");
         assert!(xml.contains("<mn>1</mn>"), "Should preserve numbers");
     }
@@ -1345,9 +1386,9 @@ mod tests {
         let flattened = flatten_containers(items);
 
         // Should have MathML
-        let has_mathml = flattened.iter().any(|item| {
-            matches!(item, ContentItem::Text { text, .. } if text.contains("<math"))
-        });
+        let has_mathml = flattened
+            .iter()
+            .any(|item| matches!(item, ContentItem::Text { text, .. } if text.contains("<math")));
         assert!(has_mathml, "Should preserve MathML from epub span");
 
         // Should NOT have fallback image
@@ -1384,8 +1425,7 @@ mod tests {
             for item in items {
                 match item {
                     ContentItem::Container {
-                        list_type: Some(_),
-                        ..
+                        list_type: Some(_), ..
                     } => return Some(item),
                     ContentItem::Container { children, .. } => {
                         if let Some(found) = find_list_container(children) {
@@ -1438,7 +1478,9 @@ mod tests {
         fn find_text_with_backlink(items: &[ContentItem]) -> Option<Vec<StyleRun>> {
             for item in items {
                 match item {
-                    ContentItem::Text { text, inline_runs, .. } if text.contains("↩︎") => {
+                    ContentItem::Text {
+                        text, inline_runs, ..
+                    } if text.contains("↩︎") => {
                         return Some(inline_runs.clone());
                     }
                     ContentItem::Container { children, .. } => {
@@ -1460,7 +1502,10 @@ mod tests {
 
         // Find the inline run with anchor_href
         let backlink_run = runs.iter().find(|r| r.anchor_href.is_some());
-        assert!(backlink_run.is_some(), "Should have inline run with anchor_href");
+        assert!(
+            backlink_run.is_some(),
+            "Should have inline run with anchor_href"
+        );
 
         let run = backlink_run.unwrap();
         assert!(

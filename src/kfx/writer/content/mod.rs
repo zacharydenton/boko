@@ -38,12 +38,9 @@ pub static UNEXPECTED_CHARACTERS: &[char] = &[
     '\u{0090}', '\u{0091}', '\u{0092}', '\u{0093}', '\u{0094}', '\u{0095}', '\u{0096}', '\u{0097}',
     '\u{0098}', '\u{0099}', '\u{009A}', '\u{009B}', '\u{009C}', '\u{009D}', '\u{009E}', '\u{009F}',
     // Arabic letter mark (invisible directional control)
-    '\u{061C}',
-    // Invisible separator
-    '\u{2063}',
-    // Interlinear annotation anchors
-    '\u{FFF9}', '\u{FFFA}', '\u{FFFB}',
-    // Noncharacters
+    '\u{061C}', // Invisible separator
+    '\u{2063}', // Interlinear annotation anchors
+    '\u{FFF9}', '\u{FFFA}', '\u{FFFB}', // Noncharacters
     '\u{FFFE}', '\u{FFFF}',
 ];
 

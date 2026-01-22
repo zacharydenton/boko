@@ -6,7 +6,7 @@ use crate::book::{Book, Resource};
 use crate::kfx::ion::IonValue;
 
 use super::fragment::KfxFragment;
-use super::symbols::{sym, SymbolTable};
+use super::symbols::{SymbolTable, sym};
 
 /// Check if a media type is an image
 pub fn is_image_media_type(media_type: &str) -> bool {
@@ -40,12 +40,10 @@ pub fn get_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     }
 
     // PNG: starts with 89 50 4E 47 0D 0A 1A 0A
-    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
-        if data.len() >= 24 {
-            let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
-            let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-            return Some((width, height));
-        }
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) && data.len() >= 24 {
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some((width, height));
     }
 
     // JPEG: starts with FF D8 FF
@@ -60,12 +58,10 @@ pub fn get_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
             if marker == 0xD9 {
                 break;
             }
-            if marker == 0xC0 || marker == 0xC2 {
-                if pos + 9 < data.len() {
-                    let height = u16::from_be_bytes([data[pos + 5], data[pos + 6]]) as u32;
-                    let width = u16::from_be_bytes([data[pos + 7], data[pos + 8]]) as u32;
-                    return Some((width, height));
-                }
+            if (marker == 0xC0 || marker == 0xC2) && pos + 9 < data.len() {
+                let height = u16::from_be_bytes([data[pos + 5], data[pos + 6]]) as u32;
+                let width = u16::from_be_bytes([data[pos + 7], data[pos + 8]]) as u32;
+                return Some((width, height));
             }
             if pos + 3 < data.len() {
                 let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
@@ -90,10 +86,7 @@ pub fn is_gif_data(data: &[u8]) -> bool {
 }
 
 /// Build resource symbol mapping for image references
-pub fn build_resource_symbols(
-    book: &Book,
-    symtab: &mut SymbolTable,
-) -> HashMap<String, u64> {
+pub fn build_resource_symbols(book: &Book, symtab: &mut SymbolTable) -> HashMap<String, u64> {
     let mut resource_symbols = HashMap::new();
     let mut resource_index = 0;
 
@@ -213,11 +206,11 @@ pub fn populate_image_dimensions(
             style,
             ..
         } => {
-            if let Some(resource) = resources.get(resource_href) {
-                if let Some((width, height)) = get_image_dimensions(&resource.data) {
-                    style.image_width_px = Some(width);
-                    style.image_height_px = Some(height);
-                }
+            if let Some(resource) = resources.get(resource_href)
+                && let Some((width, height)) = get_image_dimensions(&resource.data)
+            {
+                style.image_width_px = Some(width);
+                style.image_height_px = Some(height);
             }
         }
         ContentItem::Container { children, .. } => {

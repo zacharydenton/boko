@@ -1,17 +1,17 @@
 //! KFX book builder - orchestrates the conversion of a Book to KFX format.
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
-use std::fs::File;
 
 use crate::book::Book;
 use crate::css::{ParsedStyle, Stylesheet};
 use crate::kfx::ion::IonValue;
 
 use super::content::{
-    collect_referenced_images, count_content_items, extract_content_from_xhtml,
-    extract_css_hrefs_from_xhtml, ChapterData, ContentChunk, ContentItem, ListType, StyleRun,
+    ChapterData, ContentChunk, ContentItem, ListType, StyleRun, collect_referenced_images,
+    count_content_items, extract_content_from_xhtml, extract_css_hrefs_from_xhtml,
 };
 use super::fragment::KfxFragment;
 use super::navigation::{build_anchor_symbols, build_book_navigation, build_nav_unit_list};
@@ -24,8 +24,8 @@ use super::resources::{
     populate_image_dimensions,
 };
 use super::serialization::{
-    create_entity_data, create_raw_media_data, generate_container_id, serialize_annotated_ion,
-    serialize_container_v2, SerializedEntity,
+    SerializedEntity, create_entity_data, create_raw_media_data, generate_container_id,
+    serialize_annotated_ion, serialize_container_v2,
 };
 use super::style::style_to_ion;
 
@@ -55,7 +55,7 @@ fn normalize_text_for_kfx(text: &str, is_verse: bool) -> Vec<String> {
         }
     }
 }
-use super::symbols::{sym, SymbolTable};
+use super::symbols::{SymbolTable, sym};
 
 /// Builder for creating a complete KFX book
 pub struct KfxBookBuilder {
@@ -150,17 +150,17 @@ impl KfxBookBuilder {
 
         // Add cover section if present
         let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
-        if let Some(cover_href) = &book.metadata.cover_image {
-            if let Some(cover_sym) = builder.resource_symbols.get(cover_href).copied() {
-                let (cover_width, cover_height) = book
-                    .resources
-                    .get(cover_href)
-                    .and_then(|r| get_image_dimensions(&r.data))
-                    .unwrap_or((1400, 2100));
+        if let Some(cover_href) = &book.metadata.cover_image
+            && let Some(cover_sym) = builder.resource_symbols.get(cover_href).copied()
+        {
+            let (cover_width, cover_height) = book
+                .resources
+                .get(cover_href)
+                .and_then(|r| get_image_dimensions(&r.data))
+                .unwrap_or((1400, 2100));
 
-                builder.add_cover_section(cover_sym, cover_width, cover_height, eid_base);
-                eid_base += 2;
-            }
+            builder.add_cover_section(cover_sym, cover_width, cover_height, eid_base);
+            eid_base += 2;
         }
 
         // Add content fragments for each chapter
@@ -198,8 +198,12 @@ impl KfxBookBuilder {
         }
 
         // Add resources (only referenced images, cover, and fonts)
-        let (resource_fragments, resource_to_media) =
-            create_resource_fragments(book, &mut builder.symtab, &builder.resource_symbols, &referenced_hrefs);
+        let (resource_fragments, resource_to_media) = create_resource_fragments(
+            book,
+            &mut builder.symtab,
+            &builder.resource_symbols,
+            &referenced_hrefs,
+        );
         builder.fragments.extend(resource_fragments);
         builder.resource_to_media = resource_to_media;
 
@@ -239,8 +243,7 @@ impl KfxBookBuilder {
 
             let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
 
-            let content =
-                extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
+            let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
 
             if content.is_empty() {
                 continue;
@@ -320,11 +323,8 @@ impl KfxBookBuilder {
 
     fn add_symbol_table_fragment(&mut self) {
         let symtab_value = self.symtab.create_import();
-        self.fragments.push(KfxFragment::new(
-            3,
-            "$ion_symbol_table",
-            symtab_value,
-        ));
+        self.fragments
+            .push(KfxFragment::new(3, "$ion_symbol_table", symtab_value));
     }
 
     fn add_format_capabilities(&mut self) {
@@ -430,10 +430,10 @@ impl KfxBookBuilder {
             add_entry("content_id", IonValue::String(asin));
             add_entry("cde_content_type", IonValue::String("EBOK".to_string()));
 
-            if let Some(cover_href) = &book.metadata.cover_image {
-                if let Some(&cover_sym) = self.resource_symbols.get(cover_href) {
-                    add_entry("cover_image", IonValue::Symbol(cover_sym));
-                }
+            if let Some(cover_href) = &book.metadata.cover_image
+                && let Some(&cover_sym) = self.resource_symbols.get(cover_href)
+            {
+                add_entry("cover_image", IonValue::Symbol(cover_sym));
             }
 
             let mut group = HashMap::new();
@@ -585,10 +585,8 @@ impl KfxBookBuilder {
             first_content_eid,
         );
 
-        self.fragments.push(KfxFragment::singleton(
-            sym::BOOK_NAVIGATION,
-            nav_value,
-        ));
+        self.fragments
+            .push(KfxFragment::singleton(sym::BOOK_NAVIGATION, nav_value));
     }
 
     fn add_nav_unit_list(&mut self) {
@@ -630,7 +628,8 @@ impl KfxBookBuilder {
 
             let style_ion = style_to_ion(&style, style_sym, &mut self.symtab);
 
-            self.fragments.push(KfxFragment::new(sym::STYLE, &style_id, style_ion));
+            self.fragments
+                .push(KfxFragment::new(sym::STYLE, &style_id, style_ion));
             self.style_map.insert(style, style_sym);
         }
     }
@@ -739,7 +738,8 @@ impl KfxBookBuilder {
         ));
 
         // Track section -> resource dependency for P253
-        self.section_to_resource.push((cover_section_sym, cover_sym));
+        self.section_to_resource
+            .push((cover_section_sym, cover_sym));
     }
 
     fn add_content_block_chunked(
@@ -765,8 +765,7 @@ impl KfxBookBuilder {
             state.text_idx_in_chunk = 0;
 
             for content_item in chunk.items.iter() {
-                let ion_items =
-                    self.build_content_items(content_item, &mut state, eid_base);
+                let ion_items = self.build_content_items(content_item, &mut state, eid_base);
                 content_items.extend(ion_items);
             }
         }
@@ -817,10 +816,10 @@ impl KfxBookBuilder {
                     item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
 
                     // Add base style reference
-                    if let Some(style_sym) = self.style_map.get(style).copied() {
-                        if style_sym != 0 {
-                            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
-                        }
+                    if let Some(style_sym) = self.style_map.get(style).copied()
+                        && style_sym != 0
+                    {
+                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
                     }
 
                     // Add inline style runs ($142) only for the first line
@@ -880,10 +879,10 @@ impl KfxBookBuilder {
                 item.insert(sym::IMAGE_ALT_TEXT, IonValue::String(alt_text));
 
                 // Add style reference if present
-                if let Some(style_sym) = self.style_map.get(style).copied() {
-                    if style_sym != 0 {
-                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
-                    }
+                if let Some(style_sym) = self.style_map.get(style).copied()
+                    && style_sym != 0
+                {
+                    item.insert(sym::STYLE, IonValue::Symbol(style_sym));
                 }
 
                 // Use consistent EID that matches position maps
@@ -946,15 +945,15 @@ impl KfxBookBuilder {
 
                 // Add colspan/rowspan for table cells (td/th)
                 // Only add if > 1 (default is 1)
-                if let Some(cs) = colspan {
-                    if *cs > 1 {
-                        item.insert(sym::ATTRIB_COLSPAN, IonValue::Int(*cs as i64));
-                    }
+                if let Some(cs) = colspan
+                    && *cs > 1
+                {
+                    item.insert(sym::ATTRIB_COLSPAN, IonValue::Int(*cs as i64));
                 }
-                if let Some(rs) = rowspan {
-                    if *rs > 1 {
-                        item.insert(sym::ATTRIB_ROWSPAN, IonValue::Int(*rs as i64));
-                    }
+                if let Some(rs) = rowspan
+                    && *rs > 1
+                {
+                    item.insert(sym::ATTRIB_ROWSPAN, IonValue::Int(*rs as i64));
                 }
 
                 // For list items (li), directly reference text content with $145
@@ -972,10 +971,10 @@ impl KfxBookBuilder {
                     item.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
 
                     // Add style reference for the container
-                    if let Some(style_sym) = self.style_map.get(style).copied() {
-                        if style_sym != 0 {
-                            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
-                        }
+                    if let Some(style_sym) = self.style_map.get(style).copied()
+                        && style_sym != 0
+                    {
+                        item.insert(sym::STYLE, IonValue::Symbol(style_sym));
                     }
 
                     // Use consistent EID that matches position maps
@@ -1059,10 +1058,10 @@ impl KfxBookBuilder {
         }
 
         // Add style reference for the list item
-        if let Some(style_sym) = self.style_map.get(style).copied() {
-            if style_sym != 0 {
-                item.insert(sym::STYLE, IonValue::Symbol(style_sym));
-            }
+        if let Some(style_sym) = self.style_map.get(style).copied()
+            && style_sym != 0
+        {
+            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
         }
 
         // Use consistent EID that matches position maps
@@ -1141,7 +1140,11 @@ impl KfxBookBuilder {
                 alt,
             } => {
                 let style_sym = self.style_map.get(style).copied().unwrap_or(0);
-                let resource_sym = self.resource_symbols.get(resource_href).copied().unwrap_or(0);
+                let resource_sym = self
+                    .resource_symbols
+                    .get(resource_href)
+                    .copied()
+                    .unwrap_or(0);
 
                 let mut img = HashMap::new();
                 img.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
@@ -1226,10 +1229,10 @@ impl KfxBookBuilder {
                 run_struct.insert(sym::STYLE, IonValue::Symbol(style_sym));
 
                 // Add anchor reference ($179) if this run has a hyperlink
-                if let Some(ref href) = run.anchor_href {
-                    if let Some(&anchor_sym) = self.anchor_symbols.get(href) {
-                        run_struct.insert(sym::ANCHOR_REF, IonValue::Symbol(anchor_sym));
-                    }
+                if let Some(ref href) = run.anchor_href
+                    && let Some(&anchor_sym) = self.anchor_symbols.get(href)
+                {
+                    run_struct.insert(sym::ANCHOR_REF, IonValue::Symbol(anchor_sym));
                 }
 
                 Some(IonValue::Struct(run_struct))
@@ -1279,10 +1282,8 @@ impl KfxBookBuilder {
 
     fn add_position_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
         let position_map = build_position_map(chapters, &mut self.symtab, has_cover);
-        self.fragments.push(KfxFragment::singleton(
-            sym::POSITION_MAP,
-            position_map,
-        ));
+        self.fragments
+            .push(KfxFragment::singleton(sym::POSITION_MAP, position_map));
     }
 
     fn add_position_id_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
@@ -1295,10 +1296,8 @@ impl KfxBookBuilder {
 
     fn add_location_map(&mut self, chapters: &[ChapterData], has_cover: bool) {
         let location_map = build_location_map(chapters, has_cover);
-        self.fragments.push(KfxFragment::singleton(
-            sym::LOCATION_MAP,
-            location_map,
-        ));
+        self.fragments
+            .push(KfxFragment::singleton(sym::LOCATION_MAP, location_map));
     }
 
     fn add_page_templates(&mut self, chapters: &[ChapterData], has_cover: bool) {
@@ -1380,7 +1379,10 @@ impl KfxBookBuilder {
             let mut anchor_struct = HashMap::new();
             anchor_struct.insert(sym::TEMPLATE_NAME, IonValue::Symbol(*anchor_sym));
 
-            if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
+            if href.starts_with("http://")
+                || href.starts_with("https://")
+                || href.starts_with("mailto:")
+            {
                 anchor_struct.insert(sym::EXTERNAL_URL, IonValue::String(href.clone()));
             } else {
                 let (path_without_fragment, has_fragment) = if let Some(hash_pos) = href.find('#') {
@@ -1642,8 +1644,7 @@ mod tests {
         let list_ion = &ion_items[0];
 
         // Verify list container has content type $276 (CONTENT_LIST)
-        let content_type = get_struct_field(list_ion, sym::CONTENT_TYPE)
-            .and_then(get_symbol_value);
+        let content_type = get_struct_field(list_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
         assert_eq!(
             content_type,
             Some(sym::CONTENT_LIST),
@@ -1652,8 +1653,7 @@ mod tests {
         );
 
         // Verify list container has $100 (LIST_TYPE) property
-        let list_type_prop = get_struct_field(list_ion, sym::LIST_TYPE)
-            .and_then(get_symbol_value);
+        let list_type_prop = get_struct_field(list_ion, sym::LIST_TYPE).and_then(get_symbol_value);
         assert_eq!(
             list_type_prop,
             Some(sym::LIST_TYPE_DECIMAL),
@@ -1662,15 +1662,18 @@ mod tests {
 
         // Get the children ($146 CONTENT_ARRAY)
         let children = get_struct_field(list_ion, sym::CONTENT_ARRAY);
-        assert!(children.is_some(), "List container should have $146 (CONTENT_ARRAY)");
+        assert!(
+            children.is_some(),
+            "List container should have $146 (CONTENT_ARRAY)"
+        );
 
         if let Some(IonValue::List(child_items)) = children {
             assert_eq!(child_items.len(), 2, "List should have 2 items");
 
             // Verify each list item has content type $277 (CONTENT_LIST_ITEM)
             for (i, child_ion) in child_items.iter().enumerate() {
-                let child_content_type = get_struct_field(child_ion, sym::CONTENT_TYPE)
-                    .and_then(get_symbol_value);
+                let child_content_type =
+                    get_struct_field(child_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
                 assert_eq!(
                     child_content_type,
                     Some(sym::CONTENT_LIST_ITEM),
@@ -1739,7 +1742,10 @@ mod tests {
         let mut all_texts: Vec<String> = Vec::new();
         for item in chunk.items.iter().flat_map(|i| i.flatten()) {
             if let ContentItem::Text { text, is_verse, .. } = item {
-                println!("DEBUG: Found text item: is_verse={}, text={:?}", is_verse, text);
+                println!(
+                    "DEBUG: Found text item: is_verse={}, text={:?}",
+                    is_verse, text
+                );
                 // Use normalize_text_for_kfx logic
                 if *is_verse {
                     for line in text.split('\n') {
@@ -1788,8 +1794,13 @@ mod tests {
         let chapters = builder.extract_chapters(&book, &toc_titles);
 
         // Find the chapter with the Zeus poetry (The Enchiridion)
-        let enchiridion_chapter = chapters.iter().find(|c| c.source_path.contains("enchiridion"));
-        assert!(enchiridion_chapter.is_some(), "Should find Enchiridion chapter");
+        let enchiridion_chapter = chapters
+            .iter()
+            .find(|c| c.source_path.contains("enchiridion"));
+        assert!(
+            enchiridion_chapter.is_some(),
+            "Should find Enchiridion chapter"
+        );
         let chapter = enchiridion_chapter.unwrap();
 
         // Find all text items with "Zeus" and check is_verse
@@ -1825,13 +1836,17 @@ mod tests {
         }
 
         // At least one should have newlines and is_verse=true
-        let verse_with_newlines = zeus_results.iter()
+        let verse_with_newlines = zeus_results
+            .iter()
             .any(|(text, is_verse)| text.contains('\n') && *is_verse);
 
         assert!(
             verse_with_newlines,
             "Poetry with newlines should have is_verse=true. Results: {:?}",
-            zeus_results.iter().map(|(t, v)| (t.len(), v)).collect::<Vec<_>>()
+            zeus_results
+                .iter()
+                .map(|(t, v)| (t.len(), v))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1897,7 +1912,9 @@ mod tests {
 
         // Verify anchor symbol is registered
         assert!(
-            builder.anchor_symbols.contains_key("chapter.xhtml#noteref-1"),
+            builder
+                .anchor_symbols
+                .contains_key("chapter.xhtml#noteref-1"),
             "Anchor href should be registered in anchor_symbols. Found: {:?}",
             builder.anchor_symbols.keys().collect::<Vec<_>>()
         );
@@ -2073,7 +2090,11 @@ mod tests {
         let mut inline_runs_count = 0;
         let mut content_block_frags = 0;
 
-        fn count_in_item(item: &IonValue, inline_runs_count: &mut usize, anchor_ref_count: &mut usize) {
+        fn count_in_item(
+            item: &IonValue,
+            inline_runs_count: &mut usize,
+            anchor_ref_count: &mut usize,
+        ) {
             if let IonValue::Struct(item_struct) = item {
                 // Look for INLINE_STYLE_RUNS ($142)
                 if let Some(IonValue::List(runs)) = item_struct.get(&sym::INLINE_STYLE_RUNS) {
@@ -2189,17 +2210,15 @@ mod tests {
         // Verify backlinks are extracted (epictetus has 98 endnotes with backlinks)
         fn count_backlink_runs(item: &crate::kfx::writer::content::ContentItem) -> usize {
             match item {
-                crate::kfx::writer::content::ContentItem::Text { inline_runs, .. } => {
-                    inline_runs
-                        .iter()
-                        .filter(|r| {
-                            r.anchor_href
-                                .as_ref()
-                                .map(|h| h.contains("noteref"))
-                                .unwrap_or(false)
-                        })
-                        .count()
-                }
+                crate::kfx::writer::content::ContentItem::Text { inline_runs, .. } => inline_runs
+                    .iter()
+                    .filter(|r| {
+                        r.anchor_href
+                            .as_ref()
+                            .map(|h| h.contains("noteref"))
+                            .unwrap_or(false)
+                    })
+                    .count(),
                 crate::kfx::writer::content::ContentItem::Container { children, .. } => {
                     children.iter().map(|c| count_backlink_runs(c)).sum()
                 }
@@ -2291,8 +2310,8 @@ mod tests {
         let table_ion = &ion_items[0];
 
         // Verify table has content type $278 (CONTENT_TABLE)
-        let content_type = get_struct_field(table_ion, sym::CONTENT_TYPE)
-            .and_then(get_symbol_value);
+        let content_type =
+            get_struct_field(table_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
         assert_eq!(
             content_type,
             Some(sym::CONTENT_TABLE),
@@ -2300,14 +2319,18 @@ mod tests {
         );
 
         // Get tbody from table's content array
-        let content_array = get_struct_field(table_ion, sym::CONTENT_ARRAY)
-            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        let content_array = get_struct_field(table_ion, sym::CONTENT_ARRAY).and_then(|v| {
+            if let IonValue::List(list) = v {
+                Some(list)
+            } else {
+                None
+            }
+        });
         assert!(content_array.is_some(), "Table should have content array");
         let tbody_ion = &content_array.unwrap()[0];
 
         // Verify tbody has content type $454 (CONTENT_TBODY)
-        let tbody_type = get_struct_field(tbody_ion, sym::CONTENT_TYPE)
-            .and_then(get_symbol_value);
+        let tbody_type = get_struct_field(tbody_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
         assert_eq!(
             tbody_type,
             Some(sym::CONTENT_TBODY),
@@ -2315,14 +2338,18 @@ mod tests {
         );
 
         // Get tr from tbody's content array
-        let tbody_content = get_struct_field(tbody_ion, sym::CONTENT_ARRAY)
-            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        let tbody_content = get_struct_field(tbody_ion, sym::CONTENT_ARRAY).and_then(|v| {
+            if let IonValue::List(list) = v {
+                Some(list)
+            } else {
+                None
+            }
+        });
         assert!(tbody_content.is_some(), "Tbody should have content array");
         let tr_ion = &tbody_content.unwrap()[0];
 
         // Verify tr has content type $279 (CONTENT_TABLE_ROW)
-        let tr_type = get_struct_field(tr_ion, sym::CONTENT_TYPE)
-            .and_then(get_symbol_value);
+        let tr_type = get_struct_field(tr_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
         assert_eq!(
             tr_type,
             Some(sym::CONTENT_TABLE_ROW),
@@ -2330,14 +2357,18 @@ mod tests {
         );
 
         // Get td from tr's content array
-        let tr_content = get_struct_field(tr_ion, sym::CONTENT_ARRAY)
-            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        let tr_content = get_struct_field(tr_ion, sym::CONTENT_ARRAY).and_then(|v| {
+            if let IonValue::List(list) = v {
+                Some(list)
+            } else {
+                None
+            }
+        });
         assert!(tr_content.is_some(), "Tr should have content array");
         let td_ion = &tr_content.unwrap()[0];
 
         // Verify td has content type $269 (CONTENT_PARAGRAPH)
-        let td_type = get_struct_field(td_ion, sym::CONTENT_TYPE)
-            .and_then(get_symbol_value);
+        let td_type = get_struct_field(td_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
         assert_eq!(
             td_type,
             Some(sym::CONTENT_PARAGRAPH),
@@ -2345,8 +2376,13 @@ mod tests {
         );
 
         // Verify td has colspan attribute $148
-        let colspan = get_struct_field(td_ion, sym::ATTRIB_COLSPAN)
-            .and_then(|v| if let IonValue::Int(i) = v { Some(*i) } else { None });
+        let colspan = get_struct_field(td_ion, sym::ATTRIB_COLSPAN).and_then(|v| {
+            if let IonValue::Int(i) = v {
+                Some(*i)
+            } else {
+                None
+            }
+        });
         assert_eq!(
             colspan,
             Some(2),

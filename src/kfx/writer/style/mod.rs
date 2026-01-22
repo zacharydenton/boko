@@ -10,7 +10,7 @@ pub use conversion::*;
 use std::collections::HashMap;
 
 use crate::css::{Border, BorderStyle, Color, CssValue};
-use crate::kfx::ion::{encode_kfx_decimal, IonValue};
+use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
 use super::symbols::sym;
 
@@ -324,20 +324,12 @@ pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
         }
         CssValue::Px(v) => {
             let em = *v / 16.0; // Convert px to em (16px = 1em)
-            if em.abs() < 0.001 {
-                None
-            } else {
-                Some(em)
-            }
+            if em.abs() < 0.001 { None } else { Some(em) }
         }
         CssValue::Percent(v) => {
             // Percent of line-height, approximate as multiplier
             let mult = *v / 100.0;
-            if mult.abs() < 0.001 {
-                None
-            } else {
-                Some(mult)
-            }
+            if mult.abs() < 0.001 { None } else { Some(mult) }
         }
         CssValue::Number(v) => {
             if v.abs() < 0.001 {
@@ -397,7 +389,10 @@ mod tests {
         match ion {
             IonValue::Int(val) => {
                 // Should be 0xFF000000 = 4278190080
-                assert_eq!(val, 0xFF000000u32 as i64, "Black color should be 0xFF000000");
+                assert_eq!(
+                    val, 0xFF000000u32 as i64,
+                    "Black color should be 0xFF000000"
+                );
             }
             _ => panic!("Expected Int value"),
         }

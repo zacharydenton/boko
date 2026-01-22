@@ -10,15 +10,12 @@ use std::collections::HashMap;
 
 use crate::kfx::ion::IonValue;
 
-use super::content::{count_content_items, ChapterData, ContentItem};
-use super::symbols::{sym, SymbolTable};
+use super::content::{ChapterData, ContentItem, count_content_items};
+use super::symbols::{SymbolTable, sym};
 
 /// Build section EID mapping for internal link targets
 /// Maps XHTML paths to their FIRST CONTENT ITEM EID (not section EID)
-pub fn build_section_eids(
-    chapters: &[ChapterData],
-    has_cover: bool,
-) -> HashMap<String, i64> {
+pub fn build_section_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<String, i64> {
     let mut section_eids = HashMap::new();
     let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
@@ -37,10 +34,7 @@ pub fn build_section_eids(
 
 /// Build anchor EID mapping for TOC navigation with fragment IDs
 /// Maps "source_path#element_id" → (EID, offset)
-pub fn build_anchor_eids(
-    chapters: &[ChapterData],
-    has_cover: bool,
-) -> HashMap<String, (i64, i64)> {
+pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<String, (i64, i64)> {
     let mut anchor_eids = HashMap::new();
     let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
@@ -207,7 +201,12 @@ pub fn build_position_id_map(chapters: &[ChapterData], has_cover: bool) -> IonVa
 
         let mut content_eid = eid_base + 1;
         for content_item in &chapter.content {
-            add_entries_recursive(content_item, &mut content_eid, &mut char_offset, &mut entries);
+            add_entries_recursive(
+                content_item,
+                &mut content_eid,
+                &mut char_offset,
+                &mut entries,
+            );
         }
 
         let total_items = count_content_items(&chapter.content);

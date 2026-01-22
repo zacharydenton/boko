@@ -22,7 +22,7 @@ pub mod style;
 pub mod symbols;
 
 // Re-export the public API
-pub use builder::{write_kfx, write_kfx_to_writer, KfxBookBuilder};
+pub use builder::{KfxBookBuilder, write_kfx, write_kfx_to_writer};
 pub use content::{ChapterData, ContentChunk, ContentItem, StyleRun};
 pub use fragment::KfxFragment;
-pub use symbols::{sym, SymbolTable};
+pub use symbols::{SymbolTable, sym};

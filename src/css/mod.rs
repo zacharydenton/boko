@@ -368,7 +368,7 @@ pub enum TextCombineUpright {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RubyPosition {
     #[default]
-    Over,  // Ruby above base text (default for horizontal)
+    Over, // Ruby above base text (default for horizontal)
     Under, // Ruby below base text
 }
 
@@ -376,7 +376,7 @@ pub enum RubyPosition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RubyAlign {
     #[default]
-    Center,       // Center ruby over base
+    Center, // Center ruby over base
     Start,        // Align ruby to start of base
     SpaceAround,  // Distribute space around ruby
     SpaceBetween, // Distribute space between ruby characters
@@ -467,7 +467,7 @@ pub struct DropCap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextDecorationLineStyle {
     #[default]
-    Solid,  // Default solid line
+    Solid, // Default solid line
     Dashed, // Dashed line
     Dotted, // Dotted line
     Double, // Double line
@@ -903,7 +903,8 @@ impl ParsedStyle {
             self.text_emphasis_style = other.text_emphasis_style;
         }
         if other.text_emphasis_color.is_some() {
-            self.text_emphasis_color.clone_from(&other.text_emphasis_color);
+            self.text_emphasis_color
+                .clone_from(&other.text_emphasis_color);
         }
         // P2 Phase 2: Border collapse
         if other.border_collapse.is_some() {
@@ -911,10 +912,12 @@ impl ParsedStyle {
         }
         // Table border-spacing
         if other.border_spacing_horizontal.is_some() {
-            self.border_spacing_horizontal.clone_from(&other.border_spacing_horizontal);
+            self.border_spacing_horizontal
+                .clone_from(&other.border_spacing_horizontal);
         }
         if other.border_spacing_vertical.is_some() {
-            self.border_spacing_vertical.clone_from(&other.border_spacing_vertical);
+            self.border_spacing_vertical
+                .clone_from(&other.border_spacing_vertical);
         }
         // P1 Phase 2: Drop cap
         if other.drop_cap.is_some() {
@@ -1080,10 +1083,10 @@ impl ParsedStyle {
             };
             props.push(format!("font-style: {}", val));
         }
-        if let Some(variant) = self.font_variant {
-            if variant == FontVariant::SmallCaps {
-                props.push("font-variant: small-caps".to_string());
-            }
+        if let Some(variant) = self.font_variant
+            && variant == FontVariant::SmallCaps
+        {
+            props.push("font-variant: small-caps".to_string());
         }
         if let Some(align) = self.text_align {
             let val = match align {
@@ -1121,15 +1124,15 @@ impl ParsedStyle {
         if let Some(ref v) = self.margin_left {
             props.push(format!("margin-left: {}", css_value_to_string(v)));
         }
-        if let Some(ref color) = self.color {
-            if let Some(css) = color_to_css(color) {
-                props.push(format!("color: {}", css));
-            }
+        if let Some(ref color) = self.color
+            && let Some(css) = color_to_css(color)
+        {
+            props.push(format!("color: {}", css));
         }
-        if let Some(ref color) = self.background_color {
-            if let Some(css) = color_to_css(color) {
-                props.push(format!("background-color: {}", css));
-            }
+        if let Some(ref color) = self.background_color
+            && let Some(css) = color_to_css(color)
+        {
+            props.push(format!("background-color: {}", css));
         }
         if let Some(ref v) = self.width {
             props.push(format!("width: {}", css_value_to_string(v)));
@@ -1174,20 +1177,20 @@ impl ParsedStyle {
         if self.text_decoration_overline {
             props.push("text-decoration: overline".to_string());
         }
-        if let Some(brk) = self.break_before {
-            if brk != BreakValue::Auto {
-                props.push(format!("break-before: {}", break_value_to_css(brk)));
-            }
+        if let Some(brk) = self.break_before
+            && brk != BreakValue::Auto
+        {
+            props.push(format!("break-before: {}", break_value_to_css(brk)));
         }
-        if let Some(brk) = self.break_after {
-            if brk != BreakValue::Auto {
-                props.push(format!("break-after: {}", break_value_to_css(brk)));
-            }
+        if let Some(brk) = self.break_after
+            && brk != BreakValue::Auto
+        {
+            props.push(format!("break-after: {}", break_value_to_css(brk)));
         }
-        if let Some(brk) = self.break_inside {
-            if brk != BreakValue::Auto {
-                props.push(format!("break-inside: {}", break_value_to_css(brk)));
-            }
+        if let Some(brk) = self.break_inside
+            && brk != BreakValue::Auto
+        {
+            props.push(format!("break-inside: {}", break_value_to_css(brk)));
         }
         if let Some(ref v) = self.letter_spacing {
             props.push(format!("letter-spacing: {}", css_value_to_string(v)));
@@ -1232,7 +1235,10 @@ fn format_number(v: f32) -> String {
     if (v - v.round()).abs() < 0.0001 {
         format!("{}", v as i32)
     } else {
-        format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_string()
+        format!("{:.6}", v)
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 
@@ -1248,7 +1254,9 @@ fn color_to_css(color: &Color) -> Option<String> {
                 Some(format!("#{:02x}{:02x}{:02x}", r, g, b))
             }
         }
-        Color::Rgba(r, g, b, a) => Some(format!("rgba({}, {}, {}, {})", r, g, b, *a as f32 / 255.0)),
+        Color::Rgba(r, g, b, a) => {
+            Some(format!("rgba({}, {}, {}, {})", r, g, b, *a as f32 / 255.0))
+        }
         Color::Current => Some("currentColor".to_string()),
         Color::Transparent => Some("transparent".to_string()),
     }
@@ -2560,12 +2568,11 @@ fn parse_shadow_value(values: &[Token]) -> Option<String> {
         return None;
     }
     // Check for "none" keyword
-    if values.len() == 1 {
-        if let Token::Ident(name) = &values[0] {
-            if name.to_ascii_lowercase() == "none" {
-                return None;
-            }
-        }
+    if values.len() == 1
+        && let Token::Ident(name) = &values[0]
+        && name.to_ascii_lowercase() == "none"
+    {
+        return None;
     }
     // Collect all tokens as a string (simplified)
     let parts: Vec<String> = values
@@ -2697,11 +2704,19 @@ mod tests {
 
         // Check 0.5 opacity (should be stored as 50)
         let half = get_style_for(&stylesheet, r#"<p class="half">Test</p>"#, "p");
-        assert_eq!(half.opacity, Some(50), "opacity: 0.5 should be stored as 50");
+        assert_eq!(
+            half.opacity,
+            Some(50),
+            "opacity: 0.5 should be stored as 50"
+        );
 
         // Check full opacity
         let full = get_style_for(&stylesheet, r#"<p class="full">Test</p>"#, "p");
-        assert_eq!(full.opacity, Some(100), "opacity: 1 should be stored as 100");
+        assert_eq!(
+            full.opacity,
+            Some(100),
+            "opacity: 1 should be stored as 100"
+        );
 
         // Check zero opacity
         let zero = get_style_for(&stylesheet, r#"<p class="zero">Test</p>"#, "p");
@@ -3177,7 +3192,8 @@ mod tests {
             border_box.box_sizing
         );
 
-        let content_box = get_style_for(&stylesheet, r#"<div class="content-box">Test</div>"#, "div");
+        let content_box =
+            get_style_for(&stylesheet, r#"<div class="content-box">Test</div>"#, "div");
         assert_eq!(
             content_box.box_sizing,
             Some(BoxSizing::ContentBox),
@@ -3185,7 +3201,8 @@ mod tests {
             content_box.box_sizing
         );
 
-        let padding_box = get_style_for(&stylesheet, r#"<div class="padding-box">Test</div>"#, "div");
+        let padding_box =
+            get_style_for(&stylesheet, r#"<div class="padding-box">Test</div>"#, "div");
         assert_eq!(
             padding_box.box_sizing,
             Some(BoxSizing::PaddingBox),

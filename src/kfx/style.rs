@@ -4,8 +4,7 @@
 //! enabling bidirectional conversion between KFX and CSS.
 
 use crate::css::{
-    BreakValue, CssValue, FontStyle, FontVariant, FontWeight, ParsedStyle, TextAlign,
-    VerticalAlign,
+    BreakValue, CssValue, FontStyle, FontVariant, FontWeight, ParsedStyle, TextAlign, VerticalAlign,
 };
 use crate::kfx::ion::IonValue;
 use crate::kfx::writer::symbols::sym;
@@ -125,20 +124,20 @@ pub fn kfx_style_to_parsed(ion: &IonValue) -> ParsedStyle {
     }
 
     // Text decorations
-    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_UNDERLINE) {
-        if *s == sym::DECORATION_PRESENT {
-            style.text_decoration_underline = true;
-        }
+    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_UNDERLINE)
+        && *s == sym::DECORATION_PRESENT
+    {
+        style.text_decoration_underline = true;
     }
-    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_LINE_THROUGH) {
-        if *s == sym::DECORATION_PRESENT {
-            style.text_decoration_line_through = true;
-        }
+    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_LINE_THROUGH)
+        && *s == sym::DECORATION_PRESENT
+    {
+        style.text_decoration_line_through = true;
     }
-    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_OVERLINE) {
-        if *s == sym::DECORATION_PRESENT {
-            style.text_decoration_overline = true;
-        }
+    if let Some(IonValue::Symbol(s)) = map.get(&sym::TEXT_DECORATION_OVERLINE)
+        && *s == sym::DECORATION_PRESENT
+    {
+        style.text_decoration_overline = true;
     }
 
     // Break properties
@@ -163,10 +162,10 @@ pub fn kfx_style_to_parsed(ion: &IonValue) -> ParsedStyle {
     }
 
     // Opacity ($72)
-    if let Some(val) = map.get(&sym::OPACITY) {
-        if let Some(f) = extract_decimal(val) {
-            style.opacity = Some((f * 100.0) as u8);
-        }
+    if let Some(val) = map.get(&sym::OPACITY)
+        && let Some(f) = extract_decimal(val)
+    {
+        style.opacity = Some((f * 100.0) as u8);
     }
 
     // Language ($10)
@@ -395,7 +394,10 @@ mod tests {
         map.insert(sym::FONT_WEIGHT, IonValue::Symbol(sym::FONT_WEIGHT_BOLD));
         map.insert(sym::FONT_STYLE, IonValue::Symbol(sym::FONT_STYLE_ITALIC));
         map.insert(sym::TEXT_ALIGN, IonValue::Symbol(sym::ALIGN_CENTER));
-        map.insert(sym::FONT_VARIANT, IonValue::Symbol(sym::FONT_VARIANT_SMALL_CAPS));
+        map.insert(
+            sym::FONT_VARIANT,
+            IonValue::Symbol(sym::FONT_VARIANT_SMALL_CAPS),
+        );
         map.insert(sym::WHITE_SPACE_NOWRAP, IonValue::Bool(true));
         map.insert(sym::BREAK_INSIDE, IonValue::Symbol(sym::BREAK_AVOID));
 

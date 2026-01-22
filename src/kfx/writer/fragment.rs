@@ -4,7 +4,7 @@
 
 use crate::kfx::ion::IonValue;
 
-use super::symbols::{sym, SymbolTable};
+use super::symbols::{SymbolTable, sym};
 
 /// A KFX fragment - the fundamental unit of KFX content
 #[derive(Debug, Clone)]

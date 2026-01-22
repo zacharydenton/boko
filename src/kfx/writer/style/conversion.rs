@@ -9,14 +9,14 @@ use crate::css::{
     ListStylePosition, ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign,
     TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
 };
-use crate::kfx::ion::{encode_kfx_decimal, IonValue};
+use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
 use super::{
-    border_to_ion, break_value_to_symbol, radius_to_ion, spacing_to_ion, spacing_to_multiplier,
-    ToKfxIon,
+    ToKfxIon, border_to_ion, break_value_to_symbol, radius_to_ion, spacing_to_ion,
+    spacing_to_multiplier,
 };
 use crate::kfx::writer::fragment::KfxFragment;
-use crate::kfx::writer::symbols::{sym, SymbolTable};
+use crate::kfx::writer::symbols::{SymbolTable, sym};
 
 /// Check if a CssValue is non-zero (for layout property detection)
 fn has_nonzero_value(val: &Option<CssValue>) -> bool {
@@ -43,11 +43,7 @@ fn has_nonzero_value(val: &Option<CssValue>) -> bool {
 }
 
 /// Convert a ParsedStyle to KFX ION style struct
-pub fn style_to_ion(
-    style: &ParsedStyle,
-    style_sym: u64,
-    symtab: &mut SymbolTable,
-) -> IonValue {
+pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTable) -> IonValue {
     let mut style_ion = HashMap::new();
     style_ion.insert(sym::STYLE_NAME, IonValue::Symbol(style_sym));
 
@@ -119,49 +115,49 @@ pub fn style_to_ion(
 
     // Margins: top/bottom use UNIT_MULTIPLIER (space-before/after), left/right use UNIT_PERCENT
     // This matches Kindle Previewer's output format
-    if let Some(ref val) = style.margin_top {
-        if let Some(ion_val) = spacing_to_multiplier(val) {
-            style_ion.insert(sym::SPACE_BEFORE, ion_val);
-        }
+    if let Some(ref val) = style.margin_top
+        && let Some(ion_val) = spacing_to_multiplier(val)
+    {
+        style_ion.insert(sym::SPACE_BEFORE, ion_val);
     }
-    if let Some(ref val) = style.margin_bottom {
-        if let Some(ion_val) = spacing_to_multiplier(val) {
-            style_ion.insert(sym::SPACE_AFTER, ion_val);
-        }
+    if let Some(ref val) = style.margin_bottom
+        && let Some(ion_val) = spacing_to_multiplier(val)
+    {
+        style_ion.insert(sym::SPACE_AFTER, ion_val);
     }
     // Left/right margins use percent (unchanged)
-    if let Some(ref val) = style.margin_left {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::MARGIN_LEFT, ion_val);
-        }
+    if let Some(ref val) = style.margin_left
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::MARGIN_LEFT, ion_val);
     }
-    if let Some(ref val) = style.margin_right {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::MARGIN_RIGHT, ion_val);
-        }
+    if let Some(ref val) = style.margin_right
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::MARGIN_RIGHT, ion_val);
     }
 
     // Padding: top/bottom use UNIT_MULTIPLIER (like margin top/bottom)
-    if let Some(ref val) = style.padding_top {
-        if let Some(ion_val) = spacing_to_multiplier(val) {
-            style_ion.insert(sym::PADDING_TOP, ion_val);
-        }
+    if let Some(ref val) = style.padding_top
+        && let Some(ion_val) = spacing_to_multiplier(val)
+    {
+        style_ion.insert(sym::PADDING_TOP, ion_val);
     }
-    if let Some(ref val) = style.padding_bottom {
-        if let Some(ion_val) = spacing_to_multiplier(val) {
-            style_ion.insert(sym::PADDING_BOTTOM, ion_val);
-        }
+    if let Some(ref val) = style.padding_bottom
+        && let Some(ion_val) = spacing_to_multiplier(val)
+    {
+        style_ion.insert(sym::PADDING_BOTTOM, ion_val);
     }
     // Padding left/right use their own symbols ($53, $55)
-    if let Some(ref val) = style.padding_left {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::PADDING_LEFT, ion_val);
-        }
+    if let Some(ref val) = style.padding_left
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::PADDING_LEFT, ion_val);
     }
-    if let Some(ref val) = style.padding_right {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::PADDING_RIGHT, ion_val);
-        }
+    if let Some(ref val) = style.padding_right
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::PADDING_RIGHT, ion_val);
     }
 
     // Width and height
@@ -183,15 +179,15 @@ pub fn style_to_ion(
     add_line_height(&mut style_ion, style, is_image_style);
 
     // Colors
-    if let Some(ref color) = style.color {
-        if let Some(val) = color.to_kfx_ion() {
-            style_ion.insert(sym::COLOR, val);
-        }
+    if let Some(ref color) = style.color
+        && let Some(val) = color.to_kfx_ion()
+    {
+        style_ion.insert(sym::COLOR, val);
     }
-    if let Some(ref bg_color) = style.background_color {
-        if let Some(val) = bg_color.to_kfx_ion() {
-            style_ion.insert(sym::BACKGROUND_COLOR, val);
-        }
+    if let Some(ref bg_color) = style.background_color
+        && let Some(val) = bg_color.to_kfx_ion()
+    {
+        style_ion.insert(sym::BACKGROUND_COLOR, val);
     }
 
     // Borders - disabled: reference KFX doesn't include border styles
@@ -201,15 +197,15 @@ pub fn style_to_ion(
     add_vertical_align(&mut style_ion, style);
 
     // Letter/word spacing
-    if let Some(ref spacing) = style.letter_spacing {
-        if let Some(val) = spacing_to_ion(spacing) {
-            style_ion.insert(sym::LETTER_SPACING, val);
-        }
+    if let Some(ref spacing) = style.letter_spacing
+        && let Some(val) = spacing_to_ion(spacing)
+    {
+        style_ion.insert(sym::LETTER_SPACING, val);
     }
-    if let Some(ref spacing) = style.word_spacing {
-        if let Some(val) = spacing_to_ion(spacing) {
-            style_ion.insert(sym::WORD_SPACING, val);
-        }
+    if let Some(ref spacing) = style.word_spacing
+        && let Some(val) = spacing_to_ion(spacing)
+    {
+        style_ion.insert(sym::WORD_SPACING, val);
     }
 
     // White space
@@ -311,7 +307,11 @@ pub fn style_to_ion(
     IonValue::Struct(style_ion)
 }
 
-fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is_image_style: bool) {
+fn add_font_size(
+    style_ion: &mut HashMap<u64, IonValue>,
+    style: &ParsedStyle,
+    is_image_style: bool,
+) {
     // Images don't get font-size
     if is_image_style {
         return;
@@ -435,7 +435,7 @@ fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
 }
 
 fn add_margin_auto_centering(
-    style_ion: &mut HashMap<u64, IonValue>,
+    _style_ion: &mut HashMap<u64, IonValue>,
     style: &ParsedStyle,
     _is_image_style: bool,
 ) {
@@ -470,7 +470,10 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
                 // Convert em to percent: 1em = 3.125%
                 let percent_val = val * 3.125;
                 s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(percent_val)));
+                s.insert(
+                    sym::VALUE,
+                    IonValue::Decimal(encode_kfx_decimal(percent_val)),
+                );
             } else {
                 s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
                 s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
@@ -483,7 +486,11 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
 /// Default line-height factor used by Kindle for normalization
 const DEFAULT_LINE_HEIGHT: f32 = 1.2;
 
-fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is_image_style: bool) {
+fn add_line_height(
+    style_ion: &mut HashMap<u64, IonValue>,
+    style: &ParsedStyle,
+    is_image_style: bool,
+) {
     // Images don't get line-height
     if is_image_style {
         return;
@@ -582,7 +589,11 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
     }
 }
 
-fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, symtab: &mut SymbolTable) {
+fn add_borders(
+    style_ion: &mut HashMap<u64, IonValue>,
+    style: &ParsedStyle,
+    symtab: &mut SymbolTable,
+) {
     let border_top_sym = symtab.get_or_intern("border-top");
     let border_bottom_sym = symtab.get_or_intern("border-bottom");
     let border_left_sym = symtab.get_or_intern("border-left");
@@ -600,10 +611,10 @@ fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, symt
     ];
 
     for (border, sym) in borders {
-        if let Some(b) = border {
-            if let Some(val) = border_to_ion(b, solid_sym, dotted_sym, dashed_sym, border_style_sym) {
-                style_ion.insert(sym, val);
-            }
+        if let Some(b) = border
+            && let Some(val) = border_to_ion(b, solid_sym, dotted_sym, dashed_sym, border_style_sym)
+        {
+            style_ion.insert(sym, val);
         }
     }
 }
@@ -669,25 +680,25 @@ fn add_text_decorations(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedSt
 }
 
 fn add_min_max_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref val) = style.min_width {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::MIN_WIDTH, ion_val);
-        }
+    if let Some(ref val) = style.min_width
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::MIN_WIDTH, ion_val);
     }
-    if let Some(ref val) = style.min_height {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::MIN_HEIGHT, ion_val);
-        }
+    if let Some(ref val) = style.min_height
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::MIN_HEIGHT, ion_val);
     }
-    if let Some(ref val) = style.max_width {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::MAX_WIDTH, ion_val);
-        }
+    if let Some(ref val) = style.max_width
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::MAX_WIDTH, ion_val);
     }
-    if let Some(ref val) = style.max_height {
-        if let Some(ion_val) = val.to_kfx_ion() {
-            style_ion.insert(sym::STYLE_HEIGHT, ion_val);
-        }
+    if let Some(ref val) = style.max_height
+        && let Some(ion_val) = val.to_kfx_ion()
+    {
+        style_ion.insert(sym::STYLE_HEIGHT, ion_val);
     }
 }
 
@@ -763,10 +774,10 @@ fn add_border_radius(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
     ];
 
     for (radius, sym) in radii {
-        if let Some(r) = radius {
-            if let Some(ion_val) = radius_to_ion(r) {
-                style_ion.insert(sym, ion_val);
-            }
+        if let Some(r) = radius
+            && let Some(ion_val) = radius_to_ion(r)
+        {
+            style_ion.insert(sym, ion_val);
         }
     }
 }
@@ -912,10 +923,10 @@ fn add_text_emphasis(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
     }
 
     // Text emphasis color ($718)
-    if let Some(ref color) = style.text_emphasis_color {
-        if let Some(val) = color.to_kfx_ion() {
-            style_ion.insert(sym::TEXT_EMPHASIS_COLOR, val);
-        }
+    if let Some(ref color) = style.text_emphasis_color
+        && let Some(val) = color.to_kfx_ion()
+    {
+        style_ion.insert(sym::TEXT_EMPHASIS_COLOR, val);
     }
 }
 
@@ -923,13 +934,13 @@ fn add_text_emphasis(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
 // Note: Uses boolean values per yj_to_epub_properties.py: False=separate, True=collapse
 // Only outputs for collapse (non-default) since separate is the CSS default
 fn add_border_collapse(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(collapse) = style.border_collapse {
-        if collapse == BorderCollapse::Collapse {
-            // True = collapse
-            style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Bool(true));
-        }
-        // Don't output separate (false) since it's the CSS default
+    if let Some(collapse) = style.border_collapse
+        && collapse == BorderCollapse::Collapse
+    {
+        // True = collapse
+        style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Bool(true));
     }
+    // Don't output separate (false) since it's the CSS default
 }
 
 // Table border-spacing
@@ -937,15 +948,15 @@ fn add_border_collapse(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedSty
 fn add_border_spacing(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     use crate::kfx::writer::style::ToKfxIon;
 
-    if let Some(ref horizontal) = style.border_spacing_horizontal {
-        if let Some(ion_val) = horizontal.to_kfx_ion() {
-            style_ion.insert(sym::BORDER_SPACING_HORIZONTAL, ion_val);
-        }
+    if let Some(ref horizontal) = style.border_spacing_horizontal
+        && let Some(ion_val) = horizontal.to_kfx_ion()
+    {
+        style_ion.insert(sym::BORDER_SPACING_HORIZONTAL, ion_val);
     }
-    if let Some(ref vertical) = style.border_spacing_vertical {
-        if let Some(ion_val) = vertical.to_kfx_ion() {
-            style_ion.insert(sym::BORDER_SPACING_VERTICAL, ion_val);
-        }
+    if let Some(ref vertical) = style.border_spacing_vertical
+        && let Some(ion_val) = vertical.to_kfx_ion()
+    {
+        style_ion.insert(sym::BORDER_SPACING_VERTICAL, ion_val);
     }
 }
 
@@ -1090,7 +1101,7 @@ fn add_hyphens(
     // Only output hyphens if CSS explicitly specifies it
     if let Some(hyphens) = style.hyphens {
         let hyphens_sym = match hyphens {
-            Hyphens::None => sym::HYPHENS_NONE,    // $349
+            Hyphens::None => sym::HYPHENS_NONE,     // $349
             Hyphens::Manual => sym::HYPHENS_MANUAL, // $384
             Hyphens::Auto => sym::HYPHENS_AUTO,     // $383
         };
@@ -1849,7 +1860,11 @@ mod tests {
         );
         match ion_map.get(&sym::RUBY_POSITION) {
             Some(IonValue::Symbol(s)) => {
-                assert_eq!(*s, sym::RUBY_POSITION_UNDER, "Expected ruby-position: under");
+                assert_eq!(
+                    *s,
+                    sym::RUBY_POSITION_UNDER,
+                    "Expected ruby-position: under"
+                );
             }
             _ => panic!("Expected symbol for RUBY_POSITION"),
         }
@@ -1932,7 +1947,11 @@ mod tests {
         );
         match ion_map.get(&sym::RUBY_MERGE) {
             Some(IonValue::Symbol(s)) => {
-                assert_eq!(*s, sym::RUBY_MERGE_COLLAPSE, "Expected ruby-merge: collapse");
+                assert_eq!(
+                    *s,
+                    sym::RUBY_MERGE_COLLAPSE,
+                    "Expected ruby-merge: collapse"
+                );
             }
             _ => panic!("Expected symbol for RUBY_MERGE"),
         }
@@ -2452,7 +2471,11 @@ mod tests {
 
         match ion_map.get(&sym::FLOAT) {
             Some(IonValue::Symbol(s)) => {
-                assert_eq!(*s, sym::FLOAT_SNAP_BLOCK, "Expected float: snap-block ($786)");
+                assert_eq!(
+                    *s,
+                    sym::FLOAT_SNAP_BLOCK,
+                    "Expected float: snap-block ($786)"
+                );
             }
             _ => panic!("Expected symbol for FLOAT"),
         }
@@ -2508,11 +2531,7 @@ mod tests {
                 assert_eq!(list.len(), 1, "Layout hints should have 1 element");
                 match &list[0] {
                     IonValue::Symbol(s) => {
-                        assert_eq!(
-                            *s,
-                            sym::LAYOUT_HINT_HEADING,
-                            "Expected heading hint ($760)"
-                        );
+                        assert_eq!(*s, sym::LAYOUT_HINT_HEADING, "Expected heading hint ($760)");
                     }
                     _ => panic!("Expected symbol in layout hints list"),
                 }
@@ -2632,5 +2651,4 @@ mod tests {
             "Style without box-sizing should not have BOX_SIZING property"
         );
     }
-
 }
