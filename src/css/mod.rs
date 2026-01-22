@@ -161,6 +161,18 @@ pub enum FontVariant {
     SmallCaps,
 }
 
+/// CSS hyphens property for text hyphenation control
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Hyphens {
+    /// Don't hyphenate (hyphens: none)
+    #[default]
+    None,
+    /// Manual hyphenation with &shy; only (hyphens: manual)
+    Manual,
+    /// Automatic hyphenation (hyphens: auto)
+    Auto,
+}
+
 /// Text transform (uppercase, lowercase, capitalize)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextTransform {
@@ -648,6 +660,8 @@ pub struct ParsedStyle {
     pub column_count: Option<ColumnCount>,
     // P2 Phase 2: Float property
     pub float: Option<CssFloat>,
+    /// CSS hyphens property for text hyphenation
+    pub hyphens: Option<Hyphens>,
 }
 
 impl ParsedStyle {
@@ -896,6 +910,10 @@ impl ParsedStyle {
         // P2 Phase 2: Float property
         if other.float.is_some() {
             self.float = other.float;
+        }
+        // CSS hyphens property
+        if other.hyphens.is_some() {
+            self.hyphens = other.hyphens;
         }
     }
 
@@ -1330,6 +1348,8 @@ impl PartialEq for ParsedStyle {
             && self.column_count == other.column_count
             // P2 Phase 2: Float property
             && self.float == other.float
+            // CSS hyphens property
+            && self.hyphens == other.hyphens
     }
 }
 
@@ -1964,6 +1984,17 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         }
         "text-shadow" => {
             style.text_shadow = parse_shadow_value(values);
+        }
+        // CSS hyphens property (also handle vendor prefixes)
+        "hyphens" | "-webkit-hyphens" | "-moz-hyphens" | "-epub-hyphens" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.hyphens = match val.to_ascii_lowercase().as_str() {
+                    "none" => Some(Hyphens::None),
+                    "manual" => Some(Hyphens::Manual),
+                    "auto" => Some(Hyphens::Auto),
+                    _ => None,
+                };
+            }
         }
         _ => {
             // Ignore unsupported properties

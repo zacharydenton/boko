@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, ColumnCount, CssFloat, CssValue, FontVariant, ListStylePosition, ListStyleType,
-    ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright,
+    BorderCollapse, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens, ListStylePosition,
+    ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright,
     TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
 };
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
@@ -291,6 +291,9 @@ pub fn style_to_ion(
 
     // P2 Phase 2: Float property
     add_float(&mut style_ion, style);
+
+    // CSS hyphens property ($127)
+    add_hyphens(&mut style_ion, style, is_image_style, is_inline_style);
 
     // P2 Phase 2: Layout hints for semantic elements
     add_layout_hints(&mut style_ion, style);
@@ -1041,6 +1044,29 @@ fn add_float(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
             CssFloat::SnapBlock => sym::FLOAT_SNAP_BLOCK,
         };
         style_ion.insert(sym::FLOAT, IonValue::Symbol(float_sym));
+    }
+}
+
+/// CSS hyphens property ($127) for text hyphenation control
+fn add_hyphens(
+    style_ion: &mut HashMap<u64, IonValue>,
+    style: &ParsedStyle,
+    is_image_style: bool,
+    is_inline_style: bool,
+) {
+    // Images and inline styles don't get hyphens
+    if is_image_style || is_inline_style {
+        return;
+    }
+
+    // Only output hyphens if CSS explicitly specifies it
+    if let Some(hyphens) = style.hyphens {
+        let hyphens_sym = match hyphens {
+            Hyphens::None => sym::HYPHENS_NONE,    // $349
+            Hyphens::Manual => sym::HYPHENS_MANUAL, // $384
+            Hyphens::Auto => sym::HYPHENS_AUTO,     // $383
+        };
+        style_ion.insert(sym::HYPHENS, IonValue::Symbol(hyphens_sym));
     }
 }
 
