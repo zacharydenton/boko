@@ -63,9 +63,7 @@ pub fn style_to_ion(
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
 
-        // Add IMAGE_FIT baseline ($546=$378) to match reference KFX
-        // Reference includes this on all styles (text and image)
-        style_ion.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_NONE));
+        // Note: IMAGE_FIT baseline removed - reference KFX doesn't include it for text styles
     }
 
     // Font size
@@ -212,10 +210,9 @@ fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is
         return;
     }
 
-    // Calculate font-size value, defaulting to 1.0em if not specified
-    // Reference KFX includes font-size: 1em as a baseline on all text styles
-    let size_val: f32 = if let Some(ref size) = style.font_size {
-        match size {
+    // Only add font-size if explicitly set (reference omits default 1em)
+    if let Some(ref size) = style.font_size {
+        let size_val: f32 = match size {
             CssValue::Em(v) | CssValue::Rem(v) => *v,
             CssValue::Percent(v) => *v / 100.0,
             CssValue::Keyword(k) => match k.as_str() {
@@ -228,19 +225,22 @@ fn add_font_size(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is
                 "large" => 1.125,
                 "x-large" => 1.5,
                 "xx-large" => 2.0,
-                _ => 1.0, // Unknown keyword, use default
+                _ => return, // Unknown keyword, skip
             },
             CssValue::Px(v) => *v / 16.0, // Assume 16px = 1em
-            _ => 1.0, // Unknown unit, use default
-        }
-    } else {
-        1.0 // Default baseline
-    };
+            _ => return,
+        };
 
-    let mut s = HashMap::new();
-    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
-    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
-    style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
+        // Skip if value is effectively 1.0 (default)
+        if (size_val - 1.0).abs() < 0.001 {
+            return;
+        }
+
+        let mut s = HashMap::new();
+        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
+        style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
+    }
 }
 
 fn add_font_weight(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
@@ -378,51 +378,50 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
         return;
     }
 
-    // Get font-size if available (for normalizing rem line-height)
-    let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
-        CssValue::Rem(v) => Some(*v),
-        _ => None,
-    });
+    // Only add line-height if explicitly set (reference omits default 1.0)
+    if let Some(ref height) = style.line_height {
+        // Get font-size if available (for normalizing rem line-height)
+        let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
+            CssValue::Rem(v) => Some(*v),
+            _ => None,
+        });
 
-    // Calculate line-height value, defaulting to 1.0 if not specified
-    // Reference KFX includes line-height: 1 as a baseline on all text styles
-    let css_val: f32 = if let Some(ref height) = style.line_height {
-        match height {
-            CssValue::Number(v) => *v,
-            CssValue::Percent(v) => *v / 100.0,
-            CssValue::Em(v) => *v,
+        let css_val: Option<f32> = match height {
+            CssValue::Number(v) => Some(*v),
+            CssValue::Percent(v) => Some(*v / 100.0),
+            CssValue::Em(v) => Some(*v),
             CssValue::Rem(v) => {
                 // Normalize rem line-height relative to rem font-size
                 // CSS: font-size: 0.875rem; line-height: 1.25rem
                 // -> line-height in em = 1.25 / 0.875 = 1.42857
                 if let Some(fs_rem) = font_size_rem {
-                    *v / fs_rem
+                    Some(*v / fs_rem)
                 } else {
                     // No font-size in rem, use line-height as-is
-                    *v
+                    Some(*v)
                 }
             }
-            CssValue::Px(v) => *v / 16.0,
-            _ => 1.0, // Unknown unit, use default
+            CssValue::Px(v) => Some(*v / 16.0),
+            _ => None,
+        };
+
+        if let Some(val) = css_val {
+            // Skip if value is effectively 1.0 (default) or 0 (Kindle normalizes 0 to 1)
+            if (val - 1.0).abs() < 0.001 || val.abs() < 0.001 {
+                return;
+            }
+
+            // Kindle Previewer divides line-height by 1.2 (default line-height factor)
+            // This converts CSS line-height (relative to font-size) to KFX UNIT_MULTIPLIER
+            // which is relative to the baseline line-height of 1.2
+            let kfx_val = val / DEFAULT_LINE_HEIGHT;
+
+            let mut s = HashMap::new();
+            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
+            style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
         }
-    } else {
-        1.0 // Default baseline (represents line-height: 1.2 in KFX's multiplier space)
-    };
-
-    // Kindle Previewer divides line-height by 1.2 (default line-height factor)
-    // This converts CSS line-height (relative to font-size) to KFX UNIT_MULTIPLIER
-    // which is relative to the baseline line-height of 1.2
-    // EXCEPT for the baseline 1.0, which is stored as-is (not divided)
-    let kfx_val = if (css_val - 1.0).abs() < 0.001 {
-        1.0 // Baseline stays as 1.0, not 0.8333
-    } else {
-        css_val / DEFAULT_LINE_HEIGHT
-    };
-
-    let mut s = HashMap::new();
-    s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
-    style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
+    }
 }
 
 fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, symtab: &mut SymbolTable) {
@@ -644,9 +643,9 @@ mod tests {
     use crate::css::ParsedStyle;
 
     #[test]
-    fn test_text_style_has_image_fit_baseline() {
-        // Text styles SHOULD include IMAGE_FIT ($546=$378) baseline property
-        // Reference KFX includes $546=$378 (IMAGE_FIT_NONE) on all styles
+    fn test_text_style_no_image_fit_baseline() {
+        // Text styles should NOT include IMAGE_FIT ($546) baseline property
+        // Reference KFX doesn't include it for non-image styles
         let style = ParsedStyle {
             font_size: Some(crate::css::CssValue::Em(1.0)),
             ..Default::default()
@@ -656,22 +655,15 @@ mod tests {
         let style_sym = symtab.get_or_intern("test-style");
         let ion = style_to_ion(&style, style_sym, &mut symtab);
 
-        // Should have IMAGE_FIT with value IMAGE_FIT_NONE ($378)
+        // Should NOT have IMAGE_FIT for text styles
         let ion_map = match ion {
             IonValue::Struct(map) => map,
             _ => panic!("Expected struct"),
         };
         assert!(
-            ion_map.contains_key(&sym::IMAGE_FIT),
-            "Text styles should have IMAGE_FIT baseline property"
+            !ion_map.contains_key(&sym::IMAGE_FIT),
+            "Text styles should not have IMAGE_FIT baseline property"
         );
-        // Verify it's IMAGE_FIT_NONE ($378)
-        match ion_map.get(&sym::IMAGE_FIT) {
-            Some(IonValue::Symbol(sym)) => {
-                assert_eq!(*sym, sym::IMAGE_FIT_NONE, "Expected IMAGE_FIT_NONE ($378)");
-            }
-            _ => panic!("IMAGE_FIT should be a symbol"),
-        }
     }
 
     #[test]
@@ -788,92 +780,6 @@ mod tests {
             (value - expected).abs() < 0.01,
             "margin-top 3em should become {} in KFX, got {}",
             expected,
-            value
-        );
-    }
-
-    #[test]
-    fn test_text_style_has_line_height_baseline() {
-        // Text styles should include line-height: 1 baseline when no explicit line-height
-        // Reference KFX includes $42 = {$307: 1, $306: $310} on text styles
-        use crate::kfx::ion::decode_kfx_decimal;
-
-        let style = ParsedStyle {
-            text_align: Some(crate::css::TextAlign::Center), // Some non-font property
-            ..Default::default()
-        };
-
-        let mut symtab = SymbolTable::new();
-        let style_sym = symtab.get_or_intern("test-style");
-        let ion = style_to_ion(&style, style_sym, &mut symtab);
-
-        let ion_map = match ion {
-            IonValue::Struct(map) => map,
-            _ => panic!("Expected struct"),
-        };
-
-        // Should have LINE_HEIGHT with value 1.0
-        assert!(
-            ion_map.contains_key(&sym::LINE_HEIGHT),
-            "Text styles should have line-height baseline"
-        );
-
-        let lh_struct = match ion_map.get(&sym::LINE_HEIGHT) {
-            Some(IonValue::Struct(s)) => s,
-            _ => panic!("Expected line-height struct"),
-        };
-
-        let value = match lh_struct.get(&sym::VALUE) {
-            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
-            _ => panic!("Expected decimal value"),
-        };
-
-        assert!(
-            (value - 1.0).abs() < 0.001,
-            "line-height baseline should be 1.0, got {}",
-            value
-        );
-    }
-
-    #[test]
-    fn test_text_style_has_font_size_baseline() {
-        // Text styles should include font-size: 1em baseline when no explicit font-size
-        // Reference KFX includes $16 = {$307: 1, $306: $505} on text styles
-        use crate::kfx::ion::decode_kfx_decimal;
-
-        let style = ParsedStyle {
-            text_align: Some(crate::css::TextAlign::Center), // Some non-font property
-            ..Default::default()
-        };
-
-        let mut symtab = SymbolTable::new();
-        let style_sym = symtab.get_or_intern("test-style");
-        let ion = style_to_ion(&style, style_sym, &mut symtab);
-
-        let ion_map = match ion {
-            IonValue::Struct(map) => map,
-            _ => panic!("Expected struct"),
-        };
-
-        // Should have FONT_SIZE with value 1.0
-        assert!(
-            ion_map.contains_key(&sym::FONT_SIZE),
-            "Text styles should have font-size baseline"
-        );
-
-        let fs_struct = match ion_map.get(&sym::FONT_SIZE) {
-            Some(IonValue::Struct(s)) => s,
-            _ => panic!("Expected font-size struct"),
-        };
-
-        let value = match fs_struct.get(&sym::VALUE) {
-            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
-            _ => panic!("Expected decimal value"),
-        };
-
-        assert!(
-            (value - 1.0).abs() < 0.001,
-            "font-size baseline should be 1.0em, got {}",
             value
         );
     }
