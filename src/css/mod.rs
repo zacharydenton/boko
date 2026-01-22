@@ -1379,14 +1379,22 @@ fn parse_color(values: &[Token]) -> Option<Color> {
 }
 
 fn parse_font_family(values: &[Token]) -> Option<String> {
+    let mut fonts = Vec::new();
+
     for token in values {
         match token {
-            Token::Ident(name) => return Some(name.to_string()),
-            Token::QuotedString(name) => return Some(name.to_string()),
+            Token::Ident(name) => fonts.push(name.to_string()),
+            Token::QuotedString(name) => fonts.push(name.to_string()),
+            Token::Comma => {} // Skip commas between fonts
             _ => continue,
         }
     }
-    None
+
+    if fonts.is_empty() {
+        None
+    } else {
+        Some(fonts.join(","))
+    }
 }
 
 fn parse_font_weight(values: &[Token]) -> Option<FontWeight> {
@@ -1969,6 +1977,42 @@ mod tests {
         assert!(
             !block_style.is_hidden(),
             "display:block should not be hidden"
+        );
+    }
+
+    #[test]
+    fn test_font_family_full_stack() {
+        // Font stacks should preserve all fonts, not just the first one
+        let css = r#"
+            .sans { font-family: ui-sans-serif, system-ui, sans-serif; }
+            .mono { font-family: ui-monospace, "Courier New", monospace; }
+            .single { font-family: Georgia; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Sans stack should have all fonts
+        let sans = get_style_for(&stylesheet, r#"<div class="sans">Test</div>"#, "div");
+        assert_eq!(
+            sans.font_family,
+            Some("ui-sans-serif,system-ui,sans-serif".to_string()),
+            "Font stack should preserve all fonts"
+        );
+
+        // Mono stack with quoted font name
+        let mono = get_style_for(&stylesheet, r#"<div class="mono">Test</div>"#, "div");
+        assert_eq!(
+            mono.font_family,
+            Some("ui-monospace,Courier New,monospace".to_string()),
+            "Font stack should handle quoted names"
+        );
+
+        // Single font
+        let single = get_style_for(&stylesheet, r#"<div class="single">Test</div>"#, "div");
+        assert_eq!(
+            single.font_family,
+            Some("Georgia".to_string()),
+            "Single font should work"
         );
     }
 }
