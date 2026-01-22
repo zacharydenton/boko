@@ -465,6 +465,41 @@ Fragments reference other fragments through specific fields. This mapping shows 
 | `$749` | `$259` | Storyline reference |
 | `$757` | `$756` | Dictionary reference |
 
+### 5.6 Auxiliary Data Structure ($597)
+
+Auxiliary data fragments mark sections for navigation targeting. Each section (including cover) has a corresponding auxiliary data fragment.
+
+**Structure:**
+```
+auxiliary_data = {
+  $598: aux_id,              // Self-reference symbol
+  $258: [                    // Metadata array
+    {
+      $307: true,            // VALUE = true
+      $492: "IS_TARGET_SECTION"  // METADATA_KEY
+    }
+  ]
+}
+```
+
+**Key Fields:**
+| Symbol | Name | Description |
+|--------|------|-------------|
+| `$598` | aux_data_ref | Self-reference symbol ID |
+| `$258` | metadata | Array of metadata entries |
+| `$307` | value | Boolean value (true) |
+| `$492` | metadata_key | Key string ("IS_TARGET_SECTION") |
+
+The `IS_TARGET_SECTION` flag indicates that this section can be a navigation target (for TOC jumps, bookmarks, location tracking). Every section in the book should have a corresponding auxiliary data fragment with this flag.
+
+**Example:**
+```
+$597::aux-cover = {
+  $598: $aux-cover,
+  $258: [{ $307: true, $492: "IS_TARGET_SECTION" }]
+}
+```
+
 ---
 
 ## 6. Content Structure
@@ -498,22 +533,24 @@ storyline ($259)
 | `$269` | BLOCK_CONTAINER | div, p, blockquote | Block-level container |
 | `$270` | PAGE_TEMPLATE | page/section | Section/page container |
 | `$271` | IMAGE | img | Image content |
-| `$272` | PLUGIN | object, embed | Embedded plugin |
+| `$272` | PLUGIN | object, embed | Embedded plugin (KVG vector graphics) |
 | `$273` | INLINE_CONTAINER | span | Inline container |
 | `$274` | SVG | svg | Scalable vector graphics |
 | `$276` | LIST | ul, ol | List container |
 | `$277` | LIST_ITEM | li | List item |
 | `$278` | TABLE | table | Table container |
 | `$279` | TABLE_ROW | tr | Table row |
-| `$280` | TABLE_CELL | td | Table cell |
-| `$439` | HIDDEN_CONTAINER | display:none | Hidden content |
-| `$151` | TABLE_HEADER | thead | Table header section |
+| `$280` | TABLE_CELL | td | Table cell (unconfirmed - marked with ?) |
+| `$439` | HIDDEN_CONTAINER | display:none | Hidden/non-rendered content |
+| `$151` | TABLE_HEADER | thead | Table header section (also used for oeb-page-head position) |
 | `$454` | TABLE_BODY | tbody | Table body section |
-| `$455` | TABLE_FOOTER | tfoot | Table footer section |
+| `$455` | TABLE_FOOTER | tfoot | Table footer section (also used for oeb-page-foot position) |
 | `$596` | HORIZONTAL_RULE | hr | Horizontal rule |
-| `$764` | RUBY | ruby | Ruby annotation base |
+| `$764` | RUBY | ruby | Ruby annotation base (unconfirmed - marked with ?) |
 | `$765` | RUBY_TEXT | rt | Ruby text |
-| `$766` | RUBY_CONTAINER | rp | Ruby parenthesis |
+| `$766` | RUBY_CONTAINER | rp | Ruby parenthesis/container |
+
+**Note**: Symbols marked with `?` in the YJ_symbols catalog are unconfirmed or rarely used.
 
 ### 6.3 Content Item Structure
 
@@ -974,7 +1011,88 @@ These CSS properties are inherited by child elements (with their default values)
 | text-decoration | none | $23, $27, $554 |
 | vertical-align | baseline | $44 |
 
-### 7.15 Special Value Constants
+### 7.15 Ruby Properties
+
+Ruby annotations (furigana) for CJK text use these properties:
+
+| Symbol | CSS Property | Values |
+|--------|--------------|--------|
+| `$762` | ruby-position (horizontal) | `$58`=over, `$60`=under |
+| `$763` | ruby-position (vertical) | `$59`=under, `$61`=over |
+| `$764` | ruby-merge | `$772`=collapse, `$771`=separate |
+| `$765` | ruby-align | `$320`=center, `$773`=space-around, `$774`=space-between, `$680`=start |
+| `$766` | ruby-align (alt) | Same values as $765 |
+
+### 7.16 Text Emphasis Properties
+
+Text emphasis marks (used in CJK typography):
+
+| Symbol | CSS Property | Values |
+|--------|--------------|--------|
+| `$717` | text-emphasis-style | See below |
+| `$718` | text-emphasis-color | ARGB integer |
+| `$719` | -kfx-text-emphasis-position-horizontal | `$58`=over, `$60`=under |
+| `$720` | -kfx-text-emphasis-position-vertical | `$59`=left, `$61`=right |
+
+**text-emphasis-style ($717) values:**
+
+| Symbol | Value |
+|--------|-------|
+| `$724` | filled |
+| `$725` | open |
+| `$726` | filled dot |
+| `$727` | open dot |
+| `$728` | filled circle |
+| `$729` | open circle |
+| `$730` | filled double-circle |
+| `$731` | open double-circle |
+| `$732` | filled triangle |
+| `$733` | open triangle |
+| `$734` | filled sesame |
+| `$735` | open sesame |
+
+### 7.17 Direction and Bidi Properties
+
+| Symbol | CSS Property | Values |
+|--------|--------------|--------|
+| `$192` | direction | `$376`=ltr, `$375`=rtl |
+| `$682` | direction (alt) | `$376`=ltr, `$375`=rtl |
+| `$674` | unicode-bidi | `$675`=embed, `$676`=isolate, `$678`=isolate-override, `$350`=normal, `$677`=bidi-override, `$679`=plaintext |
+
+### 7.18 Line Break and Word Break
+
+| Symbol | CSS Property | Values |
+|--------|--------------|--------|
+| `$780` | line-break | `$783`=anywhere, `$383`=auto, `$781`=loose, `$350`=normal, `$782`=strict |
+| `$569` | word-break | `$570`=break-all, `$350`=normal |
+
+### 7.19 Text Orientation (Vertical Writing)
+
+| Symbol | CSS Property | Values |
+|--------|--------------|--------|
+| `$706` | text-orientation | `$383`=mixed, `$778`=sideways, `$779`=upright |
+| `$707` | text-combine-upright | `$573`=all |
+
+### 7.20 Modern vs Legacy Page Break Symbols
+
+KFX uses two sets of symbols for page-break properties:
+
+**Legacy symbols** (used by kfxinput):
+| Symbol | Property |
+|--------|----------|
+| `$133` | page-break-after |
+| `$134` | page-break-before |
+| `$135` | page-break-inside |
+
+**Modern symbols** (also valid):
+| Symbol | Property |
+|--------|----------|
+| `$788` | page-break-after |
+| `$789` | page-break-before |
+
+Both sets use the same values: `$352`=always, `$383`=auto, `$353`=avoid
+
+### 7.21 Special Value Constants
 
 **Line Height Defaults**:
 - Normal line-height (`$383`) in KFX corresponds to approximately 1.2em
@@ -1113,12 +1231,29 @@ nav_container = {
 
 | Symbol | Type | Purpose |
 |--------|------|---------|
-| `$212` | TOC | Table of contents |
-| `$213` | SECTION_TOC | Section navigation |
-| `$214` | PAGE_LIST_TOC | Page list |
-| `$236` | LANDMARKS | Landmarks (cover, etc.) |
-| `$237` | PAGE_LIST | Page numbers |
-| `$798` | HEADINGS | Heading navigation |
+| `$212` | TOC | Table of contents (main navigation) |
+| `$213` | SECTION_TOC | Section-specific table of contents |
+| `$214` | PAGE_LIST_TOC | Page list navigation |
+| `$236` | LANDMARKS | Landmarks (cover, body, toc references) |
+| `$237` | PAGE_LIST | Page number list |
+| `$798` | HEADINGS | Heading-based navigation |
+
+**Navigation Container Processing:**
+
+kfxinput validates that nav_type is one of: `$212`, `$236`, `$237`, `$213`, `$214`, `$798`. Other values generate an error.
+
+For `$212` (TOC) and `$798` (HEADINGS) types, nested hierarchical entries are supported via `$247` child units.
+
+### 9.3.1 Section Navigation ($390)
+
+Section-specific navigation links containers to sections:
+
+```
+section_navigation = {
+  $174: section_name,        // Section reference
+  $392: [nav_container_ids...] // Navigation containers for this section
+}
+```
 
 ### 9.4 Navigation Unit ($393)
 
@@ -1146,14 +1281,20 @@ KFX supports popup footnotes that display in an overlay window instead of naviga
 
 **1. Classification ($615)** - Marks the footnote content:
 
-| Symbol | Classification | Description |
-|--------|----------------|-------------|
-| `$618` | footnote | Inline footnote content |
-| `$619` | endnote | End-of-chapter/book note |
-| `$281` | footnote | Alternative footnote marker |
-| `$688` | math | Mathematical content |
-| `$689` | (unknown) | Internal use |
-| `$453` | caption | Table caption |
+| Symbol | Classification | EPUB epub:type | Description |
+|--------|----------------|----------------|-------------|
+| `$618` | footnote | footnote | Inline footnote content |
+| `$619` | endnote | endnote | End-of-chapter/book note |
+| `$281` | footnote | footnote | Alternative footnote marker |
+| `$688` | math | - | Mathematical content |
+| `$689` | (unknown) | - | Internal use |
+| `$453` | caption | - | Table caption |
+
+**Detection from EPUB**: kfxinput detects footnotes via:
+- `epub:type="footnote"` → `$618`
+- `epub:type="endnote"` → `$619`
+- `role="doc-footnote"` → `$618`
+- `role="doc-endnote"` → `$619`
 
 **2. Noteref Type ($616)** - Marks the link that triggers the popup:
 
@@ -1336,6 +1477,75 @@ Common features:
 }
 ```
 
+### 10.6 Position Map ($264)
+
+The position map tracks which EIDs (element IDs) belong to which sections, enabling efficient navigation:
+
+```
+position_map = [
+  {
+    $181: [eid1, eid2, ...],  // List of EIDs in this section
+    $174: section_name        // Section reference
+  },
+  ...
+]
+```
+
+**Key Fields:**
+| Symbol | Name | Description |
+|--------|------|-------------|
+| `$181` | entity_ids | List of EID values in this section |
+| `$174` | section_name | Reference to section fragment |
+
+### 10.7 Position ID Map ($265)
+
+Maps position IDs (PIDs) to EIDs for location tracking:
+
+```
+position_id_map = [
+  {
+    $184: pid,           // Position ID (cumulative character count)
+    $185: eid,           // Element ID (symbol reference)
+    $143: offset         // Optional: character offset within EID
+  },
+  ...
+  { $184: max_pid, $185: 0 }  // Terminator entry
+]
+```
+
+**Key Fields:**
+| Symbol | Name | Description |
+|--------|------|-------------|
+| `$184` | position_id | Cumulative position (character count) |
+| `$185` | eid | Target element ID |
+| `$143` | offset | Optional character offset within the element |
+
+The last entry has `$185: 0` as a terminator, with `$184` containing the total character count.
+
+### 10.8 Location Map ($550)
+
+The location map provides locations (page-like markers) throughout the book:
+
+```
+location_map = [
+  {
+    $182: [                  // Location entries list
+      { $155: eid, $143: offset },
+      ...
+    ]
+  }
+]
+```
+
+**Key Fields:**
+| Symbol | Name | Description |
+|--------|------|-------------|
+| `$182` | locations | List of location entries |
+| `$155` | eid | Element ID at this location |
+| `$143` | offset | Character offset within the element |
+
+Each entry represents approximately one "location" (similar to a page number) in the book.
+
 ---
 
 ## 11. Symbol Reference
@@ -1496,6 +1706,25 @@ Common features:
 | `$794` | upper-armenian |
 | `$795` | georgian |
 | `$796` | decimal-leading-zero |
+
+**List Type to HTML Element Mapping:**
+
+kfxinput maps list-style-type symbols to HTML list elements:
+
+| Symbol | HTML Element |
+|--------|--------------|
+| `$340` (disc) | ul |
+| `$341` (square) | ul |
+| `$342` (circle) | ul |
+| `$349` (none) | ul |
+| `$271` (image) | ul |
+| `$343` (decimal) | ol |
+| `$344` (lower-roman) | ol |
+| `$345` (upper-roman) | ol |
+| `$346` (lower-alpha) | ol |
+| `$347` (upper-alpha) | ol |
+
+All other list types default to `ol` (ordered list).
 
 ### 11.4.1 Text Decoration Properties
 
