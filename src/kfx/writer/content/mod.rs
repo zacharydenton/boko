@@ -5,6 +5,7 @@
 //! - Chapter data structures
 //! - Content chunking for large chapters
 //! - XHTML content extraction
+//! - Content validation (P3 improvement)
 
 mod extraction;
 
@@ -13,6 +14,68 @@ pub use extraction::*;
 use crate::css::ParsedStyle;
 
 use super::symbols::sym;
+
+// =============================================================================
+// P3: Content Validation Constants
+// =============================================================================
+
+/// Maximum size for a single content fragment in bytes (P3 improvement)
+/// Based on kfxinput's MAX_CONTENT_FRAGMENT_SIZE = 8192
+pub const MAX_CONTENT_FRAGMENT_SIZE: usize = 8192;
+
+/// Unexpected characters that should be detected and warned about (P3 improvement)
+/// These are control characters, interlinear annotations, and non-characters
+/// Based on kfxinput's UNEXPECTED_CHARACTERS list
+pub static UNEXPECTED_CHARACTERS: &[char] = &[
+    // C0 control characters (except common whitespace)
+    '\u{0000}', '\u{0001}', '\u{0002}', '\u{0003}', '\u{0004}', '\u{0005}', '\u{0006}', '\u{0007}',
+    '\u{0008}', '\u{000B}', '\u{000C}', '\u{000E}', '\u{000F}', '\u{0010}', '\u{0011}', '\u{0012}',
+    '\u{0013}', '\u{0014}', '\u{0015}', '\u{0016}', '\u{0017}', '\u{0018}', '\u{0019}', '\u{001A}',
+    '\u{001B}', '\u{001C}', '\u{001D}', '\u{001E}', '\u{001F}', '\u{007F}',
+    // C1 control characters
+    '\u{0080}', '\u{0081}', '\u{0082}', '\u{0083}', '\u{0084}', '\u{0085}', '\u{0086}', '\u{0087}',
+    '\u{0088}', '\u{0089}', '\u{008A}', '\u{008B}', '\u{008C}', '\u{008D}', '\u{008E}', '\u{008F}',
+    '\u{0090}', '\u{0091}', '\u{0092}', '\u{0093}', '\u{0094}', '\u{0095}', '\u{0096}', '\u{0097}',
+    '\u{0098}', '\u{0099}', '\u{009A}', '\u{009B}', '\u{009C}', '\u{009D}', '\u{009E}', '\u{009F}',
+    // Arabic letter mark (invisible directional control)
+    '\u{061C}',
+    // Invisible separator
+    '\u{2063}',
+    // Interlinear annotation anchors
+    '\u{FFF9}', '\u{FFFA}', '\u{FFFB}',
+    // Noncharacters
+    '\u{FFFE}', '\u{FFFF}',
+];
+
+// =============================================================================
+// P3: Content Validation Functions
+// =============================================================================
+
+/// Check if a string contains any unexpected characters (P3 improvement)
+/// Returns a list of (character, position) for any unexpected characters found
+pub fn find_unexpected_characters(text: &str) -> Vec<(char, usize)> {
+    let mut unexpected = Vec::new();
+    for (pos, c) in text.char_indices() {
+        if UNEXPECTED_CHARACTERS.contains(&c) {
+            unexpected.push((c, pos));
+        }
+    }
+    unexpected
+}
+
+/// Remove unexpected characters from a string (P3 improvement)
+/// Returns the cleaned string
+pub fn clean_unexpected_characters(text: &str) -> String {
+    text.chars()
+        .filter(|c| !UNEXPECTED_CHARACTERS.contains(c))
+        .collect()
+}
+
+/// Validate content fragment size (P3 improvement)
+/// Returns true if the content is within acceptable size limits
+pub fn validate_fragment_size(content: &str) -> bool {
+    content.len() <= MAX_CONTENT_FRAGMENT_SIZE
+}
 
 /// List type for ordered/unordered lists
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,5 +266,70 @@ impl ChapterData {
         }
 
         chunks
+    }
+}
+
+// =============================================================================
+// P3: Content Validation Tests
+// =============================================================================
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn test_find_unexpected_null_character() {
+        let text = "Hello\0World";
+        let unexpected = find_unexpected_characters(text);
+        assert_eq!(unexpected.len(), 1);
+        assert_eq!(unexpected[0], ('\0', 5));
+    }
+
+    #[test]
+    fn test_find_unexpected_c1_control() {
+        let text = "Hello\u{0085}World"; // NEL (Next Line)
+        let unexpected = find_unexpected_characters(text);
+        assert_eq!(unexpected.len(), 1);
+        assert_eq!(unexpected[0], ('\u{0085}', 5));
+    }
+
+    #[test]
+    fn test_find_no_unexpected_characters() {
+        let text = "Hello World! This is normal text with 日本語 and émojis 🎉";
+        let unexpected = find_unexpected_characters(text);
+        assert!(unexpected.is_empty());
+    }
+
+    #[test]
+    fn test_clean_unexpected_characters() {
+        let text = "Hello\0World\u{001F}!";
+        let cleaned = clean_unexpected_characters(text);
+        assert_eq!(cleaned, "HelloWorld!");
+    }
+
+    #[test]
+    fn test_validate_fragment_size_within_limit() {
+        let small_content = "a".repeat(1000);
+        assert!(validate_fragment_size(&small_content));
+    }
+
+    #[test]
+    fn test_validate_fragment_size_at_limit() {
+        let at_limit = "a".repeat(MAX_CONTENT_FRAGMENT_SIZE);
+        assert!(validate_fragment_size(&at_limit));
+    }
+
+    #[test]
+    fn test_validate_fragment_size_exceeds_limit() {
+        let too_large = "a".repeat(MAX_CONTENT_FRAGMENT_SIZE + 1);
+        assert!(!validate_fragment_size(&too_large));
+    }
+
+    #[test]
+    fn test_interlinear_annotation_chars_detected() {
+        // These are used in Japanese ruby/furigana but shouldn't appear in final text
+        let text = "Test\u{FFF9}annotation\u{FFFA}separator\u{FFFB}end";
+        let unexpected = find_unexpected_characters(text);
+        assert_eq!(unexpected.len(), 3);
     }
 }

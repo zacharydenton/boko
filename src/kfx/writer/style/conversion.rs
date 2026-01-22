@@ -4,7 +4,10 @@
 
 use std::collections::HashMap;
 
-use crate::css::{CssValue, FontVariant, ParsedStyle, TextAlign};
+use crate::css::{
+    CssValue, FontVariant, ListStylePosition, ListStyleType, ParsedStyle, TextAlign,
+    TextCombineUpright, WritingMode,
+};
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
 
 use super::{
@@ -23,6 +26,17 @@ fn has_nonzero_value(val: &Option<CssValue>) -> bool {
         Some(CssValue::Rem(v)) => v.abs() > 0.001,
         Some(CssValue::Percent(v)) => v.abs() > 0.001,
         Some(CssValue::Number(v)) => v.abs() > 0.001,
+        // P1: Additional units
+        Some(CssValue::Vw(v)) => v.abs() > 0.001,
+        Some(CssValue::Vh(v)) => v.abs() > 0.001,
+        Some(CssValue::Vmin(v)) => v.abs() > 0.001,
+        Some(CssValue::Vmax(v)) => v.abs() > 0.001,
+        Some(CssValue::Ch(v)) => v.abs() > 0.001,
+        Some(CssValue::Ex(v)) => v.abs() > 0.001,
+        Some(CssValue::Cm(v)) => v.abs() > 0.001,
+        Some(CssValue::Mm(v)) => v.abs() > 0.001,
+        Some(CssValue::In(v)) => v.abs() > 0.001,
+        Some(CssValue::Pt(v)) => v.abs() > 0.001,
         Some(_) => true, // Other values like keywords count as non-zero
     }
 }
@@ -232,6 +246,15 @@ pub fn style_to_ion(
     // Border radius
     add_border_radius(&mut style_ion, style);
 
+    // P1: List style properties
+    add_list_style(&mut style_ion, style);
+
+    // P2: Writing mode
+    add_writing_mode(&mut style_ion, style);
+
+    // P4: Shadow properties
+    add_shadows(&mut style_ion, style);
+
     IonValue::Struct(style_ion)
 }
 
@@ -335,7 +358,8 @@ fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
                 s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
                 Some(IonValue::Struct(s))
             }
-            _ => None,
+            // P1: Handle viewport and other new units via ToKfxIon trait
+            _ => width.to_kfx_ion(),
         };
         if let Some(val) = width_val {
             style_ion.insert(sym::STYLE_WIDTH, val);
@@ -645,6 +669,78 @@ fn add_border_radius(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
                 style_ion.insert(sym, ion_val);
             }
         }
+    }
+}
+
+// P1: List style properties
+fn add_list_style(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // List style type ($100)
+    if let Some(list_type) = style.list_style_type {
+        let type_sym = match list_type {
+            ListStyleType::Disc => sym::LIST_TYPE_DISC,
+            ListStyleType::Circle => sym::LIST_TYPE_CIRCLE,
+            ListStyleType::Square => sym::LIST_TYPE_SQUARE,
+            ListStyleType::Decimal => sym::LIST_TYPE_DECIMAL,
+            ListStyleType::DecimalLeadingZero => sym::LIST_TYPE_DECIMAL, // Fallback
+            ListStyleType::LowerAlpha => sym::LIST_TYPE_LOWER_ALPHA,
+            ListStyleType::UpperAlpha => sym::LIST_TYPE_UPPER_ALPHA,
+            ListStyleType::LowerRoman => sym::LIST_TYPE_LOWER_ROMAN,
+            ListStyleType::UpperRoman => sym::LIST_TYPE_UPPER_ROMAN,
+            ListStyleType::LowerGreek => sym::LIST_TYPE_LOWER_ALPHA, // Fallback
+            ListStyleType::None => sym::LIST_TYPE_NONE,
+        };
+        style_ion.insert(sym::LIST_TYPE, IonValue::Symbol(type_sym));
+    }
+
+    // List style position ($551)
+    if let Some(position) = style.list_style_position {
+        let pos_sym = match position {
+            ListStylePosition::Inside => sym::LIST_POSITION_INSIDE,
+            ListStylePosition::Outside => sym::LIST_POSITION_OUTSIDE,
+        };
+        style_ion.insert(sym::LIST_POSITION, IonValue::Symbol(pos_sym));
+    }
+}
+
+// P2: Writing mode
+fn add_writing_mode(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Writing mode ($560)
+    if let Some(mode) = style.writing_mode {
+        let mode_sym = match mode {
+            WritingMode::HorizontalTb => sym::WRITING_MODE_HORIZONTAL_TB,
+            WritingMode::VerticalRl => sym::WRITING_MODE_VERTICAL_RL,
+            WritingMode::VerticalLr => sym::WRITING_MODE_VERTICAL_LR,
+        };
+        // Only output if not default horizontal-tb
+        if mode != WritingMode::HorizontalTb {
+            style_ion.insert(sym::WRITING_MODE, IonValue::Symbol(mode_sym));
+        }
+    }
+
+    // Text combine upright ($561)
+    if let Some(combine) = style.text_combine_upright {
+        match combine {
+            TextCombineUpright::All => {
+                style_ion.insert(sym::TEXT_COMBINE_UPRIGHT, IonValue::Bool(true));
+            }
+            TextCombineUpright::Digits(n) if n > 0 => {
+                style_ion.insert(sym::TEXT_COMBINE_UPRIGHT, IonValue::Int(n as i64));
+            }
+            _ => {}
+        }
+    }
+}
+
+// P4: Shadow properties
+fn add_shadows(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Box shadow ($496) - store as string for now (simplified)
+    if let Some(ref shadow) = style.box_shadow {
+        style_ion.insert(sym::BOX_SHADOW, IonValue::String(shadow.clone()));
+    }
+
+    // Text shadow ($497) - store as string for now (simplified)
+    if let Some(ref shadow) = style.text_shadow {
+        style_ion.insert(sym::TEXT_SHADOW, IonValue::String(shadow.clone()));
     }
 }
 
@@ -1120,6 +1216,238 @@ mod tests {
             "line-height: 0 with font-size: 75% should become ~{} in KFX, got {}",
             expected,
             value
+        );
+    }
+
+    // P1 Tests: List style properties
+    #[test]
+    fn test_list_style_type_decimal() {
+        let style = ParsedStyle {
+            list_style_type: Some(crate::css::ListStyleType::Decimal),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::LIST_TYPE),
+            "Style should have LIST_TYPE"
+        );
+        match ion_map.get(&sym::LIST_TYPE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::LIST_TYPE_DECIMAL, "Expected decimal list type");
+            }
+            _ => panic!("Expected symbol for LIST_TYPE"),
+        }
+    }
+
+    #[test]
+    fn test_list_style_type_disc() {
+        let style = ParsedStyle {
+            list_style_type: Some(crate::css::ListStyleType::Disc),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::LIST_TYPE),
+            "Style should have LIST_TYPE"
+        );
+        match ion_map.get(&sym::LIST_TYPE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::LIST_TYPE_DISC, "Expected disc list type");
+            }
+            _ => panic!("Expected symbol for LIST_TYPE"),
+        }
+    }
+
+    #[test]
+    fn test_list_style_position_inside() {
+        let style = ParsedStyle {
+            list_style_position: Some(crate::css::ListStylePosition::Inside),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::LIST_POSITION),
+            "Style should have LIST_POSITION"
+        );
+        match ion_map.get(&sym::LIST_POSITION) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::LIST_POSITION_INSIDE, "Expected inside position");
+            }
+            _ => panic!("Expected symbol for LIST_POSITION"),
+        }
+    }
+
+    // P1 Tests: Additional CSS units
+    #[test]
+    fn test_viewport_width_unit() {
+        let style = ParsedStyle {
+            width: Some(crate::css::CssValue::Vw(50.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::STYLE_WIDTH),
+            "Style should have STYLE_WIDTH"
+        );
+    }
+
+    #[test]
+    fn test_viewport_height_unit() {
+        let style = ParsedStyle {
+            height: Some(crate::css::CssValue::Vh(100.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::STYLE_HEIGHT),
+            "Style should have STYLE_HEIGHT"
+        );
+    }
+
+    // P2 Tests: Writing mode
+    #[test]
+    fn test_writing_mode_vertical_rl() {
+        let style = ParsedStyle {
+            writing_mode: Some(crate::css::WritingMode::VerticalRl),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::WRITING_MODE),
+            "Style should have WRITING_MODE"
+        );
+        match ion_map.get(&sym::WRITING_MODE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::WRITING_MODE_VERTICAL_RL,
+                    "Expected vertical-rl writing mode"
+                );
+            }
+            _ => panic!("Expected symbol for WRITING_MODE"),
+        }
+    }
+
+    #[test]
+    fn test_writing_mode_horizontal_tb_not_output() {
+        // Horizontal-tb is the default and should not be output
+        let style = ParsedStyle {
+            writing_mode: Some(crate::css::WritingMode::HorizontalTb),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Default horizontal-tb should not be output
+        assert!(
+            !ion_map.contains_key(&sym::WRITING_MODE),
+            "Default horizontal-tb should not output WRITING_MODE"
+        );
+    }
+
+    // P4 Tests: Shadow properties
+    #[test]
+    fn test_box_shadow() {
+        let style = ParsedStyle {
+            box_shadow: Some("2px 2px 4px #000".to_string()),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::BOX_SHADOW),
+            "Style should have BOX_SHADOW"
+        );
+    }
+
+    #[test]
+    fn test_text_shadow() {
+        let style = ParsedStyle {
+            text_shadow: Some("1px 1px 2px black".to_string()),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TEXT_SHADOW),
+            "Style should have TEXT_SHADOW"
         );
     }
 }

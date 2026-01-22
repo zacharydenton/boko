@@ -66,6 +66,98 @@ impl ToKfxIon for CssValue {
                 s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
                 Some(IonValue::Struct(s))
             }
+            // P1: Additional viewport units
+            CssValue::Vw(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VW));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Vh(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VH));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Vmin(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VMIN));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Vmax(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VMAX));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Ch(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_CH));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Ex(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EX));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            // Physical units - convert to px equivalent for KFX
+            CssValue::Cm(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_CM));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Mm(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MM));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::In(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_IN));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
+            CssValue::Pt(v) => {
+                if v.abs() < 0.001 {
+                    return None;
+                }
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX)); // pt uses px symbol
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
+                Some(IonValue::Struct(s))
+            }
             _ => None,
         }
     }

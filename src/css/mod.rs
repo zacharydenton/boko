@@ -19,6 +19,27 @@ pub enum CssValue {
     Keyword(String),
     /// Unitless number (for line-height)
     Number(f32),
+    // Additional units (P1 improvement)
+    /// Viewport width (1vw = 1% of viewport width)
+    Vw(f32),
+    /// Viewport height (1vh = 1% of viewport height)
+    Vh(f32),
+    /// Viewport minimum (min of vw, vh)
+    Vmin(f32),
+    /// Viewport maximum (max of vw, vh)
+    Vmax(f32),
+    /// Character width unit (width of '0')
+    Ch(f32),
+    /// x-height unit (height of lowercase 'x')
+    Ex(f32),
+    /// Centimeters
+    Cm(f32),
+    /// Millimeters
+    Mm(f32),
+    /// Inches
+    In(f32),
+    /// Points (1pt = 1/72 inch)
+    Pt(f32),
 }
 
 impl Eq for CssValue {}
@@ -48,6 +69,46 @@ impl std::hash::Hash for CssValue {
             }
             CssValue::Number(v) => {
                 state.write_u8(5);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Vw(v) => {
+                state.write_u8(6);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Vh(v) => {
+                state.write_u8(7);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Vmin(v) => {
+                state.write_u8(8);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Vmax(v) => {
+                state.write_u8(9);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Ch(v) => {
+                state.write_u8(10);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Ex(v) => {
+                state.write_u8(11);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Cm(v) => {
+                state.write_u8(12);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Mm(v) => {
+                state.write_u8(13);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::In(v) => {
+                state.write_u8(14);
+                ((v * 100.0) as i32).hash(state);
+            }
+            CssValue::Pt(v) => {
+                state.write_u8(15);
                 ((v * 100.0) as i32).hash(state);
             }
         }
@@ -223,6 +284,49 @@ pub enum Visibility {
     Collapse,
 }
 
+/// List style type (P1 improvement)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ListStyleType {
+    #[default]
+    Disc,
+    Circle,
+    Square,
+    Decimal,
+    DecimalLeadingZero,
+    LowerAlpha,
+    UpperAlpha,
+    LowerRoman,
+    UpperRoman,
+    LowerGreek,
+    None,
+}
+
+/// List style position (P1 improvement)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ListStylePosition {
+    #[default]
+    Outside,
+    Inside,
+}
+
+/// Writing mode (P2 improvement)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum WritingMode {
+    #[default]
+    HorizontalTb,
+    VerticalRl,
+    VerticalLr,
+}
+
+/// Text combine upright (P2 improvement for vertical text)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextCombineUpright {
+    #[default]
+    None,
+    All,
+    Digits(u8),
+}
+
 /// Parsed CSS style properties
 /// Note: Custom Hash/Eq implementation excludes image_width_px and image_height_px
 /// since they don't affect KFX style output and would cause duplicate styles.
@@ -285,6 +389,15 @@ pub struct ParsedStyle {
     pub image_height_px: Option<u32>,
     /// Language tag from xml:lang or lang attribute (e.g., "en-us", "la")
     pub lang: Option<String>,
+    // P1: List style properties
+    pub list_style_type: Option<ListStyleType>,
+    pub list_style_position: Option<ListStylePosition>,
+    // P2: Writing mode properties
+    pub writing_mode: Option<WritingMode>,
+    pub text_combine_upright: Option<TextCombineUpright>,
+    // P4: Shadow properties
+    pub box_shadow: Option<String>,
+    pub text_shadow: Option<String>,
 }
 
 impl ParsedStyle {
@@ -446,6 +559,27 @@ impl ParsedStyle {
         // Language - child overrides parent
         if other.lang.is_some() {
             self.lang.clone_from(&other.lang);
+        }
+        // P1: List style properties
+        if other.list_style_type.is_some() {
+            self.list_style_type = other.list_style_type;
+        }
+        if other.list_style_position.is_some() {
+            self.list_style_position = other.list_style_position;
+        }
+        // P2: Writing mode properties
+        if other.writing_mode.is_some() {
+            self.writing_mode = other.writing_mode;
+        }
+        if other.text_combine_upright.is_some() {
+            self.text_combine_upright = other.text_combine_upright;
+        }
+        // P4: Shadow properties
+        if other.box_shadow.is_some() {
+            self.box_shadow.clone_from(&other.box_shadow);
+        }
+        if other.text_shadow.is_some() {
+            self.text_shadow.clone_from(&other.text_shadow);
         }
     }
 
@@ -649,6 +783,17 @@ fn css_value_to_string(val: &CssValue) -> String {
         CssValue::Percent(v) => format!("{}%", format_number(*v)),
         CssValue::Number(v) => format_number(*v),
         CssValue::Keyword(k) => k.clone(),
+        // P1: Additional units
+        CssValue::Vw(v) => format!("{}vw", format_number(*v)),
+        CssValue::Vh(v) => format!("{}vh", format_number(*v)),
+        CssValue::Vmin(v) => format!("{}vmin", format_number(*v)),
+        CssValue::Vmax(v) => format!("{}vmax", format_number(*v)),
+        CssValue::Ch(v) => format!("{}ch", format_number(*v)),
+        CssValue::Ex(v) => format!("{}ex", format_number(*v)),
+        CssValue::Cm(v) => format!("{}cm", format_number(*v)),
+        CssValue::Mm(v) => format!("{}mm", format_number(*v)),
+        CssValue::In(v) => format!("{}in", format_number(*v)),
+        CssValue::Pt(v) => format!("{}pt", format_number(*v)),
     }
 }
 
@@ -777,6 +922,15 @@ impl PartialEq for ParsedStyle {
             && self.is_inline == other.is_inline
             // Note: image_width_px and image_height_px are intentionally excluded
             && self.lang == other.lang
+            // P1: List style properties
+            && self.list_style_type == other.list_style_type
+            && self.list_style_position == other.list_style_position
+            // P2: Writing mode properties
+            && self.writing_mode == other.writing_mode
+            && self.text_combine_upright == other.text_combine_upright
+            // P4: Shadow properties
+            && self.box_shadow == other.box_shadow
+            && self.text_shadow == other.text_shadow
     }
 }
 
@@ -835,6 +989,15 @@ impl std::hash::Hash for ParsedStyle {
         self.is_inline.hash(state);
         // Note: image_width_px and image_height_px are intentionally excluded
         self.lang.hash(state);
+        // P1: List style properties
+        self.list_style_type.hash(state);
+        self.list_style_position.hash(state);
+        // P2: Writing mode properties
+        self.writing_mode.hash(state);
+        self.text_combine_upright.hash(state);
+        // P4: Shadow properties
+        self.box_shadow.hash(state);
+        self.text_shadow.hash(state);
     }
 }
 
@@ -1281,6 +1444,37 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                 style.opacity = Some((clamped * 100.0) as u8);
             }
         }
+        // P1: List style properties
+        "list-style-type" => {
+            style.list_style_type = parse_list_style_type(values);
+        }
+        "list-style-position" => {
+            style.list_style_position = parse_list_style_position(values);
+        }
+        "list-style" => {
+            // Shorthand: can contain type, position, and image
+            // Parse type and position, ignore image for now
+            if style.list_style_type.is_none() {
+                style.list_style_type = parse_list_style_type(values);
+            }
+            if style.list_style_position.is_none() {
+                style.list_style_position = parse_list_style_position(values);
+            }
+        }
+        // P2: Writing mode properties
+        "writing-mode" => {
+            style.writing_mode = parse_writing_mode(values);
+        }
+        "text-combine-upright" | "-webkit-text-combine" => {
+            style.text_combine_upright = parse_text_combine_upright(values);
+        }
+        // P4: Shadow properties
+        "box-shadow" => {
+            style.box_shadow = parse_shadow_value(values);
+        }
+        "text-shadow" => {
+            style.text_shadow = parse_shadow_value(values);
+        }
         _ => {
             // Ignore unsupported properties
         }
@@ -1513,6 +1707,17 @@ fn parse_single_length(token: &Token) -> Option<CssValue> {
                 "px" => Some(CssValue::Px(*value)),
                 "em" => Some(CssValue::Em(*value)),
                 "rem" => Some(CssValue::Rem(*value)),
+                // P1: Additional units
+                "vw" => Some(CssValue::Vw(*value)),
+                "vh" => Some(CssValue::Vh(*value)),
+                "vmin" => Some(CssValue::Vmin(*value)),
+                "vmax" => Some(CssValue::Vmax(*value)),
+                "ch" => Some(CssValue::Ch(*value)),
+                "ex" => Some(CssValue::Ex(*value)),
+                "cm" => Some(CssValue::Cm(*value)),
+                "mm" => Some(CssValue::Mm(*value)),
+                "in" => Some(CssValue::In(*value)),
+                "pt" => Some(CssValue::Pt(*value)),
                 _ => None,
             }
         }
@@ -1629,6 +1834,109 @@ fn parse_break_value(values: &[Token]) -> Option<BreakValue> {
         }
     }
     None
+}
+
+// P1: List style type parsing
+fn parse_list_style_type(values: &[Token]) -> Option<ListStyleType> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "disc" => return Some(ListStyleType::Disc),
+                "circle" => return Some(ListStyleType::Circle),
+                "square" => return Some(ListStyleType::Square),
+                "decimal" => return Some(ListStyleType::Decimal),
+                "decimal-leading-zero" => return Some(ListStyleType::DecimalLeadingZero),
+                "lower-alpha" | "lower-latin" => return Some(ListStyleType::LowerAlpha),
+                "upper-alpha" | "upper-latin" => return Some(ListStyleType::UpperAlpha),
+                "lower-roman" => return Some(ListStyleType::LowerRoman),
+                "upper-roman" => return Some(ListStyleType::UpperRoman),
+                "lower-greek" => return Some(ListStyleType::LowerGreek),
+                "none" => return Some(ListStyleType::None),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+// P1: List style position parsing
+fn parse_list_style_position(values: &[Token]) -> Option<ListStylePosition> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "inside" => return Some(ListStylePosition::Inside),
+                "outside" => return Some(ListStylePosition::Outside),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+// P2: Writing mode parsing
+fn parse_writing_mode(values: &[Token]) -> Option<WritingMode> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "horizontal-tb" => return Some(WritingMode::HorizontalTb),
+                "vertical-rl" => return Some(WritingMode::VerticalRl),
+                "vertical-lr" => return Some(WritingMode::VerticalLr),
+                // Legacy values
+                "lr" | "lr-tb" | "rl" | "rl-tb" => return Some(WritingMode::HorizontalTb),
+                "tb" | "tb-rl" => return Some(WritingMode::VerticalRl),
+                "tb-lr" => return Some(WritingMode::VerticalLr),
+                _ => continue,
+            }
+        }
+    }
+    None
+}
+
+// P2: Text combine upright parsing
+fn parse_text_combine_upright(values: &[Token]) -> Option<TextCombineUpright> {
+    for token in values {
+        if let Token::Ident(name) = token {
+            match name.to_ascii_lowercase().as_str() {
+                "none" => return Some(TextCombineUpright::None),
+                "all" => return Some(TextCombineUpright::All),
+                _ => continue,
+            }
+        }
+    }
+    // Check for digits(N) function - simplified parsing
+    None
+}
+
+// P4: Parse shadow value as raw string (box-shadow, text-shadow)
+fn parse_shadow_value(values: &[Token]) -> Option<String> {
+    if values.is_empty() {
+        return None;
+    }
+    // Check for "none" keyword
+    if values.len() == 1 {
+        if let Token::Ident(name) = &values[0] {
+            if name.to_ascii_lowercase() == "none" {
+                return None;
+            }
+        }
+    }
+    // Collect all tokens as a string (simplified)
+    let parts: Vec<String> = values
+        .iter()
+        .filter_map(|t| match t {
+            Token::Dimension { value, unit, .. } => Some(format!("{}{}", value, unit)),
+            Token::Number { value, .. } => Some(format!("{}", value)),
+            Token::Ident(name) => Some(name.to_string()),
+            Token::Hash(h) => Some(format!("#{}", h)),
+            Token::Comma => Some(",".to_string()),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
 }
 
 #[cfg(test)]

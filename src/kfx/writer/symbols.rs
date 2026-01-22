@@ -74,10 +74,19 @@ pub mod sym {
     pub const UNIT: u64 = 306; // $306 - unit field in value struct
     pub const VALUE: u64 = 307; // $307 - value field in value struct
     pub const UNIT_EM: u64 = 308; // $308 - em unit (for text-indent, letter-spacing, etc.)
+    pub const UNIT_EX: u64 = 309; // $309 - ex unit (x-height)
     pub const UNIT_MULTIPLIER: u64 = 310; // $310 - multiplier unit (for line-height, margins)
+    pub const UNIT_VW: u64 = 311; // $311 - vw unit (viewport width)
+    pub const UNIT_VH: u64 = 312; // $312 - vh unit (viewport height)
+    pub const UNIT_VMIN: u64 = 313; // $313 - vmin unit (viewport minimum)
     pub const UNIT_PERCENT: u64 = 314; // $314 - percent unit (for margin-left/right, width)
+    pub const UNIT_CM: u64 = 315; // $315 - cm unit (centimeters)
+    pub const UNIT_MM: u64 = 316; // $316 - mm unit (millimeters)
+    pub const UNIT_IN: u64 = 317; // $317 - in unit (inches)
     pub const UNIT_PX: u64 = 318; // $318 - px/points unit
     pub const UNIT_EM_FONTSIZE: u64 = 505; // $505 - em unit specifically for font-size
+    pub const UNIT_CH: u64 = 506; // $506 - ch unit (character width)
+    pub const UNIT_VMAX: u64 = 507; // $507 - vmax unit (viewport maximum)
 
     // ==========================================================================
     // TEXT ALIGNMENT VALUES ($34)
@@ -178,6 +187,25 @@ pub mod sym {
     // Note: $383 (BLOCK_TYPE_BLOCK) = auto
 
     // ==========================================================================
+    // SHADOW PROPERTIES ($496, $497) - P4 improvement
+    // ==========================================================================
+    pub const BOX_SHADOW: u64 = 496; // $496 - box-shadow property
+    pub const TEXT_SHADOW: u64 = 497; // $497 - text-shadow property
+
+    // ==========================================================================
+    // WRITING MODE ($560) - P2 improvement
+    // ==========================================================================
+    pub const WRITING_MODE: u64 = 560; // $560 - writing-mode property
+    pub const WRITING_MODE_HORIZONTAL_TB: u64 = 557; // $557 - horizontal-tb
+    pub const WRITING_MODE_VERTICAL_LR: u64 = 558; // $558 - vertical-lr
+    pub const WRITING_MODE_VERTICAL_RL: u64 = 559; // $559 - vertical-rl
+
+    // ==========================================================================
+    // TEXT COMBINE UPRIGHT ($561)
+    // ==========================================================================
+    pub const TEXT_COMBINE_UPRIGHT: u64 = 561; // $561 - text-combine-upright property
+
+    // ==========================================================================
     // BORDER RADIUS ($459-$462)
     // ==========================================================================
     pub const BORDER_RADIUS_TL: u64 = 459; // $459 - border-top-left-radius
@@ -213,12 +241,28 @@ pub mod sym {
     pub const BLOCK_TYPE_BLOCK: u64 = 383; // $383 - block display value
     pub const BLOCK_TYPE_INLINE: u64 = 349; // $349 - inline display value
 
-    // List symbols (for ol/ul)
-    pub const LIST_TYPE: u64 = 100; // $100 - list type property on container
-    pub const LIST_TYPE_DECIMAL: u64 = 343; // $343 - decimal numbered list (ol)
+    // ==========================================================================
+    // LIST STYLE TYPE VALUES ($100) - P1 improvement
+    // ==========================================================================
+    pub const LIST_TYPE: u64 = 100; // $100 - list-style-type property
+    pub const LIST_TYPE_DISC: u64 = 340; // $340 - list-style-type: disc
+    pub const LIST_TYPE_SQUARE: u64 = 341; // $341 - list-style-type: square
+    pub const LIST_TYPE_CIRCLE: u64 = 342; // $342 - list-style-type: circle
+    pub const LIST_TYPE_DECIMAL: u64 = 343; // $343 - list-style-type: decimal
+    pub const LIST_TYPE_LOWER_ROMAN: u64 = 344; // $344 - list-style-type: lower-roman
+    pub const LIST_TYPE_UPPER_ROMAN: u64 = 345; // $345 - list-style-type: upper-roman
+    pub const LIST_TYPE_LOWER_ALPHA: u64 = 346; // $346 - list-style-type: lower-alpha
+    pub const LIST_TYPE_UPPER_ALPHA: u64 = 347; // $347 - list-style-type: upper-alpha
+    pub const LIST_TYPE_NONE: u64 = 349; // $349 - list-style-type: none
+
+    // List style position ($551)
+    pub const LIST_POSITION: u64 = 551; // $551 - list-style-position property
+    pub const LIST_POSITION_INSIDE: u64 = 552; // $552 - list-style-position: inside
+    pub const LIST_POSITION_OUTSIDE: u64 = 553; // $553 - list-style-position: outside
+
+    // List content types
     pub const CONTENT_LIST: u64 = 276; // $276 - content type for list container (ol/ul)
     pub const CONTENT_LIST_ITEM: u64 = 277; // $277 - content type for list item (li)
-    // Note: Unordered list (ul) bullet type symbol TBD - needs investigation
 
     // Content symbols
     pub const SECTION_CONTENT: u64 = 141; // $141 - section content list
