@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from kfx_loader import load_kfx
 from kfx_symbols import format_symbol
+from kfx_to_css import KfxStyleConverter, kfx_style_to_css_string
 
 
 # ANSI colors (disabled if not a tty)
@@ -551,6 +552,119 @@ def analyze_styles(frags1, frags2):
             print(f"    + {format_value(p, 3, 80)}")
 
 
+def output_css_styles(kfx_file, output_file=None):
+    """Output all KFX styles as CSS classes, one per line."""
+    frags, _ = load_kfx(kfx_file)
+    converter = KfxStyleConverter()
+
+    css_lines = []
+
+    for frag in frags.get_all("$157"):  # STYLE fragments
+        # Get raw style data (not normalized - we need original symbols)
+        style_data = {}
+        raw_val = frag.value
+        if hasattr(raw_val, 'value'):
+            raw_val = raw_val.value
+
+        if hasattr(raw_val, 'items'):
+            for k, v in raw_val.items():
+                # Convert key to int if it's a symbol
+                key_str = str(k)
+                if key_str.startswith('$'):
+                    try:
+                        key_int = int(key_str[1:])
+                        style_data[key_int] = v
+                    except ValueError:
+                        style_data[key_str] = v
+                else:
+                    style_data[key_str] = v
+
+        # Get style name for class name
+        style_name = style_data.get(173, frag.fid)  # STYLE_NAME
+        if isinstance(style_name, str) and style_name.startswith('$'):
+            class_name = style_name[1:]  # Remove $ prefix
+        else:
+            class_name = str(style_name).replace('$', '')
+
+        # Convert to CSS
+        css_str = converter.to_css_string(style_data)
+        if css_str:
+            css_lines.append(f".{class_name} {{ {css_str}; }}")
+        else:
+            css_lines.append(f".{class_name} {{ /* empty */ }}")
+
+    # Output
+    output = "\n".join(css_lines)
+
+    if output_file:
+        with open(output_file, 'w') as f:
+            f.write(output + "\n")
+        print(f"Wrote {len(css_lines)} CSS classes to {output_file}")
+    else:
+        print(f"/* {len(css_lines)} KFX styles from {kfx_file} */")
+        print(output)
+
+
+def compare_css_styles(file1, file2):
+    """Compare CSS representation of styles from two KFX files."""
+    frags1, _ = load_kfx(file1)
+    frags2, _ = load_kfx(file2)
+    converter = KfxStyleConverter()
+
+    def get_css_styles(frags):
+        styles = {}
+        for frag in frags.get_all("$157"):
+            style_data = {}
+            raw_val = frag.value
+            if hasattr(raw_val, 'value'):
+                raw_val = raw_val.value
+
+            if hasattr(raw_val, 'items'):
+                for k, v in raw_val.items():
+                    key_str = str(k)
+                    if key_str.startswith('$'):
+                        try:
+                            key_int = int(key_str[1:])
+                            style_data[key_int] = v
+                        except ValueError:
+                            pass
+
+            css_str = converter.to_css_string(style_data)
+            # Use CSS as the key for deduplication
+            if css_str not in styles:
+                styles[css_str] = []
+            styles[css_str].append(frag.fid)
+        return styles
+
+    styles1 = get_css_styles(frags1)
+    styles2 = get_css_styles(frags2)
+
+    print(f"{BOLD}CSS Style Comparison{RESET}")
+    print(f"  File 1: {file1} ({len(styles1)} unique CSS)")
+    print(f"  File 2: {file2} ({len(styles2)} unique CSS)")
+    print()
+
+    common = set(styles1.keys()) & set(styles2.keys())
+    only1 = set(styles1.keys()) - set(styles2.keys())
+    only2 = set(styles2.keys()) - set(styles1.keys())
+
+    print(f"  Common CSS styles: {len(common)}")
+    print(f"  Only in file1: {len(only1)}")
+    print(f"  Only in file2: {len(only2)}")
+
+    if only1:
+        print(f"\n{RED}Styles only in file1:{RESET}")
+        for css in sorted(only1):
+            if css:
+                print(f"  .style {{ {css}; }}")
+
+    if only2:
+        print(f"\n{GREEN}Styles only in file2:{RESET}")
+        for css in sorted(only2):
+            if css:
+                print(f"  .style {{ {css}; }}")
+
+
 def smart_diff(file1, file2, sections=None):
     """Perform smart diff between two KFX files."""
     print(f"{BOLD}KFX Smart Diff{RESET}")
@@ -993,7 +1107,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Smart KFX diff with semantic matching and deep diffs")
     parser.add_argument("file1", help="First KFX file")
-    parser.add_argument("file2", help="Second KFX file to compare")
+    parser.add_argument("file2", nargs="?", help="Second KFX file to compare (optional for --css)")
     parser.add_argument("--section", "-s", action="append",
                         choices=["text", "styles", "sections", "storylines", "anchors", "all"],
                         help="Section(s) to analyze (default: all)")
@@ -1003,15 +1117,32 @@ def main():
                         help="Source EPUB file to show original XHTML and CSS (use with --content)")
     parser.add_argument("--full", "-f", action="store_true",
                         help="Full fragment-by-fragment diff (comprehensive)")
+    parser.add_argument("--css", action="store_true",
+                        help="Output styles as CSS (one class per line)")
+    parser.add_argument("--css-compare", action="store_true",
+                        help="Compare CSS representation of styles")
+    parser.add_argument("--css-output", "-o", type=str,
+                        help="Output CSS to file (use with --css)")
 
     args = parser.parse_args()
 
     if not os.path.exists(args.file1):
         print(f"Error: {args.file1} not found")
         sys.exit(1)
+
+    # CSS output mode - only needs file1
+    if args.css:
+        output_css_styles(args.file1, args.css_output)
+        return
+
     if not os.path.exists(args.file2):
         print(f"Error: {args.file2} not found")
         sys.exit(1)
+
+    # CSS comparison mode
+    if args.css_compare:
+        compare_css_styles(args.file1, args.file2)
+        return
 
     if args.content:
         # Focus on specific content section
