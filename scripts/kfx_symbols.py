@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-KFX Symbol Name Resolution - Extracts readable names from boko's Rust source.
+KFX Symbol Name Resolution - Extracts readable names from multiple sources.
 
-This module parses the symbol constants from src/kfx/writer.rs and provides
-a lookup table for converting symbol IDs (like $492) to readable names
-(like METADATA_KEY).
+This module provides symbol name lookup by combining:
+1. Rust symbol constants from src/kfx/writer/symbols.rs (structural names)
+2. CSS property names from kfxlib's yj_to_epub_properties.py (CSS names)
+
+Symbol IDs (like $492) are converted to readable names (like METADATA_KEY).
 """
 
 import re
@@ -14,6 +16,7 @@ from pathlib import Path
 # Cache for parsed symbols
 _SYMBOL_NAMES = None
 _RUST_SOURCE = None
+_CSS_PROPERTY_NAMES = None
 
 
 def _find_rust_source():
@@ -25,6 +28,19 @@ def _find_rust_source():
         script_dir.parent / "src" / "kfx" / "writer.rs",
         script_dir / ".." / "src" / "kfx" / "writer" / "symbols.rs",
         script_dir / ".." / "src" / "kfx" / "writer.rs",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path.resolve()
+    return None
+
+
+def _find_yj_properties():
+    """Find yj_to_epub_properties.py from kfxlib."""
+    script_dir = Path(__file__).parent
+    candidates = [
+        script_dir.parent / "kfxinput" / "kfxlib" / "yj_to_epub_properties.py",
+        script_dir / ".." / "kfxinput" / "kfxlib" / "yj_to_epub_properties.py",
     ]
     for path in candidates:
         if path.exists():
@@ -57,13 +73,65 @@ def _parse_rust_symbols(source_path):
     return symbols
 
 
+def _parse_yj_properties(source_path):
+    """Parse CSS property names from yj_to_epub_properties.py."""
+    css_names = {}
+
+    if not source_path or not os.path.exists(source_path):
+        return css_names
+
+    with open(source_path, "r") as f:
+        content = f.read()
+
+    # Match: "$123": Prop("css-property-name", ...)
+    pattern = r'"\$(\d+)":\s*Prop\("([^"]+)"'
+
+    for match in re.finditer(pattern, content):
+        num = int(match.group(1))
+        css_name = match.group(2)
+        symbol = f"${num}"
+
+        # Store CSS property name
+        css_names[symbol] = css_name
+
+    # Also parse YJ_LENGTH_UNITS
+    units_match = re.search(r'YJ_LENGTH_UNITS\s*=\s*\{([^}]+)\}', content, re.DOTALL)
+    if units_match:
+        unit_pattern = re.compile(r'"\$(\d+)":\s*"([^"]+)"')
+        for match in unit_pattern.finditer(units_match.group(1)):
+            num = int(match.group(1))
+            unit_name = match.group(2)
+            css_names[f"${num}"] = f"UNIT_{unit_name.upper()}"
+
+    return css_names
+
+
+def get_css_property_names():
+    """Get CSS property names from yj_to_epub_properties.py."""
+    global _CSS_PROPERTY_NAMES
+
+    if _CSS_PROPERTY_NAMES is None:
+        yj_path = _find_yj_properties()
+        _CSS_PROPERTY_NAMES = _parse_yj_properties(yj_path)
+
+    return _CSS_PROPERTY_NAMES
+
+
 def get_symbol_names():
-    """Get the symbol name lookup dictionary."""
+    """Get the symbol name lookup dictionary (Rust names preferred)."""
     global _SYMBOL_NAMES, _RUST_SOURCE
 
     if _SYMBOL_NAMES is None:
         _RUST_SOURCE = _find_rust_source()
         _SYMBOL_NAMES = _parse_rust_symbols(_RUST_SOURCE)
+
+        # Merge in CSS property names for symbols we don't have
+        css_names = get_css_property_names()
+        for sym, css_name in css_names.items():
+            if sym not in _SYMBOL_NAMES:
+                # Convert css-name to CSS_NAME format
+                rust_style = css_name.replace('-', '_').upper()
+                _SYMBOL_NAMES[sym] = rust_style
 
     return _SYMBOL_NAMES
 

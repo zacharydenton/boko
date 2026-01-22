@@ -5,6 +5,8 @@ KFX to CSS Conversion - Convert KFX style fragments to CSS.
 This module provides bidirectional mapping between KFX style properties
 and CSS. Each KFX style can be converted to a CSS class definition.
 
+Mappings are imported from kfxlib's yj_to_epub_properties.py for accuracy.
+
 Usage:
     from kfx_to_css import kfx_style_to_css, KfxStyleConverter
 
@@ -12,140 +14,144 @@ Usage:
     css_text = KfxStyleConverter().to_css_class(style_data, "style-1")
 """
 
+import sys
+import re
+from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 
 # =============================================================================
-# KFX Symbol to CSS Property Mapping
+# Import mappings from kfxlib's yj_to_epub_properties.py
 # =============================================================================
 
-# KFX property symbols -> CSS property names
-KFX_PROPERTY_TO_CSS = {
-    # Font properties
-    11: "font-family",      # $11 FONT_FAMILY
-    12: "font-style",       # $12 FONT_STYLE
-    13: "font-weight",      # $13 FONT_WEIGHT
-    16: "font-size",        # $16 FONT_SIZE
-    583: "font-variant",    # $583 FONT_VARIANT
+def _load_yj_mappings():
+    """Load property and unit mappings from yj_to_epub_properties.py."""
+    script_dir = Path(__file__).parent
+    yj_path = script_dir.parent / 'kfxinput' / 'kfxlib' / 'yj_to_epub_properties.py'
 
-    # Text properties
-    19: "color",            # $19 COLOR
-    34: "text-align",       # $34 TEXT_ALIGN
-    36: "text-indent",      # $36 TEXT_INDENT
-    41: "text-transform",   # $41 TEXT_TRANSFORM
-    42: "line-height",      # $42 LINE_HEIGHT
-    44: "vertical-align",   # $44 VERTICAL_ALIGN
-    45: "white-space",      # $45 WHITE_SPACE (nowrap)
+    property_to_css = {}
+    value_mappings = {}  # property_id -> {value_id: css_value}
+    unit_values = {}
 
-    # Spacing/margins
-    47: "margin-top",       # $47 SPACE_BEFORE
-    48: "margin-left",      # $48 MARGIN_LEFT
-    49: "margin-bottom",    # $49 SPACE_AFTER
-    50: "margin-right",     # $50 MARGIN_RIGHT
+    if not yj_path.exists():
+        print(f"Warning: {yj_path} not found, using fallback mappings", file=sys.stderr)
+        return None, None, None
 
-    # Dimensions
-    56: "width",            # $56 STYLE_WIDTH
-    57: "height",           # $57 STYLE_HEIGHT
-    65: "max-width",        # $65 MAX_WIDTH
-    66: "max-height",       # $66 MAX_HEIGHT
-    67: "min-width",        # $67 MIN_WIDTH
-    68: "min-height",       # $68 MIN_HEIGHT
+    content = yj_path.read_text()
 
-    # Image properties
-    546: "object-fit",      # $546 IMAGE_FIT
-    580: "object-position", # $580 IMAGE_LAYOUT (approximation)
+    # Parse YJ_PROPERTY_INFO
+    prop_pattern = re.compile(r'"\$(\d+)":\s*Prop\("([^"]+)"(?:,\s*\{([^}]*)\})?\)')
+    for match in prop_pattern.finditer(content):
+        sym_id = int(match.group(1))
+        css_name = match.group(2)
+        values_str = match.group(3)
 
-    # Text decoration
-    20: "text-decoration",  # $20 TEXT_DECORATION_UNDERLINE (partial)
-    21: "text-decoration",  # $21 TEXT_DECORATION_OVERLINE (partial)
-    22: "text-decoration",  # $22 TEXT_DECORATION_LINE_THROUGH (partial)
+        # Skip -kfx- prefixed properties (internal KFX)
+        if not css_name.startswith('-kfx-') and not css_name.startswith('-amzn-'):
+            property_to_css[sym_id] = css_name
 
-    # Break properties
-    135: "break-inside",    # $135 BREAK_INSIDE
-    788: "break-after",     # $788 BREAK_AFTER
+        # Parse value mappings
+        if values_str:
+            val_pattern = re.compile(r'"\$(\d+)":\s*"([^"]*)"')
+            for val_match in val_pattern.finditer(values_str):
+                val_id = int(val_match.group(1))
+                val_name = val_match.group(2)
+                if sym_id not in value_mappings:
+                    value_mappings[sym_id] = {}
+                value_mappings[sym_id][val_id] = val_name
 
-    # Language
-    10: "lang",             # $10 LANGUAGE (as attribute, not CSS)
+    # Parse YJ_LENGTH_UNITS
+    units_match = re.search(r'YJ_LENGTH_UNITS\s*=\s*\{([^}]+)\}', content, re.DOTALL)
+    if units_match:
+        unit_pattern = re.compile(r'"\$(\d+)":\s*"([^"]+)"')
+        for match in unit_pattern.finditer(units_match.group(1)):
+            sym_id = int(match.group(1))
+            unit_name = match.group(2)
+            unit_values[sym_id] = unit_name
 
-    # Block type (informational, not direct CSS)
-    127: "-kfx-block-type", # $127 STYLE_BLOCK_TYPE
-    173: "-kfx-style-name", # $173 STYLE_NAME
-}
+    return property_to_css, value_mappings, unit_values
+
+
+# Load mappings from authoritative source
+_YJ_PROPERTY_TO_CSS, _YJ_VALUE_MAPPINGS, _YJ_UNIT_VALUES = _load_yj_mappings()
 
 # =============================================================================
-# KFX Value Symbol to CSS Value Mapping
+# KFX Symbol to CSS Property Mapping (from yj_to_epub_properties.py)
 # =============================================================================
 
-# Text-align values
-KFX_TEXT_ALIGN_VALUES = {
-    59: "left",       # $59 ALIGN_LEFT
-    61: "right",      # $61 ALIGN_RIGHT
-    320: "center",    # $320 ALIGN_CENTER
-    321: "justify",   # $321 ALIGN_JUSTIFY
+# Use imported mappings if available, otherwise fallback
+if _YJ_PROPERTY_TO_CSS:
+    KFX_PROPERTY_TO_CSS = _YJ_PROPERTY_TO_CSS
+else:
+    # Fallback if yj_to_epub_properties.py not found
+    KFX_PROPERTY_TO_CSS = {
+        11: "font-family", 12: "font-style", 13: "font-weight", 16: "font-size",
+        19: "color", 34: "text-align", 36: "text-indent", 41: "text-transform",
+        42: "line-height", 44: "vertical-align", 45: "white-space",
+        47: "margin-top", 48: "margin-left", 49: "margin-bottom", 50: "margin-right",
+        56: "width", 57: "height", 65: "max-width",
+        135: "page-break-inside", 583: "font-variant",
+    }
+
+# =============================================================================
+# KFX Value Symbol to CSS Value Mapping (from yj_to_epub_properties.py)
+# =============================================================================
+
+def _get_values_for_prop(prop_css_name: str) -> Dict[int, str]:
+    """Get value mappings for a CSS property from YJ data."""
+    if not _YJ_VALUE_MAPPINGS:
+        return {}
+
+    # Find property ID by CSS name
+    for prop_id, css_name in KFX_PROPERTY_TO_CSS.items():
+        if css_name == prop_css_name and prop_id in _YJ_VALUE_MAPPINGS:
+            return _YJ_VALUE_MAPPINGS[prop_id]
+    return {}
+
+
+# Build value mapping dicts from imported data or use fallbacks
+KFX_TEXT_ALIGN_VALUES = _get_values_for_prop("text-align") or {
+    59: "left", 61: "right", 320: "center", 321: "justify",
 }
 
-# Font-weight values
-KFX_FONT_WEIGHT_VALUES = {
-    350: "normal",    # $350 FONT_WEIGHT_NORMAL (400)
-    355: "100",       # $355
-    356: "200",       # $356
-    357: "300",       # $357
-    359: "500",       # $359
-    360: "600",       # $360
-    361: "bold",      # $361 FONT_WEIGHT_BOLD (700)
-    362: "800",       # $362
-    363: "900",       # $363
+KFX_FONT_WEIGHT_VALUES = _get_values_for_prop("font-weight") or {
+    350: "normal", 355: "100", 356: "200", 357: "300",
+    359: "500", 360: "600", 361: "bold", 362: "800", 363: "900",
 }
 
-# Font-style values
-KFX_FONT_STYLE_VALUES = {
-    350: "normal",    # $350 (shared with font-weight)
-    381: "oblique",   # $381 FONT_STYLE_OBLIQUE
-    382: "italic",    # $382 FONT_STYLE_ITALIC
+KFX_FONT_STYLE_VALUES = _get_values_for_prop("font-style") or {
+    350: "normal", 381: "oblique", 382: "italic",
 }
 
-# Font-variant values
-KFX_FONT_VARIANT_VALUES = {
-    369: "small-caps",  # $369 FONT_VARIANT_SMALL_CAPS
+KFX_FONT_VARIANT_VALUES = _get_values_for_prop("font-variant") or {
+    349: "normal", 369: "small-caps",
 }
 
-# Vertical-align values
-KFX_VERTICAL_ALIGN_VALUES = {
-    350: "baseline",   # $350
-    370: "super",      # $370 VERTICAL_SUPER
-    371: "sub",        # $371 VERTICAL_SUB
-    372: "text-top",   # $372 VERTICAL_TEXT_TOP
-    373: "text-bottom",# $373 VERTICAL_TEXT_BOTTOM
-    320: "middle",     # $320 (shared)
+# Vertical-align uses -kfx-baseline-style in kfxlib
+KFX_VERTICAL_ALIGN_VALUES = (_YJ_VALUE_MAPPINGS or {}).get(44, {}) or {
+    350: "baseline", 370: "super", 371: "sub",
+    447: "text-top", 449: "text-bottom", 320: "middle",
+    58: "top", 60: "bottom",
 }
 
-# Text-transform values
-KFX_TEXT_TRANSFORM_VALUES = {
-    349: "none",       # $349 TEXT_TRANSFORM_NONE
-    373: "lowercase",  # $373
-    374: "uppercase",  # $374
-    375: "capitalize", # $375
+KFX_TEXT_TRANSFORM_VALUES = _get_values_for_prop("text-transform") or {
+    349: "none", 372: "uppercase", 373: "lowercase", 374: "capitalize",
 }
 
-# Image-fit values (object-fit)
-KFX_IMAGE_FIT_VALUES = {
-    377: "contain",    # $377 IMAGE_FIT_CONTAIN
-    378: "cover",      # $378 IMAGE_FIT_COVER
-    379: "fill",       # $379 IMAGE_FIT_FILL
+# Box-sizing/image-fit ($546)
+KFX_IMAGE_FIT_VALUES = (_YJ_VALUE_MAPPINGS or {}).get(546, {}) or {
+    377: "content-box", 378: "border-box", 379: "padding-box",
 }
 
 # Break values
-KFX_BREAK_VALUES = {
-    353: "avoid",      # $353 BREAK_AVOID
-    383: "auto",       # $383 BLOCK_TYPE_BLOCK (default)
+KFX_BREAK_VALUES = _get_values_for_prop("page-break-inside") or {
+    353: "avoid", 383: "auto",
 }
 
-# Unit symbols
-KFX_UNIT_VALUES = {
-    308: "em",         # $308 UNIT_EM
-    310: "em",         # $310 UNIT_MULTIPLIER (treat as em for margins)
-    314: "%",          # $314 UNIT_PERCENT
-    318: "px",         # $318 UNIT_PX
-    505: "em",         # $505 UNIT_EM_FONTSIZE
+# Unit symbols (from YJ_LENGTH_UNITS)
+KFX_UNIT_VALUES = _YJ_UNIT_VALUES or {
+    308: "em", 309: "ex", 310: "lh", 314: "%",
+    315: "cm", 316: "mm", 317: "in", 318: "pt", 319: "px",
+    505: "rem", 506: "ch",
 }
 
 # Properties where UNIT_MULTIPLIER should be unitless (like line-height)
