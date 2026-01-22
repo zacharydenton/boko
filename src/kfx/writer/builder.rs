@@ -900,6 +900,8 @@ impl KfxBookBuilder {
                 children,
                 list_type,
                 tag,
+                colspan,
+                rowspan,
                 ..
             } => {
                 let mut item = HashMap::new();
@@ -911,8 +913,23 @@ impl KfxBookBuilder {
                 } else if tag == "li" {
                     // li list item uses $277 (CONTENT_LIST_ITEM)
                     sym::CONTENT_LIST_ITEM
+                } else if tag == "table" {
+                    // table uses $278 (CONTENT_TABLE)
+                    sym::CONTENT_TABLE
+                } else if tag == "tr" {
+                    // table row uses $279 (CONTENT_TABLE_ROW)
+                    sym::CONTENT_TABLE_ROW
+                } else if tag == "thead" {
+                    // thead uses $151 (CONTENT_THEAD)
+                    sym::CONTENT_THEAD
+                } else if tag == "tbody" {
+                    // tbody uses $454 (CONTENT_TBODY)
+                    sym::CONTENT_TBODY
+                } else if tag == "tfoot" {
+                    // tfoot uses $455 (CONTENT_TFOOT)
+                    sym::CONTENT_TFOOT
                 } else {
-                    // Regular container uses $269 (CONTENT_PARAGRAPH)
+                    // Regular container (td, th, div, etc.) uses $269 (CONTENT_PARAGRAPH)
                     sym::CONTENT_PARAGRAPH
                 };
                 item.insert(sym::CONTENT_TYPE, IonValue::Symbol(content_type));
@@ -925,6 +942,19 @@ impl KfxBookBuilder {
                         ListType::Unordered => sym::LIST_TYPE_DECIMAL, // TODO: find correct symbol for bullet list
                     };
                     item.insert(sym::LIST_TYPE, IonValue::Symbol(list_type_sym));
+                }
+
+                // Add colspan/rowspan for table cells (td/th)
+                // Only add if > 1 (default is 1)
+                if let Some(cs) = colspan {
+                    if *cs > 1 {
+                        item.insert(sym::ATTRIB_COLSPAN, IonValue::Int(*cs as i64));
+                    }
+                }
+                if let Some(rs) = rowspan {
+                    if *rs > 1 {
+                        item.insert(sym::ATTRIB_ROWSPAN, IonValue::Int(*rs as i64));
+                    }
                 }
 
                 // For list items (li), directly reference text content with $145
@@ -1561,6 +1591,8 @@ mod tests {
             tag: "li".to_string(),
             element_id: None,
             list_type: None, // li elements don't have list_type
+            colspan: None,
+            rowspan: None,
         };
 
         let list_item_2 = ContentItem::Container {
@@ -1576,6 +1608,8 @@ mod tests {
             tag: "li".to_string(),
             element_id: None,
             list_type: None,
+            colspan: None,
+            rowspan: None,
         };
 
         let list_container = ContentItem::Container {
@@ -1584,6 +1618,8 @@ mod tests {
             tag: "ol".to_string(),
             element_id: None,
             list_type: Some(ListType::Ordered),
+            colspan: None,
+            rowspan: None,
         };
 
         // Build the content items
@@ -1682,6 +1718,8 @@ mod tests {
             tag: "p".to_string(),
             element_id: None,
             list_type: None,
+            colspan: None,
+            rowspan: None,
         };
 
         let chapter = ChapterData {
@@ -1830,6 +1868,8 @@ mod tests {
             tag: "p".to_string(),
             element_id: None,
             list_type: None,
+            colspan: None,
+            rowspan: None,
         };
 
         // Create a chapter with this content
@@ -2177,6 +2217,140 @@ mod tests {
             backlink_count >= 90,
             "Should find many backlink inline runs, found only {}",
             backlink_count
+        );
+    }
+
+    #[test]
+    fn test_table_content_types() {
+        // Test that table elements get the correct KFX content types
+
+        // Create a simple table: table > tbody > tr > td
+        let td = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "Cell content".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+            }],
+            tag: "td".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: Some(2), // Test colspan
+            rowspan: None,
+        };
+
+        let tr = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![td],
+            tag: "tr".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+        };
+
+        let tbody = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![tr],
+            tag: "tbody".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+        };
+
+        let table = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![tbody],
+            tag: "table".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+        };
+
+        // Build the content items
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&table, &mut state, 860);
+
+        // Should have one table container
+        assert_eq!(ion_items.len(), 1, "Should produce one table container");
+
+        let table_ion = &ion_items[0];
+
+        // Verify table has content type $278 (CONTENT_TABLE)
+        let content_type = get_struct_field(table_ion, sym::CONTENT_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            content_type,
+            Some(sym::CONTENT_TABLE),
+            "Table should have content type $278 (CONTENT_TABLE)"
+        );
+
+        // Get tbody from table's content array
+        let content_array = get_struct_field(table_ion, sym::CONTENT_ARRAY)
+            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        assert!(content_array.is_some(), "Table should have content array");
+        let tbody_ion = &content_array.unwrap()[0];
+
+        // Verify tbody has content type $454 (CONTENT_TBODY)
+        let tbody_type = get_struct_field(tbody_ion, sym::CONTENT_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            tbody_type,
+            Some(sym::CONTENT_TBODY),
+            "Tbody should have content type $454 (CONTENT_TBODY)"
+        );
+
+        // Get tr from tbody's content array
+        let tbody_content = get_struct_field(tbody_ion, sym::CONTENT_ARRAY)
+            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        assert!(tbody_content.is_some(), "Tbody should have content array");
+        let tr_ion = &tbody_content.unwrap()[0];
+
+        // Verify tr has content type $279 (CONTENT_TABLE_ROW)
+        let tr_type = get_struct_field(tr_ion, sym::CONTENT_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            tr_type,
+            Some(sym::CONTENT_TABLE_ROW),
+            "Tr should have content type $279 (CONTENT_TABLE_ROW)"
+        );
+
+        // Get td from tr's content array
+        let tr_content = get_struct_field(tr_ion, sym::CONTENT_ARRAY)
+            .and_then(|v| if let IonValue::List(list) = v { Some(list) } else { None });
+        assert!(tr_content.is_some(), "Tr should have content array");
+        let td_ion = &tr_content.unwrap()[0];
+
+        // Verify td has content type $269 (CONTENT_PARAGRAPH)
+        let td_type = get_struct_field(td_ion, sym::CONTENT_TYPE)
+            .and_then(get_symbol_value);
+        assert_eq!(
+            td_type,
+            Some(sym::CONTENT_PARAGRAPH),
+            "Td should have content type $269 (CONTENT_PARAGRAPH)"
+        );
+
+        // Verify td has colspan attribute $148
+        let colspan = get_struct_field(td_ion, sym::ATTRIB_COLSPAN)
+            .and_then(|v| if let IonValue::Int(i) = v { Some(*i) } else { None });
+        assert_eq!(
+            colspan,
+            Some(2),
+            "Td should have colspan attribute with value 2"
         );
     }
 }

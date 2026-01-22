@@ -420,12 +420,24 @@ fn extract_from_node(
                     _ => None,
                 };
 
+                // Extract colspan/rowspan for table cells (td/th)
+                let (colspan, rowspan) = if tag_name == "td" || tag_name == "th" {
+                    let attrs = element.attributes.borrow();
+                    let colspan = attrs.get("colspan").and_then(|v| v.parse::<u32>().ok());
+                    let rowspan = attrs.get("rowspan").and_then(|v| v.parse::<u32>().ok());
+                    (colspan, rowspan)
+                } else {
+                    (None, None)
+                };
+
                 return vec![ContentItem::Container {
                     style: direct_with_inline,
                     children: merged_children,
                     tag: tag_name.to_string(),
                     element_id,
                     list_type,
+                    colspan,
+                    rowspan,
                 }];
             }
 

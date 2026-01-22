@@ -139,6 +139,10 @@ pub enum ContentItem {
         element_id: Option<String>,
         /// List type if this is an ol/ul container
         list_type: Option<ListType>,
+        /// Table cell colspan attribute
+        colspan: Option<u32>,
+        /// Table cell rowspan attribute
+        rowspan: Option<u32>,
     },
 }
 

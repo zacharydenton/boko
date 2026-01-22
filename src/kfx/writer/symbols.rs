@@ -514,6 +514,14 @@ pub mod sym {
     pub const PAGE_TEMPLATE: u64 = 266; // $266 - page template
     pub const CONTENT_PARAGRAPH: u64 = 269; // $269 - paragraph content type
 
+    // Table content types
+    pub const CONTENT_TABLE: u64 = 278; // $278 - table content type
+    pub const CONTENT_TABLE_ROW: u64 = 279; // $279 - table row (tr) content type
+    pub const CONTENT_THEAD: u64 = 151; // $151 - thead content type
+    pub const CONTENT_TBODY: u64 = 454; // $454 - tbody content type
+    pub const CONTENT_TFOOT: u64 = 455; // $455 - tfoot content type
+    pub const COL_SPAN: u64 = 118; // $118 - column span in colgroup
+
     // Content item role/position indicator ($790)
     // This field appears on paragraph content items and indicates their role:
     // - 2: First paragraph in content block (index 0)
