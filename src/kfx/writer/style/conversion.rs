@@ -194,6 +194,18 @@ pub fn style_to_ion(
     // Text decorations
     add_text_decorations(&mut style_ion, style);
 
+    // Text transform
+    if let Some(transform) = style.text_transform {
+        use crate::css::TextTransform;
+        let sym_val = match transform {
+            TextTransform::None => sym::TEXT_TRANSFORM_NONE,
+            TextTransform::Uppercase => sym::TEXT_TRANSFORM_UPPERCASE,
+            TextTransform::Lowercase => sym::TEXT_TRANSFORM_LOWERCASE,
+            TextTransform::Capitalize => sym::TEXT_TRANSFORM_CAPITALIZE,
+        };
+        style_ion.insert(sym::TEXT_TRANSFORM, IonValue::Symbol(sym_val));
+    }
+
     // Opacity
     if let Some(opacity) = style.opacity {
         let val = (opacity as f32) / 100.0;

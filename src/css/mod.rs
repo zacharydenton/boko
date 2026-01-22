@@ -161,6 +161,16 @@ pub enum FontVariant {
     SmallCaps,
 }
 
+/// Text transform (uppercase, lowercase, capitalize)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextTransform {
+    #[default]
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
 /// Color value
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Color {
@@ -548,6 +558,7 @@ pub struct ParsedStyle {
     pub font_weight: Option<FontWeight>,
     pub font_style: Option<FontStyle>,
     pub font_variant: Option<FontVariant>,
+    pub text_transform: Option<TextTransform>,
     pub text_align: Option<TextAlign>,
     pub text_indent: Option<CssValue>,
     pub line_height: Option<CssValue>,
@@ -652,6 +663,9 @@ impl ParsedStyle {
         }
         if other.font_variant.is_some() {
             self.font_variant = other.font_variant;
+        }
+        if other.text_transform.is_some() {
+            self.text_transform = other.text_transform;
         }
         if other.text_align.is_some() {
             self.text_align = other.text_align;
@@ -895,27 +909,69 @@ impl ParsedStyle {
 
     /// Check if this style has any properties set
     pub fn is_empty(&self) -> bool {
+        // Font properties
         self.font_family.is_none()
             && self.font_size.is_none()
             && self.font_weight.is_none()
             && self.font_style.is_none()
             && self.font_variant.is_none()
+            // Text properties
+            && self.text_transform.is_none()
             && self.text_align.is_none()
             && self.text_indent.is_none()
             && self.line_height.is_none()
+            && self.letter_spacing.is_none()
+            && self.word_spacing.is_none()
+            && self.white_space_nowrap.is_none()
+            // Margin properties
             && self.margin_top.is_none()
             && self.margin_bottom.is_none()
             && self.margin_left.is_none()
             && self.margin_right.is_none()
+            // Color properties
             && self.color.is_none()
             && self.background_color.is_none()
+            // Border properties
             && self.border_top.is_none()
             && self.border_bottom.is_none()
             && self.border_left.is_none()
             && self.border_right.is_none()
+            && self.border_radius_tl.is_none()
+            && self.border_radius_tr.is_none()
+            && self.border_radius_br.is_none()
+            && self.border_radius_bl.is_none()
+            // Display/position
             && self.display.is_none()
             && self.position.is_none()
             && self.left.is_none()
+            && self.visibility.is_none()
+            && self.overflow.is_none()
+            && self.float.is_none()
+            && self.clear.is_none()
+            // Size properties
+            && self.width.is_none()
+            && self.height.is_none()
+            && self.min_width.is_none()
+            && self.min_height.is_none()
+            && self.max_width.is_none()
+            && self.max_height.is_none()
+            // Vertical alignment
+            && self.vertical_align.is_none()
+            // Break properties
+            && self.break_before.is_none()
+            && self.break_after.is_none()
+            && self.break_inside.is_none()
+            && self.word_break.is_none()
+            // Text decoration (bool fields)
+            && !self.text_decoration_underline
+            && !self.text_decoration_overline
+            && !self.text_decoration_line_through
+            && self.text_decoration_line_style.is_none()
+            // Opacity
+            && self.opacity.is_none()
+            // List styles
+            && self.list_style_type.is_none()
+            && self.list_style_position.is_none()
     }
 
     /// Convert this style to a CSS declaration string.
@@ -958,6 +1014,15 @@ impl ParsedStyle {
                 TextAlign::Justify => "justify",
             };
             props.push(format!("text-align: {}", val));
+        }
+        if let Some(transform) = self.text_transform {
+            let val = match transform {
+                TextTransform::None => "none",
+                TextTransform::Uppercase => "uppercase",
+                TextTransform::Lowercase => "lowercase",
+                TextTransform::Capitalize => "capitalize",
+            };
+            props.push(format!("text-transform: {}", val));
         }
         if let Some(ref indent) = self.text_indent {
             props.push(format!("text-indent: {}", css_value_to_string(indent)));
@@ -1163,6 +1228,7 @@ impl PartialEq for ParsedStyle {
             && self.font_weight == other.font_weight
             && normalize_font_style(&self.font_style) == normalize_font_style(&other.font_style)
             && self.font_variant == other.font_variant
+            && self.text_transform == other.text_transform
             && self.text_align == other.text_align
             && normalize_spacing(&self.text_indent) == normalize_spacing(&other.text_indent)
             && self.line_height == other.line_height
@@ -1252,6 +1318,7 @@ impl std::hash::Hash for ParsedStyle {
         self.font_weight.hash(state);
         normalize_font_style(&self.font_style).hash(state);
         self.font_variant.hash(state);
+        self.text_transform.hash(state);
         self.text_align.hash(state);
         normalize_spacing(&self.text_indent).hash(state);
         self.line_height.hash(state);
@@ -1570,6 +1637,17 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         }
         "text-align" => {
             style.text_align = parse_text_align(values);
+        }
+        "text-transform" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.text_transform = match val.to_ascii_lowercase().as_str() {
+                    "uppercase" => Some(TextTransform::Uppercase),
+                    "lowercase" => Some(TextTransform::Lowercase),
+                    "capitalize" => Some(TextTransform::Capitalize),
+                    "none" => Some(TextTransform::None),
+                    _ => None,
+                };
+            }
         }
         "text-indent" => {
             style.text_indent = parse_length_value(values);
@@ -2325,6 +2403,94 @@ mod tests {
         // Element.class should have highest specificity
         let combined_style = get_style_for(&stylesheet, r#"<p class="special">Test</p>"#, "p");
         assert_eq!(combined_style.text_align, Some(TextAlign::Center));
+    }
+
+    #[test]
+    fn test_text_decoration_parsing() {
+        let css = r#"
+            .underline { text-decoration: underline; }
+            .line-through { text-decoration: line-through; }
+            .overline { text-decoration: overline; }
+            .no-underline { text-decoration: none; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Check underline
+        let underline = get_style_for(&stylesheet, r#"<p class="underline">Test</p>"#, "p");
+        assert!(
+            underline.text_decoration_underline,
+            "Expected text_decoration_underline to be true"
+        );
+
+        // Check line-through
+        let line_through = get_style_for(&stylesheet, r#"<p class="line-through">Test</p>"#, "p");
+        assert!(
+            line_through.text_decoration_line_through,
+            "Expected text_decoration_line_through to be true"
+        );
+
+        // Check overline
+        let overline = get_style_for(&stylesheet, r#"<p class="overline">Test</p>"#, "p");
+        assert!(
+            overline.text_decoration_overline,
+            "Expected text_decoration_overline to be true"
+        );
+
+        // Check none resets all
+        let no_underline = get_style_for(&stylesheet, r#"<p class="no-underline">Test</p>"#, "p");
+        assert!(
+            !no_underline.text_decoration_underline,
+            "text-decoration: none should reset underline"
+        );
+    }
+
+    #[test]
+    fn test_opacity_parsing() {
+        let css = r#"
+            .half { opacity: 0.5; }
+            .full { opacity: 1; }
+            .zero { opacity: 0; }
+            .pct { opacity: 50%; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Check 0.5 opacity (should be stored as 50)
+        let half = get_style_for(&stylesheet, r#"<p class="half">Test</p>"#, "p");
+        assert_eq!(half.opacity, Some(50), "opacity: 0.5 should be stored as 50");
+
+        // Check full opacity
+        let full = get_style_for(&stylesheet, r#"<p class="full">Test</p>"#, "p");
+        assert_eq!(full.opacity, Some(100), "opacity: 1 should be stored as 100");
+
+        // Check zero opacity
+        let zero = get_style_for(&stylesheet, r#"<p class="zero">Test</p>"#, "p");
+        assert_eq!(zero.opacity, Some(0), "opacity: 0 should be stored as 0");
+    }
+
+    #[test]
+    fn test_text_transform_parsing() {
+        let css = r#"
+            .upper { text-transform: uppercase; }
+            .lower { text-transform: lowercase; }
+            .cap { text-transform: capitalize; }
+            .none { text-transform: none; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        let upper = get_style_for(&stylesheet, r#"<p class="upper">Test</p>"#, "p");
+        assert_eq!(upper.text_transform, Some(TextTransform::Uppercase));
+
+        let lower = get_style_for(&stylesheet, r#"<p class="lower">Test</p>"#, "p");
+        assert_eq!(lower.text_transform, Some(TextTransform::Lowercase));
+
+        let cap = get_style_for(&stylesheet, r#"<p class="cap">Test</p>"#, "p");
+        assert_eq!(cap.text_transform, Some(TextTransform::Capitalize));
+
+        let none = get_style_for(&stylesheet, r#"<p class="none">Test</p>"#, "p");
+        assert_eq!(none.text_transform, Some(TextTransform::None));
     }
 
     #[test]

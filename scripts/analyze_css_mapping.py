@@ -113,7 +113,7 @@ def main():
         return
 
     frags, method = load_kfx(kfx_path)
-    fragments = list(frags.all())
+    fragments = list(frags)
     print(f"Loaded {len(fragments)} fragments using {method}")
 
     # Build fragment lookup by ID
