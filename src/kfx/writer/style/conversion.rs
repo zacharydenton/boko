@@ -382,10 +382,27 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
 
     // Only add line-height if explicitly set (reference omits default 1.0)
     if let Some(ref height) = style.line_height {
+        // Get font-size if available (for normalizing rem line-height)
+        let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
+            CssValue::Rem(v) => Some(*v),
+            _ => None,
+        });
+
         let css_val: Option<f32> = match height {
             CssValue::Number(v) => Some(*v),
             CssValue::Percent(v) => Some(*v / 100.0),
-            CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
+            CssValue::Em(v) => Some(*v),
+            CssValue::Rem(v) => {
+                // Normalize rem line-height relative to rem font-size
+                // CSS: font-size: 0.875rem; line-height: 1.25rem
+                // -> line-height in em = 1.25 / 0.875 = 1.42857
+                if let Some(fs_rem) = font_size_rem {
+                    Some(*v / fs_rem)
+                } else {
+                    // No font-size in rem, use line-height as-is
+                    Some(*v)
+                }
+            }
             CssValue::Px(v) => Some(*v / 16.0),
             _ => None,
         };
@@ -771,6 +788,57 @@ mod tests {
         assert!(
             (value - expected).abs() < 0.01,
             "margin-top 3em should become {} in KFX, got {}",
+            expected,
+            value
+        );
+    }
+
+    #[test]
+    fn test_line_height_rem_normalized_to_font_size() {
+        // When line-height is in rem and font-size is also in rem, line-height
+        // should be normalized relative to font-size before dividing by 1.2.
+        // Example: font-size: 0.875rem; line-height: 1.25rem
+        // - line-height in em = 1.25 / 0.875 = 1.42857
+        // - After /1.2: 1.42857 / 1.2 = 1.19048
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            font_size: Some(crate::css::CssValue::Rem(0.875)),
+            line_height: Some(crate::css::CssValue::Rem(1.25)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have LINE_HEIGHT
+        assert!(
+            ion_map.contains_key(&sym::LINE_HEIGHT),
+            "Style should have line-height"
+        );
+
+        let lh_struct = match ion_map.get(&sym::LINE_HEIGHT) {
+            Some(IonValue::Struct(s)) => s,
+            _ => panic!("Expected line-height struct"),
+        };
+
+        let value = match lh_struct.get(&sym::VALUE) {
+            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
+            _ => panic!("Expected decimal value"),
+        };
+
+        // line-height in em = 1.25 / 0.875 = 1.42857
+        // After /1.2: 1.42857 / 1.2 = 1.19048
+        let expected = (1.25 / 0.875) / 1.2;
+        assert!(
+            (value - expected).abs() < 0.01,
+            "line-height 1.25rem with font-size 0.875rem should become {} in KFX, got {}",
             expected,
             value
         );
