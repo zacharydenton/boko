@@ -277,6 +277,9 @@ pub fn style_to_ion(
     // P2 Phase 2: Border collapse
     add_border_collapse(&mut style_ion, style);
 
+    // Table border-spacing
+    add_border_spacing(&mut style_ion, style);
+
     // P1 Phase 2: Drop cap
     add_drop_cap(&mut style_ion, style);
 
@@ -297,6 +300,10 @@ pub fn style_to_ion(
 
     // CSS box-sizing property ($546)
     add_box_sizing(&mut style_ion, style);
+
+    // Table properties
+    add_border_collapse(&mut style_ion, style);
+    add_border_spacing(&mut style_ion, style);
 
     // P2 Phase 2: Layout hints for semantic elements
     add_layout_hints(&mut style_ion, style);
@@ -914,12 +921,30 @@ fn add_text_emphasis(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
 
 // P2 Phase 2: Border collapse
 // Note: Uses boolean values per yj_to_epub_properties.py: False=separate, True=collapse
+// Only outputs for collapse (non-default) since separate is the CSS default
 fn add_border_collapse(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     if let Some(collapse) = style.border_collapse {
-        // Only output if not default (separate)
-        if collapse != BorderCollapse::Separate {
+        if collapse == BorderCollapse::Collapse {
             // True = collapse
             style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Bool(true));
+        }
+        // Don't output separate (false) since it's the CSS default
+    }
+}
+
+// Table border-spacing
+// Uses $456 for vertical and $457 for horizontal (per yj_to_epub_properties.py)
+fn add_border_spacing(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    use crate::kfx::writer::style::ToKfxIon;
+
+    if let Some(ref horizontal) = style.border_spacing_horizontal {
+        if let Some(ion_val) = horizontal.to_kfx_ion() {
+            style_ion.insert(sym::BORDER_SPACING_HORIZONTAL, ion_val);
+        }
+    }
+    if let Some(ref vertical) = style.border_spacing_vertical {
+        if let Some(ion_val) = vertical.to_kfx_ion() {
+            style_ion.insert(sym::BORDER_SPACING_VERTICAL, ion_val);
         }
     }
 }
@@ -2607,4 +2632,5 @@ mod tests {
             "Style without box-sizing should not have BOX_SIZING property"
         );
     }
+
 }

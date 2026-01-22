@@ -665,6 +665,9 @@ pub struct ParsedStyle {
     pub text_emphasis_color: Option<Color>,
     // P2 Phase 2: Border collapse
     pub border_collapse: Option<BorderCollapse>,
+    // Table border-spacing (separate into horizontal and vertical)
+    pub border_spacing_horizontal: Option<CssValue>,
+    pub border_spacing_vertical: Option<CssValue>,
     // P1 Phase 2: Drop cap
     pub drop_cap: Option<DropCap>,
     // P2 Phase 2: Transform properties
@@ -906,6 +909,13 @@ impl ParsedStyle {
         if other.border_collapse.is_some() {
             self.border_collapse = other.border_collapse;
         }
+        // Table border-spacing
+        if other.border_spacing_horizontal.is_some() {
+            self.border_spacing_horizontal.clone_from(&other.border_spacing_horizontal);
+        }
+        if other.border_spacing_vertical.is_some() {
+            self.border_spacing_vertical.clone_from(&other.border_spacing_vertical);
+        }
         // P1 Phase 2: Drop cap
         if other.drop_cap.is_some() {
             self.drop_cap = other.drop_cap;
@@ -1037,6 +1047,10 @@ impl ParsedStyle {
             && self.hyphens.is_none()
             // Box sizing
             && self.box_sizing.is_none()
+            // Table properties
+            && self.border_collapse.is_none()
+            && self.border_spacing_horizontal.is_none()
+            && self.border_spacing_vertical.is_none()
     }
 
     /// Convert this style to a CSS declaration string.
@@ -1363,6 +1377,9 @@ impl PartialEq for ParsedStyle {
             && self.text_emphasis_color == other.text_emphasis_color
             // P2 Phase 2: Border collapse
             && self.border_collapse == other.border_collapse
+            // Table border-spacing
+            && self.border_spacing_horizontal == other.border_spacing_horizontal
+            && self.border_spacing_vertical == other.border_spacing_vertical
             // P1 Phase 2: Drop cap
             && self.drop_cap == other.drop_cap
             // P2 Phase 2: Transform properties
@@ -2077,6 +2094,32 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                     "padding-box" => Some(BoxSizing::PaddingBox),
                     _ => None,
                 };
+            }
+        }
+        // Table CSS properties
+        "border-collapse" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.border_collapse = match val.to_ascii_lowercase().as_str() {
+                    "collapse" => Some(BorderCollapse::Collapse),
+                    "separate" => Some(BorderCollapse::Separate),
+                    _ => None,
+                };
+            }
+        }
+        "border-spacing" => {
+            // border-spacing: <horizontal> [<vertical>]
+            // If one value, applies to both; if two, first is horizontal, second is vertical
+            let lengths: Vec<CssValue> = values.iter().filter_map(parse_single_length).collect();
+            match lengths.len() {
+                1 => {
+                    style.border_spacing_horizontal = Some(lengths[0].clone());
+                    style.border_spacing_vertical = Some(lengths[0].clone());
+                }
+                2 => {
+                    style.border_spacing_horizontal = Some(lengths[0].clone());
+                    style.border_spacing_vertical = Some(lengths[1].clone());
+                }
+                _ => {}
             }
         }
         _ => {
@@ -3198,6 +3241,68 @@ mod tests {
             Some(BoxSizing::BorderBox),
             "Cleaned selector should apply box-sizing via *, got {:?}",
             div_style.box_sizing
+        );
+    }
+
+    #[test]
+    fn test_border_collapse_parsing() {
+        let css = r#"
+            .collapse { border-collapse: collapse; }
+            .separate { border-collapse: separate; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        let collapse = get_style_for(&stylesheet, r#"<table class="collapse"></table>"#, "table");
+        assert_eq!(
+            collapse.border_collapse,
+            Some(BorderCollapse::Collapse),
+            "Expected border-collapse: collapse, got {:?}",
+            collapse.border_collapse
+        );
+
+        let separate = get_style_for(&stylesheet, r#"<table class="separate"></table>"#, "table");
+        assert_eq!(
+            separate.border_collapse,
+            Some(BorderCollapse::Separate),
+            "Expected border-collapse: separate, got {:?}",
+            separate.border_collapse
+        );
+    }
+
+    #[test]
+    fn test_border_spacing_parsing() {
+        let css = r#"
+            .single { border-spacing: 2px; }
+            .double { border-spacing: 2px 4px; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Single value applies to both horizontal and vertical
+        let single = get_style_for(&stylesheet, r#"<table class="single"></table>"#, "table");
+        assert!(
+            matches!(single.border_spacing_horizontal, Some(CssValue::Px(v)) if (v - 2.0).abs() < 0.01),
+            "Expected border-spacing horizontal: 2px, got {:?}",
+            single.border_spacing_horizontal
+        );
+        assert!(
+            matches!(single.border_spacing_vertical, Some(CssValue::Px(v)) if (v - 2.0).abs() < 0.01),
+            "Expected border-spacing vertical: 2px, got {:?}",
+            single.border_spacing_vertical
+        );
+
+        // Two values: first is horizontal, second is vertical
+        let double = get_style_for(&stylesheet, r#"<table class="double"></table>"#, "table");
+        assert!(
+            matches!(double.border_spacing_horizontal, Some(CssValue::Px(v)) if (v - 2.0).abs() < 0.01),
+            "Expected border-spacing horizontal: 2px, got {:?}",
+            double.border_spacing_horizontal
+        );
+        assert!(
+            matches!(double.border_spacing_vertical, Some(CssValue::Px(v)) if (v - 4.0).abs() < 0.01),
+            "Expected border-spacing vertical: 4px, got {:?}",
+            double.border_spacing_vertical
         );
     }
 }
