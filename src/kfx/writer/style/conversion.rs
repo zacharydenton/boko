@@ -14,6 +14,19 @@ use super::{
 use crate::kfx::writer::fragment::KfxFragment;
 use crate::kfx::writer::symbols::{sym, SymbolTable};
 
+/// Check if a CssValue is non-zero (for layout property detection)
+fn has_nonzero_value(val: &Option<CssValue>) -> bool {
+    match val {
+        None => false,
+        Some(CssValue::Px(v)) => v.abs() > 0.001,
+        Some(CssValue::Em(v)) => v.abs() > 0.001,
+        Some(CssValue::Rem(v)) => v.abs() > 0.001,
+        Some(CssValue::Percent(v)) => v.abs() > 0.001,
+        Some(CssValue::Number(v)) => v.abs() > 0.001,
+        Some(_) => true, // Other values like keywords count as non-zero
+    }
+}
+
 /// Convert a ParsedStyle to KFX ION style struct
 pub fn style_to_ion(
     style: &ParsedStyle,
@@ -52,11 +65,29 @@ pub fn style_to_ion(
             style_ion.insert(sym::FONT_FAMILY, IonValue::String(family_str));
         }
 
-        // Add STYLE_BLOCK_TYPE for block elements to match reference KFX
-        style_ion.insert(
-            sym::STYLE_BLOCK_TYPE,
-            IonValue::Symbol(sym::BLOCK_TYPE_BLOCK),
-        );
+        // Add STYLE_BLOCK_TYPE based on style content
+        // Reference KFX behavior:
+        // - BLOCK_TYPE_BLOCK ($383) only for styles with actual layout properties
+        // - No BLOCK_TYPE at all for font-only styles (reference omits it)
+        // - BLOCK_TYPE_INLINE ($349) only for explicit inline elements (handled above)
+        // Note: We check for non-zero values since margin: 0 shouldn't count as a layout property
+        let has_layout_props = has_nonzero_value(&style.margin_top)
+            || has_nonzero_value(&style.margin_bottom)
+            || has_nonzero_value(&style.margin_left)
+            || has_nonzero_value(&style.margin_right)
+            || has_nonzero_value(&style.text_indent)
+            || style.width.is_some()
+            || style.height.is_some()
+            || style.max_width.is_some()
+            || style.break_before.is_some()
+            || style.break_after.is_some()
+            || style.break_inside.is_some();
+
+        // Only set BLOCK_TYPE when style has layout properties
+        // Font-only styles don't get BLOCK_TYPE (matches reference behavior)
+        if has_layout_props {
+            style_ion.insert(sym::STYLE_BLOCK_TYPE, IonValue::Symbol(sym::BLOCK_TYPE_BLOCK));
+        }
 
         // Language tag ($10) from xml:lang or lang attribute
         if let Some(ref lang) = style.lang {
@@ -832,6 +863,93 @@ mod tests {
             "line-height 1.25rem with font-size 0.875rem should become {} in KFX, got {}",
             expected,
             value
+        );
+    }
+
+    #[test]
+    fn test_font_only_style_omits_block_type() {
+        // Styles with only font formatting (no layout properties) should NOT
+        // have BLOCK_TYPE at all. Reference KFX only sets BLOCK_TYPE on styles
+        // with actual layout properties.
+        let style = ParsedStyle {
+            font_style: Some(crate::css::FontStyle::Italic),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Font-only styles should NOT have BLOCK_TYPE at all (matches reference)
+        assert!(
+            !ion_map.contains_key(&sym::STYLE_BLOCK_TYPE),
+            "Font-only style should not have BLOCK_TYPE"
+        );
+    }
+
+    #[test]
+    fn test_layout_style_uses_block_block_type() {
+        // Styles with layout properties (margins, text-indent) should use
+        // BLOCK_TYPE_BLOCK ($383)
+        let style = ParsedStyle {
+            margin_top: Some(crate::css::CssValue::Em(1.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have STYLE_BLOCK_TYPE = BLOCK ($383)
+        match ion_map.get(&sym::STYLE_BLOCK_TYPE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::BLOCK_TYPE_BLOCK,
+                    "Layout style should use BLOCK_TYPE_BLOCK ($383), got ${}",
+                    s
+                );
+            }
+            _ => panic!("Expected STYLE_BLOCK_TYPE symbol"),
+        }
+    }
+
+    #[test]
+    fn test_zero_margin_omits_block_type() {
+        // Styles with margin: 0 should NOT have BLOCK_TYPE
+        // because margin: 0 doesn't affect layout (same as font-only)
+        let style = ParsedStyle {
+            font_style: Some(crate::css::FontStyle::Italic),
+            margin_top: Some(crate::css::CssValue::Px(0.0)),
+            margin_bottom: Some(crate::css::CssValue::Px(0.0)),
+            margin_left: Some(crate::css::CssValue::Px(0.0)),
+            margin_right: Some(crate::css::CssValue::Px(0.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should NOT have BLOCK_TYPE because margins are zero
+        assert!(
+            !ion_map.contains_key(&sym::STYLE_BLOCK_TYPE),
+            "Style with margin: 0 should not have BLOCK_TYPE"
         );
     }
 }
