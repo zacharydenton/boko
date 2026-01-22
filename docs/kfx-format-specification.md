@@ -106,13 +106,29 @@ The entity payload follows the header. For most entity types, this is Ion-encode
 
 ### 2.5 Container Types
 
-KFX books consist of multiple containers:
+KFX books consist of multiple containers, identified by the fragment types they contain:
 
-| Type | Fragment IDs | Purpose |
-|------|--------------|---------|
-| KFX-main | 259, 260, 538 | Book content |
-| KFX-metadata | 258, 419, 490, 585 | Metadata, symbols |
-| KFX-attachable | 417 | Resources (images, fonts) |
+| Type | Identifying Fragment IDs | Purpose |
+|------|-------------------------|---------|
+| KFX-main | 259, 260, 538 | Book content (sections, storylines, document structure) |
+| KFX-metadata | 258, 419, 490, 585 | Metadata, symbol tables, entity maps |
+| KFX-attachable | 417 | Binary resources (images, fonts, raw media) |
+
+**Container type detection logic**:
+1. If entity types include any of {259, 260, 538} → KFX-main
+2. Else if types include any of {258, 419, 490, 585} OR has doc_symbols → KFX-metadata
+3. Else if types include {417} → KFX-attachable
+
+**Required fragments** (for valid books):
+- `$ion_symbol_table` - Symbol table import
+- `$270` - Container info
+- `$490` or `$258` - Metadata (one of these)
+- `$389` - Book navigation
+- `$419` - Container entity map
+- `$538` - Document data
+- `$550` - Story timeline
+- `$265` - Maximum EID
+- `$264` - Format capabilities
 
 ### 2.6 Generator Info
 
@@ -131,60 +147,129 @@ After container info, JSON generator info appears:
 
 ## 3. Ion Binary Encoding
 
-Amazon Ion is a richly-typed, self-describing binary format. KFX uses a subset of Ion.
+Amazon Ion is a richly-typed, self-describing binary format. KFX uses Ion binary version 1.0.
 
-### 3.1 Ion Type Codes
+### 3.1 Ion Binary Signature
 
+All Ion binary data starts with:
 ```
-Type    Code  Description
-------  ----  -----------
-null    0x0   Null value
-bool    0x1   Boolean
-posint  0x2   Positive integer
-negint  0x3   Negative integer
-float   0x4   IEEE 754 float
-decimal 0x5   Arbitrary-precision decimal
-timestamp 0x6 Date/time
-symbol  0x7   Symbol reference
-string  0x8   UTF-8 string
-clob    0x9   Character LOB
-blob    0xA   Binary LOB
-list    0xB   Ordered collection
-sexp    0xC   S-expression
-struct  0xD   Unordered key-value pairs
-annotation 0xE Annotated value
+0xE0 0x01 0x00 0xEA   (version marker: Ion 1.0)
 ```
 
-### 3.2 Ion Binary Structure
+### 3.2 Ion Type Codes
 
-Each value is encoded as:
+| Type Code | Hex | Name | Description |
+|-----------|-----|------|-------------|
+| 0 | 0x0 | null | Null value |
+| 1 | 0x1 | bool | Boolean (flag=0 for false, 1 for true) |
+| 2 | 0x2 | posint | Positive integer |
+| 3 | 0x3 | negint | Negative integer |
+| 4 | 0x4 | float | IEEE 754 float (0/4/8 bytes) |
+| 5 | 0x5 | decimal | Arbitrary-precision decimal |
+| 6 | 0x6 | timestamp | Date/time |
+| 7 | 0x7 | symbol | Symbol reference (ID) |
+| 8 | 0x8 | string | UTF-8 string |
+| 9 | 0x9 | clob | Character LOB |
+| 10 | 0xA | blob | Binary LOB |
+| 11 | 0xB | list | Ordered collection |
+| 12 | 0xC | sexp | S-expression |
+| 13 | 0xD | struct | Unordered key-value pairs |
+| 14 | 0xE | annotation | Annotated value wrapper |
+
+### 3.3 Value Encoding Format
+
+Each value is encoded as a type descriptor byte followed by data:
 ```
-[type nibble][length nibble][optional length bytes][value bytes]
+Type descriptor: [type:4bits][length/flag:4bits]
+
+If flag == 14 (0xE): length follows as VarUInt
+If flag == 15 (0xF): value is null of this type
+Otherwise: flag is the length
 ```
 
-For structs, keys are symbol IDs (VarUInt), values are Ion values.
+**Special cases**:
+- Boolean: flag is the value (0=false, 1=true), no length bytes
+- Struct with flag=1: sorted struct (error condition in KFX)
+- Float: flag=0 for 0.0, flag=4 for 32-bit, flag=8 for 64-bit
 
-### 3.3 Decimal Encoding
+### 3.4 VarUInt and VarInt Encoding
 
-KFX decimals use Ion's decimal type with custom precision:
+**VarUInt** (Variable-length unsigned integer):
+- MSB of each byte indicates continuation (1=more bytes, 0=last byte)
+- Lower 7 bits contain data, big-endian
+
+**VarInt** (Variable-length signed integer):
+- Same as VarUInt, but first data byte's MSB is sign bit
 
 ```
-Encoded as: coefficient * 10^exponent
+Examples:
+  0 → 0x00
+  127 → 0x7F
+  128 → 0x81 0x00
+  16383 → 0xFF 0x7F
+```
 
+### 3.5 Decimal Encoding
+
+Decimals are encoded as: `coefficient × 10^exponent`
+
+```
 Structure:
-  - VarInt exponent (negative for fractional)
-  - VarInt coefficient
+  - VarInt exponent (negative for fractional values)
+  - SignedInt coefficient (magnitude bytes, sign in high bit)
 
 Example: 0.833333
-  exponent: -6
-  coefficient: 833333
+  exponent: -6 (encoded as VarInt)
+  coefficient: 833333 (encoded as signed int)
+  Result: 833333 × 10^(-6) = 0.833333
+
+Example: 1.5
+  exponent: -1
+  coefficient: 15
+  Result: 15 × 10^(-1) = 1.5
 ```
 
-### 3.4 Symbol References
+### 3.6 Struct Encoding
 
-Symbols are referenced by numeric ID in binary:
+Structs are sequences of field-name/value pairs:
 ```
-0xE7 0x81 0x83  → Symbol $131 (YJ_symbols shared symbol)
+For each field:
+  - VarUInt: symbol ID of field name
+  - Ion value: field value
+
+The struct length includes all field bytes.
+```
+
+### 3.7 Annotation Encoding
+
+Annotated values wrap another value with symbol annotations:
+```
+Type descriptor: 0xE_ (where _ is length flag)
+Length: total bytes of annotation data + wrapped value
+Annotation length: VarUInt (bytes of annotation IDs)
+Annotation IDs: sequence of VarUInt symbol IDs
+Wrapped value: the actual Ion value
+```
+
+**KFX Fragment format**:
+```
+E7 <len>          // annotation wrapper
+  82              // 2 bytes of annotations
+  <fid_sym>       // fragment ID symbol
+  <ftype_sym>     // fragment type symbol
+  <value>         // fragment value (struct, blob, etc.)
+```
+
+### 3.8 Symbol References
+
+Symbols are stored as VarUInt IDs referencing the symbol table:
+```
+Type descriptor: 0x7_ (where _ is length)
+Symbol ID: unsigned integer (big-endian)
+
+Examples:
+  0x71 0x0A       → Symbol ID 10 ($10)
+  0x72 0x01 0x9B  → Symbol ID 411 ($411)
 ```
 
 ---
@@ -193,36 +278,60 @@ Symbols are referenced by numeric ID in binary:
 
 ### 4.1 System Symbol Table ($ion)
 
-The base Ion symbol table (IDs 1-9):
+The base Ion symbol table (IDs 1-9). These symbols are always available:
 
-| ID | Symbol |
-|----|--------|
-| 1  | `$ion` |
-| 2  | `$ion_1_0` |
-| 3  | `$ion_symbol_table` |
-| 4  | `name` |
-| 5  | `version` |
-| 6  | `imports` |
-| 7  | `symbols` |
-| 8  | `max_id` |
-| 9  | `$ion_shared_symbol_table` |
+| ID | Symbol | Purpose |
+|----|--------|---------|
+| 1  | `$ion` | Ion marker |
+| 2  | `$ion_1_0` | Version marker |
+| 3  | `$ion_symbol_table` | Symbol table annotation |
+| 4  | `name` | Name field |
+| 5  | `version` | Version field |
+| 6  | `imports` | Imports list |
+| 7  | `symbols` | Local symbols list |
+| 8  | `max_id` | Maximum symbol ID |
+| 9  | `$ion_shared_symbol_table` | Shared table annotation |
 
 ### 4.2 YJ_symbols Shared Table
 
-Amazon's shared symbol table for KFX (version 10):
-- Name: "YJ_symbols"
-- IDs: $10 through ~$851
-- Contains all standard KFX property and value symbols
+Amazon's shared symbol table for KFX:
+- **Name**: "YJ_symbols"
+- **Version**: 10 (current)
+- **Symbol range**: $10 through approximately $851
+- **Total symbols**: ~842 (varies by version)
 
-Symbols ending with `?` in the catalog are deprecated/unknown.
+Symbols are defined in order, so:
+- $10 is the first YJ symbol
+- Symbol ID = 10 + (position in symbols list - 1)
+
+**Symbol naming convention**:
+- Symbols ending with `?` in the catalog are deprecated/unknown
+- Property symbols start at $10
+- Value symbols are interspersed throughout
 
 ### 4.3 Local Symbols
 
-Book-specific symbols are added after shared symbols:
-- Style names (e.g., "style_0", "V_1_0_PARA...")
-- Section IDs
-- Resource IDs
-- Anchor names
+Book-specific symbols are added after shared symbols. Common patterns:
+
+| Pattern | Purpose | Example |
+|---------|---------|---------|
+| `V_X_Y_*` | Styles | `V_1_0_PARA-1_0_abc123_5` |
+| `rsrcN` | Resources | `rsrc0`, `rsrc1` |
+| `resource/rsrcN` | Media locations | `resource/rsrc0` |
+| `section-*` | Sections | `section-1_0_abc123_1` |
+| `story-*` | Storylines | `story-1_0_abc123_1` |
+| `anchor-*` | Anchors | `anchor-1_0_abc123_1` |
+| `navContainer*` | Navigation | `navContainer1_0_abc123_1` |
+| `navUnit*` | Navigation entries | `navUnit1_0_abc123_1` |
+| `content_N` | Text content | `content_0`, `content_1` |
+| `CR!*` | Container IDs | `CR!ABC123...` (28 chars) |
+
+**Symbol classification types**:
+- COMMON: Known special names (`content_N`, UUIDs, `yj.*` patterns)
+- DICTIONARY: Dictionary-specific (`G*`, `yj.dictionary.*`)
+- ORIGINAL: Original source patterns (KindleGen generated)
+- BASE64: Base64-encoded IDs (22+ chars)
+- SHORT: Short encoded IDs (`rsrcN`, single prefix + alphanumeric)
 
 ### 4.4 Symbol Table Import
 
@@ -236,6 +345,19 @@ $ion_symbol_table::{
   symbols: ["local_symbol_1", "local_symbol_2", ...]
 }
 ```
+
+**Important**: The `max_id` in the import includes system symbols (add 9 to the YJ_symbols count). When reading, subtract 9 to get the actual YJ_symbols max_id.
+
+### 4.5 Symbol ID Calculation
+
+For a symbol to resolve to its ID:
+```
+If symbol in system table (1-9): ID = position
+If symbol in YJ_symbols: ID = 10 + position_in_YJ_symbols - 1
+If symbol is local: ID = local_min_id + position_in_local_list
+```
+
+Where `local_min_id` = 10 + len(YJ_symbols) = typically 852
 
 ---
 
@@ -287,6 +409,62 @@ These exist once per book and have fid == ftype:
 **Multiple instances allowed**:
 - `$145`, `$157`, `$164`, `$259`, `$260`, `$266`, `$391`, `$393`, `$417`, `$593`, `$597`, `$608`, `$609`
 
+### 5.4 Fragment ID Keys
+
+Each fragment type has a specific field that contains its identifier. This mapping is crucial for correctly extracting fragment IDs from their values:
+
+| Fragment Type | ID Key Field(s) | Description |
+|---------------|-----------------|-------------|
+| `$145` | `name` | Text content name |
+| `$157` | `$173` | Style name (self-reference) |
+| `$164` | `$175` | Resource name |
+| `$259` | `$176` | Storyline name |
+| `$260` | `$174` | Section name |
+| `$266` | `$180` | Anchor name |
+| `$267` | `$174` | Periodical section name |
+| `$387` | `$174` | Section metadata name |
+| `$391` | `$239` | Navigation container name |
+| `$394` | `$240` | Navigation unit name |
+| `$417` | `$165` | Raw media location |
+| `$418` | `$165` | Font resource location |
+| `$597` | `$174`, `$598` | Auxiliary data (section or EID) |
+| `$608` | `$598` | Page template EID |
+| `$609` | `$174` | Section position map |
+| `$610` | `$602` | EID bucket index |
+| `$692` | `name` | Named content reference |
+| `$756` | `$757` | Dictionary entry |
+
+### 5.5 Fragment Reference Relationships
+
+Fragments reference other fragments through specific fields. This mapping shows which field references which fragment type:
+
+| Field | References Fragment Type | Description |
+|-------|-------------------------|-------------|
+| `$145` | `$145` | Text content |
+| `$146` | `$608` | Page template children |
+| `$157` | `$157` | Style reference |
+| `$165` | `$417` | Raw media location |
+| `$167` | `$164` | Resource reference |
+| `$170` | `$260` | Section list |
+| `$173` | `$157` | Style self-reference |
+| `$174` | `$260` | Section reference |
+| `$175` | `$164` | Resource name |
+| `$176` | `$259` | Storyline reference |
+| `$179` | `$266` | Anchor reference (links) |
+| `$214` | `$164` | Page list resource |
+| `$245` | `$164` | Image resource |
+| `$247` | `$394` | Navigation unit children |
+| `$266` | `$266` | Anchor self-reference |
+| `$392` | `$391` | Navigation container list |
+| `$429` | `$157` | Inline style reference |
+| `$479` | `$164` | Background image |
+| `$528` | `$164` | Background image alt |
+| `$597` | `$597` | Auxiliary data reference |
+| `$635` | `$164` | Optional resource |
+| `$636` | `$417` | Tile media reference |
+| `$749` | `$259` | Storyline reference |
+| `$757` | `$756` | Dictionary reference |
+
 ---
 
 ## 6. Content Structure
@@ -315,22 +493,27 @@ storyline ($259)
 
 ### 6.2 Content Item Types ($159)
 
-| Symbol | Name | HTML Equivalent |
-|--------|------|-----------------|
-| `$269` | BLOCK_CONTAINER | div, p, blockquote |
-| `$270` | PAGE_TEMPLATE | page/section container |
-| `$271` | IMAGE | img |
-| `$272` | PLUGIN | embedded object |
-| `$274` | SVG | svg |
-| `$276` | LIST | ul, ol |
-| `$277` | LIST_ITEM | li |
-| `$278` | TABLE | table |
-| `$279` | TABLE_ROW | tr |
-| `$439` | HIDDEN_CONTAINER | display:none |
-| `$454` | TABLE_BODY | tbody |
-| `$151` | TABLE_HEADER | thead |
-| `$455` | TABLE_FOOTER | tfoot |
-| `$596` | HORIZONTAL_RULE | hr |
+| Symbol | Name | HTML Equivalent | Notes |
+|--------|------|-----------------|-------|
+| `$269` | BLOCK_CONTAINER | div, p, blockquote | Block-level container |
+| `$270` | PAGE_TEMPLATE | page/section | Section/page container |
+| `$271` | IMAGE | img | Image content |
+| `$272` | PLUGIN | object, embed | Embedded plugin |
+| `$273` | INLINE_CONTAINER | span | Inline container |
+| `$274` | SVG | svg | Scalable vector graphics |
+| `$276` | LIST | ul, ol | List container |
+| `$277` | LIST_ITEM | li | List item |
+| `$278` | TABLE | table | Table container |
+| `$279` | TABLE_ROW | tr | Table row |
+| `$280` | TABLE_CELL | td | Table cell |
+| `$439` | HIDDEN_CONTAINER | display:none | Hidden content |
+| `$151` | TABLE_HEADER | thead | Table header section |
+| `$454` | TABLE_BODY | tbody | Table body section |
+| `$455` | TABLE_FOOTER | tfoot | Table footer section |
+| `$596` | HORIZONTAL_RULE | hr | Horizontal rule |
+| `$764` | RUBY | ruby | Ruby annotation base |
+| `$765` | RUBY_TEXT | rt | Ruby text |
+| `$766` | RUBY_CONTAINER | rp | Ruby parenthesis |
 
 ### 6.3 Content Item Structure
 
@@ -346,23 +529,92 @@ content_item = {
 }
 ```
 
-### 6.4 Text Content ($145)
+### 6.4 Inline Style Runs ($142)
 
-Text is stored in separate fragments for efficiency:
+Content items can have inline styling applied to ranges of text through the `$142` field. This is used for:
+- Links (noteref references)
+- Drop caps
+- Ruby annotations
+- Inline style changes
+
+**Structure:**
+```
+content_item = {
+  $159: $269,              // BLOCK_CONTAINER
+  $146: ["text content"],  // Text content
+  $142: [                  // Inline style runs (list)
+    {
+      $143: start_offset,  // Start character offset (0-based)
+      $144: length,        // Number of characters affected
+      $179: "anchor-id",   // Link target (optional)
+      $616: $617,          // noteref marker (optional)
+      $157: style_ref,     // Style override (optional)
+      $429: inline_style,  // Inline style struct (optional)
+    },
+    // ... more style runs
+  ]
+}
+```
+
+**Key Fields:**
+| Symbol | Name | Description |
+|--------|------|-------------|
+| `$143` | start | Character offset where run starts |
+| `$144` | length | Number of characters in run |
+| `$179` | anchor_ref | Target anchor for links |
+| `$616` | epub_type | `$617` for noteref |
+| `$157` | style | Reference to a style fragment |
+| `$429` | inline_style | Inline style properties |
+| `$125` | dropcap_lines | Number of lines for drop cap |
+| `$758` | ruby_id | Ruby annotation reference |
+| `$759` | ruby_list | List of ruby annotations |
+
+**Drop Cap Example:**
+```
+{
+  $143: 0,           // Start at first character
+  $144: 1,           // Affect one character
+  $125: 3,           // Span 3 lines
+  $173: "dropcap_style"
+}
+```
+
+### 6.5 Text Content ($145)
+
+Text is stored in separate fragments for efficiency. Each text_content fragment can contain multiple text chunks:
 
 ```
 text_content_fragment = {
-  name: "text_id",
-  $146: ["chunk1", "chunk2", "chunk3", ...]  // Text chunks
+  name: "text_id",           // Fragment ID (string field, not symbol)
+  $146: [                    // Children - list of text strings
+    "First paragraph text...",
+    "Second paragraph text...",
+    "Third paragraph text...",
+    ""                        // Empty string as terminator
+  ]
 }
 ```
 
-Referenced from storylines:
+**Maximum fragment size**: 8192 bytes (not counting the final empty string)
+
+Text is referenced from storylines using offset:
 ```
 {
-  $145: {name: "text_id", $403: chunk_index}
+  $145: {
+    name: "text_id",    // References the text_content fragment
+    $403: chunk_index   // Index into $146 array (0-based)
+  }
 }
 ```
+
+**Text reference structure**:
+- `name`: String referencing the text_content fragment's `name` field
+- `$403` (TEXT_OFFSET): Integer index into the `$146` array
+
+**Chunking behavior**:
+- Text is split across chunks when it exceeds the maximum size
+- Each storyline content item references a specific chunk by index
+- The chunk index increments as content progresses through the book
 
 ### 6.5 Inline Style Runs ($142)
 
@@ -493,72 +745,177 @@ Dimensional values use a struct format:
 
 ### 7.3 Unit Symbols ($306)
 
-| Symbol | CSS Unit |
-|--------|----------|
-| `$308` | em |
-| `$309` | ex |
-| `$310` | lh (line-height multiplier) |
-| `$311` | vw |
-| `$312` | vh |
-| `$313` | vmin |
-| `$314` | % (percent) |
-| `$315` | cm |
-| `$316` | mm |
-| `$317` | in |
-| `$318` | pt |
-| `$319` | px |
-| `$505` | rem |
-| `$506` | ch |
-| `$507` | vmax |
+Complete mapping of unit symbols to CSS units:
+
+| Symbol | CSS Unit | Notes |
+|--------|----------|-------|
+| `$308` | em | Relative to font-size |
+| `$309` | ex | Relative to x-height |
+| `$310` | lh | Line-height multiplier |
+| `$311` | vw | Viewport width |
+| `$312` | vh | Viewport height |
+| `$313` | vmin | Viewport minimum |
+| `$314` | % | Percentage |
+| `$315` | cm | Centimeters |
+| `$316` | mm | Millimeters |
+| `$317` | in | Inches |
+| `$318` | pt | Points (1pt = 1/72 inch) |
+| `$319` | px | Pixels |
+| `$505` | rem | Root em |
+| `$506` | ch | Character width |
+| `$507` | vmax | Viewport maximum |
+
+**Note**: When converting from KFX to CSS, values in `pt` units where `magnitude * 1000 % 225 == 0` are often originally `px` values (converted as `px = pt * 1000 / 450`)
 
 ### 7.4 Common Value Symbols
 
 Direct symbols for common values:
 
-| Symbol | Meaning |
-|--------|---------|
-| `$310` | 0 / zero / none |
-| `$320` | center (text-align) |
-| `$321` | justify |
-| `$322` | left (in some contexts) |
-| `$323` | vertical-block |
-| `$328` | solid (border-style) |
+| Symbol | Meaning | Context |
+|--------|---------|---------|
+| `$320` | center | text-align, box-align |
+| `$321` | justify | text-align |
+| `$322` | horizontal | layout |
+| `$323` | vertical-block | layout |
+| `$324` | absolute/fixed | position |
+| `$328` | solid | border-style |
+| `$329` | double | border-style |
+| `$330` | dashed | border-style |
+| `$331` | dotted | border-style |
+| `$334` | groove | border-style |
+| `$335` | ridge | border-style |
+| `$336` | inset | border-style/box-shadow |
+| `$337` | outset | border-style |
+| `$349` | none | general |
+| `$350` | normal | font-style, font-weight, etc. |
+| `$352` | always | page-break |
+| `$353` | avoid | page-break |
+| `$361` | bold | font-weight |
+| `$369` | small-caps | font-variant |
+| `$372` | uppercase | text-transform |
+| `$373` | lowercase | text-transform |
+| `$374` | capitalize | text-transform |
+| `$375` | rtl | direction |
+| `$376` | ltr | direction |
+| `$377` | content-box | box-sizing, background-origin |
+| `$378` | border-box | box-sizing, background-clip |
+| `$379` | padding-box | box-sizing, background-origin |
+| `$381` | oblique | font-style |
+| `$382` | italic | font-style |
+| `$383` | auto | various |
+| `$384` | manual | hyphens |
+| `$488` | relative | position |
+| `$489` | fixed | position |
+
+### 7.5 Border Styles
+
+| Symbol | CSS border-style |
+|--------|------------------|
 | `$349` | none |
-| `$350` | normal (font-style, etc.) |
-| `$361` | bold |
-| `$369` | default-font |
-| `$376` | ltr (direction) |
-| `$375` | rtl (direction) |
-| `$377` | contain (image-fit) |
-| `$378` | border-box |
-| `$379` | padding-box |
-| `$382` | italic |
-| `$383` | auto |
+| `$328` | solid |
+| `$329` | double |
+| `$330` | dashed |
+| `$331` | dotted |
+| `$334` | groove |
+| `$335` | ridge |
+| `$336` | inset |
+| `$337` | outset |
 
-### 7.5 Color Encoding
+### 7.6 Position Values ($183)
 
-Colors use ARGB integers:
+| Symbol | CSS position |
+|--------|--------------|
+| `$324` | absolute |
+| `$455` | oeb-page-foot |
+| `$151` | oeb-page-head |
+| `$488` | relative |
+| `$489` | fixed |
+
+### 7.7 Background Properties
+
+| Symbol | CSS Property |
+|--------|--------------|
+| `$479` | background-image |
+| `$480` | background-position-x |
+| `$481` | background-position-y |
+| `$482` | background-size-x |
+| `$483` | background-size-y |
+| `$484` | background-repeat |
+| `$547` | background-origin |
+| `$73` | background-clip |
+
+**background-repeat ($484) values:**
+- `$487` = no-repeat
+- `$485` = repeat-x
+- `$486` = repeat-y
+
+**background-origin/clip values:**
+- `$377` = content-box
+- `$378` = border-box
+- `$379` = padding-box
+
+### 7.8 Color Encoding
+
+Colors are encoded as ARGB integers (32-bit):
 ```
 color = (alpha << 24) | (red << 16) | (green << 8) | blue
 ```
 
-Common: `0xff000000` = opaque black, `0xffffffff` = opaque white
+| Hex Value | Color |
+|-----------|-------|
+| `0xff000000` | Opaque black |
+| `0xffffffff` | Opaque white |
+| `0x00000000` | Transparent |
+| `0xff0000ff` | Opaque blue |
+| `0x80ff0000` | 50% transparent red |
 
-### 7.6 Font Weight Symbols ($13)
+**Alpha mask**: `0xff000000`
 
-| Symbol | Weight |
-|--------|--------|
-| `$355` | 100 |
-| `$356` | 200 |
-| `$357` | 300 |
-| `$359` | 500 |
-| `$360` | 600 |
-| `$361` | bold/700 |
-| `$362` | 800 |
-| `$363` | 900 |
-| `$350` | normal/400 |
+**Color properties** (use ARGB encoding):
+- `$19` - color (text color)
+- `$21` - background-color
+- `$83`-`$87` - border colors
+- `$105` - outline-color
+- `$116` - column-rule-color
+- `$24`, `$28` - text-decoration-color
+- `$75` - text-stroke-color
+- `$70` - fill-color
+- `$555` - overline text-decoration-color
+- `$718` - text-emphasis-color
 
-### 7.7 Style Inheritance
+### 7.9 Font Weight Symbols ($13)
+
+| Symbol | CSS Weight | Name |
+|--------|------------|------|
+| `$350` | 400 | normal |
+| `$355` | 100 | thin |
+| `$356` | 200 | extra-light |
+| `$357` | 300 | light |
+| `$359` | 500 | medium |
+| `$360` | 600 | semi-bold |
+| `$361` | 700 | bold |
+| `$362` | 800 | extra-bold |
+| `$363` | 900 | black |
+
+### 7.10 Font Style Symbols ($12)
+
+| Symbol | CSS font-style |
+|--------|----------------|
+| `$350` | normal |
+| `$382` | italic |
+| `$381` | oblique |
+
+### 7.11 Font Stretch Symbols ($15)
+
+| Symbol | CSS font-stretch |
+|--------|------------------|
+| `$350` | normal |
+| `$365` | condensed |
+| `$366` | semi-condensed |
+| `$367` | semi-expanded |
+| `$368` | expanded |
+
+### 7.12 Style Inheritance
 
 Styles can inherit via `$583` (base_style):
 ```
@@ -567,6 +924,76 @@ child_style = {
   $583: "parent_style",  // Inherit from parent
   $34: $321,             // Override text-align
 }
+```
+
+**Note**: $583 has dual meaning depending on context:
+- As symbol value: font-variant (`$349`=normal, `$369`=small-caps)
+- As string referencing another style: base style for inheritance
+
+### 7.13 Heritable Properties
+
+These CSS properties are inherited by child elements (with their default values):
+
+| Property | Default | KFX Symbol |
+|----------|---------|------------|
+| color | (inherited) | $19 |
+| direction | ltr | $192, $682 |
+| font-family | serif | $11 |
+| font-size | 1rem | $16 |
+| font-stretch | normal | $15 |
+| font-style | normal | $12 |
+| font-weight | normal | $13 |
+| letter-spacing | normal | $32 |
+| line-break | auto | $780 |
+| line-height | normal | $42 |
+| list-style-type | disc | $100 |
+| orphans | 2 | (via $785) |
+| text-align | (inherited) | $34 |
+| text-align-last | auto | $35 |
+| text-indent | 0 | $36 |
+| text-transform | none | $41 |
+| visibility | visible | $68 |
+| white-space | normal | $45 |
+| widows | 2 | (via $785) |
+| word-break | normal | $569 |
+| word-spacing | normal | $33 |
+| writing-mode | horizontal-tb | $560 |
+
+### 7.14 Non-Heritable Property Defaults
+
+| Property | Default | KFX Symbol |
+|----------|---------|------------|
+| background-color | transparent | $21 |
+| box-sizing | content-box | $546 |
+| float | none | $140 |
+| margin-* | 0 | $46-$50 |
+| overflow | visible | $476 |
+| padding-* | 0 | $51-$55 |
+| page-break-* | auto | $133-$135 |
+| position | static | $183 |
+| text-decoration | none | $23, $27, $554 |
+| vertical-align | baseline | $44 |
+
+### 7.15 Special Value Constants
+
+**Line Height Defaults**:
+- Normal line-height (`$383`) in KFX corresponds to approximately 1.2em
+- `LINE_HEIGHT_SCALE_FACTOR = 1.2`
+- `MINIMUM_LINE_HEIGHT = 1.0` (as multiplier)
+
+**Default Document Properties**:
+- `DEFAULT_DOCUMENT_FONT_FAMILY = "serif"`
+- `DEFAULT_DOCUMENT_LINE_HEIGHT = "normal"` (or "1.2em")
+- `DEFAULT_DOCUMENT_FONT_SIZE = "1em"`
+
+**Pixel to Percent Conversion**:
+- `PX_PER_PERCENT = 8.534`
+- 100% ≈ 853.4px
+
+**Points to Pixels Conversion**:
+When reading KFX, if a `pt` value has `magnitude * 1000 % 225 == 0`, it may have been converted from pixels:
+```
+original_px = pt_value * 1000 / 450
 ```
 
 ---
@@ -625,16 +1052,37 @@ Images appear in storylines as:
 }
 ```
 
-### 8.6 Resource to Media Mapping
+### 8.6 Container Entity Map ($419)
 
-The container entity map (`$419`) tracks dependencies:
+The container entity map tracks all entities and their dependencies:
+
 ```
-{
-  $252: [container_contents...],
-  $253: [entity_dependencies...],
-  $254: [mandatory_dependencies...],
+container_entity_map = {
+  $252: [                           // Container contents list
+    {
+      $155: container_id,           // Container identifier
+      $181: [fragment_id, ...]      // Fragment IDs in this container
+    },
+    ...
+  ],
+  $253: [                           // Entity dependencies
+    {
+      $155: dependent_id,           // The fragment that has dependencies
+      $254: [dependency_id, ...],   // Mandatory dependencies
+      $255: [optional_id, ...]      // Optional dependencies (for fallbacks)
+    },
+    ...
+  ]
 }
 ```
+
+**Dependency types**:
+- `$254` (mandatory): Required for proper rendering (e.g., images for sections)
+- `$255` (optional): Fallback resources that may not be present
+
+**Common dependency relationships**:
+- Section (`$260`) → Resources (`$164`) → Raw media (`$417`)
+- This allows the Kindle to prefetch required resources before displaying a section
 
 ---
 
@@ -686,11 +1134,71 @@ nav_unit = {
 
 ### 9.5 Landmark Types ($238)
 
-| Symbol | Type |
-|--------|------|
-| `$233` | cover |
-| `$396` | text (body) |
-| `$212` | toc |
+| Symbol | Type | EPUB type |
+|--------|------|-----------|
+| `$233` | cover | cover |
+| `$396` | text (body) | bodymatter |
+| `$212` | toc | toc |
+
+### 9.5.1 Popup Footnotes
+
+KFX supports popup footnotes that display in an overlay window instead of navigating to the footnote location. This requires two components:
+
+**1. Classification ($615)** - Marks the footnote content:
+
+| Symbol | Classification | Description |
+|--------|----------------|-------------|
+| `$618` | footnote | Inline footnote content |
+| `$619` | endnote | End-of-chapter/book note |
+| `$281` | footnote | Alternative footnote marker |
+| `$688` | math | Mathematical content |
+| `$689` | (unknown) | Internal use |
+| `$453` | caption | Table caption |
+
+**2. Noteref Type ($616)** - Marks the link that triggers the popup:
+
+| Symbol | epub:type |
+|--------|-----------|
+| `$617` | noteref |
+
+**How Popup Footnotes Work:**
+
+1. The footnote content container has `$615: $618` (or `$619` for endnote)
+2. The link pointing to the footnote has `$616: $617` in its style events
+3. When the Kindle reader detects a `noteref` link pointing to a `footnote`/`endnote` container, it displays the content in a popup overlay instead of navigating
+
+**Style Event Structure for Noteref:**
+```
+{
+  $142: [  // Inline style runs
+    {
+      $143: start_offset,   // Character offset where noteref starts
+      $144: end_offset,     // Character offset where noteref ends
+      $616: $617,           // Mark as noteref type
+      $179: "anchor-id"     // Link target (anchor reference)
+    }
+  ]
+}
+```
+
+**Footnote Container Structure:**
+```
+{
+  $159: $269,              // BLOCK_CONTAINER
+  $615: $618,              // Classification = footnote
+  $146: [...],             // Content
+  // ... other properties
+}
+```
+
+### 9.5.2 EPUB Type Attributes ($649)
+
+Additional EPUB semantic types for images:
+
+| Symbol | epub:type | Description |
+|--------|-----------|-------------|
+| `$441` | amzn:not-decorative | Image is meaningful content |
+| `$442` | amzn:decorative | Image is decorative (ignored by accessibility) |
 
 ### 9.6 Anchors ($266)
 
@@ -703,7 +1211,7 @@ anchor_fragment = {
 }
 ```
 
-### 9.7 Heading Levels ($238 for nav, $790 for content)
+### 9.7 Heading Levels ($790 for content)
 
 | Symbol | Level |
 |--------|-------|
@@ -713,6 +1221,31 @@ anchor_fragment = {
 | `$802` | h4 |
 | `$803` | h5 |
 | `$804` | h6 |
+
+Used in styles to indicate semantic heading level.
+
+### 9.8 Layout Hints ($761)
+
+Layout hints provide semantic information about content:
+
+| Symbol | Meaning |
+|--------|---------|
+| `$282` | figure |
+| `$453` | caption |
+| `$760` | heading |
+
+Layout hints are stored as a list of symbols in the `$761` property.
+
+### 9.9 Content Role ($790)
+
+Content role values used in storylines:
+
+| Value | Meaning |
+|-------|---------|
+| 2 | First content item in section |
+| 3 | Normal content item |
+
+This helps readers identify the start of new sections.
 
 ---
 
@@ -944,6 +1477,54 @@ Common features:
 | `$346` | lower-alpha |
 | `$347` | upper-alpha |
 | `$349` | none |
+| `$736` | cjk-ideographic |
+| `$737` | cjk-earthly-branch |
+| `$738` | cjk-heavenly-stem |
+| `$739` | hiragana |
+| `$740` | hiragana-iroha |
+| `$741` | katakana |
+| `$742` | katakana-iroha |
+| `$743` | japanese-formal |
+| `$744` | japanese-informal |
+| `$745` | simp-chinese-informal |
+| `$746` | simp-chinese-formal |
+| `$747` | trad-chinese-informal |
+| `$748` | trad-chinese-formal |
+| `$791` | lower-greek |
+| `$792` | upper-greek |
+| `$793` | lower-armenian |
+| `$794` | upper-armenian |
+| `$795` | georgian |
+| `$796` | decimal-leading-zero |
+
+### 11.4.1 Text Decoration Properties
+
+**Underline ($23)**:
+| Symbol | Style |
+|--------|-------|
+| `$328` | underline |
+| `$329` | underline double |
+| `$330` | underline dashed |
+| `$331` | underline dotted |
+| `$349` | none |
+
+**Strikethrough ($27)**:
+| Symbol | Style |
+|--------|-------|
+| `$328` | line-through |
+| `$329` | line-through double |
+| `$330` | line-through dashed |
+| `$331` | line-through dotted |
+| `$349` | none |
+
+**Overline ($554)**:
+| Symbol | Style |
+|--------|-------|
+| `$328` | overline |
+| `$329` | overline double |
+| `$330` | overline dashed |
+| `$331` | overline dotted |
+| `$349` | none |
 
 ### 11.5 Text Alignment Symbols ($34)
 
@@ -967,6 +1548,53 @@ Common features:
 | `$336` | inset |
 | `$337` | outset |
 | `$349` | none |
+
+### 11.7 Writing Mode Symbols ($560)
+
+| Symbol | CSS writing-mode |
+|--------|------------------|
+| `$557` | horizontal-tb |
+| `$558` | vertical-lr |
+| `$559` | vertical-rl |
+
+### 11.8 Hyphens Symbols ($127)
+
+| Symbol | CSS hyphens |
+|--------|-------------|
+| `$383` | auto |
+| `$384` | manual |
+| `$349` | none |
+
+### 11.9 Float Symbols ($140)
+
+| Symbol | CSS float |
+|--------|-----------|
+| `$59` | left |
+| `$61` | right |
+| `$786` | snap-block |
+
+### 11.10 Clear Symbols ($628)
+
+| Symbol | CSS clear |
+|--------|-----------|
+| `$59` | left |
+| `$61` | right |
+| `$421` | both |
+| `$349` | none |
+
+### 11.11 Overflow Symbols ($476)
+
+| Value | CSS overflow |
+|-------|--------------|
+| `false` | visible |
+| `true` | hidden |
+
+### 11.12 Visibility Symbols ($68)
+
+| Value | CSS visibility |
+|-------|----------------|
+| `false` | hidden |
+| `true` | visible |
 
 ---
 
