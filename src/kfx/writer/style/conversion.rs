@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, ColumnCount, CssValue, FontVariant, ListStylePosition, ListStyleType,
+    BorderCollapse, ColumnCount, CssFloat, CssValue, FontVariant, ListStylePosition, ListStyleType,
     ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright,
     TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
 };
@@ -276,6 +276,9 @@ pub fn style_to_ion(
 
     // P2 Phase 2: Column layout
     add_column_count(&mut style_ion, style);
+
+    // P2 Phase 2: Float property
+    add_float(&mut style_ion, style);
 
     IonValue::Struct(style_ion)
 }
@@ -986,6 +989,20 @@ fn add_column_count(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle)
                 style_ion.insert(sym::COLUMN_COUNT, IonValue::Int(n as i64));
             }
         }
+    }
+}
+
+// P2 Phase 2: Float property
+fn add_float(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    if let Some(float) = style.float {
+        // Only output non-none values
+        let float_sym = match float {
+            CssFloat::None => return, // Don't output float: none
+            CssFloat::Left => sym::FLOAT_LEFT,
+            CssFloat::Right => sym::FLOAT_RIGHT,
+            CssFloat::SnapBlock => sym::FLOAT_SNAP_BLOCK,
+        };
+        style_ion.insert(sym::FLOAT, IonValue::Symbol(float_sym));
     }
 }
 
@@ -2250,5 +2267,107 @@ mod tests {
             }
             _ => panic!("Expected symbol for COLUMN_COUNT auto"),
         }
+    }
+
+    // P2 Phase 2 Tests: Float property
+    #[test]
+    fn test_float_left() {
+        let style = ParsedStyle {
+            float: Some(crate::css::CssFloat::Left),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(ion_map.contains_key(&sym::FLOAT), "Style should have FLOAT");
+
+        match ion_map.get(&sym::FLOAT) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::FLOAT_LEFT, "Expected float: left ($59)");
+            }
+            _ => panic!("Expected symbol for FLOAT"),
+        }
+    }
+
+    #[test]
+    fn test_float_right() {
+        let style = ParsedStyle {
+            float: Some(crate::css::CssFloat::Right),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(ion_map.contains_key(&sym::FLOAT), "Style should have FLOAT");
+
+        match ion_map.get(&sym::FLOAT) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::FLOAT_RIGHT, "Expected float: right ($61)");
+            }
+            _ => panic!("Expected symbol for FLOAT"),
+        }
+    }
+
+    #[test]
+    fn test_float_snap_block() {
+        let style = ParsedStyle {
+            float: Some(crate::css::CssFloat::SnapBlock),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(ion_map.contains_key(&sym::FLOAT), "Style should have FLOAT");
+
+        match ion_map.get(&sym::FLOAT) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::FLOAT_SNAP_BLOCK, "Expected float: snap-block ($786)");
+            }
+            _ => panic!("Expected symbol for FLOAT"),
+        }
+    }
+
+    #[test]
+    fn test_float_none_not_output() {
+        // float: none should not be output (default behavior)
+        let style = ParsedStyle {
+            float: Some(crate::css::CssFloat::None),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::FLOAT),
+            "float: none should not be output"
+        );
     }
 }

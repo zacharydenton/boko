@@ -288,6 +288,14 @@ pub mod sym {
     pub const COLUMN_COUNT_AUTO: u64 = 383; // $383 - column-count: auto (same as BLOCK_TYPE_BLOCK)
 
     // ==========================================================================
+    // FLOAT PROPERTIES (P2 Phase 2)
+    // ==========================================================================
+    pub const FLOAT: u64 = 140; // $140 - float property
+    pub const FLOAT_LEFT: u64 = 59; // $59 - float: left (same as ALIGN_LEFT)
+    pub const FLOAT_RIGHT: u64 = 61; // $61 - float: right (same as ALIGN_RIGHT)
+    pub const FLOAT_SNAP_BLOCK: u64 = 786; // $786 - float: snap-block (KFX-specific)
+
+    // ==========================================================================
     // BORDER RADIUS ($459-$462)
     // ==========================================================================
     pub const BORDER_RADIUS_TL: u64 = 459; // $459 - border-top-left-radius

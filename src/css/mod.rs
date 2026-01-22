@@ -284,6 +284,17 @@ pub enum Visibility {
     Collapse,
 }
 
+/// CSS Float property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CssFloat {
+    #[default]
+    None,
+    Left,
+    Right,
+    /// KFX-specific: snap to block boundary
+    SnapBlock,
+}
+
 /// List style type (P1 improvement)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ListStyleType {
@@ -618,6 +629,8 @@ pub struct ParsedStyle {
     pub baseline_shift: Option<CssValue>,
     // P2 Phase 2: Column layout
     pub column_count: Option<ColumnCount>,
+    // P2 Phase 2: Float property
+    pub float: Option<CssFloat>,
 }
 
 impl ParsedStyle {
@@ -843,6 +856,10 @@ impl ParsedStyle {
         // P2 Phase 2: Column layout
         if other.column_count.is_some() {
             self.column_count = other.column_count;
+        }
+        // P2 Phase 2: Float property
+        if other.float.is_some() {
+            self.float = other.float;
         }
     }
 
@@ -1213,6 +1230,8 @@ impl PartialEq for ParsedStyle {
             && self.baseline_shift == other.baseline_shift
             // P2 Phase 2: Column layout
             && self.column_count == other.column_count
+            // P2 Phase 2: Float property
+            && self.float == other.float
     }
 }
 
@@ -1299,6 +1318,8 @@ impl std::hash::Hash for ParsedStyle {
         self.baseline_shift.hash(state);
         // P2 Phase 2: Column layout
         self.column_count.hash(state);
+        // P2 Phase 2: Float property
+        self.float.hash(state);
     }
 }
 
