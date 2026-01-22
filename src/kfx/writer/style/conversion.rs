@@ -414,8 +414,16 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
             }
 
             let mut s = HashMap::new();
-            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
-            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+            // Reference uses percent for negative values (hanging indent), em for positive
+            if val < 0.0 {
+                // Convert em to percent: 1em = 3.125%
+                let percent_val = val * 3.125;
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(percent_val)));
+            } else {
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+            }
             style_ion.insert(sym::TEXT_INDENT, IonValue::Struct(s));
         }
     }
