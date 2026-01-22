@@ -49,9 +49,9 @@ pub mod sym {
     pub const SPACE_AFTER: u64 = 49; // $49 - margin-bottom/space-after (multiplier)
     pub const MARGIN_RIGHT: u64 = 50; // $50 - margin-right and padding-right (percent)
     pub const PADDING_TOP: u64 = 52; // $52 - padding-top (multiplier)
-    pub const CELL_PADDING_RIGHT: u64 = 53; // $53 - table cell padding-right
+    pub const PADDING_LEFT: u64 = 53; // $53 - padding-left
     pub const PADDING_BOTTOM: u64 = 54; // $54 - padding-bottom (multiplier)
-    pub const CELL_PADDING_LEFT: u64 = 55; // $55 - table cell padding-left
+    pub const PADDING_RIGHT: u64 = 55; // $55 - padding-right
 
     // Dimensions
     pub const STYLE_WIDTH: u64 = 56; // $56 - width in style
@@ -59,11 +59,9 @@ pub mod sym {
     pub const MAX_WIDTH: u64 = 65; // $65 - max-width (for em widths)
     pub const OPACITY: u64 = 72; // $72 - opacity (0.0-1.0 decimal)
 
-    // Legacy aliases for compatibility (will be removed)
+    // Legacy aliases for compatibility
     pub const MARGIN_TOP: u64 = 47; // alias for SPACE_BEFORE
     pub const MARGIN_BOTTOM: u64 = 49; // alias for SPACE_AFTER
-    pub const PADDING_LEFT: u64 = 48; // alias for MARGIN_LEFT
-    pub const PADDING_RIGHT: u64 = 50; // alias for MARGIN_RIGHT
 
     // Background
     pub const BACKGROUND_COLOR: u64 = 21; // $21 - background color

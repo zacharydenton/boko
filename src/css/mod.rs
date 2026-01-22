@@ -566,6 +566,10 @@ pub struct ParsedStyle {
     pub margin_bottom: Option<CssValue>,
     pub margin_left: Option<CssValue>,
     pub margin_right: Option<CssValue>,
+    pub padding_top: Option<CssValue>,
+    pub padding_bottom: Option<CssValue>,
+    pub padding_left: Option<CssValue>,
+    pub padding_right: Option<CssValue>,
     pub color: Option<Color>,
     pub background_color: Option<Color>,
     pub border_top: Option<Border>,
@@ -687,6 +691,18 @@ impl ParsedStyle {
         }
         if other.margin_right.is_some() {
             self.margin_right.clone_from(&other.margin_right);
+        }
+        if other.padding_top.is_some() {
+            self.padding_top.clone_from(&other.padding_top);
+        }
+        if other.padding_bottom.is_some() {
+            self.padding_bottom.clone_from(&other.padding_bottom);
+        }
+        if other.padding_left.is_some() {
+            self.padding_left.clone_from(&other.padding_left);
+        }
+        if other.padding_right.is_some() {
+            self.padding_right.clone_from(&other.padding_right);
         }
         if other.color.is_some() {
             self.color.clone_from(&other.color);
@@ -928,6 +944,11 @@ impl ParsedStyle {
             && self.margin_bottom.is_none()
             && self.margin_left.is_none()
             && self.margin_right.is_none()
+            // Padding properties
+            && self.padding_top.is_none()
+            && self.padding_bottom.is_none()
+            && self.padding_left.is_none()
+            && self.padding_right.is_none()
             // Color properties
             && self.color.is_none()
             && self.background_color.is_none()
@@ -1236,6 +1257,10 @@ impl PartialEq for ParsedStyle {
             && normalize_spacing(&self.margin_bottom) == normalize_spacing(&other.margin_bottom)
             && normalize_spacing(&self.margin_left) == normalize_spacing(&other.margin_left)
             && normalize_spacing(&self.margin_right) == normalize_spacing(&other.margin_right)
+            && normalize_spacing(&self.padding_top) == normalize_spacing(&other.padding_top)
+            && normalize_spacing(&self.padding_bottom) == normalize_spacing(&other.padding_bottom)
+            && normalize_spacing(&self.padding_left) == normalize_spacing(&other.padding_left)
+            && normalize_spacing(&self.padding_right) == normalize_spacing(&other.padding_right)
             && self.color == other.color
             && self.background_color == other.background_color
             && self.border_top == other.border_top
@@ -1326,6 +1351,10 @@ impl std::hash::Hash for ParsedStyle {
         normalize_spacing(&self.margin_bottom).hash(state);
         normalize_spacing(&self.margin_left).hash(state);
         normalize_spacing(&self.margin_right).hash(state);
+        normalize_spacing(&self.padding_top).hash(state);
+        normalize_spacing(&self.padding_bottom).hash(state);
+        normalize_spacing(&self.padding_left).hash(state);
+        normalize_spacing(&self.padding_right).hash(state);
         self.color.hash(state);
         self.background_color.hash(state);
         self.border_top.hash(state);
@@ -1697,6 +1726,49 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         }
         "margin-right" => {
             style.margin_right = parse_length_value(values);
+        }
+        "padding" => {
+            // Shorthand: 1-4 values (same as margin)
+            let parsed: Vec<CssValue> = values.iter().filter_map(parse_single_length).collect();
+            match parsed.len() {
+                1 => {
+                    style.padding_top = Some(parsed[0].clone());
+                    style.padding_right = Some(parsed[0].clone());
+                    style.padding_bottom = Some(parsed[0].clone());
+                    style.padding_left = Some(parsed[0].clone());
+                }
+                2 => {
+                    style.padding_top = Some(parsed[0].clone());
+                    style.padding_bottom = Some(parsed[0].clone());
+                    style.padding_left = Some(parsed[1].clone());
+                    style.padding_right = Some(parsed[1].clone());
+                }
+                3 => {
+                    style.padding_top = Some(parsed[0].clone());
+                    style.padding_left = Some(parsed[1].clone());
+                    style.padding_right = Some(parsed[1].clone());
+                    style.padding_bottom = Some(parsed[2].clone());
+                }
+                4 => {
+                    style.padding_top = Some(parsed[0].clone());
+                    style.padding_right = Some(parsed[1].clone());
+                    style.padding_bottom = Some(parsed[2].clone());
+                    style.padding_left = Some(parsed[3].clone());
+                }
+                _ => {}
+            }
+        }
+        "padding-top" => {
+            style.padding_top = parse_length_value(values);
+        }
+        "padding-bottom" => {
+            style.padding_bottom = parse_length_value(values);
+        }
+        "padding-left" => {
+            style.padding_left = parse_length_value(values);
+        }
+        "padding-right" => {
+            style.padding_right = parse_length_value(values);
         }
         "color" => {
             style.color = parse_color(values);
@@ -2521,6 +2593,37 @@ mod tests {
 
         let none = get_style_for(&stylesheet, r#"<p class="none">Test</p>"#, "p");
         assert_eq!(none.float, Some(CssFloat::None));
+    }
+
+    #[test]
+    fn test_padding_parsing() {
+        let css = r#"
+            .p1 { padding: 1em; }
+            .p2 { padding: 1em 2em; }
+            .pt { padding-top: 0.5em; }
+            .pb { padding-bottom: 0.5em; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Check shorthand with 1 value
+        let p1 = get_style_for(&stylesheet, r#"<p class="p1">Test</p>"#, "p");
+        assert!(matches!(p1.padding_top, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+        assert!(matches!(p1.padding_bottom, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+        assert!(matches!(p1.padding_left, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+        assert!(matches!(p1.padding_right, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+
+        // Check shorthand with 2 values
+        let p2 = get_style_for(&stylesheet, r#"<p class="p2">Test</p>"#, "p");
+        assert!(matches!(p2.padding_top, Some(CssValue::Em(e)) if (e - 1.0).abs() < 0.01));
+        assert!(matches!(p2.padding_left, Some(CssValue::Em(e)) if (e - 2.0).abs() < 0.01));
+
+        // Check individual properties
+        let pt = get_style_for(&stylesheet, r#"<p class="pt">Test</p>"#, "p");
+        assert!(matches!(pt.padding_top, Some(CssValue::Em(e)) if (e - 0.5).abs() < 0.01));
+
+        let pb = get_style_for(&stylesheet, r#"<p class="pb">Test</p>"#, "p");
+        assert!(matches!(pb.padding_bottom, Some(CssValue::Em(e)) if (e - 0.5).abs() < 0.01));
     }
 
     #[test]

@@ -138,6 +138,29 @@ pub fn style_to_ion(
         }
     }
 
+    // Padding: top/bottom use UNIT_MULTIPLIER (like margin top/bottom)
+    if let Some(ref val) = style.padding_top {
+        if let Some(ion_val) = spacing_to_multiplier(val) {
+            style_ion.insert(sym::PADDING_TOP, ion_val);
+        }
+    }
+    if let Some(ref val) = style.padding_bottom {
+        if let Some(ion_val) = spacing_to_multiplier(val) {
+            style_ion.insert(sym::PADDING_BOTTOM, ion_val);
+        }
+    }
+    // Padding left/right use their own symbols ($53, $55)
+    if let Some(ref val) = style.padding_left {
+        if let Some(ion_val) = val.to_kfx_ion() {
+            style_ion.insert(sym::PADDING_LEFT, ion_val);
+        }
+    }
+    if let Some(ref val) = style.padding_right {
+        if let Some(ion_val) = val.to_kfx_ion() {
+            style_ion.insert(sym::PADDING_RIGHT, ion_val);
+        }
+    }
+
     // Width and height
     add_dimensions(&mut style_ion, style);
 
