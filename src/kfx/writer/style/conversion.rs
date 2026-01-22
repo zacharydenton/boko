@@ -326,11 +326,6 @@ fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
                 let mut s = HashMap::new();
                 s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
                 s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                // Also set max-width to 100%
-                let mut max_s = HashMap::new();
-                max_s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                max_s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(100.0)));
-                style_ion.insert(sym::MAX_WIDTH, IonValue::Struct(max_s));
                 Some(IonValue::Struct(s))
             }
             CssValue::Px(v) => {
@@ -950,6 +945,35 @@ mod tests {
         assert!(
             !ion_map.contains_key(&sym::STYLE_BLOCK_TYPE),
             "Style with margin: 0 should not have BLOCK_TYPE"
+        );
+    }
+
+    #[test]
+    fn test_em_width_does_not_add_max_width() {
+        // Width in em units should NOT automatically add MAX_WIDTH
+        // Reference KFX does not have MAX_WIDTH on these styles
+        let style = ParsedStyle {
+            width: Some(crate::css::CssValue::Em(10.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have STYLE_WIDTH but NOT MAX_WIDTH
+        assert!(
+            ion_map.contains_key(&sym::STYLE_WIDTH),
+            "Style should have STYLE_WIDTH"
+        );
+        assert!(
+            !ion_map.contains_key(&sym::MAX_WIDTH),
+            "Width in em should not automatically add MAX_WIDTH"
         );
     }
 }
