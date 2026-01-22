@@ -160,6 +160,7 @@ impl KfxBookBuilder {
                 .unwrap_or((1400, 2100));
 
             builder.add_cover_section(cover_sym, cover_width, cover_height, eid_base);
+            builder.add_auxiliary_data_for_section("cover");
             eid_base += 2;
         }
 
@@ -173,7 +174,7 @@ impl KfxBookBuilder {
 
             builder.add_content_block_chunked(chapter, &chapter_chunks, eid_base);
             builder.add_section(chapter, eid_base);
-            builder.add_auxiliary_data(chapter);
+            builder.add_auxiliary_data_for_section(&chapter.id);
 
             let total_items = count_content_items(&chapter.content);
             eid_base += 1 + total_items as i64;
@@ -1278,13 +1279,24 @@ impl KfxBookBuilder {
         ));
     }
 
-    fn add_auxiliary_data(&mut self, chapter: &ChapterData) {
-        let aux_id = format!("aux-{}", chapter.id);
+    fn add_auxiliary_data_for_section(&mut self, section_id: &str) {
+        let aux_id = format!("aux-{}", section_id);
         let aux_sym = self.symtab.get_or_intern(&aux_id);
+
+        // Build metadata entry: { $307: True, $492: 'IS_TARGET_SECTION' }
+        let mut metadata_entry = HashMap::new();
+        metadata_entry.insert(sym::VALUE, IonValue::Bool(true));
+        metadata_entry.insert(
+            sym::METADATA_KEY,
+            IonValue::String("IS_TARGET_SECTION".to_string()),
+        );
 
         let mut aux = HashMap::new();
         aux.insert(sym::AUX_DATA_REF, IonValue::Symbol(aux_sym));
-        aux.insert(sym::DESCRIPTION, IonValue::String(chapter.title.clone()));
+        aux.insert(
+            sym::METADATA,
+            IonValue::List(vec![IonValue::Struct(metadata_entry)]),
+        );
 
         self.fragments.push(KfxFragment::new(
             sym::AUXILIARY_DATA,
