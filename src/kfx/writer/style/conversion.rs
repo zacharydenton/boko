@@ -438,7 +438,10 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
         return;
     }
 
-    // Only add line-height if explicitly set (reference omits default 1.0)
+    // Reference adds LINE_HEIGHT: 1 for styles with vertical-align or headings
+    // even when CSS doesn't explicitly set line-height
+    let needs_default_line_height = style.vertical_align.is_some() || style.is_heading;
+
     if let Some(ref height) = style.line_height {
         // Get font-size ratio for normalization (percent or em/rem)
         let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
@@ -492,10 +495,9 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
                 } else {
                     None // No font-size ratio, skip line-height: 0
                 }
-            } else if (val - 1.0).abs() < 0.001 {
-                // line-height is effectively 1.0 (default), skip
-                None
             } else {
+                // Output line-height even if 1.0 - reference KFX includes it
+                // for styles with vertical-align, headings, etc.
                 // Normal case: use the value as-is
                 Some(val)
             };
@@ -515,8 +517,17 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
                 s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
                 s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
                 style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
+                return; // Already set, don't add default
             }
         }
+    }
+
+    // Add default LINE_HEIGHT: 1 for styles with vertical-align or headings
+    if needs_default_line_height {
+        let mut s = HashMap::new();
+        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(1.0)));
+        style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
     }
 }
 
