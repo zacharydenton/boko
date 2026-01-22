@@ -174,7 +174,7 @@ fn build_nav_entries_recursive(
     nav_entries
 }
 
-/// Build nav unit list fragment ($395)
+/// Build empty nav entries list (placeholder for navigation structure)
 pub fn build_nav_unit_list() -> IonValue {
     let mut nav_unit_list = HashMap::new();
     nav_unit_list.insert(sym::NAV_ENTRIES, IonValue::List(Vec::new()));

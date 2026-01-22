@@ -529,6 +529,15 @@ pub mod sym {
     // - 4: Special paragraph (endnotes, back matter)
     pub const CONTENT_ROLE: u64 = 790; // $790 - content item role indicator
 
+    // ==========================================================================
+    // FOOTNOTE/ENDNOTE SYMBOLS (for popup footnotes)
+    // ==========================================================================
+    pub const CLASSIFICATION: u64 = 615; // $615 - content classification (footnote/endnote)
+    pub const NOTEREF_TYPE: u64 = 616; // $616 - noteref type field in inline style runs
+    pub const NOTEREF: u64 = 617; // $617 - noteref value (link is a note reference)
+    pub const FOOTNOTE: u64 = 618; // $618 - footnote classification value
+    pub const ENDNOTE: u64 = 619; // $619 - endnote classification value
+
     // Page template / anchor symbols
     pub const ANCHOR_REF: u64 = 179; // $179 - reference to anchor fragment in inline style runs
     pub const TEMPLATE_NAME: u64 = 180; // $180 - template name/id (also anchor ID)
@@ -552,9 +561,9 @@ pub mod sym {
     pub const BOOK_NAVIGATION: u64 = 389; // $389 - book navigation fragment type
     pub const NAV_CONTAINER_TYPE: u64 = 391; // $391 - nav container fragment type
     pub const NAV_CONTAINER_REF: u64 = 392; // $392 - nav container reference
-    pub const NAV_DEFINITION: u64 = 393; // $393 - nav definition
-    pub const NAV_UNIT: u64 = 394; // $394 - nav unit fragment type
-    pub const NAV_UNIT_LIST: u64 = 395; // $395 - nav unit list fragment type
+    pub const NAV_DEFINITION: u64 = 393; // $393 - nav unit fragment type (navigation entry)
+    pub const NAV_UNIT_NAME: u64 = 394; // $394 - nav unit name field
+    pub const NAV_UNIT_LIST: u64 = 395; // $395 - nav unit list (used for empty nav structure)
 
     // Resource symbols
     pub const TEXT_OFFSET: u64 = 403; // $403 - text offset

@@ -642,6 +642,10 @@ pub struct ParsedStyle {
     pub is_inline: bool,
     /// Whether this style is for a heading element (h1-h6) - adds layout hints
     pub is_heading: bool,
+    /// Whether this style is for a figure element - adds layout hints
+    pub is_figure: bool,
+    /// Whether this style is for a figcaption element - adds layout hints
+    pub is_caption: bool,
     /// Actual image width in pixels (set for image styles when dimensions are known)
     pub image_width_px: Option<u32>,
     /// Actual image height in pixels (set for image styles when dimensions are known)

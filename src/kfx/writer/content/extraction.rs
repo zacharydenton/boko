@@ -6,11 +6,12 @@
 use kuchiki::traits::*;
 
 use crate::css::{NodeRef, ParsedStyle, Stylesheet};
+use crate::kfx::writer::symbols::sym;
 
 use super::{ContentItem, ListType, StyleRun};
 
-/// Pending text item: (text, style, anchor_href, element_id, is_verse)
-type PendingText = (String, ParsedStyle, Option<String>, Option<String>, bool);
+/// Pending text item: (text, style, anchor_href, element_id, is_verse, is_noteref)
+type PendingText = (String, ParsedStyle, Option<String>, Option<String>, bool, bool);
 
 /// Check if a tag is a block-level element that should become a Container
 fn is_block_element(tag: &str) -> bool {
@@ -87,11 +88,13 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
         }
 
         // is_verse if ANY of the pending items is verse
-        let is_verse = pending.iter().any(|(_, _, _, _, v)| *v);
+        let is_verse = pending.iter().any(|(_, _, _, _, v, _)| *v);
+        // is_noteref if ANY of the pending items is noteref
+        let is_noteref = pending.iter().any(|(_, _, _, _, _, n)| *n);
 
         if pending.len() == 1 && pending[0].2.is_none() && pending[0].3.is_none() {
             // Single text item with no anchor and no element_id, no inline runs needed
-            let (text, style, _, _, _) = pending.remove(0);
+            let (text, style, _, _, _, _) = pending.remove(0);
             result.push(ContentItem::Text {
                 text,
                 style,
@@ -99,6 +102,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
                 anchor_href: None,
                 element_id: None, // Text merged from inline elements doesn't have its own ID
                 is_verse,
+                is_noteref,
             });
         } else {
             // Multiple text items OR has anchors/element_ids - merge with inline style runs
@@ -108,7 +112,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
             let base_style = {
                 let mut style_counts: std::collections::HashMap<&ParsedStyle, usize> =
                     std::collections::HashMap::new();
-                for (text, style, _, _, _) in pending.iter() {
+                for (text, style, _, _, _, _) in pending.iter() {
                     *style_counts.entry(style).or_insert(0) += text.chars().count();
                 }
                 style_counts
@@ -122,7 +126,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
             let mut combined_text = String::new();
             let mut inline_runs = Vec::new();
 
-            for (text, style, anchor_href, element_id, _) in pending.drain(..) {
+            for (text, style, anchor_href, element_id, _, item_is_noteref) in pending.drain(..) {
                 let offset = combined_text.chars().count();
                 let length = text.chars().count();
 
@@ -153,6 +157,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
                         style: run_style,
                         anchor_href,
                         element_id,
+                        is_noteref: item_is_noteref,
                     });
                 }
 
@@ -166,6 +171,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
                 anchor_href: None, // Anchors are now in inline_runs
                 element_id: None,  // Merged text doesn't have element ID
                 is_verse,
+                is_noteref,
             });
         }
     }
@@ -178,10 +184,11 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
                 anchor_href,
                 element_id,
                 is_verse,
+                is_noteref,
                 ..
             } => {
-                // Accumulate text with style, anchor, element_id, and verse flag
-                pending_texts.push((text, style, anchor_href, element_id, is_verse));
+                // Accumulate text with style, anchor, element_id, verse flag, and noteref flag
+                pending_texts.push((text, style, anchor_href, element_id, is_verse, is_noteref));
             }
             other => {
                 // Non-text item: flush any pending texts first
@@ -264,7 +271,8 @@ pub fn extract_content_from_xhtml(
         &ParsedStyle::default(),
         base_dir,
         None,
-        false,
+        false, // is_verse
+        false, // is_noteref
     );
     // Flatten unnecessary container nesting (section wrappers, paragraph wrappers, etc.)
     flatten_containers(items)
@@ -279,6 +287,7 @@ fn extract_from_node(
     base_dir: &str,
     anchor_href: Option<&str>, // Current anchor href context (from parent <a>)
     is_verse: bool,            // Whether we're inside a z3998:verse block
+    is_noteref: bool,          // Whether we're inside a noteref link (for popup footnotes)
 ) -> Vec<ContentItem> {
     use kuchiki::NodeData;
 
@@ -311,6 +320,14 @@ fn extract_from_node(
             // Mark heading elements (h1-h6) for layout hints
             if matches!(tag_name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
                 direct_with_inline.is_heading = true;
+            }
+            // Mark figure elements for layout hints
+            if tag_name == "figure" {
+                direct_with_inline.is_figure = true;
+            }
+            // Mark figcaption elements for layout hints
+            if tag_name == "figcaption" {
+                direct_with_inline.is_caption = true;
             }
 
             // Skip hidden elements (display: none) - handles epub/mobi conditional content
@@ -362,6 +379,7 @@ fn extract_from_node(
                     anchor_href: anchor_href.map(|s| s.to_string()),
                     element_id: None,
                     is_verse, // Inherit verse context - only splits in verse blocks
+                    is_noteref,
                 }];
             }
 
@@ -375,6 +393,7 @@ fn extract_from_node(
                     anchor_href: None,
                     element_id,
                     is_verse: false,
+                    is_noteref: false, // Math elements aren't noterefs
                 }];
             }
 
@@ -389,8 +408,9 @@ fn extract_from_node(
 
             // Determine anchor_href for children:
             // If this is an <a> element, extract its href; otherwise pass through parent's
-            let child_anchor_href = if tag_name == "a" {
-                element.attributes.borrow().get("href").map(|href| {
+            let (child_anchor_href, child_is_noteref) = if tag_name == "a" {
+                let attrs = element.attributes.borrow();
+                let href = attrs.get("href").map(|href| {
                     // Resolve relative href to full path (matches section_eids keys)
                     // External URLs (http/https/mailto) are kept as-is
                     if href.starts_with("http://")
@@ -401,9 +421,19 @@ fn extract_from_node(
                     } else {
                         resolve_relative_path(base_dir, href)
                     }
-                })
+                });
+                // Check if this link is a noteref (triggers popup footnotes)
+                let noteref = attrs
+                    .get("epub:type")
+                    .map(|t| t.contains("noteref"))
+                    .unwrap_or(false)
+                    || attrs
+                        .get("role")
+                        .map(|r| r == "doc-noteref")
+                        .unwrap_or(false);
+                (href, noteref || is_noteref)
             } else {
-                anchor_href.map(|s| s.to_string())
+                (anchor_href.map(|s| s.to_string()), is_noteref)
             };
 
             // Extract children with anchor context
@@ -416,6 +446,7 @@ fn extract_from_node(
                     base_dir,
                     child_anchor_href.as_deref(),
                     child_is_verse,
+                    child_is_noteref,
                 ));
             }
 
@@ -441,6 +472,27 @@ fn extract_from_node(
                     (None, None)
                 };
 
+                // Detect footnote/endnote classification for popup support
+                let classification = {
+                    let attrs = element.attributes.borrow();
+                    // Check epub:type attribute
+                    let epub_type = attrs.get("epub:type").map(|s| s.to_lowercase());
+                    // Check role attribute (ARIA)
+                    let role = attrs.get("role").map(|s| s.to_lowercase());
+
+                    if epub_type.as_deref() == Some("footnote")
+                        || role.as_deref() == Some("doc-footnote")
+                    {
+                        Some(sym::FOOTNOTE)
+                    } else if epub_type.as_deref() == Some("endnote")
+                        || role.as_deref() == Some("doc-endnote")
+                    {
+                        Some(sym::ENDNOTE)
+                    } else {
+                        None
+                    }
+                };
+
                 return vec![ContentItem::Container {
                     style: direct_with_inline,
                     children: merged_children,
@@ -449,6 +501,7 @@ fn extract_from_node(
                     list_type,
                     colspan,
                     rowspan,
+                    classification,
                 }];
             }
 
@@ -492,6 +545,7 @@ fn extract_from_node(
                     anchor_href: anchor_href.map(|s| s.to_string()),
                     element_id: None, // Text nodes don't have IDs (parent block does)
                     is_verse,
+                    is_noteref,
                 }]
             } else {
                 vec![]
@@ -508,6 +562,7 @@ fn extract_from_node(
                     base_dir,
                     anchor_href,
                     is_verse,
+                    is_noteref,
                 ));
             }
             children
@@ -710,7 +765,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Should have a Container with Text items containing newline markers
@@ -749,7 +804,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         let texts = collect_all_texts(&flattened);
@@ -813,10 +868,6 @@ mod tests {
                 }
             }
 
-            // Debug: print CSS hrefs and length
-            println!("DEBUG TEST: CSS hrefs: {:?}", css_hrefs);
-            println!("DEBUG TEST: combined CSS length: {}", combined_css.len());
-
             // Use the same stylesheet parsing as the builder
             let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
             let content =
@@ -854,8 +905,6 @@ mod tests {
             }
 
             // The poetry should be split into separate lines
-            println!("Raw texts (with newlines visible): {:?}", raw_texts);
-            println!("Found Zeus texts: {:?}", zeus_texts);
             assert!(
                 zeus_texts.len() >= 2,
                 "Poetry should be split into multiple lines, found: {:?}",
@@ -893,7 +942,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // This mimics the builder's collect_texts function
@@ -921,7 +970,6 @@ mod tests {
             builder_collect_texts(item, &mut texts);
         }
 
-        println!("Builder collect_texts produced: {:?}", texts);
         assert_eq!(
             texts.len(),
             2,
@@ -954,7 +1002,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Simulate what the builder does: flatten items and check is_verse
@@ -963,7 +1011,6 @@ mod tests {
             for leaf in item.flatten() {
                 if let ContentItem::Text { text, is_verse, .. } = leaf {
                     if text.contains('\n') {
-                        println!("Flattened text: is_verse={}, text={:?}", is_verse, text);
                         assert!(
                             *is_verse,
                             "is_verse should be true for BR-separated text after flatten"
@@ -1043,7 +1090,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Find the merged text item
@@ -1091,7 +1138,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Find all text items and verify is_verse
@@ -1100,10 +1147,6 @@ mod tests {
             for leaf in item.flatten() {
                 if let ContentItem::Text { text, is_verse, .. } = leaf {
                     if text.contains('\n') {
-                        println!(
-                            "Found text with newline: is_verse={}, text={:?}",
-                            is_verse, text
-                        );
                         found_text = Some((text.clone(), *is_verse));
                     }
                 }
@@ -1160,7 +1203,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Should have one Container for the <ol>
@@ -1220,7 +1263,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         assert_eq!(
@@ -1267,7 +1310,7 @@ mod tests {
             .map(|n| n.as_node().clone())
             .unwrap();
 
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
         let texts = collect_all_texts(&flattened);
         let all_text = texts.join(" ");
@@ -1305,7 +1348,7 @@ mod tests {
             .map(|n| n.as_node().clone())
             .unwrap();
 
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
         let texts = collect_all_texts(&flattened);
         let all_text = texts.join(" ");
@@ -1339,7 +1382,7 @@ mod tests {
             .unwrap();
 
         let stylesheet = Stylesheet::default();
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Find MathML text
@@ -1380,7 +1423,7 @@ mod tests {
             .map(|n| n.as_node().clone())
             .unwrap();
 
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Should have MathML
@@ -1533,7 +1576,7 @@ mod tests {
             .map(|n| n.as_node().clone())
             .unwrap();
 
-        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
         let flattened = flatten_containers(items);
 
         // Find the text item and check its style has line-height
@@ -1568,6 +1611,492 @@ mod tests {
             matches!(style.line_height, Some(crate::css::CssValue::Rem(v)) if (v - 1.0).abs() < 0.01),
             "Style should have line-height: 1rem, got {:?}",
             style.line_height
+        );
+    }
+
+    #[test]
+    fn test_footnote_classification_from_epub_type() {
+        // Test that epub:type="footnote" sets classification
+        let html = r#"
+            <html xmlns:epub="http://www.idpf.org/2007/ops">
+            <body>
+                <aside epub:type="footnote" id="fn1">
+                    <p>This is a footnote</p>
+                </aside>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        // Find the aside container
+        fn find_classification(items: &[ContentItem]) -> Option<u64> {
+            for item in items {
+                if let ContentItem::Container {
+                    classification,
+                    children,
+                    ..
+                } = item
+                {
+                    if classification.is_some() {
+                        return *classification;
+                    }
+                    if let Some(c) = find_classification(children) {
+                        return Some(c);
+                    }
+                }
+            }
+            None
+        }
+
+        let classification = find_classification(&flattened);
+        assert_eq!(
+            classification,
+            Some(sym::FOOTNOTE),
+            "Container with epub:type='footnote' should have FOOTNOTE classification ($618)"
+        );
+    }
+
+    #[test]
+    fn test_endnote_classification_from_epub_type() {
+        // Test that epub:type="endnote" sets classification
+        let html = r#"
+            <html xmlns:epub="http://www.idpf.org/2007/ops">
+            <body>
+                <aside epub:type="endnote" id="en1">
+                    <p>This is an endnote</p>
+                </aside>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        fn find_classification(items: &[ContentItem]) -> Option<u64> {
+            for item in items {
+                if let ContentItem::Container {
+                    classification,
+                    children,
+                    ..
+                } = item
+                {
+                    if classification.is_some() {
+                        return *classification;
+                    }
+                    if let Some(c) = find_classification(children) {
+                        return Some(c);
+                    }
+                }
+            }
+            None
+        }
+
+        let classification = find_classification(&flattened);
+        assert_eq!(
+            classification,
+            Some(sym::ENDNOTE),
+            "Container with epub:type='endnote' should have ENDNOTE classification ($619)"
+        );
+    }
+
+    #[test]
+    fn test_footnote_classification_from_aria_role() {
+        // Test that role="doc-footnote" sets classification
+        let html = r#"
+            <html>
+            <body>
+                <aside role="doc-footnote" id="fn1">
+                    <p>This is a footnote via ARIA</p>
+                </aside>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        fn find_classification(items: &[ContentItem]) -> Option<u64> {
+            for item in items {
+                if let ContentItem::Container {
+                    classification,
+                    children,
+                    ..
+                } = item
+                {
+                    if classification.is_some() {
+                        return *classification;
+                    }
+                    if let Some(c) = find_classification(children) {
+                        return Some(c);
+                    }
+                }
+            }
+            None
+        }
+
+        let classification = find_classification(&flattened);
+        assert_eq!(
+            classification,
+            Some(sym::FOOTNOTE),
+            "Container with role='doc-footnote' should have FOOTNOTE classification ($618)"
+        );
+    }
+
+    #[test]
+    fn test_noteref_detection_from_epub_type() {
+        // Test that epub:type="noteref" sets is_noteref on text
+        let html = r##"
+            <html xmlns:epub="http://www.idpf.org/2007/ops">
+            <body>
+                <p>See note<a epub:type="noteref" href="#fn1">1</a> for details.</p>
+            </body>
+            </html>
+        "##;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+        let merged = merge_text_with_inline_runs(flattened);
+
+        // Find text with inline runs containing noteref
+        fn find_noteref_run(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                match item {
+                    ContentItem::Text { inline_runs, .. } => {
+                        for run in inline_runs {
+                            if run.is_noteref && run.anchor_href.is_some() {
+                                return Some(true);
+                            }
+                        }
+                    }
+                    ContentItem::Container { children, .. } => {
+                        if let Some(result) = find_noteref_run(children) {
+                            return Some(result);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let has_noteref = find_noteref_run(&merged);
+        assert_eq!(
+            has_noteref,
+            Some(true),
+            "Link with epub:type='noteref' should have is_noteref=true in inline run"
+        );
+    }
+
+    #[test]
+    fn test_noteref_detection_from_aria_role() {
+        // Test that role="doc-noteref" sets is_noteref on text
+        let html = r##"
+            <html>
+            <body>
+                <p>See note<a role="doc-noteref" href="#fn1">1</a> for details.</p>
+            </body>
+            </html>
+        "##;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+        let merged = merge_text_with_inline_runs(flattened);
+
+        fn find_noteref_run(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                match item {
+                    ContentItem::Text { inline_runs, .. } => {
+                        for run in inline_runs {
+                            if run.is_noteref && run.anchor_href.is_some() {
+                                return Some(true);
+                            }
+                        }
+                    }
+                    ContentItem::Container { children, .. } => {
+                        if let Some(result) = find_noteref_run(children) {
+                            return Some(result);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let has_noteref = find_noteref_run(&merged);
+        assert_eq!(
+            has_noteref,
+            Some(true),
+            "Link with role='doc-noteref' should have is_noteref=true in inline run"
+        );
+    }
+
+    #[test]
+    fn test_regular_link_not_noteref() {
+        // Test that regular links don't have is_noteref
+        let html = r#"
+            <html>
+            <body>
+                <p>Visit <a href="https://example.com">this site</a> for more.</p>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+        let merged = merge_text_with_inline_runs(flattened);
+
+        // Find inline run with anchor_href and check is_noteref
+        fn check_link_not_noteref(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                match item {
+                    ContentItem::Text { inline_runs, .. } => {
+                        for run in inline_runs {
+                            if run.anchor_href.is_some() {
+                                // Found a link - should NOT be noteref
+                                return Some(!run.is_noteref);
+                            }
+                        }
+                    }
+                    ContentItem::Container { children, .. } => {
+                        if let Some(result) = check_link_not_noteref(children) {
+                            return Some(result);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let link_not_noteref = check_link_not_noteref(&merged);
+        assert_eq!(
+            link_not_noteref,
+            Some(true),
+            "Regular link without epub:type/role should have is_noteref=false"
+        );
+    }
+
+    #[test]
+    fn test_figure_element_sets_is_figure() {
+        // Test that <figure> elements set is_figure on style
+        let html = r#"
+            <html>
+            <body>
+                <figure>
+                    <img src="image.jpg" alt="Test image"/>
+                </figure>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        fn find_figure_style(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                if let ContentItem::Container {
+                    style, tag, children, ..
+                } = item
+                {
+                    if tag == "figure" {
+                        return Some(style.is_figure);
+                    }
+                    if let Some(result) = find_figure_style(children) {
+                        return Some(result);
+                    }
+                }
+            }
+            None
+        }
+
+        let is_figure = find_figure_style(&flattened);
+        assert_eq!(
+            is_figure,
+            Some(true),
+            "<figure> element should have is_figure=true on its style"
+        );
+    }
+
+    #[test]
+    fn test_figcaption_element_sets_is_caption() {
+        // Test that <figcaption> elements set is_caption on style
+        let html = r#"
+            <html>
+            <body>
+                <figure>
+                    <img src="image.jpg" alt="Test image"/>
+                    <figcaption>This is a caption</figcaption>
+                </figure>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        fn find_figcaption_style(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                if let ContentItem::Container {
+                    style, tag, children, ..
+                } = item
+                {
+                    if tag == "figcaption" {
+                        return Some(style.is_caption);
+                    }
+                    if let Some(result) = find_figcaption_style(children) {
+                        return Some(result);
+                    }
+                }
+            }
+            None
+        }
+
+        let is_caption = find_figcaption_style(&flattened);
+        assert_eq!(
+            is_caption,
+            Some(true),
+            "<figcaption> element should have is_caption=true on its style"
+        );
+    }
+
+    #[test]
+    fn test_heading_element_sets_is_heading() {
+        // Test that h1-h6 elements set is_heading on style
+        let html = r#"
+            <html>
+            <body>
+                <h2>Chapter Title</h2>
+            </body>
+            </html>
+        "#;
+
+        let stylesheet = Stylesheet::parse("");
+        let document = kuchiki::parse_html().one(html);
+        let body = document.select("body").unwrap().next().unwrap();
+        let items = extract_from_node(
+            body.as_node(),
+            &stylesheet,
+            &ParsedStyle::default(),
+            "",
+            None,
+            false,
+            false,
+        );
+        let flattened = flatten_containers(items);
+
+        fn find_heading_style(items: &[ContentItem]) -> Option<bool> {
+            for item in items {
+                if let ContentItem::Container {
+                    style, tag, children, ..
+                } = item
+                {
+                    if tag.starts_with('h') && tag.len() == 2 {
+                        return Some(style.is_heading);
+                    }
+                    if let Some(result) = find_heading_style(children) {
+                        return Some(result);
+                    }
+                }
+            }
+            None
+        }
+
+        let is_heading = find_heading_style(&flattened);
+        assert_eq!(
+            is_heading,
+            Some(true),
+            "<h2> element should have is_heading=true on its style"
         );
     }
 }

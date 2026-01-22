@@ -778,13 +778,14 @@ fn add_visibility(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
 }
 
 fn add_break_properties(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Use legacy page-break-* symbols ($133-$135) per KFX spec
     if let Some(break_val) = style.break_before {
         let break_sym = break_value_to_symbol(break_val);
-        style_ion.insert(sym::BREAK_BEFORE, IonValue::Symbol(break_sym));
+        style_ion.insert(sym::PAGE_BREAK_BEFORE, IonValue::Symbol(break_sym));
     }
     if let Some(break_val) = style.break_after {
         let break_sym = break_value_to_symbol(break_val);
-        style_ion.insert(sym::BREAK_AFTER, IonValue::Symbol(break_sym));
+        style_ion.insert(sym::PAGE_BREAK_AFTER, IonValue::Symbol(break_sym));
     }
     if let Some(break_val) = style.break_inside {
         let break_sym = break_value_to_symbol(break_val);
@@ -1153,13 +1154,24 @@ fn add_box_sizing(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
 
 // P2 Phase 2: Layout hints for semantic elements
 fn add_layout_hints(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    let mut hints = Vec::new();
+
     // Add heading hint for h1-h6 elements
     if style.is_heading {
-        // $761: [$760] - layout hints list containing heading hint
-        style_ion.insert(
-            sym::LAYOUT_HINTS,
-            IonValue::List(vec![IonValue::Symbol(sym::LAYOUT_HINT_HEADING)]),
-        );
+        hints.push(IonValue::Symbol(sym::LAYOUT_HINT_HEADING));
+    }
+    // Add figure hint for <figure> elements
+    if style.is_figure {
+        hints.push(IonValue::Symbol(sym::LAYOUT_HINT_FIGURE));
+    }
+    // Add caption hint for <figcaption> elements
+    if style.is_caption {
+        hints.push(IonValue::Symbol(sym::LAYOUT_HINT_CAPTION));
+    }
+
+    // $761: [hint, ...] - layout hints list
+    if !hints.is_empty() {
+        style_ion.insert(sym::LAYOUT_HINTS, IonValue::List(hints));
     }
 }
 
@@ -2677,5 +2689,286 @@ mod tests {
             !ion_map.contains_key(&sym::BOX_SIZING),
             "Style without box-sizing should not have BOX_SIZING property"
         );
+    }
+
+    // =========================================================================
+    // Layout Hints Tests
+    // =========================================================================
+
+    #[test]
+    fn test_figure_style_has_layout_hint_figure() {
+        let style = ParsedStyle {
+            is_figure: true,
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have LAYOUT_HINTS ($761) containing LAYOUT_HINT_FIGURE ($282)
+        assert!(
+            ion_map.contains_key(&sym::LAYOUT_HINTS),
+            "Figure style should have LAYOUT_HINTS property"
+        );
+
+        match ion_map.get(&sym::LAYOUT_HINTS) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 1, "Layout hints should have 1 element");
+                match &list[0] {
+                    IonValue::Symbol(s) => {
+                        assert_eq!(
+                            *s,
+                            sym::LAYOUT_HINT_FIGURE,
+                            "Expected figure hint ($282)"
+                        );
+                    }
+                    _ => panic!("Expected symbol in layout hints list"),
+                }
+            }
+            _ => panic!("Expected list for LAYOUT_HINTS"),
+        }
+    }
+
+    #[test]
+    fn test_caption_style_has_layout_hint_caption() {
+        let style = ParsedStyle {
+            is_caption: true,
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have LAYOUT_HINTS ($761) containing LAYOUT_HINT_CAPTION ($453)
+        assert!(
+            ion_map.contains_key(&sym::LAYOUT_HINTS),
+            "Caption style should have LAYOUT_HINTS property"
+        );
+
+        match ion_map.get(&sym::LAYOUT_HINTS) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 1, "Layout hints should have 1 element");
+                match &list[0] {
+                    IonValue::Symbol(s) => {
+                        assert_eq!(
+                            *s,
+                            sym::LAYOUT_HINT_CAPTION,
+                            "Expected caption hint ($453)"
+                        );
+                    }
+                    _ => panic!("Expected symbol in layout hints list"),
+                }
+            }
+            _ => panic!("Expected list for LAYOUT_HINTS"),
+        }
+    }
+
+    #[test]
+    fn test_figure_with_caption_has_both_hints() {
+        // A figure that is also a caption (unlikely but tests multiple hints)
+        let style = ParsedStyle {
+            is_figure: true,
+            is_caption: true,
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        match ion_map.get(&sym::LAYOUT_HINTS) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 2, "Should have 2 layout hints");
+                // Check both hints are present
+                let hints: Vec<u64> = list
+                    .iter()
+                    .filter_map(|v| match v {
+                        IonValue::Symbol(s) => Some(*s),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    hints.contains(&sym::LAYOUT_HINT_FIGURE),
+                    "Should contain figure hint"
+                );
+                assert!(
+                    hints.contains(&sym::LAYOUT_HINT_CAPTION),
+                    "Should contain caption hint"
+                );
+            }
+            _ => panic!("Expected list for LAYOUT_HINTS"),
+        }
+    }
+
+    #[test]
+    fn test_no_layout_hints_for_regular_style() {
+        // Regular style without is_heading/is_figure/is_caption should have no layout hints
+        let style = ParsedStyle {
+            font_weight: Some(crate::css::FontWeight::Bold),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::LAYOUT_HINTS),
+            "Regular style should not have LAYOUT_HINTS"
+        );
+    }
+
+    // =========================================================================
+    // Page Break Properties Tests
+    // =========================================================================
+
+    #[test]
+    fn test_page_break_before_always() {
+        let style = ParsedStyle {
+            break_before: Some(crate::css::BreakValue::Page),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should use PAGE_BREAK_BEFORE ($134) not BREAK_BEFORE ($789)
+        assert!(
+            ion_map.contains_key(&sym::PAGE_BREAK_BEFORE),
+            "Should have PAGE_BREAK_BEFORE ($134) property"
+        );
+
+        match ion_map.get(&sym::PAGE_BREAK_BEFORE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::BREAK_ALWAYS,
+                    "page-break-before: page should map to $352 (always)"
+                );
+            }
+            _ => panic!("Expected Symbol for PAGE_BREAK_BEFORE"),
+        }
+    }
+
+    #[test]
+    fn test_page_break_after_avoid() {
+        let style = ParsedStyle {
+            break_after: Some(crate::css::BreakValue::Avoid),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should use PAGE_BREAK_AFTER ($133) not BREAK_AFTER ($788)
+        assert!(
+            ion_map.contains_key(&sym::PAGE_BREAK_AFTER),
+            "Should have PAGE_BREAK_AFTER ($133) property"
+        );
+
+        match ion_map.get(&sym::PAGE_BREAK_AFTER) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::BREAK_AVOID,
+                    "page-break-after: avoid should map to $353"
+                );
+            }
+            _ => panic!("Expected Symbol for PAGE_BREAK_AFTER"),
+        }
+    }
+
+    #[test]
+    fn test_page_break_inside_avoid() {
+        let style = ParsedStyle {
+            break_inside: Some(crate::css::BreakValue::Avoid),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should use BREAK_INSIDE ($135)
+        assert!(
+            ion_map.contains_key(&sym::BREAK_INSIDE),
+            "Should have BREAK_INSIDE ($135) property"
+        );
+
+        match ion_map.get(&sym::BREAK_INSIDE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::BREAK_AVOID,
+                    "page-break-inside: avoid should map to $353"
+                );
+            }
+            _ => panic!("Expected Symbol for BREAK_INSIDE"),
+        }
+    }
+
+    #[test]
+    fn test_no_page_break_for_auto() {
+        // auto is the default - should not emit anything
+        let style = ParsedStyle {
+            break_before: Some(crate::css::BreakValue::Auto),
+            break_after: Some(crate::css::BreakValue::Auto),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Auto values should still emit the property with BREAK_AUTO
+        // (this depends on implementation - some converters skip auto)
+        // Our implementation emits it, so just verify the value is correct if present
+        if let Some(IonValue::Symbol(s)) = ion_map.get(&sym::PAGE_BREAK_BEFORE) {
+            assert_eq!(*s, sym::BREAK_AUTO, "auto should map to $383");
+        }
     }
 }

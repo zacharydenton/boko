@@ -98,6 +98,9 @@ pub struct StyleRun {
     /// Optional element ID from inline element (e.g., <a id="noteref-1">)
     /// Used for anchor targets (back-links)
     pub element_id: Option<String>,
+    /// Whether this link is a noteref (reference to a footnote/endnote)
+    /// When true, $616: $617 is added to inline style runs for popup behavior
+    pub is_noteref: bool,
 }
 
 /// A content item - text, image, or nested container
@@ -115,6 +118,8 @@ pub enum ContentItem {
         element_id: Option<String>,
         /// Whether this text is from a verse/poetry block (affects line break handling)
         is_verse: bool,
+        /// Whether this text is from a noteref link (triggers popup footnotes)
+        is_noteref: bool,
     },
     /// Image reference with optional styling
     Image {
@@ -140,6 +145,10 @@ pub enum ContentItem {
         colspan: Option<u32>,
         /// Table cell rowspan attribute
         rowspan: Option<u32>,
+        /// Content classification for footnotes/endnotes ($615 value)
+        /// - Some(sym::FOOTNOTE) for footnote containers
+        /// - Some(sym::ENDNOTE) for endnote containers
+        classification: Option<u64>,
     },
 }
 

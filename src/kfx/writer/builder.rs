@@ -901,9 +901,15 @@ impl KfxBookBuilder {
                 tag,
                 colspan,
                 rowspan,
+                classification,
                 ..
             } => {
                 let mut item = HashMap::new();
+
+                // Add classification ($615) for footnote/endnote containers (popup support)
+                if let Some(class_sym) = classification {
+                    item.insert(sym::CLASSIFICATION, IonValue::Symbol(*class_sym));
+                }
 
                 // Determine content type based on container type
                 let content_type = if list_type.is_some() {
@@ -938,7 +944,7 @@ impl KfxBookBuilder {
                 if let Some(lt) = list_type {
                     let list_type_sym = match lt {
                         ListType::Ordered => sym::LIST_TYPE_DECIMAL,
-                        ListType::Unordered => sym::LIST_TYPE_DECIMAL, // TODO: find correct symbol for bullet list
+                        ListType::Unordered => sym::LIST_TYPE_DISC,
                     };
                     item.insert(sym::LIST_TYPE, IonValue::Symbol(list_type_sym));
                 }
@@ -1028,6 +1034,7 @@ impl KfxBookBuilder {
                         style: run.style.clone(),
                         anchor_href: run.anchor_href.clone(),
                         element_id: run.element_id.clone(),
+                        is_noteref: run.is_noteref,
                     });
                 }
                 // Track cumulative offset for next text item
@@ -1233,6 +1240,12 @@ impl KfxBookBuilder {
                     && let Some(&anchor_sym) = self.anchor_symbols.get(href)
                 {
                     run_struct.insert(sym::ANCHOR_REF, IonValue::Symbol(anchor_sym));
+                }
+
+                // Add noteref marker ($616: $617) for footnote/endnote reference links
+                // This enables popup behavior on Kindle devices
+                if run.is_noteref {
+                    run_struct.insert(sym::NOTEREF_TYPE, IonValue::Symbol(sym::NOTEREF));
                 }
 
                 Some(IonValue::Struct(run_struct))
@@ -1594,12 +1607,14 @@ mod tests {
                 anchor_href: None,
                 element_id: None,
                 is_verse: false,
+                is_noteref: false,
             }],
             tag: "li".to_string(),
             element_id: None,
             list_type: None, // li elements don't have list_type
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         let list_item_2 = ContentItem::Container {
@@ -1611,12 +1626,14 @@ mod tests {
                 anchor_href: None,
                 element_id: None,
                 is_verse: false,
+                is_noteref: false,
             }],
             tag: "li".to_string(),
             element_id: None,
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         let list_container = ContentItem::Container {
@@ -1627,6 +1644,7 @@ mod tests {
             list_type: Some(ListType::Ordered),
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         // Build the content items
@@ -1718,6 +1736,7 @@ mod tests {
             anchor_href: None,
             element_id: None,
             is_verse: true, // Mark as verse so it should be split
+            is_noteref: false,
         };
 
         let container = ContentItem::Container {
@@ -1728,6 +1747,7 @@ mod tests {
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         let chapter = ChapterData {
@@ -1747,10 +1767,6 @@ mod tests {
         let mut all_texts: Vec<String> = Vec::new();
         for item in chunk.items.iter().flat_map(|i| i.flatten()) {
             if let ContentItem::Text { text, is_verse, .. } = item {
-                println!(
-                    "DEBUG: Found text item: is_verse={}, text={:?}",
-                    is_verse, text
-                );
                 // Use normalize_text_for_kfx logic
                 if *is_verse {
                     for line in text.split('\n') {
@@ -1766,8 +1782,6 @@ mod tests {
                 }
             }
         }
-
-        println!("DEBUG: Collected texts: {:?}", all_texts);
 
         assert_eq!(
             all_texts.len(),
@@ -1830,16 +1844,6 @@ mod tests {
             find_zeus_texts(item, &mut zeus_results);
         }
 
-        println!("Found {} Zeus-related text items:", zeus_results.len());
-        for (text, is_verse) in &zeus_results {
-            let display = if text.len() > 80 {
-                format!("{}...", &text[..80])
-            } else {
-                text.clone()
-            };
-            println!("  is_verse={}: {:?}", is_verse, display);
-        }
-
         // At least one should have newlines and is_verse=true
         let verse_with_newlines = zeus_results
             .iter()
@@ -1876,10 +1880,12 @@ mod tests {
                 style: anchor_style.clone(),
                 anchor_href: Some("chapter.xhtml#noteref-1".to_string()),
                 element_id: None,
+                is_noteref: false,
             }],
             anchor_href: None,
             element_id: None,
             is_verse: false,
+            is_noteref: false,
         };
 
         let paragraph = ContentItem::Container {
@@ -1890,6 +1896,7 @@ mod tests {
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         // Create a chapter with this content
@@ -1931,6 +1938,7 @@ mod tests {
             style: anchor_style,
             anchor_href: Some("chapter.xhtml#noteref-1".to_string()),
             element_id: None,
+            is_noteref: false,
         }];
 
         let ion_runs = builder.build_inline_runs(&runs);
@@ -2005,11 +2013,6 @@ mod tests {
             collect_anchor_runs(item, &mut backlink_runs);
         }
 
-        println!("Found {} backlink inline runs:", backlink_runs.len());
-        for (href, style_str, style) in &backlink_runs[..5.min(backlink_runs.len())] {
-            println!("  {} - {} - lang={:?}", href, style_str, style.lang);
-        }
-
         // Should find many backlinks (epictetus has 98+ endnotes)
         assert!(
             backlink_runs.len() > 90,
@@ -2040,28 +2043,17 @@ mod tests {
                 style: style.clone(),
                 anchor_href: Some(href.clone()),
                 element_id: None,
+                is_noteref: false,
             })
             .collect();
 
         // Check that ALL styles are registered (this is the critical check)
-        for (i, (href, _, style)) in backlink_runs.iter().take(10).enumerate() {
+        for (_i, (_href, _, style)) in backlink_runs.iter().take(10).enumerate() {
             let in_map = builder.style_map.contains_key(style);
-            println!(
-                "Run {} href={} style_in_map={} is_inline={}",
-                i, href, in_map, style.is_inline
-            );
-            if !in_map {
-                println!("  Missing style: {:?}", style);
-            }
+            assert!(in_map, "Style should be in style_map: {:?}", style);
         }
 
         let ion_runs = builder.build_inline_runs(&test_runs);
-
-        println!(
-            "Built {} ION runs from {} StyleRuns",
-            ion_runs.len(),
-            test_runs.len()
-        );
 
         // Should produce same number of output runs as input
         assert_eq!(
@@ -2137,11 +2129,6 @@ mod tests {
                 }
             }
         }
-
-        println!(
-            "CONTENT_BLOCK frags: {}, inline runs: {}, with anchor refs: {}",
-            content_block_frags, inline_runs_count, anchor_ref_count
-        );
 
         // Should have many anchor refs (noterefs + backlinks + any other links)
         // Epictetus has 98+ endnotes so we should have at least 98 backlinks + 98 noterefs = 196
@@ -2258,12 +2245,14 @@ mod tests {
                 anchor_href: None,
                 element_id: None,
                 is_verse: false,
+                is_noteref: false,
             }],
             tag: "td".to_string(),
             element_id: None,
             list_type: None,
             colspan: Some(2), // Test colspan
             rowspan: None,
+            classification: None,
         };
 
         let tr = ContentItem::Container {
@@ -2274,6 +2263,7 @@ mod tests {
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         let tbody = ContentItem::Container {
@@ -2284,6 +2274,7 @@ mod tests {
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         let table = ContentItem::Container {
@@ -2294,6 +2285,7 @@ mod tests {
             list_type: None,
             colspan: None,
             rowspan: None,
+            classification: None,
         };
 
         // Build the content items
@@ -2392,6 +2384,282 @@ mod tests {
             colspan,
             Some(2),
             "Td should have colspan attribute with value 2"
+        );
+    }
+
+    #[test]
+    fn test_unordered_list_uses_disc_marker() {
+        // Create an unordered list (ul) with list items
+        let list_item = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "Bullet item".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+                is_noteref: false,
+            }],
+            tag: "li".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+            classification: None,
+        };
+
+        let unordered_list = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![list_item],
+            tag: "ul".to_string(),
+            element_id: None,
+            list_type: Some(ListType::Unordered),
+            colspan: None,
+            rowspan: None,
+            classification: None,
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&unordered_list, &mut state, 860);
+        assert_eq!(ion_items.len(), 1, "Should produce one list container");
+
+        let list_ion = &ion_items[0];
+
+        // Verify unordered list has LIST_TYPE_DISC ($340), not LIST_TYPE_DECIMAL ($343)
+        let list_type = get_struct_field(list_ion, sym::LIST_TYPE).and_then(get_symbol_value);
+        assert_eq!(
+            list_type,
+            Some(sym::LIST_TYPE_DISC),
+            "Unordered list should use LIST_TYPE_DISC ($340), not decimal"
+        );
+    }
+
+    #[test]
+    fn test_ordered_list_uses_decimal_marker() {
+        // Create an ordered list (ol) with list items
+        let list_item = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "Numbered item".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+                is_noteref: false,
+            }],
+            tag: "li".to_string(),
+            element_id: None,
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+            classification: None,
+        };
+
+        let ordered_list = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![list_item],
+            tag: "ol".to_string(),
+            element_id: None,
+            list_type: Some(ListType::Ordered),
+            colspan: None,
+            rowspan: None,
+            classification: None,
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&ordered_list, &mut state, 860);
+        let list_ion = &ion_items[0];
+
+        // Verify ordered list has LIST_TYPE_DECIMAL ($343)
+        let list_type = get_struct_field(list_ion, sym::LIST_TYPE).and_then(get_symbol_value);
+        assert_eq!(
+            list_type,
+            Some(sym::LIST_TYPE_DECIMAL),
+            "Ordered list should use LIST_TYPE_DECIMAL ($343)"
+        );
+    }
+
+    #[test]
+    fn test_footnote_classification_emitted() {
+        // Create a container with footnote classification
+        let footnote_container = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "This is a footnote".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+                is_noteref: false,
+            }],
+            tag: "aside".to_string(),
+            element_id: Some("fn1".to_string()),
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+            classification: Some(sym::FOOTNOTE), // $618
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&footnote_container, &mut state, 860);
+        let container_ion = &ion_items[0];
+
+        // Verify footnote has CLASSIFICATION ($615) with value FOOTNOTE ($618)
+        let classification =
+            get_struct_field(container_ion, sym::CLASSIFICATION).and_then(get_symbol_value);
+        assert_eq!(
+            classification,
+            Some(sym::FOOTNOTE),
+            "Footnote container should have CLASSIFICATION: FOOTNOTE ($615: $618)"
+        );
+    }
+
+    #[test]
+    fn test_endnote_classification_emitted() {
+        // Create a container with endnote classification
+        let endnote_container = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![ContentItem::Text {
+                text: "This is an endnote".to_string(),
+                style: ParsedStyle::default(),
+                inline_runs: Vec::new(),
+                anchor_href: None,
+                element_id: None,
+                is_verse: false,
+                is_noteref: false,
+            }],
+            tag: "aside".to_string(),
+            element_id: Some("en1".to_string()),
+            list_type: None,
+            colspan: None,
+            rowspan: None,
+            classification: Some(sym::ENDNOTE), // $619
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(ParsedStyle::default(), 860);
+
+        let content_sym = builder.symtab.get_or_intern("content-test");
+        let mut state = ContentState {
+            global_idx: 0,
+            text_idx_in_chunk: 0,
+            current_content_sym: content_sym,
+        };
+
+        let ion_items = builder.build_content_items(&endnote_container, &mut state, 860);
+        let container_ion = &ion_items[0];
+
+        // Verify endnote has CLASSIFICATION ($615) with value ENDNOTE ($619)
+        let classification =
+            get_struct_field(container_ion, sym::CLASSIFICATION).and_then(get_symbol_value);
+        assert_eq!(
+            classification,
+            Some(sym::ENDNOTE),
+            "Endnote container should have CLASSIFICATION: ENDNOTE ($615: $619)"
+        );
+    }
+
+    #[test]
+    fn test_noteref_inline_run_has_noteref_type() {
+        // Create inline style for noteref link
+        let noteref_style = ParsedStyle {
+            is_inline: true,
+            ..Default::default()
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(noteref_style.clone(), 861);
+        builder
+            .anchor_symbols
+            .insert("chapter.xhtml#fn1".to_string(), 500);
+
+        // Create a StyleRun with is_noteref = true
+        let runs = vec![StyleRun {
+            offset: 0,
+            length: 1,
+            style: noteref_style,
+            anchor_href: Some("chapter.xhtml#fn1".to_string()),
+            element_id: None,
+            is_noteref: true, // This is a noteref link
+        }];
+
+        let ion_runs = builder.build_inline_runs(&runs);
+        assert_eq!(ion_runs.len(), 1, "Should produce one inline run");
+
+        let run_ion = &ion_runs[0];
+
+        // Verify noteref has NOTEREF_TYPE ($616) with value NOTEREF ($617)
+        let noteref_type =
+            get_struct_field(run_ion, sym::NOTEREF_TYPE).and_then(get_symbol_value);
+        assert_eq!(
+            noteref_type,
+            Some(sym::NOTEREF),
+            "Noteref link should have NOTEREF_TYPE: NOTEREF ($616: $617)"
+        );
+    }
+
+    #[test]
+    fn test_non_noteref_link_has_no_noteref_type() {
+        // Create inline style for regular link
+        let link_style = ParsedStyle {
+            is_inline: true,
+            ..Default::default()
+        };
+
+        let mut builder = KfxBookBuilder::new();
+        builder.style_map.insert(link_style.clone(), 861);
+        builder
+            .anchor_symbols
+            .insert("chapter.xhtml#section1".to_string(), 500);
+
+        // Create a StyleRun with is_noteref = false (regular link)
+        let runs = vec![StyleRun {
+            offset: 0,
+            length: 5,
+            style: link_style,
+            anchor_href: Some("chapter.xhtml#section1".to_string()),
+            element_id: None,
+            is_noteref: false, // Not a noteref
+        }];
+
+        let ion_runs = builder.build_inline_runs(&runs);
+        let run_ion = &ion_runs[0];
+
+        // Verify regular link does NOT have NOTEREF_TYPE
+        let noteref_type = get_struct_field(run_ion, sym::NOTEREF_TYPE);
+        assert!(
+            noteref_type.is_none(),
+            "Regular link should NOT have NOTEREF_TYPE"
         );
     }
 }

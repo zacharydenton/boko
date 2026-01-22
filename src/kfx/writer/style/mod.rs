@@ -356,7 +356,9 @@ pub fn break_value_to_symbol(break_val: crate::css::BreakValue) -> u64 {
     match break_val {
         BreakValue::Auto => sym::BREAK_AUTO, // $383
         BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => sym::BREAK_AVOID, // $353
-        _ => sym::BREAK_AUTO, // Default to auto
+        BreakValue::Page | BreakValue::Left | BreakValue::Right | BreakValue::Column => {
+            sym::BREAK_ALWAYS // $352
+        }
     }
 }
 
