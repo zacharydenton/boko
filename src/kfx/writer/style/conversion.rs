@@ -89,15 +89,18 @@ pub fn style_to_ion(
     // Font size
     add_font_size(&mut style_ion, style, is_image_style);
 
-    // Text align
+    // Text align - skip left (default value)
     if let Some(align) = style.text_align {
-        let align_sym = match align {
-            TextAlign::Left => sym::ALIGN_LEFT,
-            TextAlign::Right => sym::ALIGN_RIGHT,
-            TextAlign::Center => sym::ALIGN_CENTER,
-            TextAlign::Justify => sym::ALIGN_JUSTIFY,
-        };
-        style_ion.insert(sym::TEXT_ALIGN, IonValue::Symbol(align_sym));
+        // Only output non-default alignments
+        if align != TextAlign::Left {
+            let align_sym = match align {
+                TextAlign::Left => sym::ALIGN_LEFT, // Won't reach this
+                TextAlign::Right => sym::ALIGN_RIGHT,
+                TextAlign::Center => sym::ALIGN_CENTER,
+                TextAlign::Justify => sym::ALIGN_JUSTIFY,
+            };
+            style_ion.insert(sym::TEXT_ALIGN, IonValue::Symbol(align_sym));
+        }
     }
 
     // Font weight
