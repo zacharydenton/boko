@@ -63,7 +63,9 @@ pub fn style_to_ion(
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
 
-        // Note: IMAGE_FIT baseline removed - reference KFX doesn't include it for text styles
+        // Add IMAGE_FIT baseline ($546=$378) to match reference KFX
+        // Reference includes this on all styles (text and image)
+        style_ion.insert(sym::IMAGE_FIT, IonValue::Symbol(sym::IMAGE_FIT_NONE));
     }
 
     // Font size
@@ -626,9 +628,9 @@ mod tests {
     use crate::css::ParsedStyle;
 
     #[test]
-    fn test_text_style_no_image_fit_baseline() {
-        // Text styles should NOT include IMAGE_FIT ($546) baseline property
-        // Reference KFX doesn't include it for non-image styles
+    fn test_text_style_has_image_fit_baseline() {
+        // Text styles SHOULD include IMAGE_FIT ($546=$378) baseline property
+        // Reference KFX includes $546=$378 (IMAGE_FIT_NONE) on all styles
         let style = ParsedStyle {
             font_size: Some(crate::css::CssValue::Em(1.0)),
             ..Default::default()
@@ -638,15 +640,22 @@ mod tests {
         let style_sym = symtab.get_or_intern("test-style");
         let ion = style_to_ion(&style, style_sym, &mut symtab);
 
-        // Should NOT have IMAGE_FIT for text styles
+        // Should have IMAGE_FIT with value IMAGE_FIT_NONE ($378)
         let ion_map = match ion {
             IonValue::Struct(map) => map,
             _ => panic!("Expected struct"),
         };
         assert!(
-            !ion_map.contains_key(&sym::IMAGE_FIT),
-            "Text styles should not have IMAGE_FIT baseline property"
+            ion_map.contains_key(&sym::IMAGE_FIT),
+            "Text styles should have IMAGE_FIT baseline property"
         );
+        // Verify it's IMAGE_FIT_NONE ($378)
+        match ion_map.get(&sym::IMAGE_FIT) {
+            Some(IonValue::Symbol(sym)) => {
+                assert_eq!(*sym, sym::IMAGE_FIT_NONE, "Expected IMAGE_FIT_NONE ($378)");
+            }
+            _ => panic!("IMAGE_FIT should be a symbol"),
+        }
     }
 
     #[test]
