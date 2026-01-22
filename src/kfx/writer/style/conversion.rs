@@ -613,36 +613,42 @@ fn add_vertical_align(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyl
 
 fn add_text_decorations(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     // Get the line style (if any)
+    // Per yj_to_epub_properties.py: decoration properties use $328-$331 as values
+    // $328=solid, $329=double, $330=dashed, $331=dotted
     let line_style = style.text_decoration_line_style;
+
+    // Helper to get decoration style symbol
+    let style_sym = |style: Option<TextDecorationLineStyle>| -> u64 {
+        match style {
+            Some(TextDecorationLineStyle::Dashed) => sym::TEXT_DECORATION_STYLE_DASHED,
+            Some(TextDecorationLineStyle::Dotted) => sym::TEXT_DECORATION_STYLE_DOTTED,
+            Some(TextDecorationLineStyle::Double) => sym::TEXT_DECORATION_STYLE_DOUBLE,
+            Some(TextDecorationLineStyle::Solid) | None => sym::DECORATION_PRESENT, // $328 = solid
+        }
+    };
 
     // Handle underline with optional line style
     if style.text_decoration_underline {
-        let decoration_sym = match line_style {
-            Some(TextDecorationLineStyle::Dashed) => sym::TEXT_DECORATION_UNDERLINE_DASHED,
-            Some(TextDecorationLineStyle::Dotted) => sym::TEXT_DECORATION_UNDERLINE_DOTTED,
-            Some(TextDecorationLineStyle::Double) => sym::TEXT_DECORATION_UNDERLINE_DOUBLE,
-            Some(TextDecorationLineStyle::Solid) | None => sym::DECORATION_PRESENT,
-        };
-        style_ion.insert(sym::TEXT_DECORATION_UNDERLINE, IonValue::Symbol(decoration_sym));
+        style_ion.insert(
+            sym::TEXT_DECORATION_UNDERLINE,
+            IonValue::Symbol(style_sym(line_style)),
+        );
     }
 
-    // Handle overline (no combined symbols in reference, use simple present)
+    // Handle overline with optional line style
     if style.text_decoration_overline {
         style_ion.insert(
             sym::TEXT_DECORATION_OVERLINE,
-            IonValue::Symbol(sym::DECORATION_PRESENT),
+            IonValue::Symbol(style_sym(line_style)),
         );
     }
 
     // Handle line-through with optional line style
     if style.text_decoration_line_through {
-        let decoration_sym = match line_style {
-            Some(TextDecorationLineStyle::Dashed) => sym::TEXT_DECORATION_LINE_THROUGH_DASHED,
-            Some(TextDecorationLineStyle::Dotted) => sym::TEXT_DECORATION_LINE_THROUGH_DOTTED,
-            Some(TextDecorationLineStyle::Double) => sym::TEXT_DECORATION_LINE_THROUGH_DOUBLE,
-            Some(TextDecorationLineStyle::Solid) | None => sym::DECORATION_PRESENT,
-        };
-        style_ion.insert(sym::TEXT_DECORATION_LINE_THROUGH, IonValue::Symbol(decoration_sym));
+        style_ion.insert(
+            sym::TEXT_DECORATION_LINE_THROUGH,
+            IonValue::Symbol(style_sym(line_style)),
+        );
     }
 }
 
@@ -898,15 +904,13 @@ fn add_text_emphasis(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle
 }
 
 // P2 Phase 2: Border collapse
+// Note: Uses boolean values per yj_to_epub_properties.py: False=separate, True=collapse
 fn add_border_collapse(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     if let Some(collapse) = style.border_collapse {
-        let collapse_sym = match collapse {
-            BorderCollapse::Separate => sym::BORDER_COLLAPSE_SEPARATE,
-            BorderCollapse::Collapse => sym::BORDER_COLLAPSE_COLLAPSE,
-        };
         // Only output if not default (separate)
         if collapse != BorderCollapse::Separate {
-            style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Symbol(collapse_sym));
+            // True = collapse
+            style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Bool(true));
         }
     }
 }
@@ -1960,15 +1964,10 @@ mod tests {
             ion_map.contains_key(&sym::BORDER_COLLAPSE),
             "Style should have BORDER_COLLAPSE"
         );
+        // Per yj_to_epub_properties.py: True = collapse
         match ion_map.get(&sym::BORDER_COLLAPSE) {
-            Some(IonValue::Symbol(s)) => {
-                assert_eq!(
-                    *s,
-                    sym::BORDER_COLLAPSE_COLLAPSE,
-                    "Expected border-collapse: collapse"
-                );
-            }
-            _ => panic!("Expected symbol for BORDER_COLLAPSE"),
+            Some(IonValue::Bool(true)) => {}
+            other => panic!("Expected Bool(true) for BORDER_COLLAPSE, got {:?}", other),
         }
     }
 
@@ -2057,12 +2056,13 @@ mod tests {
             ion_map.contains_key(&sym::TEXT_DECORATION_UNDERLINE),
             "Style should have TEXT_DECORATION_UNDERLINE"
         );
+        // Per yj_to_epub_properties.py: $330 = dashed line style
         match ion_map.get(&sym::TEXT_DECORATION_UNDERLINE) {
             Some(IonValue::Symbol(s)) => {
                 assert_eq!(
                     *s,
-                    sym::TEXT_DECORATION_UNDERLINE_DASHED,
-                    "Expected underline dashed symbol"
+                    sym::TEXT_DECORATION_STYLE_DASHED,
+                    "Expected dashed style symbol ($330)"
                 );
             }
             _ => panic!("Expected symbol for TEXT_DECORATION_UNDERLINE"),
@@ -2090,12 +2090,13 @@ mod tests {
             ion_map.contains_key(&sym::TEXT_DECORATION_LINE_THROUGH),
             "Style should have TEXT_DECORATION_LINE_THROUGH"
         );
+        // Per yj_to_epub_properties.py: $329 = double line style
         match ion_map.get(&sym::TEXT_DECORATION_LINE_THROUGH) {
             Some(IonValue::Symbol(s)) => {
                 assert_eq!(
                     *s,
-                    sym::TEXT_DECORATION_LINE_THROUGH_DOUBLE,
-                    "Expected line-through double symbol"
+                    sym::TEXT_DECORATION_STYLE_DOUBLE,
+                    "Expected double style symbol ($329)"
                 );
             }
             _ => panic!("Expected symbol for TEXT_DECORATION_LINE_THROUGH"),

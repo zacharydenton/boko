@@ -27,6 +27,7 @@ pub mod sym {
     pub const FONT_FAMILY: u64 = 11; // $11 - font-family (string value: serif, sans-serif, etc.)
     pub const FONT_STYLE: u64 = 12; // $12 - font-style (italic, oblique, normal)
     pub const FONT_WEIGHT: u64 = 13; // $13 - font-weight (100-900, bold, normal)
+    pub const FONT_STRETCH: u64 = 15; // $15 - font-stretch (condensed, expanded, etc.)
     pub const FONT_SIZE: u64 = 16; // $16 - font-size (relative to 1.0 = 1em)
     pub const COLOR: u64 = 19; // $19 - text color (ARGB integer)
 
@@ -38,16 +39,19 @@ pub mod sym {
     pub const LETTER_SPACING: u64 = 32; // $32 - letter-spacing
     pub const WORD_SPACING: u64 = 33; // $33 - word-spacing
     pub const TEXT_ALIGN: u64 = 34; // $34 - text alignment
+    pub const TEXT_ALIGN_LAST: u64 = 35; // $35 - text-align-last
     pub const TEXT_INDENT: u64 = 36; // $36 - text indent
     pub const TEXT_TRANSFORM: u64 = 41; // $41 - text-transform (uppercase, lowercase, etc.)
     pub const LINE_HEIGHT: u64 = 42; // $42 - line-height
     pub const WHITE_SPACE_NOWRAP: u64 = 45; // $45 - white-space: nowrap (boolean)
 
     // Margin/padding (note: $47 is shared between margin-top/bottom and spacing)
+    pub const MARGIN: u64 = 46; // $46 - margin (shorthand)
     pub const SPACE_BEFORE: u64 = 47; // $47 - margin-top/space-before (multiplier)
-    pub const MARGIN_LEFT: u64 = 48; // $48 - margin-left and padding-left (percent)
+    pub const MARGIN_LEFT: u64 = 48; // $48 - margin-left (percent)
     pub const SPACE_AFTER: u64 = 49; // $49 - margin-bottom/space-after (multiplier)
-    pub const MARGIN_RIGHT: u64 = 50; // $50 - margin-right and padding-right (percent)
+    pub const MARGIN_RIGHT: u64 = 50; // $50 - margin-right (percent)
+    pub const PADDING: u64 = 51; // $51 - padding (shorthand)
     pub const PADDING_TOP: u64 = 52; // $52 - padding-top (multiplier)
     pub const PADDING_LEFT: u64 = 53; // $53 - padding-left
     pub const PADDING_BOTTOM: u64 = 54; // $54 - padding-bottom (multiplier)
@@ -56,6 +60,7 @@ pub mod sym {
     // Dimensions
     pub const STYLE_WIDTH: u64 = 56; // $56 - width in style
     pub const STYLE_HEIGHT: u64 = 57; // $57 - height in style
+    pub const MAX_HEIGHT: u64 = 64; // $64 - max-height
     pub const MAX_WIDTH: u64 = 65; // $65 - max-width (for em widths)
     pub const OPACITY: u64 = 72; // $72 - opacity (0.0-1.0 decimal)
 
@@ -81,8 +86,9 @@ pub mod sym {
     pub const UNIT_CM: u64 = 315; // $315 - cm unit (centimeters)
     pub const UNIT_MM: u64 = 316; // $316 - mm unit (millimeters)
     pub const UNIT_IN: u64 = 317; // $317 - in unit (inches)
-    pub const UNIT_PX: u64 = 318; // $318 - px/points unit
-    pub const UNIT_EM_FONTSIZE: u64 = 505; // $505 - em unit specifically for font-size
+    pub const UNIT_PT: u64 = 318; // $318 - pt unit (points)
+    pub const UNIT_PX: u64 = 319; // $319 - px unit (pixels)
+    pub const UNIT_EM_FONTSIZE: u64 = 505; // $505 - rem unit (root em / font-size context)
     pub const UNIT_CH: u64 = 506; // $506 - ch unit (character width)
     pub const UNIT_VMAX: u64 = 507; // $507 - vmax unit (viewport maximum)
 
@@ -95,9 +101,17 @@ pub mod sym {
     pub const ALIGN_JUSTIFY: u64 = 321; // $321 - text-align: justify
 
     // ==========================================================================
-    // TABLE CELL ALIGNMENT
+    // TEXT ALIGN LAST VALUES ($35)
     // ==========================================================================
-    pub const CELL_ALIGN: u64 = 633; // $633 - table cell alignment
+    pub const ALIGN_LAST_START: u64 = 680; // $680 - text-align-last: start
+    pub const ALIGN_LAST_END: u64 = 681; // $681 - text-align-last: end
+    // Also uses ALIGN_LEFT, ALIGN_RIGHT, ALIGN_CENTER, ALIGN_JUSTIFY, BREAK_AUTO
+
+    // ==========================================================================
+    // TABLE CELL ALIGNMENT ($633)
+    // ==========================================================================
+    pub const CELL_ALIGN: u64 = 633; // $633 - -kfx-table-vertical-align
+    // Values: $350 (baseline), $60 (bottom), $320 (middle), $58 (top)
 
     // ==========================================================================
     // FONT WEIGHT VALUES ($13)
@@ -120,6 +134,22 @@ pub mod sym {
     pub const FONT_STYLE_ITALIC: u64 = 382; // $382 - font-style: italic
 
     // ==========================================================================
+    // FONT STRETCH VALUES ($15)
+    // ==========================================================================
+    pub const FONT_STRETCH_NORMAL: u64 = 350; // $350 - font-stretch: normal
+    pub const FONT_STRETCH_CONDENSED: u64 = 365; // $365 - font-stretch: condensed
+    pub const FONT_STRETCH_SEMI_CONDENSED: u64 = 366; // $366 - font-stretch: semi-condensed
+    pub const FONT_STRETCH_SEMI_EXPANDED: u64 = 367; // $367 - font-stretch: semi-expanded
+    pub const FONT_STRETCH_EXPANDED: u64 = 368; // $368 - font-stretch: expanded
+
+    // ==========================================================================
+    // DIRECTION VALUES ($192, $682)
+    // ==========================================================================
+    pub const DIRECTION: u64 = 192; // $192 - direction property (also $682)
+    pub const DIRECTION_LTR: u64 = 376; // $376 - direction: ltr
+    pub const DIRECTION_RTL: u64 = 375; // $375 - direction: rtl
+
+    // ==========================================================================
     // TEXT TRANSFORM VALUES ($41)
     // ==========================================================================
     pub const TEXT_TRANSFORM_NONE: u64 = 349; // $349 - text-transform: none
@@ -137,22 +167,22 @@ pub mod sym {
     // ==========================================================================
     // TEXT DECORATION VALUES
     // ==========================================================================
-    pub const DECORATION_PRESENT: u64 = 328; // $328 - decoration is present
+    pub const DECORATION_PRESENT: u64 = 328; // $328 - decoration is present (solid)
     pub const TEXT_DECORATION_OVERLINE: u64 = 554; // $554 - text-decoration: overline
-    pub const DECORATION_BOX_CLONE: u64 = 99; // $99 - decoration-break: clone
+    pub const DECORATION_BOX_CLONE: u64 = 99; // $99 - box-decoration-break: clone
 
-    // Text decoration line styles (P2 Phase 2)
-    pub const TEXT_DECORATION_DASHED: u64 = 707; // $707 - dashed line style
-    pub const TEXT_DECORATION_DOTTED: u64 = 708; // $708 - dotted line style
-    pub const TEXT_DECORATION_DOUBLE: u64 = 709; // $709 - double line style
-    // Combined values for underline variants
-    pub const TEXT_DECORATION_UNDERLINE_DASHED: u64 = 710; // $710 - underline dashed
-    pub const TEXT_DECORATION_UNDERLINE_DOTTED: u64 = 711; // $711 - underline dotted
-    pub const TEXT_DECORATION_UNDERLINE_DOUBLE: u64 = 712; // $712 - underline double
-    // Combined values for line-through variants
-    pub const TEXT_DECORATION_LINE_THROUGH_DASHED: u64 = 713; // $713 - line-through dashed (estimated)
-    pub const TEXT_DECORATION_LINE_THROUGH_DOTTED: u64 = 714; // $714 - line-through dotted (estimated)
-    pub const TEXT_DECORATION_LINE_THROUGH_DOUBLE: u64 = 715; // $715 - line-through double (estimated)
+    // Text decoration color (separate symbols for underline/line-through/overline)
+    pub const TEXT_DECORATION_UNDERLINE_COLOR: u64 = 24; // $24 - underline text-decoration-color
+    pub const TEXT_DECORATION_LINE_THROUGH_COLOR: u64 = 28; // $28 - line-through text-decoration-color
+    pub const TEXT_DECORATION_OVERLINE_COLOR: u64 = 555; // $555 - overline text-decoration-color
+
+    // Text decoration line styles (from yj_to_epub_properties.py)
+    // Note: $707 is -kfx-character-width in kfxlib, not decoration style
+    // Note: $708 is also -kfx-character-width in kfxlib
+    // Values $329, $330, $331 are the actual line styles (shared with border)
+    pub const TEXT_DECORATION_STYLE_DOUBLE: u64 = 329; // $329 - double line style
+    pub const TEXT_DECORATION_STYLE_DASHED: u64 = 330; // $330 - dashed line style
+    pub const TEXT_DECORATION_STYLE_DOTTED: u64 = 331; // $331 - dotted line style
 
     // ==========================================================================
     // VERTICAL ALIGN VALUES ($44)
@@ -175,6 +205,25 @@ pub mod sym {
     pub const OVERFLOW_CLIP: u64 = 476; // $476 - overflow: hidden/clip (boolean: true = clip)
 
     // ==========================================================================
+    // POSITION PROPERTY ($183)
+    // ==========================================================================
+    pub const CSS_POSITION: u64 = 183; // $183 - position property
+    pub const POSITION_OEB_PAGE_HEAD: u64 = 151; // $151 - position: oeb-page-head
+    pub const POSITION_ABSOLUTE: u64 = 324; // $324 - position: absolute
+    pub const POSITION_OEB_PAGE_FOOT: u64 = 455; // $455 - position: oeb-page-foot
+    pub const POSITION_RELATIVE: u64 = 488; // $488 - position: relative
+    pub const POSITION_FIXED: u64 = 489; // $489 - position: fixed
+    // Note: Position coordinates use $58 (top), $59 (left), $60 (bottom), $61 (right)
+
+    // ==========================================================================
+    // OUTLINE PROPERTIES
+    // ==========================================================================
+    pub const OUTLINE_COLOR: u64 = 105; // $105 - outline-color
+    pub const OUTLINE_OFFSET: u64 = 106; // $106 - outline-offset
+    pub const OUTLINE_STYLE: u64 = 107; // $107 - outline-style (uses BORDER_STYLES values)
+    pub const OUTLINE_WIDTH: u64 = 108; // $108 - outline-width
+
+    // ==========================================================================
     // CLEAR PROPERTY ($628)
     // ==========================================================================
     pub const CLEAR: u64 = 628; // $628 - clear property
@@ -191,11 +240,19 @@ pub mod sym {
     // ==========================================================================
     // PAGE BREAK CONTROL
     // ==========================================================================
-    pub const BREAK_INSIDE: u64 = 135; // $135 - break-inside property
+    // Legacy page-break-* properties (CSS 2.1)
+    pub const PAGE_BREAK_AFTER: u64 = 133; // $133 - page-break-after (legacy)
+    pub const PAGE_BREAK_BEFORE: u64 = 134; // $134 - page-break-before (legacy)
+    pub const BREAK_INSIDE: u64 = 135; // $135 - break-inside / page-break-inside property
+
+    // Modern break-* properties (CSS3)
     pub const BREAK_AFTER: u64 = 788; // $788 - break-after property
     pub const BREAK_BEFORE: u64 = 789; // $789 - break-before property
-    pub const BREAK_AVOID: u64 = 353; // $353 - avoid value for break properties
-    pub const BREAK_AUTO: u64 = 383; // $383 - auto value for break properties
+
+    // Break values
+    pub const BREAK_ALWAYS: u64 = 352; // $352 - always value
+    pub const BREAK_AVOID: u64 = 353; // $353 - avoid value
+    pub const BREAK_AUTO: u64 = 383; // $383 - auto value
 
     // ==========================================================================
     // SHADOW PROPERTIES ($496, $497) - P4 improvement
@@ -255,11 +312,10 @@ pub mod sym {
     pub const TEXT_EMPHASIS_OPEN_SESAME: u64 = 740; // $740 - open sesame
 
     // ==========================================================================
-    // BORDER COLLAPSE (P2 Phase 2)
+    // BORDER COLLAPSE ($150)
+    // Note: Uses boolean values (false=separate, true=collapse), not symbols
     // ==========================================================================
-    pub const BORDER_COLLAPSE: u64 = 79; // $79 - border-collapse property
-    pub const BORDER_COLLAPSE_SEPARATE: u64 = 80; // $80 - border-collapse: separate
-    pub const BORDER_COLLAPSE_COLLAPSE: u64 = 81; // $81 - border-collapse: collapse
+    pub const BORDER_COLLAPSE: u64 = 150; // $150 - border-collapse property
 
     // ==========================================================================
     // DROP CAP PROPERTIES (P1 Phase 2)
@@ -310,27 +366,70 @@ pub mod sym {
     pub const BORDER_RADIUS_BL: u64 = 462; // $462 - border-bottom-left-radius
 
     // ==========================================================================
-    // BORDER PROPERTIES (additional)
+    // BORDER PROPERTIES (from yj_to_epub_properties.py)
     // ==========================================================================
-    pub const BORDER_TOP_COLOR: u64 = 83; // $83 - border-top-color
-    pub const BORDER_RIGHT_COLOR: u64 = 84; // $84 - border-right-color
-    pub const BORDER_BOTTOM_COLOR: u64 = 89; // $89 - border-bottom-color
-    pub const BORDER_LEFT_COLOR: u64 = 94; // $94 - border-left-color
-    pub const BORDER_TOP_PRESENT: u64 = 88; // $88 - border-top decoration present
-    pub const BORDER_TOP_WIDTH: u64 = 93; // $93 - border-top-width
+    // Border color
+    pub const BORDER_COLOR: u64 = 83; // $83 - border-color (shorthand)
+    pub const BORDER_TOP_COLOR: u64 = 84; // $84 - border-top-color
+    pub const BORDER_LEFT_COLOR: u64 = 85; // $85 - border-left-color
+    pub const BORDER_BOTTOM_COLOR: u64 = 86; // $86 - border-bottom-color
+    pub const BORDER_RIGHT_COLOR: u64 = 87; // $87 - border-right-color
+
+    // Border style
+    pub const BORDER_STYLE: u64 = 88; // $88 - border-style (shorthand)
+    pub const BORDER_TOP_STYLE: u64 = 89; // $89 - border-top-style
+    pub const BORDER_LEFT_STYLE: u64 = 90; // $90 - border-left-style
+    pub const BORDER_BOTTOM_STYLE: u64 = 91; // $91 - border-bottom-style
+    pub const BORDER_RIGHT_STYLE: u64 = 92; // $92 - border-right-style
+
+    // Border width
+    pub const BORDER_WIDTH: u64 = 93; // $93 - border-width (shorthand)
+    pub const BORDER_TOP_WIDTH: u64 = 94; // $94 - border-top-width
+    pub const BORDER_LEFT_WIDTH: u64 = 95; // $95 - border-left-width
+    pub const BORDER_BOTTOM_WIDTH: u64 = 96; // $96 - border-bottom-width
+    pub const BORDER_RIGHT_WIDTH: u64 = 97; // $97 - border-right-width
+
+    // Border style values (from BORDER_STYLES)
+    pub const BORDER_STYLE_NONE: u64 = 349; // $349 - none
+    pub const BORDER_STYLE_SOLID: u64 = 328; // $328 - solid
+    pub const BORDER_STYLE_DOTTED: u64 = 331; // $331 - dotted
+    pub const BORDER_STYLE_DASHED: u64 = 330; // $330 - dashed
+    pub const BORDER_STYLE_DOUBLE: u64 = 329; // $329 - double
+    pub const BORDER_STYLE_RIDGE: u64 = 335; // $335 - ridge
+    pub const BORDER_STYLE_GROOVE: u64 = 334; // $334 - groove
+    pub const BORDER_STYLE_INSET: u64 = 336; // $336 - inset
+    pub const BORDER_STYLE_OUTSET: u64 = 337; // $337 - outset
 
     // ==========================================================================
     // TABLE PROPERTIES
     // ==========================================================================
+    pub const ATTRIB_COLSPAN: u64 = 148; // $148 - -kfx-attrib-colspan
+    pub const ATTRIB_ROWSPAN: u64 = 149; // $149 - -kfx-attrib-rowspan
+    // BORDER_COLLAPSE is at $150 (defined above)
     pub const CAPTION_SIDE: u64 = 453; // $453 - caption-side property
+    pub const BORDER_SPACING_VERTICAL: u64 = 456; // $456 - -webkit-border-vertical-spacing
+    pub const BORDER_SPACING_HORIZONTAL: u64 = 457; // $457 - -webkit-border-horizontal-spacing
+    pub const EMPTY_CELLS: u64 = 458; // $458 - empty-cells (boolean: true=hide)
 
     // ==========================================================================
-    // IMAGE/BLOCK LAYOUT
+    // BOX SIZING / IMAGE FIT ($546)
+    // Note: In CSS this is "box-sizing", but KFX uses same symbol for image fitting
     // ==========================================================================
-    pub const IMAGE_FIT: u64 = 546; // $546 - image fit mode
-    pub const IMAGE_FIT_CONTAIN: u64 = 377; // $377 - contain fit mode
-    pub const IMAGE_FIT_NONE: u64 = 378; // $378 - image fit: none (baseline)
-    pub const IMAGE_LAYOUT: u64 = 580; // $580 - image/block layout
+    pub const BOX_SIZING: u64 = 546; // $546 - box-sizing / image fit mode
+    pub const BOX_SIZING_CONTENT_BOX: u64 = 377; // $377 - content-box (images: contain-like)
+    pub const BOX_SIZING_BORDER_BOX: u64 = 378; // $378 - border-box (images: none/baseline)
+    pub const BOX_SIZING_PADDING_BOX: u64 = 379; // $379 - padding-box
+
+    // Legacy aliases for image fit (same symbols)
+    pub const IMAGE_FIT: u64 = 546; // alias for BOX_SIZING
+    pub const IMAGE_FIT_CONTAIN: u64 = 377; // alias for BOX_SIZING_CONTENT_BOX
+    pub const IMAGE_FIT_NONE: u64 = 378; // alias for BOX_SIZING_BORDER_BOX
+
+    // ==========================================================================
+    // BOX ALIGN / IMAGE LAYOUT ($580)
+    // ==========================================================================
+    pub const BOX_ALIGN: u64 = 580; // $580 - -kfx-box-align / image layout
+    pub const IMAGE_LAYOUT: u64 = 580; // alias for BOX_ALIGN
 
     // Hyphens property ($127)
     // Note: Previously incorrectly named STYLE_BLOCK_TYPE - $127 is actually CSS "hyphens"
