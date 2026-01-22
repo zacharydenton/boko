@@ -5,9 +5,9 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens, ListStylePosition,
-    ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright,
-    TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
+    BorderCollapse, BoxSizing, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens,
+    ListStylePosition, ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign,
+    TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
 };
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
 
@@ -294,6 +294,9 @@ pub fn style_to_ion(
 
     // CSS hyphens property ($127)
     add_hyphens(&mut style_ion, style, is_image_style, is_inline_style);
+
+    // CSS box-sizing property ($546)
+    add_box_sizing(&mut style_ion, style);
 
     // P2 Phase 2: Layout hints for semantic elements
     add_layout_hints(&mut style_ion, style);
@@ -1067,6 +1070,21 @@ fn add_hyphens(
             Hyphens::Auto => sym::HYPHENS_AUTO,     // $383
         };
         style_ion.insert(sym::HYPHENS, IonValue::Symbol(hyphens_sym));
+    }
+}
+
+/// CSS box-sizing property ($546)
+fn add_box_sizing(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Only output box-sizing if CSS explicitly specifies it
+    // Note: content-box is the CSS default, so we could skip it,
+    // but Kindle Previewer includes border-box explicitly when specified
+    if let Some(box_sizing) = style.box_sizing {
+        let box_sizing_sym = match box_sizing {
+            BoxSizing::ContentBox => sym::BOX_SIZING_CONTENT_BOX, // $377
+            BoxSizing::BorderBox => sym::BOX_SIZING_BORDER_BOX,   // $378
+            BoxSizing::PaddingBox => sym::BOX_SIZING_PADDING_BOX, // $379
+        };
+        style_ion.insert(sym::BOX_SIZING, IonValue::Symbol(box_sizing_sym));
     }
 }
 
@@ -2498,6 +2516,95 @@ mod tests {
         assert!(
             !ion_map.contains_key(&sym::LAYOUT_HINTS),
             "Non-heading style should not have LAYOUT_HINTS"
+        );
+    }
+
+    #[test]
+    fn test_box_sizing_border_box() {
+        // Styles with box-sizing: border-box should output BOX_SIZING: $378
+        let style = ParsedStyle {
+            box_sizing: Some(crate::css::BoxSizing::BorderBox),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::BOX_SIZING),
+            "Style with box-sizing: border-box should have BOX_SIZING"
+        );
+
+        let box_sizing = ion_map.get(&sym::BOX_SIZING).unwrap();
+        match box_sizing {
+            IonValue::Symbol(s) => assert_eq!(
+                *s,
+                sym::BOX_SIZING_BORDER_BOX,
+                "box-sizing: border-box should map to $378"
+            ),
+            _ => panic!("Expected Symbol for BOX_SIZING"),
+        }
+    }
+
+    #[test]
+    fn test_box_sizing_content_box() {
+        // Styles with box-sizing: content-box should output BOX_SIZING: $377
+        let style = ParsedStyle {
+            box_sizing: Some(crate::css::BoxSizing::ContentBox),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::BOX_SIZING),
+            "Style with box-sizing: content-box should have BOX_SIZING"
+        );
+
+        let box_sizing = ion_map.get(&sym::BOX_SIZING).unwrap();
+        match box_sizing {
+            IonValue::Symbol(s) => assert_eq!(
+                *s,
+                sym::BOX_SIZING_CONTENT_BOX,
+                "box-sizing: content-box should map to $377"
+            ),
+            _ => panic!("Expected Symbol for BOX_SIZING"),
+        }
+    }
+
+    #[test]
+    fn test_no_box_sizing_when_not_set() {
+        // Styles without explicit box-sizing should NOT have BOX_SIZING property
+        let style = ParsedStyle {
+            font_size: Some(crate::css::CssValue::Em(1.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::BOX_SIZING),
+            "Style without box-sizing should not have BOX_SIZING property"
         );
     }
 }

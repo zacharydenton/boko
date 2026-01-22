@@ -431,6 +431,22 @@ pub enum BorderCollapse {
 }
 
 // =============================================================================
+// CSS Box Sizing
+// =============================================================================
+
+/// CSS box-sizing property
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BoxSizing {
+    /// content-box: width/height only include content (CSS default)
+    #[default]
+    ContentBox,
+    /// border-box: width/height include padding and border
+    BorderBox,
+    /// padding-box: width/height include padding but not border
+    PaddingBox,
+}
+
+// =============================================================================
 // P1 Phase 2: Drop Cap Properties
 // =============================================================================
 
@@ -662,6 +678,8 @@ pub struct ParsedStyle {
     pub float: Option<CssFloat>,
     /// CSS hyphens property for text hyphenation
     pub hyphens: Option<Hyphens>,
+    /// CSS box-sizing property
+    pub box_sizing: Option<BoxSizing>,
 }
 
 impl ParsedStyle {
@@ -915,6 +933,10 @@ impl ParsedStyle {
         if other.hyphens.is_some() {
             self.hyphens = other.hyphens;
         }
+        // CSS box-sizing property
+        if other.box_sizing.is_some() {
+            self.box_sizing = other.box_sizing;
+        }
     }
 
     /// Check if this style indicates the element is hidden/invisible
@@ -1011,6 +1033,10 @@ impl ParsedStyle {
             // List styles
             && self.list_style_type.is_none()
             && self.list_style_position.is_none()
+            // Hyphenation
+            && self.hyphens.is_none()
+            // Box sizing
+            && self.box_sizing.is_none()
     }
 
     /// Convert this style to a CSS declaration string.
@@ -1350,6 +1376,8 @@ impl PartialEq for ParsedStyle {
             && self.float == other.float
             // CSS hyphens property
             && self.hyphens == other.hyphens
+            // CSS box-sizing property
+            && self.box_sizing == other.box_sizing
     }
 }
 
@@ -1496,7 +1524,13 @@ impl Stylesheet {
         let rules = raw_rules
             .into_iter()
             .filter_map(|(selector_str, style)| {
-                Selectors::compile(&selector_str)
+                // Pre-process selector to remove pseudo-elements that kuchiki doesn't support
+                // E.g., "*,::after,::before" becomes just "*"
+                let cleaned = clean_selector(&selector_str);
+                if cleaned.is_empty() {
+                    return None;
+                }
+                Selectors::compile(&cleaned)
                     .ok()
                     .map(|selectors| CssRule { selectors, style })
             })
@@ -1547,6 +1581,44 @@ impl Stylesheet {
 
         result
     }
+}
+
+/// Clean a CSS selector by removing pseudo-elements that kuchiki doesn't support.
+/// This allows rules like `*,::after,::before { ... }` to work.
+fn clean_selector(selector: &str) -> String {
+    // Split by comma to handle selector lists
+    let parts: Vec<&str> = selector.split(',').collect();
+
+    // Filter out pseudo-element selectors and clean the remaining ones
+    let cleaned: Vec<String> = parts
+        .iter()
+        .map(|s| s.trim())
+        // Remove parts that are just pseudo-elements
+        .filter(|s| !s.starts_with("::") && !s.starts_with(':'))
+        // For parts that contain pseudo-elements, strip them
+        .map(|s| {
+            // Remove ::before, ::after, etc. from the end
+            if let Some(idx) = s.find("::") {
+                s[..idx].trim().to_string()
+            } else if let Some(idx) = s.find(':') {
+                // Also handle single-colon pseudo-classes like :hover
+                // But preserve structural pseudo-classes if they're the whole selector
+                let before = &s[..idx];
+                if before.is_empty() {
+                    // Pure pseudo-class like :root or :host
+                    s.to_string()
+                } else {
+                    before.trim().to_string()
+                }
+            } else {
+                s.to_string()
+            }
+        })
+        // Filter out empty strings
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    cleaned.join(", ")
 }
 
 // =============================================================================
@@ -1992,6 +2064,17 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                     "none" => Some(Hyphens::None),
                     "manual" => Some(Hyphens::Manual),
                     "auto" => Some(Hyphens::Auto),
+                    _ => None,
+                };
+            }
+        }
+        // CSS box-sizing property
+        "box-sizing" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.box_sizing = match val.to_ascii_lowercase().as_str() {
+                    "content-box" => Some(BoxSizing::ContentBox),
+                    "border-box" => Some(BoxSizing::BorderBox),
+                    "padding-box" => Some(BoxSizing::PaddingBox),
                     _ => None,
                 };
             }
@@ -2713,6 +2796,17 @@ mod tests {
     }
 
     #[test]
+    fn test_inline_box_sizing_parsing() {
+        let inline = Stylesheet::parse_inline_style("box-sizing: border-box");
+        assert_eq!(
+            inline.box_sizing,
+            Some(BoxSizing::BorderBox),
+            "Inline box-sizing should parse correctly, got {:?}",
+            inline.box_sizing
+        );
+    }
+
+    #[test]
     fn test_epictetus_css_styles() {
         // Simplified version of epictetus.epub CSS
         let css = r#"
@@ -3019,6 +3113,91 @@ mod tests {
             matches!(text_sm.line_height, Some(CssValue::Rem(v)) if (v - 1.25).abs() < 0.01),
             "text-sm should have line-height: 1.25rem, got {:?}",
             text_sm.line_height
+        );
+    }
+
+    #[test]
+    fn test_box_sizing_parsing() {
+        let css = r#"
+            .border-box { box-sizing: border-box; }
+            .content-box { box-sizing: content-box; }
+            .padding-box { box-sizing: padding-box; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        let border_box = get_style_for(&stylesheet, r#"<div class="border-box">Test</div>"#, "div");
+        assert_eq!(
+            border_box.box_sizing,
+            Some(BoxSizing::BorderBox),
+            "Expected box-sizing: border-box, got {:?}",
+            border_box.box_sizing
+        );
+
+        let content_box = get_style_for(&stylesheet, r#"<div class="content-box">Test</div>"#, "div");
+        assert_eq!(
+            content_box.box_sizing,
+            Some(BoxSizing::ContentBox),
+            "Expected box-sizing: content-box, got {:?}",
+            content_box.box_sizing
+        );
+
+        let padding_box = get_style_for(&stylesheet, r#"<div class="padding-box">Test</div>"#, "div");
+        assert_eq!(
+            padding_box.box_sizing,
+            Some(BoxSizing::PaddingBox),
+            "Expected box-sizing: padding-box, got {:?}",
+            padding_box.box_sizing
+        );
+    }
+
+    #[test]
+    fn test_box_sizing_universal_selector() {
+        // This is the Tailwind CSS preflight pattern
+        let css = r#"
+            * { box-sizing: border-box; }
+            p { margin: 0; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // Universal selector should apply to all elements
+        let div_style = get_style_for(&stylesheet, "<div>Test</div>", "div");
+        assert_eq!(
+            div_style.box_sizing,
+            Some(BoxSizing::BorderBox),
+            "Universal selector should apply box-sizing to div, got {:?}",
+            div_style.box_sizing
+        );
+
+        let p_style = get_style_for(&stylesheet, "<p>Test</p>", "p");
+        assert_eq!(
+            p_style.box_sizing,
+            Some(BoxSizing::BorderBox),
+            "Universal selector should apply box-sizing to p, got {:?}",
+            p_style.box_sizing
+        );
+    }
+
+    #[test]
+    fn test_clean_selector_pseudo_elements() {
+        // Test that selectors with pseudo-elements get cleaned properly
+        // The actual cleaning happens internally in Stylesheet::parse
+        // This tests that rules with pseudo-elements don't cause parsing failures
+        let css = r#"
+            *,::after,::before { box-sizing: border-box; }
+            p { margin: 0; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // If the selector was cleaned properly, * should still apply
+        let div_style = get_style_for(&stylesheet, "<div>Test</div>", "div");
+        assert_eq!(
+            div_style.box_sizing,
+            Some(BoxSizing::BorderBox),
+            "Cleaned selector should apply box-sizing via *, got {:?}",
+            div_style.box_sizing
         );
     }
 }
