@@ -270,6 +270,24 @@ pub mod sym {
     pub const DROP_CAP_CHARS: u64 = 126; // $126 - number of characters in drop cap
 
     // ==========================================================================
+    // TRANSFORM PROPERTIES (P2 Phase 2)
+    // ==========================================================================
+    pub const TRANSFORM: u64 = 98; // $98 - transform property (6-element matrix array)
+    pub const TRANSFORM_ORIGIN: u64 = 549; // $549 - transform-origin property
+    // Note: Transform-origin uses $59 (left/x) and $58 (top/y) as sub-properties
+
+    // ==========================================================================
+    // BASELINE-SHIFT (P2 Phase 2)
+    // ==========================================================================
+    pub const BASELINE_SHIFT: u64 = 31; // $31 - baseline-shift (numeric value for vertical tuning)
+
+    // ==========================================================================
+    // COLUMN PROPERTIES (P2 Phase 2)
+    // ==========================================================================
+    pub const COLUMN_COUNT: u64 = 112; // $112 - column-count property
+    pub const COLUMN_COUNT_AUTO: u64 = 383; // $383 - column-count: auto (same as BLOCK_TYPE_BLOCK)
+
+    // ==========================================================================
     // BORDER RADIUS ($459-$462)
     // ==========================================================================
     pub const BORDER_RADIUS_TL: u64 = 459; // $459 - border-top-left-radius

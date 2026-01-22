@@ -5,9 +5,9 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, CssValue, FontVariant, ListStylePosition, ListStyleType, ParsedStyle,
-    RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright, TextDecorationLineStyle,
-    TextEmphasisStyle, WritingMode,
+    BorderCollapse, ColumnCount, CssValue, FontVariant, ListStylePosition, ListStyleType,
+    ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright,
+    TextDecorationLineStyle, TextEmphasisStyle, WritingMode,
 };
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
 
@@ -267,6 +267,15 @@ pub fn style_to_ion(
 
     // P1 Phase 2: Drop cap
     add_drop_cap(&mut style_ion, style);
+
+    // P2 Phase 2: Transform properties
+    add_transform(&mut style_ion, style);
+
+    // P2 Phase 2: Baseline-shift
+    add_baseline_shift(&mut style_ion, style);
+
+    // P2 Phase 2: Column layout
+    add_column_count(&mut style_ion, style);
 
     IonValue::Struct(style_ion)
 }
@@ -876,6 +885,106 @@ fn add_drop_cap(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
         }
         if drop_cap.chars > 0 {
             style_ion.insert(sym::DROP_CAP_CHARS, IonValue::Int(drop_cap.chars as i64));
+        }
+    }
+}
+
+// P2 Phase 2: Transform properties
+fn add_transform(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Transform matrix
+    if let Some(ref transform) = style.transform {
+        // Skip identity transforms
+        if !transform.is_identity() {
+            // KFX stores transform as a 6-element list [a, b, c, d, tx, ty]
+            let matrix_list: Vec<IonValue> = transform
+                .matrix
+                .iter()
+                .map(|&v| IonValue::Decimal(encode_kfx_decimal(v)))
+                .collect();
+            style_ion.insert(sym::TRANSFORM, IonValue::List(matrix_list));
+        }
+    }
+
+    // Transform origin
+    if let Some(ref origin) = style.transform_origin {
+        // Transform-origin uses a struct with $59 (x/left) and $58 (y/top)
+        let mut origin_struct = HashMap::new();
+
+        // X position (left)
+        if let Some(ref x) = origin.x {
+            match x {
+                CssValue::Percent(v) => {
+                    origin_struct.insert(59, IonValue::Decimal(encode_kfx_decimal(*v)));
+                }
+                CssValue::Px(v) => {
+                    origin_struct.insert(59, IonValue::Decimal(encode_kfx_decimal(*v)));
+                }
+                _ => {}
+            }
+        }
+
+        // Y position (top)
+        if let Some(ref y) = origin.y {
+            match y {
+                CssValue::Percent(v) => {
+                    origin_struct.insert(58, IonValue::Decimal(encode_kfx_decimal(*v)));
+                }
+                CssValue::Px(v) => {
+                    origin_struct.insert(58, IonValue::Decimal(encode_kfx_decimal(*v)));
+                }
+                _ => {}
+            }
+        }
+
+        if !origin_struct.is_empty() {
+            style_ion.insert(sym::TRANSFORM_ORIGIN, IonValue::Struct(origin_struct));
+        }
+    }
+}
+
+// P2 Phase 2: Baseline-shift
+fn add_baseline_shift(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    if let Some(ref shift) = style.baseline_shift {
+        // Baseline-shift is a numeric value (typically in em or percent)
+        match shift {
+            CssValue::Em(v) => {
+                // Convert em to decimal value
+                style_ion.insert(
+                    sym::BASELINE_SHIFT,
+                    IonValue::Decimal(encode_kfx_decimal(*v)),
+                );
+            }
+            CssValue::Percent(v) => {
+                // Convert percent to decimal (e.g., 50% = 0.5)
+                style_ion.insert(
+                    sym::BASELINE_SHIFT,
+                    IonValue::Decimal(encode_kfx_decimal(*v / 100.0)),
+                );
+            }
+            CssValue::Px(v) => {
+                // Pixels need conversion - assume ~16px base font
+                style_ion.insert(
+                    sym::BASELINE_SHIFT,
+                    IonValue::Decimal(encode_kfx_decimal(*v / 16.0)),
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+// P2 Phase 2: Column layout
+fn add_column_count(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    if let Some(count) = style.column_count {
+        match count {
+            ColumnCount::Auto => {
+                // auto uses $383 (same as BLOCK_TYPE_BLOCK)
+                style_ion.insert(sym::COLUMN_COUNT, IonValue::Symbol(sym::COLUMN_COUNT_AUTO));
+            }
+            ColumnCount::Count(n) => {
+                // Numeric column count
+                style_ion.insert(sym::COLUMN_COUNT, IonValue::Int(n as i64));
+            }
         }
     }
 }
@@ -1936,6 +2045,210 @@ mod tests {
                 );
             }
             _ => panic!("Expected symbol for TEXT_DECORATION_LINE_THROUGH"),
+        }
+    }
+
+    // P2 Phase 2 Tests: Transform properties
+    #[test]
+    fn test_transform_translate() {
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            transform: Some(crate::css::Transform::translate(10.0, 20.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TRANSFORM),
+            "Style should have TRANSFORM"
+        );
+
+        match ion_map.get(&sym::TRANSFORM) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 6, "Transform should have 6 elements");
+                // translate(10, 20) = [1, 0, 0, 1, 10, 20]
+                if let IonValue::Decimal(bytes) = &list[4] {
+                    let tx = decode_kfx_decimal(bytes);
+                    assert!((tx - 10.0).abs() < 0.001, "Expected tx=10, got {}", tx);
+                }
+                if let IonValue::Decimal(bytes) = &list[5] {
+                    let ty = decode_kfx_decimal(bytes);
+                    assert!((ty - 20.0).abs() < 0.001, "Expected ty=20, got {}", ty);
+                }
+            }
+            _ => panic!("Expected list for TRANSFORM"),
+        }
+    }
+
+    #[test]
+    fn test_transform_scale() {
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            transform: Some(crate::css::Transform::scale(2.0, 0.5)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TRANSFORM),
+            "Style should have TRANSFORM"
+        );
+
+        match ion_map.get(&sym::TRANSFORM) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 6, "Transform should have 6 elements");
+                // scale(2, 0.5) = [2, 0, 0, 0.5, 0, 0]
+                if let IonValue::Decimal(bytes) = &list[0] {
+                    let sx = decode_kfx_decimal(bytes);
+                    assert!((sx - 2.0).abs() < 0.001, "Expected sx=2, got {}", sx);
+                }
+                if let IonValue::Decimal(bytes) = &list[3] {
+                    let sy = decode_kfx_decimal(bytes);
+                    assert!((sy - 0.5).abs() < 0.001, "Expected sy=0.5, got {}", sy);
+                }
+            }
+            _ => panic!("Expected list for TRANSFORM"),
+        }
+    }
+
+    #[test]
+    fn test_transform_identity_omitted() {
+        // Identity transform should be omitted from output
+        let style = ParsedStyle {
+            transform: Some(crate::css::Transform::default()), // Identity
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::TRANSFORM),
+            "Identity transform should be omitted"
+        );
+    }
+
+    // P2 Phase 2 Tests: Baseline-shift
+    #[test]
+    fn test_baseline_shift_em() {
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            baseline_shift: Some(crate::css::CssValue::Em(0.5)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::BASELINE_SHIFT),
+            "Style should have BASELINE_SHIFT"
+        );
+
+        match ion_map.get(&sym::BASELINE_SHIFT) {
+            Some(IonValue::Decimal(bytes)) => {
+                let shift = decode_kfx_decimal(bytes);
+                assert!(
+                    (shift - 0.5).abs() < 0.001,
+                    "Expected baseline-shift 0.5em, got {}",
+                    shift
+                );
+            }
+            _ => panic!("Expected decimal for BASELINE_SHIFT"),
+        }
+    }
+
+    // P2 Phase 2 Tests: Column count
+    #[test]
+    fn test_column_count_numeric() {
+        let style = ParsedStyle {
+            column_count: Some(crate::css::ColumnCount::Count(3)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::COLUMN_COUNT),
+            "Style should have COLUMN_COUNT"
+        );
+
+        match ion_map.get(&sym::COLUMN_COUNT) {
+            Some(IonValue::Int(n)) => {
+                assert_eq!(*n, 3, "Expected column-count 3");
+            }
+            _ => panic!("Expected int for COLUMN_COUNT"),
+        }
+    }
+
+    #[test]
+    fn test_column_count_auto() {
+        let style = ParsedStyle {
+            column_count: Some(crate::css::ColumnCount::Auto),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::COLUMN_COUNT),
+            "Style should have COLUMN_COUNT"
+        );
+
+        match ion_map.get(&sym::COLUMN_COUNT) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::COLUMN_COUNT_AUTO,
+                    "Expected column-count auto ($383)"
+                );
+            }
+            _ => panic!("Expected symbol for COLUMN_COUNT auto"),
         }
     }
 }

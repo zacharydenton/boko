@@ -424,6 +424,109 @@ pub enum TextDecorationLineStyle {
     Double, // Double line
 }
 
+// =============================================================================
+// P2 Phase 2: Transform Properties
+// =============================================================================
+
+/// 2D Transform matrix [a, b, c, d, tx, ty]
+/// Standard 2D affine transformation matrix representation:
+/// - [1, 0, 0, 1, tx, ty] = translate(tx, ty)
+/// - [sx, 0, 0, sy, 0, 0] = scale(sx, sy)
+/// - [0, 1, -1, 0, 0, 0] = rotate(-90deg)
+/// - [0, -1, 1, 0, 0, 0] = rotate(90deg)
+/// - [-1, 0, 0, -1, 0, 0] = rotate(180deg)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transform {
+    /// Matrix values [a, b, c, d, tx, ty]
+    pub matrix: [f32; 6],
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        // Identity matrix
+        Self {
+            matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
+    }
+}
+
+impl Eq for Transform {}
+
+impl std::hash::Hash for Transform {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Hash each component as integer for stability
+        for v in &self.matrix {
+            ((v * 1000.0) as i32).hash(state);
+        }
+    }
+}
+
+impl Transform {
+    /// Create a translation transform
+    pub fn translate(tx: f32, ty: f32) -> Self {
+        Self {
+            matrix: [1.0, 0.0, 0.0, 1.0, tx, ty],
+        }
+    }
+
+    /// Create a scale transform
+    pub fn scale(sx: f32, sy: f32) -> Self {
+        Self {
+            matrix: [sx, 0.0, 0.0, sy, 0.0, 0.0],
+        }
+    }
+
+    /// Create a rotation transform (angle in degrees)
+    pub fn rotate(degrees: f32) -> Self {
+        let radians = degrees * std::f32::consts::PI / 180.0;
+        let cos = radians.cos();
+        let sin = radians.sin();
+        Self {
+            matrix: [cos, sin, -sin, cos, 0.0, 0.0],
+        }
+    }
+
+    /// Check if this is the identity transform
+    pub fn is_identity(&self) -> bool {
+        (self.matrix[0] - 1.0).abs() < 0.0001
+            && self.matrix[1].abs() < 0.0001
+            && self.matrix[2].abs() < 0.0001
+            && (self.matrix[3] - 1.0).abs() < 0.0001
+            && self.matrix[4].abs() < 0.0001
+            && self.matrix[5].abs() < 0.0001
+    }
+}
+
+/// Transform origin point
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TransformOrigin {
+    /// X position (default: 50%)
+    pub x: Option<CssValue>,
+    /// Y position (default: 50%)
+    pub y: Option<CssValue>,
+}
+
+impl Eq for TransformOrigin {}
+
+impl std::hash::Hash for TransformOrigin {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.x.hash(state);
+        self.y.hash(state);
+    }
+}
+
+// =============================================================================
+// P2 Phase 2: Column Properties
+// =============================================================================
+
+/// Column count for multi-column layout
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ColumnCount {
+    #[default]
+    Auto,
+    Count(u32),
+}
+
 /// Parsed CSS style properties
 /// Note: Custom Hash/Eq implementation excludes image_width_px and image_height_px
 /// since they don't affect KFX style output and would cause duplicate styles.
@@ -508,6 +611,13 @@ pub struct ParsedStyle {
     pub border_collapse: Option<BorderCollapse>,
     // P1 Phase 2: Drop cap
     pub drop_cap: Option<DropCap>,
+    // P2 Phase 2: Transform properties
+    pub transform: Option<Transform>,
+    pub transform_origin: Option<TransformOrigin>,
+    // P2 Phase 2: Baseline-shift (fine-tuning vertical position)
+    pub baseline_shift: Option<CssValue>,
+    // P2 Phase 2: Column layout
+    pub column_count: Option<ColumnCount>,
 }
 
 impl ParsedStyle {
@@ -718,6 +828,21 @@ impl ParsedStyle {
         // P1 Phase 2: Drop cap
         if other.drop_cap.is_some() {
             self.drop_cap = other.drop_cap;
+        }
+        // P2 Phase 2: Transform properties
+        if other.transform.is_some() {
+            self.transform.clone_from(&other.transform);
+        }
+        if other.transform_origin.is_some() {
+            self.transform_origin.clone_from(&other.transform_origin);
+        }
+        // P2 Phase 2: Baseline-shift
+        if other.baseline_shift.is_some() {
+            self.baseline_shift.clone_from(&other.baseline_shift);
+        }
+        // P2 Phase 2: Column layout
+        if other.column_count.is_some() {
+            self.column_count = other.column_count;
         }
     }
 
@@ -1081,6 +1206,13 @@ impl PartialEq for ParsedStyle {
             && self.border_collapse == other.border_collapse
             // P1 Phase 2: Drop cap
             && self.drop_cap == other.drop_cap
+            // P2 Phase 2: Transform properties
+            && self.transform == other.transform
+            && self.transform_origin == other.transform_origin
+            // P2 Phase 2: Baseline-shift
+            && self.baseline_shift == other.baseline_shift
+            // P2 Phase 2: Column layout
+            && self.column_count == other.column_count
     }
 }
 
@@ -1160,6 +1292,13 @@ impl std::hash::Hash for ParsedStyle {
         self.border_collapse.hash(state);
         // P1 Phase 2: Drop cap
         self.drop_cap.hash(state);
+        // P2 Phase 2: Transform properties
+        self.transform.hash(state);
+        self.transform_origin.hash(state);
+        // P2 Phase 2: Baseline-shift
+        self.baseline_shift.hash(state);
+        // P2 Phase 2: Column layout
+        self.column_count.hash(state);
     }
 }
 
