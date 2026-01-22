@@ -1926,6 +1926,84 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                 style.border_right = Some(border);
             }
         }
+        // Border shorthand properties for width/style/color
+        "border-width" => {
+            if let Some(width) = parse_length_value(values) {
+                // Apply width to all borders, creating border if needed
+                for border in [
+                    &mut style.border_top,
+                    &mut style.border_right,
+                    &mut style.border_bottom,
+                    &mut style.border_left,
+                ] {
+                    if let Some(b) = border {
+                        b.width = Some(width.clone());
+                    } else {
+                        *border = Some(Border {
+                            width: Some(width.clone()),
+                            style: BorderStyle::Solid, // Default style when width is set
+                            color: None,
+                        });
+                    }
+                }
+            }
+        }
+        "border-style" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                let bs = match val.to_ascii_lowercase().as_str() {
+                    "solid" => BorderStyle::Solid,
+                    "dashed" => BorderStyle::Dashed,
+                    "dotted" => BorderStyle::Dotted,
+                    "double" => BorderStyle::Double,
+                    "groove" => BorderStyle::Groove,
+                    "ridge" => BorderStyle::Ridge,
+                    "inset" => BorderStyle::Inset,
+                    "outset" => BorderStyle::Outset,
+                    "hidden" => BorderStyle::Hidden,
+                    _ => BorderStyle::None,
+                };
+                if bs != BorderStyle::None && bs != BorderStyle::Hidden {
+                    // Apply style to all borders, creating border if needed
+                    for border in [
+                        &mut style.border_top,
+                        &mut style.border_right,
+                        &mut style.border_bottom,
+                        &mut style.border_left,
+                    ] {
+                        if let Some(b) = border {
+                            b.style = bs;
+                        } else {
+                            *border = Some(Border {
+                                width: None,
+                                style: bs,
+                                color: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        "border-color" => {
+            if let Some(color) = parse_color(values) {
+                // Apply color to all borders, creating border if needed
+                for border in [
+                    &mut style.border_top,
+                    &mut style.border_right,
+                    &mut style.border_bottom,
+                    &mut style.border_left,
+                ] {
+                    if let Some(b) = border {
+                        b.color = Some(color.clone());
+                    } else {
+                        *border = Some(Border {
+                            width: None,
+                            style: BorderStyle::Solid, // Default style when color is set
+                            color: Some(color.clone()),
+                        });
+                    }
+                }
+            }
+        }
         "display" => {
             style.display = parse_display(values);
         }
@@ -3321,5 +3399,44 @@ mod tests {
             "Expected border-spacing vertical: 4px, got {:?}",
             double.border_spacing_vertical
         );
+    }
+
+    #[test]
+    fn test_border_width_style_shorthand_parsing() {
+        let css = r#"
+            .border-width { border-width: 1px; }
+            .border-style { border-style: solid; }
+            .border-color { border-color: #ff0000; }
+            .combined { border-width: 2px; border-style: dashed; border-color: #00ff00; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // border-width: 1px should create borders with width on all sides
+        let width_style = get_style_for(&stylesheet, r#"<div class="border-width"></div>"#, "div");
+        assert!(width_style.border_top.is_some(), "border-top should be set");
+        let top = width_style.border_top.unwrap();
+        assert!(
+            matches!(top.width, Some(CssValue::Px(v)) if (v - 1.0).abs() < 0.01),
+            "Expected border-top-width: 1px, got {:?}",
+            top.width
+        );
+        assert_eq!(top.style, BorderStyle::Solid, "border-style should default to solid");
+
+        // border-style: solid should set style on all sides
+        let style_style = get_style_for(&stylesheet, r#"<div class="border-style"></div>"#, "div");
+        assert!(style_style.border_top.is_some(), "border-top should be set");
+        assert_eq!(style_style.border_top.as_ref().unwrap().style, BorderStyle::Solid);
+
+        // Combined should have all properties
+        let combined = get_style_for(&stylesheet, r#"<div class="combined"></div>"#, "div");
+        assert!(combined.border_top.is_some(), "border-top should be set");
+        let combined_top = combined.border_top.unwrap();
+        assert!(
+            matches!(combined_top.width, Some(CssValue::Px(v)) if (v - 2.0).abs() < 0.01),
+            "Expected border-top-width: 2px"
+        );
+        assert_eq!(combined_top.style, BorderStyle::Dashed);
+        assert!(combined_top.color.is_some(), "border-color should be set");
     }
 }

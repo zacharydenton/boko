@@ -1300,6 +1300,10 @@ impl KfxBookBuilder {
             .push(KfxFragment::singleton(sym::LOCATION_MAP, location_map));
     }
 
+    /// Add pagination templates based on character count.
+    /// Note: Currently not called as Kindle uses POSITION_MAP instead,
+    /// but kept for potential future use.
+    #[allow(dead_code)]
     fn add_page_templates(&mut self, chapters: &[ChapterData], has_cover: bool) {
         const CHARS_PER_PAGE: usize = 2000;
 
@@ -1346,6 +1350,7 @@ impl KfxBookBuilder {
         }
     }
 
+    #[allow(dead_code)]
     fn add_page_template_with_offset(&mut self, idx: usize, eid: i64, offset: i64) {
         let template_id = format!("template-{idx}");
         let template_sym = self.symtab.get_or_intern(&template_id);

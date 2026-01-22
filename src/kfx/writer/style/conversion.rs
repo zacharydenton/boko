@@ -12,35 +12,10 @@ use crate::css::{
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
 use super::{
-    ToKfxIon, border_to_ion, break_value_to_symbol, radius_to_ion, spacing_to_ion,
-    spacing_to_multiplier,
+    ToKfxIon, break_value_to_symbol, radius_to_ion, spacing_to_ion, spacing_to_multiplier,
 };
 use crate::kfx::writer::fragment::KfxFragment;
 use crate::kfx::writer::symbols::{SymbolTable, sym};
-
-/// Check if a CssValue is non-zero (for layout property detection)
-fn has_nonzero_value(val: &Option<CssValue>) -> bool {
-    match val {
-        None => false,
-        Some(CssValue::Px(v)) => v.abs() > 0.001,
-        Some(CssValue::Em(v)) => v.abs() > 0.001,
-        Some(CssValue::Rem(v)) => v.abs() > 0.001,
-        Some(CssValue::Percent(v)) => v.abs() > 0.001,
-        Some(CssValue::Number(v)) => v.abs() > 0.001,
-        // P1: Additional units
-        Some(CssValue::Vw(v)) => v.abs() > 0.001,
-        Some(CssValue::Vh(v)) => v.abs() > 0.001,
-        Some(CssValue::Vmin(v)) => v.abs() > 0.001,
-        Some(CssValue::Vmax(v)) => v.abs() > 0.001,
-        Some(CssValue::Ch(v)) => v.abs() > 0.001,
-        Some(CssValue::Ex(v)) => v.abs() > 0.001,
-        Some(CssValue::Cm(v)) => v.abs() > 0.001,
-        Some(CssValue::Mm(v)) => v.abs() > 0.001,
-        Some(CssValue::In(v)) => v.abs() > 0.001,
-        Some(CssValue::Pt(v)) => v.abs() > 0.001,
-        Some(_) => true, // Other values like keywords count as non-zero
-    }
-}
 
 /// Convert a ParsedStyle to KFX ION style struct
 pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTable) -> IonValue {
@@ -190,8 +165,8 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         style_ion.insert(sym::BACKGROUND_COLOR, val);
     }
 
-    // Borders - disabled: reference KFX doesn't include border styles
-    // add_borders(&mut style_ion, style, symtab);
+    // Borders
+    add_borders(&mut style_ion, style);
 
     // Vertical align
     add_vertical_align(&mut style_ion, style);
@@ -589,32 +564,85 @@ fn add_line_height(
     }
 }
 
-fn add_borders(
-    style_ion: &mut HashMap<u64, IonValue>,
-    style: &ParsedStyle,
-    symtab: &mut SymbolTable,
-) {
-    let border_top_sym = symtab.get_or_intern("border-top");
-    let border_bottom_sym = symtab.get_or_intern("border-bottom");
-    let border_left_sym = symtab.get_or_intern("border-left");
-    let border_right_sym = symtab.get_or_intern("border-right");
-    let border_style_sym = symtab.get_or_intern("border-style");
-    let solid_sym = symtab.get_or_intern("solid");
-    let dotted_sym = symtab.get_or_intern("dotted");
-    let dashed_sym = symtab.get_or_intern("dashed");
+fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    use crate::css::BorderStyle;
 
+    // Helper to convert BorderStyle to KFX symbol
+    fn border_style_to_symbol(bs: BorderStyle) -> Option<u64> {
+        match bs {
+            BorderStyle::None | BorderStyle::Hidden => None, // Don't output none/hidden
+            BorderStyle::Solid => Some(sym::BORDER_STYLE_SOLID),
+            BorderStyle::Dotted => Some(sym::BORDER_STYLE_DOTTED),
+            BorderStyle::Dashed => Some(sym::BORDER_STYLE_DASHED),
+            BorderStyle::Double => Some(sym::BORDER_STYLE_DOUBLE),
+            BorderStyle::Groove => Some(sym::BORDER_STYLE_GROOVE),
+            BorderStyle::Ridge => Some(sym::BORDER_STYLE_RIDGE),
+            BorderStyle::Inset => Some(sym::BORDER_STYLE_INSET),
+            BorderStyle::Outset => Some(sym::BORDER_STYLE_OUTSET),
+        }
+    }
+
+    // Helper to convert color to KFX value
+    fn color_to_ion(color: &crate::css::Color) -> Option<IonValue> {
+        use crate::css::Color;
+        match color {
+            Color::Rgba(r, g, b, _) => {
+                let rgb = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
+                Some(IonValue::Int(rgb as i64))
+            }
+            Color::Current | Color::Transparent => None, // Don't output these
+        }
+    }
+
+    // Border sides: (border, width_sym, style_sym, color_sym)
     let borders = [
-        (style.border_top.as_ref(), border_top_sym),
-        (style.border_right.as_ref(), border_right_sym),
-        (style.border_bottom.as_ref(), border_bottom_sym),
-        (style.border_left.as_ref(), border_left_sym),
+        (
+            style.border_top.as_ref(),
+            sym::BORDER_TOP_WIDTH,
+            sym::BORDER_TOP_STYLE,
+            sym::BORDER_TOP_COLOR,
+        ),
+        (
+            style.border_right.as_ref(),
+            sym::BORDER_RIGHT_WIDTH,
+            sym::BORDER_RIGHT_STYLE,
+            sym::BORDER_RIGHT_COLOR,
+        ),
+        (
+            style.border_bottom.as_ref(),
+            sym::BORDER_BOTTOM_WIDTH,
+            sym::BORDER_BOTTOM_STYLE,
+            sym::BORDER_BOTTOM_COLOR,
+        ),
+        (
+            style.border_left.as_ref(),
+            sym::BORDER_LEFT_WIDTH,
+            sym::BORDER_LEFT_STYLE,
+            sym::BORDER_LEFT_COLOR,
+        ),
     ];
 
-    for (border, sym) in borders {
-        if let Some(b) = border
-            && let Some(val) = border_to_ion(b, solid_sym, dotted_sym, dashed_sym, border_style_sym)
-        {
-            style_ion.insert(sym, val);
+    for (border, width_sym, style_sym, color_sym) in borders {
+        if let Some(b) = border {
+            // Only output if style is not none/hidden
+            if let Some(style_val) = border_style_to_symbol(b.style) {
+                // Output width if present
+                if let Some(ref width) = b.width {
+                    if let Some(width_ion) = width.to_kfx_ion() {
+                        style_ion.insert(width_sym, width_ion);
+                    }
+                }
+
+                // Output style
+                style_ion.insert(style_sym, IonValue::Symbol(style_val));
+
+                // Output color if present
+                if let Some(ref color) = b.color {
+                    if let Some(color_ion) = color_to_ion(color) {
+                        style_ion.insert(color_sym, color_ion);
+                    }
+                }
+            }
         }
     }
 }
