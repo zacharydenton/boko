@@ -623,7 +623,7 @@ pub(crate) fn decode_kfx_decimal(bytes: &[u8]) -> f64 {
 }
 
 /// Encode a float as a KFX/Ion decimal (exponent + coefficient)
-/// Uses a fixed precision of 2 decimal places (e.g., 1.25 -> 125 * 10^-2)
+/// Uses precision of 6 decimal places to match Kindle Previewer output (e.g., 0.833333)
 pub(crate) fn encode_kfx_decimal(val: f32) -> Vec<u8> {
     if val == 0.0 {
         return vec![0x80]; // Exponent 0, Coef 0

@@ -327,6 +327,103 @@ pub enum TextCombineUpright {
     Digits(u8),
 }
 
+// =============================================================================
+// P1 Phase 2: Ruby Annotation Properties (CJK text support)
+// =============================================================================
+
+/// Ruby position (where ruby text appears relative to base text)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RubyPosition {
+    #[default]
+    Over,  // Ruby above base text (default for horizontal)
+    Under, // Ruby below base text
+}
+
+/// Ruby alignment (how ruby text is aligned with base text)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RubyAlign {
+    #[default]
+    Center,       // Center ruby over base
+    Start,        // Align ruby to start of base
+    SpaceAround,  // Distribute space around ruby
+    SpaceBetween, // Distribute space between ruby characters
+}
+
+/// Ruby merge (how adjacent ruby annotations are combined)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RubyMerge {
+    #[default]
+    Separate, // Each ruby annotation is separate
+    Collapse, // Adjacent annotations can be merged
+}
+
+// =============================================================================
+// P1 Phase 2: Text Emphasis Properties (CJK typography)
+// =============================================================================
+
+/// Text emphasis style (marks above/below characters for emphasis)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextEmphasisStyle {
+    #[default]
+    None,
+    Filled,
+    Open,
+    Dot,
+    Circle,
+    FilledCircle,
+    OpenCircle,
+    FilledDot,
+    OpenDot,
+    DoubleCircle,
+    FilledDoubleCircle,
+    OpenDoubleCircle,
+    Triangle,
+    FilledTriangle,
+    OpenTriangle,
+    Sesame,
+    FilledSesame,
+    OpenSesame,
+}
+
+// =============================================================================
+// P2 Phase 2: Border Collapse (Table styling)
+// =============================================================================
+
+/// Border collapse for tables
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BorderCollapse {
+    #[default]
+    Separate, // Borders are separate
+    Collapse, // Adjacent borders are collapsed
+}
+
+// =============================================================================
+// P1 Phase 2: Drop Cap Properties
+// =============================================================================
+
+/// Drop cap configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DropCap {
+    /// Number of lines the drop cap spans
+    pub lines: u8,
+    /// Number of characters in the drop cap
+    pub chars: u8,
+}
+
+// =============================================================================
+// P2 Phase 2: Text Decoration Line Style
+// =============================================================================
+
+/// Text decoration line style (how the decoration line is drawn)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextDecorationLineStyle {
+    #[default]
+    Solid,  // Default solid line
+    Dashed, // Dashed line
+    Dotted, // Dotted line
+    Double, // Double line
+}
+
 /// Parsed CSS style properties
 /// Note: Custom Hash/Eq implementation excludes image_width_px and image_height_px
 /// since they don't affect KFX style output and would cause duplicate styles.
@@ -377,6 +474,8 @@ pub struct ParsedStyle {
     pub text_decoration_underline: bool,
     pub text_decoration_overline: bool,
     pub text_decoration_line_through: bool,
+    /// Line style for text decorations (dashed, dotted, double)
+    pub text_decoration_line_style: Option<TextDecorationLineStyle>,
     /// Opacity as integer 0-100 (representing 0.0-1.0)
     pub opacity: Option<u8>,
     /// Whether this style is for an image element (set when creating ContentItem::Image)
@@ -398,6 +497,17 @@ pub struct ParsedStyle {
     // P4: Shadow properties
     pub box_shadow: Option<String>,
     pub text_shadow: Option<String>,
+    // P1 Phase 2: Ruby annotation properties
+    pub ruby_position: Option<RubyPosition>,
+    pub ruby_align: Option<RubyAlign>,
+    pub ruby_merge: Option<RubyMerge>,
+    // P1 Phase 2: Text emphasis properties
+    pub text_emphasis_style: Option<TextEmphasisStyle>,
+    pub text_emphasis_color: Option<Color>,
+    // P2 Phase 2: Border collapse
+    pub border_collapse: Option<BorderCollapse>,
+    // P1 Phase 2: Drop cap
+    pub drop_cap: Option<DropCap>,
 }
 
 impl ParsedStyle {
@@ -538,6 +648,9 @@ impl ParsedStyle {
         if other.text_decoration_line_through {
             self.text_decoration_line_through = true;
         }
+        if other.text_decoration_line_style.is_some() {
+            self.text_decoration_line_style = other.text_decoration_line_style;
+        }
         if other.opacity.is_some() {
             self.opacity = other.opacity;
         }
@@ -580,6 +693,31 @@ impl ParsedStyle {
         }
         if other.text_shadow.is_some() {
             self.text_shadow.clone_from(&other.text_shadow);
+        }
+        // P1 Phase 2: Ruby annotation properties
+        if other.ruby_position.is_some() {
+            self.ruby_position = other.ruby_position;
+        }
+        if other.ruby_align.is_some() {
+            self.ruby_align = other.ruby_align;
+        }
+        if other.ruby_merge.is_some() {
+            self.ruby_merge = other.ruby_merge;
+        }
+        // P1 Phase 2: Text emphasis properties
+        if other.text_emphasis_style.is_some() {
+            self.text_emphasis_style = other.text_emphasis_style;
+        }
+        if other.text_emphasis_color.is_some() {
+            self.text_emphasis_color.clone_from(&other.text_emphasis_color);
+        }
+        // P2 Phase 2: Border collapse
+        if other.border_collapse.is_some() {
+            self.border_collapse = other.border_collapse;
+        }
+        // P1 Phase 2: Drop cap
+        if other.drop_cap.is_some() {
+            self.drop_cap = other.drop_cap;
         }
     }
 
@@ -917,6 +1055,7 @@ impl PartialEq for ParsedStyle {
             && self.text_decoration_underline == other.text_decoration_underline
             && self.text_decoration_overline == other.text_decoration_overline
             && self.text_decoration_line_through == other.text_decoration_line_through
+            && self.text_decoration_line_style == other.text_decoration_line_style
             && self.opacity == other.opacity
             && self.is_image == other.is_image
             && self.is_inline == other.is_inline
@@ -931,6 +1070,17 @@ impl PartialEq for ParsedStyle {
             // P4: Shadow properties
             && self.box_shadow == other.box_shadow
             && self.text_shadow == other.text_shadow
+            // P1 Phase 2: Ruby annotation properties
+            && self.ruby_position == other.ruby_position
+            && self.ruby_align == other.ruby_align
+            && self.ruby_merge == other.ruby_merge
+            // P1 Phase 2: Text emphasis properties
+            && self.text_emphasis_style == other.text_emphasis_style
+            && self.text_emphasis_color == other.text_emphasis_color
+            // P2 Phase 2: Border collapse
+            && self.border_collapse == other.border_collapse
+            // P1 Phase 2: Drop cap
+            && self.drop_cap == other.drop_cap
     }
 }
 
@@ -984,6 +1134,7 @@ impl std::hash::Hash for ParsedStyle {
         self.text_decoration_underline.hash(state);
         self.text_decoration_overline.hash(state);
         self.text_decoration_line_through.hash(state);
+        self.text_decoration_line_style.hash(state);
         self.opacity.hash(state);
         self.is_image.hash(state);
         self.is_inline.hash(state);
@@ -998,6 +1149,17 @@ impl std::hash::Hash for ParsedStyle {
         // P4: Shadow properties
         self.box_shadow.hash(state);
         self.text_shadow.hash(state);
+        // P1 Phase 2: Ruby annotation properties
+        self.ruby_position.hash(state);
+        self.ruby_align.hash(state);
+        self.ruby_merge.hash(state);
+        // P1 Phase 2: Text emphasis properties
+        self.text_emphasis_style.hash(state);
+        self.text_emphasis_color.hash(state);
+        // P2 Phase 2: Border collapse
+        self.border_collapse.hash(state);
+        // P1 Phase 2: Drop cap
+        self.drop_cap.hash(state);
     }
 }
 

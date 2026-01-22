@@ -143,6 +143,19 @@ pub mod sym {
     pub const TEXT_DECORATION_OVERLINE: u64 = 554; // $554 - text-decoration: overline
     pub const DECORATION_BOX_CLONE: u64 = 99; // $99 - decoration-break: clone
 
+    // Text decoration line styles (P2 Phase 2)
+    pub const TEXT_DECORATION_DASHED: u64 = 707; // $707 - dashed line style
+    pub const TEXT_DECORATION_DOTTED: u64 = 708; // $708 - dotted line style
+    pub const TEXT_DECORATION_DOUBLE: u64 = 709; // $709 - double line style
+    // Combined values for underline variants
+    pub const TEXT_DECORATION_UNDERLINE_DASHED: u64 = 710; // $710 - underline dashed
+    pub const TEXT_DECORATION_UNDERLINE_DOTTED: u64 = 711; // $711 - underline dotted
+    pub const TEXT_DECORATION_UNDERLINE_DOUBLE: u64 = 712; // $712 - underline double
+    // Combined values for line-through variants
+    pub const TEXT_DECORATION_LINE_THROUGH_DASHED: u64 = 713; // $713 - line-through dashed (estimated)
+    pub const TEXT_DECORATION_LINE_THROUGH_DOTTED: u64 = 714; // $714 - line-through dotted (estimated)
+    pub const TEXT_DECORATION_LINE_THROUGH_DOUBLE: u64 = 715; // $715 - line-through double (estimated)
+
     // ==========================================================================
     // VERTICAL ALIGN VALUES ($44)
     // ==========================================================================
@@ -204,6 +217,57 @@ pub mod sym {
     // TEXT COMBINE UPRIGHT ($561)
     // ==========================================================================
     pub const TEXT_COMBINE_UPRIGHT: u64 = 561; // $561 - text-combine-upright property
+
+    // ==========================================================================
+    // RUBY ANNOTATION PROPERTIES (P1 Phase 2)
+    // ==========================================================================
+    pub const RUBY_POSITION: u64 = 762; // $762 - ruby-position property
+    pub const RUBY_POSITION_OVER: u64 = 58; // $58 - ruby-position: over (reuses VERTICAL_TOP)
+    pub const RUBY_POSITION_UNDER: u64 = 60; // $60 - ruby-position: under (reuses VERTICAL_BOTTOM)
+    pub const RUBY_ALIGN: u64 = 766; // $766 - ruby-align property
+    pub const RUBY_ALIGN_CENTER: u64 = 767; // $767 - ruby-align: center
+    pub const RUBY_ALIGN_START: u64 = 768; // $768 - ruby-align: start
+    pub const RUBY_ALIGN_SPACE_AROUND: u64 = 769; // $769 - ruby-align: space-around
+    pub const RUBY_ALIGN_SPACE_BETWEEN: u64 = 770; // $770 - ruby-align: space-between
+    pub const RUBY_MERGE: u64 = 764; // $764 - ruby-merge property
+    pub const RUBY_MERGE_SEPARATE: u64 = 765; // $765 - ruby-merge: separate
+    pub const RUBY_MERGE_COLLAPSE: u64 = 763; // $763 - ruby-merge: collapse
+
+    // ==========================================================================
+    // TEXT EMPHASIS PROPERTIES (P1 Phase 2)
+    // ==========================================================================
+    pub const TEXT_EMPHASIS_STYLE: u64 = 717; // $717 - text-emphasis-style property
+    pub const TEXT_EMPHASIS_COLOR: u64 = 718; // $718 - text-emphasis-color property
+    pub const TEXT_EMPHASIS_FILLED: u64 = 724; // $724 - filled
+    pub const TEXT_EMPHASIS_OPEN: u64 = 725; // $725 - open
+    pub const TEXT_EMPHASIS_DOT: u64 = 726; // $726 - dot
+    pub const TEXT_EMPHASIS_CIRCLE: u64 = 727; // $727 - circle
+    pub const TEXT_EMPHASIS_FILLED_CIRCLE: u64 = 728; // $728 - filled circle
+    pub const TEXT_EMPHASIS_OPEN_CIRCLE: u64 = 729; // $729 - open circle
+    pub const TEXT_EMPHASIS_FILLED_DOT: u64 = 730; // $730 - filled dot
+    pub const TEXT_EMPHASIS_OPEN_DOT: u64 = 731; // $731 - open dot
+    pub const TEXT_EMPHASIS_DOUBLE_CIRCLE: u64 = 732; // $732 - double-circle
+    pub const TEXT_EMPHASIS_FILLED_DOUBLE_CIRCLE: u64 = 733; // $733 - filled double-circle
+    pub const TEXT_EMPHASIS_OPEN_DOUBLE_CIRCLE: u64 = 734; // $734 - open double-circle
+    pub const TEXT_EMPHASIS_TRIANGLE: u64 = 735; // $735 - triangle
+    pub const TEXT_EMPHASIS_FILLED_TRIANGLE: u64 = 736; // $736 - filled triangle
+    pub const TEXT_EMPHASIS_OPEN_TRIANGLE: u64 = 737; // $737 - open triangle
+    pub const TEXT_EMPHASIS_SESAME: u64 = 738; // $738 - sesame
+    pub const TEXT_EMPHASIS_FILLED_SESAME: u64 = 739; // $739 - filled sesame
+    pub const TEXT_EMPHASIS_OPEN_SESAME: u64 = 740; // $740 - open sesame
+
+    // ==========================================================================
+    // BORDER COLLAPSE (P2 Phase 2)
+    // ==========================================================================
+    pub const BORDER_COLLAPSE: u64 = 79; // $79 - border-collapse property
+    pub const BORDER_COLLAPSE_SEPARATE: u64 = 80; // $80 - border-collapse: separate
+    pub const BORDER_COLLAPSE_COLLAPSE: u64 = 81; // $81 - border-collapse: collapse
+
+    // ==========================================================================
+    // DROP CAP PROPERTIES (P1 Phase 2)
+    // ==========================================================================
+    pub const DROP_CAP_LINES: u64 = 125; // $125 - number of lines drop cap spans
+    pub const DROP_CAP_CHARS: u64 = 126; // $126 - number of characters in drop cap
 
     // ==========================================================================
     // BORDER RADIUS ($459-$462)

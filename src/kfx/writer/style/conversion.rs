@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    CssValue, FontVariant, ListStylePosition, ListStyleType, ParsedStyle, TextAlign,
-    TextCombineUpright, WritingMode,
+    BorderCollapse, CssValue, FontVariant, ListStylePosition, ListStyleType, ParsedStyle,
+    RubyAlign, RubyMerge, RubyPosition, TextAlign, TextCombineUpright, TextDecorationLineStyle,
+    TextEmphasisStyle, WritingMode,
 };
 use crate::kfx::ion::{encode_kfx_decimal, IonValue};
 
@@ -254,6 +255,18 @@ pub fn style_to_ion(
 
     // P4: Shadow properties
     add_shadows(&mut style_ion, style);
+
+    // P1 Phase 2: Ruby annotation properties
+    add_ruby_properties(&mut style_ion, style);
+
+    // P1 Phase 2: Text emphasis properties
+    add_text_emphasis(&mut style_ion, style);
+
+    // P2 Phase 2: Border collapse
+    add_border_collapse(&mut style_ion, style);
+
+    // P1 Phase 2: Drop cap
+    add_drop_cap(&mut style_ion, style);
 
     IonValue::Struct(style_ion)
 }
@@ -556,16 +569,37 @@ fn add_vertical_align(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyl
 }
 
 fn add_text_decorations(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    let decorations = [
-        (style.text_decoration_underline, sym::TEXT_DECORATION_UNDERLINE),
-        (style.text_decoration_overline, sym::TEXT_DECORATION_OVERLINE),
-        (style.text_decoration_line_through, sym::TEXT_DECORATION_LINE_THROUGH),
-    ];
+    // Get the line style (if any)
+    let line_style = style.text_decoration_line_style;
 
-    for (enabled, sym) in decorations {
-        if enabled {
-            style_ion.insert(sym, IonValue::Symbol(sym::DECORATION_PRESENT));
-        }
+    // Handle underline with optional line style
+    if style.text_decoration_underline {
+        let decoration_sym = match line_style {
+            Some(TextDecorationLineStyle::Dashed) => sym::TEXT_DECORATION_UNDERLINE_DASHED,
+            Some(TextDecorationLineStyle::Dotted) => sym::TEXT_DECORATION_UNDERLINE_DOTTED,
+            Some(TextDecorationLineStyle::Double) => sym::TEXT_DECORATION_UNDERLINE_DOUBLE,
+            Some(TextDecorationLineStyle::Solid) | None => sym::DECORATION_PRESENT,
+        };
+        style_ion.insert(sym::TEXT_DECORATION_UNDERLINE, IonValue::Symbol(decoration_sym));
+    }
+
+    // Handle overline (no combined symbols in reference, use simple present)
+    if style.text_decoration_overline {
+        style_ion.insert(
+            sym::TEXT_DECORATION_OVERLINE,
+            IonValue::Symbol(sym::DECORATION_PRESENT),
+        );
+    }
+
+    // Handle line-through with optional line style
+    if style.text_decoration_line_through {
+        let decoration_sym = match line_style {
+            Some(TextDecorationLineStyle::Dashed) => sym::TEXT_DECORATION_LINE_THROUGH_DASHED,
+            Some(TextDecorationLineStyle::Dotted) => sym::TEXT_DECORATION_LINE_THROUGH_DOTTED,
+            Some(TextDecorationLineStyle::Double) => sym::TEXT_DECORATION_LINE_THROUGH_DOUBLE,
+            Some(TextDecorationLineStyle::Solid) | None => sym::DECORATION_PRESENT,
+        };
+        style_ion.insert(sym::TEXT_DECORATION_LINE_THROUGH, IonValue::Symbol(decoration_sym));
     }
 }
 
@@ -741,6 +775,108 @@ fn add_shadows(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     // Text shadow ($497) - store as string for now (simplified)
     if let Some(ref shadow) = style.text_shadow {
         style_ion.insert(sym::TEXT_SHADOW, IonValue::String(shadow.clone()));
+    }
+}
+
+// P1 Phase 2: Ruby annotation properties
+fn add_ruby_properties(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Ruby position ($762)
+    if let Some(position) = style.ruby_position {
+        let pos_sym = match position {
+            RubyPosition::Over => sym::RUBY_POSITION_OVER,
+            RubyPosition::Under => sym::RUBY_POSITION_UNDER,
+        };
+        // Only output if not default (over)
+        if position != RubyPosition::Over {
+            style_ion.insert(sym::RUBY_POSITION, IonValue::Symbol(pos_sym));
+        }
+    }
+
+    // Ruby align ($766)
+    if let Some(align) = style.ruby_align {
+        let align_sym = match align {
+            RubyAlign::Center => sym::RUBY_ALIGN_CENTER,
+            RubyAlign::Start => sym::RUBY_ALIGN_START,
+            RubyAlign::SpaceAround => sym::RUBY_ALIGN_SPACE_AROUND,
+            RubyAlign::SpaceBetween => sym::RUBY_ALIGN_SPACE_BETWEEN,
+        };
+        // Only output if not default (center)
+        if align != RubyAlign::Center {
+            style_ion.insert(sym::RUBY_ALIGN, IonValue::Symbol(align_sym));
+        }
+    }
+
+    // Ruby merge ($764)
+    if let Some(merge) = style.ruby_merge {
+        let merge_sym = match merge {
+            RubyMerge::Separate => sym::RUBY_MERGE_SEPARATE,
+            RubyMerge::Collapse => sym::RUBY_MERGE_COLLAPSE,
+        };
+        // Only output if not default (separate)
+        if merge != RubyMerge::Separate {
+            style_ion.insert(sym::RUBY_MERGE, IonValue::Symbol(merge_sym));
+        }
+    }
+}
+
+// P1 Phase 2: Text emphasis properties
+fn add_text_emphasis(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Text emphasis style ($717)
+    if let Some(emphasis) = style.text_emphasis_style {
+        let style_sym = match emphasis {
+            TextEmphasisStyle::None => return, // Don't output None
+            TextEmphasisStyle::Filled => sym::TEXT_EMPHASIS_FILLED,
+            TextEmphasisStyle::Open => sym::TEXT_EMPHASIS_OPEN,
+            TextEmphasisStyle::Dot => sym::TEXT_EMPHASIS_DOT,
+            TextEmphasisStyle::Circle => sym::TEXT_EMPHASIS_CIRCLE,
+            TextEmphasisStyle::FilledCircle => sym::TEXT_EMPHASIS_FILLED_CIRCLE,
+            TextEmphasisStyle::OpenCircle => sym::TEXT_EMPHASIS_OPEN_CIRCLE,
+            TextEmphasisStyle::FilledDot => sym::TEXT_EMPHASIS_FILLED_DOT,
+            TextEmphasisStyle::OpenDot => sym::TEXT_EMPHASIS_OPEN_DOT,
+            TextEmphasisStyle::DoubleCircle => sym::TEXT_EMPHASIS_DOUBLE_CIRCLE,
+            TextEmphasisStyle::FilledDoubleCircle => sym::TEXT_EMPHASIS_FILLED_DOUBLE_CIRCLE,
+            TextEmphasisStyle::OpenDoubleCircle => sym::TEXT_EMPHASIS_OPEN_DOUBLE_CIRCLE,
+            TextEmphasisStyle::Triangle => sym::TEXT_EMPHASIS_TRIANGLE,
+            TextEmphasisStyle::FilledTriangle => sym::TEXT_EMPHASIS_FILLED_TRIANGLE,
+            TextEmphasisStyle::OpenTriangle => sym::TEXT_EMPHASIS_OPEN_TRIANGLE,
+            TextEmphasisStyle::Sesame => sym::TEXT_EMPHASIS_SESAME,
+            TextEmphasisStyle::FilledSesame => sym::TEXT_EMPHASIS_FILLED_SESAME,
+            TextEmphasisStyle::OpenSesame => sym::TEXT_EMPHASIS_OPEN_SESAME,
+        };
+        style_ion.insert(sym::TEXT_EMPHASIS_STYLE, IonValue::Symbol(style_sym));
+    }
+
+    // Text emphasis color ($718)
+    if let Some(ref color) = style.text_emphasis_color {
+        if let Some(val) = color.to_kfx_ion() {
+            style_ion.insert(sym::TEXT_EMPHASIS_COLOR, val);
+        }
+    }
+}
+
+// P2 Phase 2: Border collapse
+fn add_border_collapse(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    if let Some(collapse) = style.border_collapse {
+        let collapse_sym = match collapse {
+            BorderCollapse::Separate => sym::BORDER_COLLAPSE_SEPARATE,
+            BorderCollapse::Collapse => sym::BORDER_COLLAPSE_COLLAPSE,
+        };
+        // Only output if not default (separate)
+        if collapse != BorderCollapse::Separate {
+            style_ion.insert(sym::BORDER_COLLAPSE, IonValue::Symbol(collapse_sym));
+        }
+    }
+}
+
+// P1 Phase 2: Drop cap
+fn add_drop_cap(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    if let Some(drop_cap) = style.drop_cap {
+        if drop_cap.lines > 0 {
+            style_ion.insert(sym::DROP_CAP_LINES, IonValue::Int(drop_cap.lines as i64));
+        }
+        if drop_cap.chars > 0 {
+            style_ion.insert(sym::DROP_CAP_CHARS, IonValue::Int(drop_cap.chars as i64));
+        }
     }
 }
 
@@ -1449,5 +1585,357 @@ mod tests {
             ion_map.contains_key(&sym::TEXT_SHADOW),
             "Style should have TEXT_SHADOW"
         );
+    }
+
+    // P1 Phase 2 Tests: Ruby annotations
+    #[test]
+    fn test_ruby_position_under() {
+        let style = ParsedStyle {
+            ruby_position: Some(crate::css::RubyPosition::Under),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::RUBY_POSITION),
+            "Style should have RUBY_POSITION"
+        );
+        match ion_map.get(&sym::RUBY_POSITION) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::RUBY_POSITION_UNDER, "Expected ruby-position: under");
+            }
+            _ => panic!("Expected symbol for RUBY_POSITION"),
+        }
+    }
+
+    #[test]
+    fn test_ruby_position_over_not_output() {
+        // Over is the default and should not be output
+        let style = ParsedStyle {
+            ruby_position: Some(crate::css::RubyPosition::Over),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::RUBY_POSITION),
+            "Default ruby-position: over should not output"
+        );
+    }
+
+    #[test]
+    fn test_ruby_align_space_between() {
+        let style = ParsedStyle {
+            ruby_align: Some(crate::css::RubyAlign::SpaceBetween),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::RUBY_ALIGN),
+            "Style should have RUBY_ALIGN"
+        );
+        match ion_map.get(&sym::RUBY_ALIGN) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::RUBY_ALIGN_SPACE_BETWEEN,
+                    "Expected ruby-align: space-between"
+                );
+            }
+            _ => panic!("Expected symbol for RUBY_ALIGN"),
+        }
+    }
+
+    #[test]
+    fn test_ruby_merge_collapse() {
+        let style = ParsedStyle {
+            ruby_merge: Some(crate::css::RubyMerge::Collapse),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::RUBY_MERGE),
+            "Style should have RUBY_MERGE"
+        );
+        match ion_map.get(&sym::RUBY_MERGE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(*s, sym::RUBY_MERGE_COLLAPSE, "Expected ruby-merge: collapse");
+            }
+            _ => panic!("Expected symbol for RUBY_MERGE"),
+        }
+    }
+
+    // P1 Phase 2 Tests: Text emphasis
+    #[test]
+    fn test_text_emphasis_style_filled_circle() {
+        let style = ParsedStyle {
+            text_emphasis_style: Some(crate::css::TextEmphasisStyle::FilledCircle),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TEXT_EMPHASIS_STYLE),
+            "Style should have TEXT_EMPHASIS_STYLE"
+        );
+        match ion_map.get(&sym::TEXT_EMPHASIS_STYLE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::TEXT_EMPHASIS_FILLED_CIRCLE,
+                    "Expected text-emphasis-style: filled circle"
+                );
+            }
+            _ => panic!("Expected symbol for TEXT_EMPHASIS_STYLE"),
+        }
+    }
+
+    #[test]
+    fn test_text_emphasis_style_none_not_output() {
+        let style = ParsedStyle {
+            text_emphasis_style: Some(crate::css::TextEmphasisStyle::None),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::TEXT_EMPHASIS_STYLE),
+            "text-emphasis-style: none should not output"
+        );
+    }
+
+    #[test]
+    fn test_text_emphasis_color() {
+        let style = ParsedStyle {
+            text_emphasis_color: Some(crate::css::Color::Rgba(255, 0, 0, 255)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TEXT_EMPHASIS_COLOR),
+            "Style should have TEXT_EMPHASIS_COLOR"
+        );
+    }
+
+    // P2 Phase 2 Tests: Border collapse
+    #[test]
+    fn test_border_collapse() {
+        let style = ParsedStyle {
+            border_collapse: Some(crate::css::BorderCollapse::Collapse),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::BORDER_COLLAPSE),
+            "Style should have BORDER_COLLAPSE"
+        );
+        match ion_map.get(&sym::BORDER_COLLAPSE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::BORDER_COLLAPSE_COLLAPSE,
+                    "Expected border-collapse: collapse"
+                );
+            }
+            _ => panic!("Expected symbol for BORDER_COLLAPSE"),
+        }
+    }
+
+    #[test]
+    fn test_border_collapse_separate_not_output() {
+        // Separate is the default and should not be output
+        let style = ParsedStyle {
+            border_collapse: Some(crate::css::BorderCollapse::Separate),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::BORDER_COLLAPSE),
+            "Default border-collapse: separate should not output"
+        );
+    }
+
+    // P1 Phase 2 Tests: Drop cap
+    #[test]
+    fn test_drop_cap() {
+        let style = ParsedStyle {
+            drop_cap: Some(crate::css::DropCap { lines: 3, chars: 1 }),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::DROP_CAP_LINES),
+            "Style should have DROP_CAP_LINES"
+        );
+        assert!(
+            ion_map.contains_key(&sym::DROP_CAP_CHARS),
+            "Style should have DROP_CAP_CHARS"
+        );
+
+        match ion_map.get(&sym::DROP_CAP_LINES) {
+            Some(IonValue::Int(n)) => {
+                assert_eq!(*n, 3, "Expected drop cap lines = 3");
+            }
+            _ => panic!("Expected int for DROP_CAP_LINES"),
+        }
+        match ion_map.get(&sym::DROP_CAP_CHARS) {
+            Some(IonValue::Int(n)) => {
+                assert_eq!(*n, 1, "Expected drop cap chars = 1");
+            }
+            _ => panic!("Expected int for DROP_CAP_CHARS"),
+        }
+    }
+
+    // P2 Phase 2 Tests: Text decoration line style
+    #[test]
+    fn test_text_decoration_underline_dashed() {
+        let style = ParsedStyle {
+            text_decoration_underline: true,
+            text_decoration_line_style: Some(crate::css::TextDecorationLineStyle::Dashed),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TEXT_DECORATION_UNDERLINE),
+            "Style should have TEXT_DECORATION_UNDERLINE"
+        );
+        match ion_map.get(&sym::TEXT_DECORATION_UNDERLINE) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::TEXT_DECORATION_UNDERLINE_DASHED,
+                    "Expected underline dashed symbol"
+                );
+            }
+            _ => panic!("Expected symbol for TEXT_DECORATION_UNDERLINE"),
+        }
+    }
+
+    #[test]
+    fn test_text_decoration_line_through_double() {
+        let style = ParsedStyle {
+            text_decoration_line_through: true,
+            text_decoration_line_style: Some(crate::css::TextDecorationLineStyle::Double),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::TEXT_DECORATION_LINE_THROUGH),
+            "Style should have TEXT_DECORATION_LINE_THROUGH"
+        );
+        match ion_map.get(&sym::TEXT_DECORATION_LINE_THROUGH) {
+            Some(IonValue::Symbol(s)) => {
+                assert_eq!(
+                    *s,
+                    sym::TEXT_DECORATION_LINE_THROUGH_DOUBLE,
+                    "Expected line-through double symbol"
+                );
+            }
+            _ => panic!("Expected symbol for TEXT_DECORATION_LINE_THROUGH"),
+        }
     }
 }
