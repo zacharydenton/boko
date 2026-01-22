@@ -1770,6 +1770,16 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "clear" => {
             style.clear = parse_clear(values);
         }
+        "float" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.float = match val.to_ascii_lowercase().as_str() {
+                    "none" => Some(CssFloat::None),
+                    "left" => Some(CssFloat::Left),
+                    "right" => Some(CssFloat::Right),
+                    _ => None,
+                };
+            }
+        }
         "word-break" => {
             style.word_break = parse_word_break(values);
         }
@@ -2491,6 +2501,26 @@ mod tests {
 
         let none = get_style_for(&stylesheet, r#"<p class="none">Test</p>"#, "p");
         assert_eq!(none.text_transform, Some(TextTransform::None));
+    }
+
+    #[test]
+    fn test_float_parsing() {
+        let css = r#"
+            .left { float: left; }
+            .right { float: right; }
+            .none { float: none; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        let left = get_style_for(&stylesheet, r#"<p class="left">Test</p>"#, "p");
+        assert_eq!(left.float, Some(CssFloat::Left));
+
+        let right = get_style_for(&stylesheet, r#"<p class="right">Test</p>"#, "p");
+        assert_eq!(right.float, Some(CssFloat::Right));
+
+        let none = get_style_for(&stylesheet, r#"<p class="none">Test</p>"#, "p");
+        assert_eq!(none.float, Some(CssFloat::None));
     }
 
     #[test]
