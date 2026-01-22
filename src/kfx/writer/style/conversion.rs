@@ -718,4 +718,52 @@ mod tests {
             value
         );
     }
+
+    #[test]
+    fn test_margin_top_divided_by_1_2() {
+        // Kindle Previewer divides vertical em margins by 1.2 (default line-height factor)
+        // CSS margin-top: 1em → KFX margin-top: 0.833333em (1/1.2)
+        // CSS margin-top: 3em → KFX margin-top: 2.5em (3/1.2)
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            margin_top: Some(crate::css::CssValue::Em(3.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have SPACE_BEFORE (margin-top)
+        assert!(
+            ion_map.contains_key(&sym::SPACE_BEFORE),
+            "Style should have margin-top (SPACE_BEFORE)"
+        );
+
+        // Extract the value
+        let margin_struct = match ion_map.get(&sym::SPACE_BEFORE) {
+            Some(IonValue::Struct(s)) => s,
+            _ => panic!("Expected margin-top struct"),
+        };
+
+        let value = match margin_struct.get(&sym::VALUE) {
+            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
+            _ => panic!("Expected decimal value"),
+        };
+
+        // Should be 3 / 1.2 = 2.5
+        let expected = 3.0 / 1.2;
+        assert!(
+            (value - expected).abs() < 0.01,
+            "margin-top 3em should become {} in KFX, got {}",
+            expected,
+            value
+        );
+    }
 }

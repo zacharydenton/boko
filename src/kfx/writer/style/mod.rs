@@ -214,10 +214,14 @@ pub fn spacing_to_ion(spacing: &CssValue) -> Option<IonValue> {
     })
 }
 
+/// Default line-height factor used by Kindle for normalization
+const DEFAULT_LINE_HEIGHT: f32 = 1.2;
+
 /// Convert margin-top/bottom to UNIT_MULTIPLIER format for space-before/space-after
-/// Reference KFX uses UNIT_MULTIPLIER with em values for vertical spacing
+/// Reference KFX uses UNIT_MULTIPLIER with values divided by 1.2 (default line-height)
+/// This converts CSS margins (relative to font-size) to KFX multipliers (relative to line-height)
 pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
-    let multiplier_val: Option<f32> = match spacing {
+    let css_val: Option<f32> = match spacing {
         CssValue::Em(v) | CssValue::Rem(v) => {
             if v.abs() < 0.001 {
                 None
@@ -251,10 +255,12 @@ pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
         }
         _ => None,
     };
-    multiplier_val.map(|val| {
+    css_val.map(|val| {
+        // Kindle Previewer divides vertical margins by 1.2 (default line-height factor)
+        let kfx_val = val / DEFAULT_LINE_HEIGHT;
         let mut s = HashMap::new();
         s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
         IonValue::Struct(s)
     })
 }
