@@ -3422,12 +3422,19 @@ mod tests {
             "Expected border-top-width: 1px, got {:?}",
             top.width
         );
-        assert_eq!(top.style, BorderStyle::Solid, "border-style should default to solid");
+        assert_eq!(
+            top.style,
+            BorderStyle::Solid,
+            "border-style should default to solid"
+        );
 
         // border-style: solid should set style on all sides
         let style_style = get_style_for(&stylesheet, r#"<div class="border-style"></div>"#, "div");
         assert!(style_style.border_top.is_some(), "border-top should be set");
-        assert_eq!(style_style.border_top.as_ref().unwrap().style, BorderStyle::Solid);
+        assert_eq!(
+            style_style.border_top.as_ref().unwrap().style,
+            BorderStyle::Solid
+        );
 
         // Combined should have all properties
         let combined = get_style_for(&stylesheet, r#"<div class="combined"></div>"#, "div");
