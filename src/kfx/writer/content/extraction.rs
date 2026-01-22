@@ -1407,6 +1407,53 @@ mod tests {
     }
 
     #[test]
+    fn test_backlink_creates_inline_run_with_anchor() {
+        // Verify that backlinks (↩︎) in endnotes create inline runs with anchor_href
+        // This is critical for links to work in KFX output
+        let html = r#"<html><body>
+            <p>Some note text. <a href="chapter.xhtml#noteref-1" role="doc-backlink">↩︎</a></p>
+        </body></html>"#;
+
+        let stylesheet = Stylesheet::default();
+        let content = extract_content_from_xhtml(html.as_bytes(), &stylesheet, "endnotes.xhtml");
+
+        // Find the paragraph with inline runs
+        fn find_text_with_backlink(items: &[ContentItem]) -> Option<Vec<StyleRun>> {
+            for item in items {
+                match item {
+                    ContentItem::Text { text, inline_runs, .. } if text.contains("↩︎") => {
+                        return Some(inline_runs.clone());
+                    }
+                    ContentItem::Container { children, .. } => {
+                        if let Some(runs) = find_text_with_backlink(children) {
+                            return Some(runs);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let inline_runs = find_text_with_backlink(&content);
+        assert!(inline_runs.is_some(), "Should find text with backlink");
+
+        let runs = inline_runs.unwrap();
+        assert!(!runs.is_empty(), "Should have inline runs for backlink");
+
+        // Find the inline run with anchor_href
+        let backlink_run = runs.iter().find(|r| r.anchor_href.is_some());
+        assert!(backlink_run.is_some(), "Should have inline run with anchor_href");
+
+        let run = backlink_run.unwrap();
+        assert!(
+            run.anchor_href.as_ref().unwrap().contains("noteref-1"),
+            "Anchor href should reference noteref-1, got {:?}",
+            run.anchor_href
+        );
+    }
+
+    #[test]
     fn test_span_with_css_class_preserves_line_height() {
         // This tests the text-xs Tailwind pattern: font-size and line-height on an inline span
         // The span's style (including line-height) should be preserved in the extracted content

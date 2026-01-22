@@ -980,6 +980,32 @@ impl KfxBookBuilder {
             .filter(|c| matches!(c, ContentItem::Text { .. }))
             .collect();
 
+        // Collect inline runs from all text items
+        // For list items with a single text paragraph, offsets are already correct
+        // For multiple text items, we need to adjust offsets (though this is rare)
+        let mut all_inline_runs = Vec::new();
+        let mut offset_adjustment = 0usize;
+
+        for text_item in &text_content {
+            if let ContentItem::Text {
+                text, inline_runs, ..
+            } = text_item
+            {
+                // Add runs with adjusted offsets
+                for run in inline_runs {
+                    all_inline_runs.push(super::content::StyleRun {
+                        offset: run.offset + offset_adjustment,
+                        length: run.length,
+                        style: run.style.clone(),
+                        anchor_href: run.anchor_href.clone(),
+                        element_id: run.element_id.clone(),
+                    });
+                }
+                // Track cumulative offset for next text item
+                offset_adjustment += text.chars().count();
+            }
+        }
+
         // Create direct text reference ($145) for the first text item
         // This matches reference KFX where list items directly contain text ref
         if !text_content.is_empty() {
@@ -987,6 +1013,14 @@ impl KfxBookBuilder {
             text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
             text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
             item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+
+            // Add inline style runs ($142) if present
+            if !all_inline_runs.is_empty() {
+                let runs = self.build_inline_runs(&all_inline_runs);
+                if !runs.is_empty() {
+                    item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                }
+            }
 
             // Increment text index for each text item in the list item
             for _ in &text_content {
@@ -1760,6 +1794,389 @@ mod tests {
             verse_with_newlines,
             "Poetry with newlines should have is_verse=true. Results: {:?}",
             zeus_results.iter().map(|(t, v)| (t.len(), v)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_inline_anchor_style_is_registered_and_used() {
+        // Verify that anchor-only inline runs get their styles registered in style_map
+        // and produce valid inline run ION output with anchor references.
+        use crate::kfx::writer::navigation::build_anchor_symbols;
+
+        // Create content with an inline anchor (like a backlink)
+        let anchor_style = ParsedStyle {
+            is_inline: true,
+            ..Default::default()
+        };
+
+        let text_with_link = ContentItem::Text {
+            text: "Note text ↩︎".to_string(),
+            style: ParsedStyle::default(),
+            inline_runs: vec![StyleRun {
+                offset: 10,
+                length: 1, // Just the backlink arrow
+                style: anchor_style.clone(),
+                anchor_href: Some("chapter.xhtml#noteref-1".to_string()),
+                element_id: None,
+            }],
+            anchor_href: None,
+            element_id: None,
+            is_verse: false,
+        };
+
+        let paragraph = ContentItem::Container {
+            style: ParsedStyle::default(),
+            children: vec![text_with_link],
+            tag: "p".to_string(),
+            element_id: None,
+            list_type: None,
+        };
+
+        // Create a chapter with this content
+        let chapter = ChapterData {
+            id: "test".to_string(),
+            title: "Test".to_string(),
+            source_path: "test.xhtml".to_string(),
+            content: vec![paragraph],
+        };
+
+        // Build styles (this should register the anchor style)
+        let mut builder = KfxBookBuilder::new();
+        let chapters = vec![chapter];
+        builder.add_all_styles(&chapters);
+
+        // Verify anchor style is in style_map
+        assert!(
+            builder.style_map.contains_key(&anchor_style),
+            "Anchor-only inline style should be registered in style_map. Found styles: {:?}",
+            builder.style_map.keys().collect::<Vec<_>>()
+        );
+
+        // Build anchor symbols (this should register the href)
+        builder.anchor_symbols = build_anchor_symbols(&chapters, &mut builder.symtab);
+
+        // Verify anchor symbol is registered
+        assert!(
+            builder.anchor_symbols.contains_key("chapter.xhtml#noteref-1"),
+            "Anchor href should be registered in anchor_symbols. Found: {:?}",
+            builder.anchor_symbols.keys().collect::<Vec<_>>()
+        );
+
+        // Build inline runs (this should produce ION with anchor reference)
+        let runs = vec![StyleRun {
+            offset: 10,
+            length: 1,
+            style: anchor_style,
+            anchor_href: Some("chapter.xhtml#noteref-1".to_string()),
+            element_id: None,
+        }];
+
+        let ion_runs = builder.build_inline_runs(&runs);
+
+        // Should have exactly one inline run
+        assert_eq!(
+            ion_runs.len(),
+            1,
+            "Should produce one inline run, got {} (style or anchor might be missing)",
+            ion_runs.len()
+        );
+
+        // Verify the inline run has anchor reference ($179)
+        if let IonValue::Struct(run_map) = &ion_runs[0] {
+            assert!(
+                run_map.contains_key(&sym::ANCHOR_REF),
+                "Inline run should have ANCHOR_REF ($179). Keys: {:?}",
+                run_map.keys().collect::<Vec<_>>()
+            );
+        } else {
+            panic!("Expected inline run to be a struct");
+        }
+    }
+
+    #[test]
+    fn test_epictetus_backlinks_have_anchor_refs() {
+        // Test that backlinks in the actual epictetus.epub endnotes work
+        use crate::kfx::writer::navigation::build_anchor_symbols;
+
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+
+        // Build chapters like the full builder does
+        let mut builder = KfxBookBuilder::new();
+        builder.resource_symbols = build_resource_symbols(&book, &mut builder.symtab);
+
+        let toc_titles: std::collections::HashMap<&str, &str> = book
+            .toc
+            .iter()
+            .map(|entry| (entry.href.as_str(), entry.title.as_str()))
+            .collect();
+
+        let chapters = builder.extract_chapters(&book, &toc_titles);
+
+        // Find the endnotes chapter
+        let endnotes_chapter = chapters.iter().find(|c| c.source_path.contains("endnotes"));
+        assert!(endnotes_chapter.is_some(), "Should find endnotes chapter");
+        let endnotes = endnotes_chapter.unwrap();
+
+        // Collect all inline runs with anchor_href from endnotes
+        fn collect_anchor_runs(item: &ContentItem, runs: &mut Vec<(String, String, ParsedStyle)>) {
+            match item {
+                ContentItem::Text { inline_runs, .. } => {
+                    for run in inline_runs {
+                        if let Some(ref href) = run.anchor_href {
+                            let style_debug = format!("is_inline={}", run.style.is_inline);
+                            runs.push((href.clone(), style_debug, run.style.clone()));
+                        }
+                    }
+                }
+                ContentItem::Container { children, .. } => {
+                    for child in children {
+                        collect_anchor_runs(child, runs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut backlink_runs = Vec::new();
+        for item in &endnotes.content {
+            collect_anchor_runs(item, &mut backlink_runs);
+        }
+
+        println!("Found {} backlink inline runs:", backlink_runs.len());
+        for (href, style_str, style) in &backlink_runs[..5.min(backlink_runs.len())] {
+            println!("  {} - {} - lang={:?}", href, style_str, style.lang);
+        }
+
+        // Should find many backlinks (epictetus has 98+ endnotes)
+        assert!(
+            backlink_runs.len() > 90,
+            "Should find many backlinks in endnotes, found only {}",
+            backlink_runs.len()
+        );
+
+        // Verify styles and anchor symbols are built correctly
+        builder.add_all_styles(&chapters);
+        builder.anchor_symbols = build_anchor_symbols(&chapters, &mut builder.symtab);
+
+        // Check that the backlink hrefs are in anchor_symbols
+        let first_backlink = &backlink_runs[0].0;
+        assert!(
+            builder.anchor_symbols.contains_key(first_backlink),
+            "First backlink href {} should be in anchor_symbols. Found hrefs: {:?}",
+            first_backlink,
+            builder.anchor_symbols.keys().take(5).collect::<Vec<_>>()
+        );
+
+        // Build inline runs using the ACTUAL styles (not fabricated ones)
+        let test_runs: Vec<StyleRun> = backlink_runs
+            .iter()
+            .take(10)
+            .map(|(href, _, style)| StyleRun {
+                offset: 0,
+                length: 1,
+                style: style.clone(),
+                anchor_href: Some(href.clone()),
+                element_id: None,
+            })
+            .collect();
+
+        // Check that ALL styles are registered (this is the critical check)
+        for (i, (href, _, style)) in backlink_runs.iter().take(10).enumerate() {
+            let in_map = builder.style_map.contains_key(style);
+            println!(
+                "Run {} href={} style_in_map={} is_inline={}",
+                i, href, in_map, style.is_inline
+            );
+            if !in_map {
+                println!("  Missing style: {:?}", style);
+            }
+        }
+
+        let ion_runs = builder.build_inline_runs(&test_runs);
+
+        println!(
+            "Built {} ION runs from {} StyleRuns",
+            ion_runs.len(),
+            test_runs.len()
+        );
+
+        // Should produce same number of output runs as input
+        assert_eq!(
+            ion_runs.len(),
+            test_runs.len(),
+            "Should produce ION output for all inline runs (check style_map and anchor_symbols)"
+        );
+
+        // Each should have ANCHOR_REF
+        for (i, run) in ion_runs.iter().enumerate() {
+            if let IonValue::Struct(run_map) = run {
+                assert!(
+                    run_map.contains_key(&sym::ANCHOR_REF),
+                    "Inline run {} should have ANCHOR_REF",
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_full_kfx_has_backlink_anchor_refs() {
+        // Build the complete KFX and verify it has anchor references in endnotes
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+        let kfx_builder = KfxBookBuilder::from_book(&book);
+
+        // Count anchor refs in the generated fragments
+        // Inline runs are in CONTENT_BLOCK ($259), not TEXT_CONTENT ($145)
+        let mut anchor_ref_count = 0;
+        let mut inline_runs_count = 0;
+        let mut content_block_frags = 0;
+
+        fn count_in_item(item: &IonValue, inline_runs_count: &mut usize, anchor_ref_count: &mut usize) {
+            if let IonValue::Struct(item_struct) = item {
+                // Look for INLINE_STYLE_RUNS ($142)
+                if let Some(IonValue::List(runs)) = item_struct.get(&sym::INLINE_STYLE_RUNS) {
+                    *inline_runs_count += runs.len();
+                    for run in runs {
+                        if let IonValue::Struct(run_struct) = run {
+                            if run_struct.contains_key(&sym::ANCHOR_REF) {
+                                *anchor_ref_count += 1;
+                            }
+                        }
+                    }
+                }
+                // Recursively check nested CONTENT_ARRAY
+                if let Some(IonValue::List(nested)) = item_struct.get(&sym::CONTENT_ARRAY) {
+                    for nested_item in nested {
+                        count_in_item(nested_item, inline_runs_count, anchor_ref_count);
+                    }
+                }
+            } else if let IonValue::Annotated(_, boxed) = item {
+                count_in_item(boxed, inline_runs_count, anchor_ref_count);
+            }
+        }
+
+        for fragment in &kfx_builder.fragments {
+            // CONTENT_BLOCK fragments ($259) have structure: { $146: [...items...], ... }
+            if fragment.ftype == sym::CONTENT_BLOCK {
+                content_block_frags += 1;
+                if let IonValue::Struct(s) = &fragment.value {
+                    // Look for CONTENT_ARRAY ($146)
+                    if let Some(IonValue::List(items)) = s.get(&sym::CONTENT_ARRAY) {
+                        for item in items {
+                            count_in_item(item, &mut inline_runs_count, &mut anchor_ref_count);
+                        }
+                    }
+                }
+            }
+        }
+
+        println!(
+            "CONTENT_BLOCK frags: {}, inline runs: {}, with anchor refs: {}",
+            content_block_frags, inline_runs_count, anchor_ref_count
+        );
+
+        // Should have many anchor refs (noterefs + backlinks + any other links)
+        // Epictetus has 98+ endnotes so we should have at least 98 backlinks + 98 noterefs = 196
+        assert!(
+            anchor_ref_count >= 100,
+            "Should have many anchor refs in KFX output, found only {}",
+            anchor_ref_count
+        );
+    }
+
+    #[test]
+    fn test_anchor_eid_href_format_match() {
+        // Test that anchor_eids keys match the href format from inline runs
+        // This ensures backlinks and footnote refs are properly resolvable
+        let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+        let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+
+        let mut builder = KfxBookBuilder::new();
+        builder.resource_symbols = build_resource_symbols(&book, &mut builder.symtab);
+        let toc_titles: HashMap<&str, &str> = book
+            .toc
+            .iter()
+            .map(|entry| (entry.href.as_str(), entry.title.as_str()))
+            .collect();
+
+        let chapters = builder.extract_chapters(&book, &toc_titles);
+        let has_cover = book.metadata.cover_image.is_some();
+
+        // Get anchor_eids
+        let anchor_eids = build_anchor_eids(&chapters, has_cover);
+
+        // Collect all anchor hrefs from inline runs
+        fn collect_hrefs(item: &crate::kfx::writer::content::ContentItem, hrefs: &mut Vec<String>) {
+            match item {
+                crate::kfx::writer::content::ContentItem::Text { inline_runs, .. } => {
+                    for run in inline_runs {
+                        if let Some(ref href) = run.anchor_href {
+                            hrefs.push(href.clone());
+                        }
+                    }
+                }
+                crate::kfx::writer::content::ContentItem::Container { children, .. } => {
+                    for child in children {
+                        collect_hrefs(child, hrefs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut all_hrefs = Vec::new();
+        for chapter in &chapters {
+            for item in &chapter.content {
+                collect_hrefs(item, &mut all_hrefs);
+            }
+        }
+
+        // All fragment hrefs (internal links) should be resolvable via anchor_eids
+        let fragment_hrefs: Vec<_> = all_hrefs.iter().filter(|h| h.contains('#')).collect();
+        let not_found: Vec<_> = fragment_hrefs
+            .iter()
+            .filter(|href| !anchor_eids.contains_key(**href))
+            .collect();
+
+        assert!(
+            not_found.is_empty(),
+            "Some hrefs not found in anchor_eids: {:?}",
+            not_found.iter().take(5).collect::<Vec<_>>()
+        );
+
+        // Verify backlinks are extracted (epictetus has 98 endnotes with backlinks)
+        fn count_backlink_runs(item: &crate::kfx::writer::content::ContentItem) -> usize {
+            match item {
+                crate::kfx::writer::content::ContentItem::Text { inline_runs, .. } => {
+                    inline_runs
+                        .iter()
+                        .filter(|r| {
+                            r.anchor_href
+                                .as_ref()
+                                .map(|h| h.contains("noteref"))
+                                .unwrap_or(false)
+                        })
+                        .count()
+                }
+                crate::kfx::writer::content::ContentItem::Container { children, .. } => {
+                    children.iter().map(|c| count_backlink_runs(c)).sum()
+                }
+                _ => 0,
+            }
+        }
+
+        let backlink_count: usize = chapters
+            .iter()
+            .flat_map(|ch| &ch.content)
+            .map(|item| count_backlink_runs(item))
+            .sum();
+
+        assert!(
+            backlink_count >= 90,
+            "Should find many backlink inline runs, found only {}",
+            backlink_count
         );
     }
 }
