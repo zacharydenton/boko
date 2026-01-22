@@ -369,6 +369,9 @@ fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) 
     }
 }
 
+/// Default line-height factor used by Kindle for normalization
+const DEFAULT_LINE_HEIGHT: f32 = 1.2;
+
 fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, is_image_style: bool) {
     // Images don't get line-height
     if is_image_style {
@@ -377,7 +380,7 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
 
     // Only add line-height if explicitly set (reference omits default 1.0)
     if let Some(ref height) = style.line_height {
-        let kfx_val: Option<f32> = match height {
+        let css_val: Option<f32> = match height {
             CssValue::Number(v) => Some(*v),
             CssValue::Percent(v) => Some(*v / 100.0),
             CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
@@ -385,15 +388,20 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
             _ => None,
         };
 
-        if let Some(val) = kfx_val {
+        if let Some(val) = css_val {
             // Skip if value is effectively 1.0 (default) or 0 (Kindle normalizes 0 to 1)
             if (val - 1.0).abs() < 0.001 || val.abs() < 0.001 {
                 return;
             }
 
+            // Kindle Previewer divides line-height by 1.2 (default line-height factor)
+            // This converts CSS line-height (relative to font-size) to KFX UNIT_MULTIPLIER
+            // which is relative to the baseline line-height of 1.2
+            let kfx_val = val / DEFAULT_LINE_HEIGHT;
+
             let mut s = HashMap::new();
             s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
+            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
             style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
         }
     }
@@ -660,6 +668,54 @@ mod tests {
         assert!(
             ion_map.contains_key(&sym::IMAGE_FIT),
             "Image styles should have IMAGE_FIT property"
+        );
+    }
+
+    #[test]
+    fn test_line_height_divided_by_1_2() {
+        // Kindle Previewer divides line-height values by 1.2 (default line-height factor)
+        // CSS line-height: 1.5 → KFX line-height: 1.25 (1.5/1.2)
+        // CSS line-height: 2.0 → KFX line-height: 1.666667 (2/1.2)
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            line_height: Some(crate::css::CssValue::Number(1.5)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have LINE_HEIGHT
+        assert!(
+            ion_map.contains_key(&sym::LINE_HEIGHT),
+            "Style should have line-height"
+        );
+
+        // Extract the value
+        let lh_struct = match ion_map.get(&sym::LINE_HEIGHT) {
+            Some(IonValue::Struct(s)) => s,
+            _ => panic!("Expected line-height struct"),
+        };
+
+        let value = match lh_struct.get(&sym::VALUE) {
+            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
+            _ => panic!("Expected decimal value"),
+        };
+
+        // Should be 1.5 / 1.2 = 1.25
+        let expected = 1.5 / 1.2;
+        assert!(
+            (value - expected).abs() < 0.01,
+            "line-height 1.5 should become {} in KFX, got {}",
+            expected,
+            value
         );
     }
 }

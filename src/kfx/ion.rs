@@ -585,7 +585,7 @@ fn write_varuint_to(buf: &mut Vec<u8>, value: u64) {
 
 /// Decode a KFX/Ion decimal to f64 (for testing)
 #[cfg(test)]
-fn decode_kfx_decimal(bytes: &[u8]) -> f64 {
+pub(crate) fn decode_kfx_decimal(bytes: &[u8]) -> f64 {
     if bytes.is_empty() || bytes == [0x80] {
         return 0.0;
     }
