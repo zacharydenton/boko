@@ -2015,4 +2015,42 @@ mod tests {
             "Single font should work"
         );
     }
+
+    #[test]
+    fn test_line_height_with_rem_units() {
+        // Line-height with rem units should be parsed correctly
+        // This is the text-xs pattern from Tailwind CSS
+        let css = r#"
+            .text-xs { font-size: 0.75rem; line-height: 1rem; }
+            .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+        "#;
+
+        let stylesheet = Stylesheet::parse(css);
+
+        // text-xs should have both font-size and line-height
+        let text_xs = get_style_for(&stylesheet, r#"<span class="text-xs">Test</span>"#, "span");
+        assert!(
+            matches!(text_xs.font_size, Some(CssValue::Rem(v)) if (v - 0.75).abs() < 0.01),
+            "text-xs should have font-size: 0.75rem, got {:?}",
+            text_xs.font_size
+        );
+        assert!(
+            matches!(text_xs.line_height, Some(CssValue::Rem(v)) if (v - 1.0).abs() < 0.01),
+            "text-xs should have line-height: 1rem, got {:?}",
+            text_xs.line_height
+        );
+
+        // text-sm should have both font-size and line-height
+        let text_sm = get_style_for(&stylesheet, r#"<span class="text-sm">Test</span>"#, "span");
+        assert!(
+            matches!(text_sm.font_size, Some(CssValue::Rem(v)) if (v - 0.875).abs() < 0.01),
+            "text-sm should have font-size: 0.875rem, got {:?}",
+            text_sm.font_size
+        );
+        assert!(
+            matches!(text_sm.line_height, Some(CssValue::Rem(v)) if (v - 1.25).abs() < 0.01),
+            "text-sm should have line-height: 1.25rem, got {:?}",
+            text_sm.line_height
+        );
+    }
 }

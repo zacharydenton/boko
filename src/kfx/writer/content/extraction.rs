@@ -1405,4 +1405,62 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_span_with_css_class_preserves_line_height() {
+        // This tests the text-xs Tailwind pattern: font-size and line-height on an inline span
+        // The span's style (including line-height) should be preserved in the extracted content
+        let css = r#"
+            .text-xs { font-size: 0.75rem; line-height: 1rem; }
+        "#;
+        let html = r#"<html><body>
+            <p><span class="text-xs">Test content</span></p>
+        </body></html>"#;
+
+        let stylesheet = Stylesheet::parse(css);
+        let document = kuchiki::parse_html().one(html);
+        let body = document
+            .select("body")
+            .ok()
+            .and_then(|mut iter| iter.next())
+            .map(|n| n.as_node().clone())
+            .unwrap();
+
+        let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false);
+        let flattened = flatten_containers(items);
+
+        // Find the text item and check its style has line-height
+        fn find_text_style(items: &[ContentItem]) -> Option<ParsedStyle> {
+            for item in items {
+                match item {
+                    ContentItem::Text { text, style, .. } if text.contains("Test content") => {
+                        return Some(style.clone());
+                    }
+                    ContentItem::Container { children, .. } => {
+                        if let Some(s) = find_text_style(children) {
+                            return Some(s);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        let style = find_text_style(&flattened).expect("Should find text item");
+
+        // Check font-size is preserved
+        assert!(
+            matches!(style.font_size, Some(crate::css::CssValue::Rem(v)) if (v - 0.75).abs() < 0.01),
+            "Style should have font-size: 0.75rem, got {:?}",
+            style.font_size
+        );
+
+        // Check line-height is preserved - THIS IS THE KEY ASSERTION
+        assert!(
+            matches!(style.line_height, Some(crate::css::CssValue::Rem(v)) if (v - 1.0).abs() < 0.01),
+            "Style should have line-height: 1rem, got {:?}",
+            style.line_height
+        );
+    }
 }

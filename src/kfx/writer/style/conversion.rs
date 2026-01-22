@@ -406,46 +406,82 @@ fn add_line_height(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle, 
 
     // Only add line-height if explicitly set (reference omits default 1.0)
     if let Some(ref height) = style.line_height {
-        // Get font-size if available (for normalizing rem line-height)
+        // Get font-size ratio for normalization (percent or em/rem)
         let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
             CssValue::Rem(v) => Some(*v),
             _ => None,
         });
 
-        let css_val: Option<f32> = match height {
-            CssValue::Number(v) => Some(*v),
+        // Get font-size as a ratio (for normalizing line-height: 0)
+        let font_size_ratio: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
             CssValue::Percent(v) => Some(*v / 100.0),
-            CssValue::Em(v) => Some(*v),
+            CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
+            _ => None,
+        });
+
+        // Track if this is a unitless line-height (Number/Percent)
+        // vs absolute units (em/rem/px) - only unitless values need division by 1.2
+        let (css_val, is_unitless): (Option<f32>, bool) = match height {
+            CssValue::Number(v) => (Some(*v), true),
+            CssValue::Percent(v) => (Some(*v / 100.0), true),
+            CssValue::Em(v) => (Some(*v), false),
             CssValue::Rem(v) => {
                 // Normalize rem line-height relative to rem font-size
                 // CSS: font-size: 0.875rem; line-height: 1.25rem
                 // -> line-height in em = 1.25 / 0.875 = 1.42857
-                if let Some(fs_rem) = font_size_rem {
-                    Some(*v / fs_rem)
+                let normalized = if let Some(fs_rem) = font_size_rem {
+                    *v / fs_rem
                 } else {
                     // No font-size in rem, use line-height as-is
-                    Some(*v)
-                }
+                    *v
+                };
+                (Some(normalized), false)
             }
-            CssValue::Px(v) => Some(*v / 16.0),
-            _ => None,
+            CssValue::Px(v) => (Some(*v / 16.0), false),
+            _ => (None, false),
         };
 
         if let Some(val) = css_val {
-            // Skip if value is effectively 1.0 (default) or 0 (Kindle normalizes 0 to 1)
-            if (val - 1.0).abs() < 0.001 || val.abs() < 0.001 {
-                return;
+            // Handle special case: line-height: 0 with a font-size ratio
+            // CSS pattern for sub/sup: font-size: 75%; line-height: 0
+            // Kindle normalizes this to line-height = 1.0 / font-size-ratio
+            // This maintains vertical rhythm (smaller text gets larger line-height multiplier)
+            let normalized_val = if val.abs() < 0.001 {
+                // line-height is effectively 0
+                if let Some(fs_ratio) = font_size_ratio {
+                    if fs_ratio > 0.001 {
+                        // Normalize to 1.0 / font-size-ratio
+                        Some(1.0 / fs_ratio)
+                    } else {
+                        None // Skip if font-size is also 0
+                    }
+                } else {
+                    None // No font-size ratio, skip line-height: 0
+                }
+            } else if (val - 1.0).abs() < 0.001 {
+                // line-height is effectively 1.0 (default), skip
+                None
+            } else {
+                // Normal case: use the value as-is
+                Some(val)
+            };
+
+            if let Some(final_val) = normalized_val {
+                // Only divide by 1.2 for unitless line-height values (CSS multipliers)
+                // Absolute units (em/rem/px) have already been normalized to em and
+                // don't need the conversion to KFX multiplier space
+                // Note: normalized line-height: 0 is treated as unitless since we computed the ratio
+                let kfx_val = if is_unitless || val.abs() < 0.001 {
+                    final_val / DEFAULT_LINE_HEIGHT
+                } else {
+                    final_val
+                };
+
+                let mut s = HashMap::new();
+                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
+                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
+                style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
             }
-
-            // Kindle Previewer divides line-height by 1.2 (default line-height factor)
-            // This converts CSS line-height (relative to font-size) to KFX UNIT_MULTIPLIER
-            // which is relative to the baseline line-height of 1.2
-            let kfx_val = val / DEFAULT_LINE_HEIGHT;
-
-            let mut s = HashMap::new();
-            s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-            s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
-            style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
         }
     }
 }
@@ -812,11 +848,11 @@ mod tests {
 
     #[test]
     fn test_line_height_rem_normalized_to_font_size() {
-        // When line-height is in rem and font-size is also in rem, line-height
-        // should be normalized relative to font-size before dividing by 1.2.
+        // When line-height is in rem/em units, it should be normalized relative
+        // to font-size but NOT divided by 1.2 (division only applies to unitless values).
         // Example: font-size: 0.875rem; line-height: 1.25rem
         // - line-height in em = 1.25 / 0.875 = 1.42857
-        // - After /1.2: 1.42857 / 1.2 = 1.19048
+        // - NO division by 1.2 because it's already in absolute units
         use crate::kfx::ion::decode_kfx_decimal;
 
         let style = ParsedStyle {
@@ -851,8 +887,8 @@ mod tests {
         };
 
         // line-height in em = 1.25 / 0.875 = 1.42857
-        // After /1.2: 1.42857 / 1.2 = 1.19048
-        let expected = (1.25 / 0.875) / 1.2;
+        // NO division by 1.2 for absolute units
+        let expected = 1.25 / 0.875;
         assert!(
             (value - expected).abs() < 0.01,
             "line-height 1.25rem with font-size 0.875rem should become {} in KFX, got {}",
@@ -974,6 +1010,116 @@ mod tests {
         assert!(
             !ion_map.contains_key(&sym::MAX_WIDTH),
             "Width in em should not automatically add MAX_WIDTH"
+        );
+    }
+
+    #[test]
+    fn test_text_xs_style_has_line_height_in_ion() {
+        // The text-xs pattern: font-size 0.75rem, line-height 1rem
+        // Both should be present in the ION output
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            font_size: Some(crate::css::CssValue::Rem(0.75)),
+            line_height: Some(crate::css::CssValue::Rem(1.0)),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("text-xs");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Check font-size is present
+        assert!(
+            ion_map.contains_key(&sym::FONT_SIZE),
+            "text-xs style should have FONT_SIZE"
+        );
+
+        // Check line-height is present - THIS IS THE KEY ASSERTION
+        assert!(
+            ion_map.contains_key(&sym::LINE_HEIGHT),
+            "text-xs style should have LINE_HEIGHT, but it's missing! ION keys: {:?}",
+            ion_map.keys().collect::<Vec<_>>()
+        );
+
+        // Verify line-height value
+        // line-height = 1rem / 0.75rem font-size = 1.33333
+        let lh_struct = match ion_map.get(&sym::LINE_HEIGHT) {
+            Some(IonValue::Struct(s)) => s,
+            _ => panic!("Expected line-height struct"),
+        };
+
+        let value = match lh_struct.get(&sym::VALUE) {
+            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
+            _ => panic!("Expected decimal value"),
+        };
+
+        // line-height in em = 1.0 / 0.75 = 1.33333
+        // NO division by 1.2 for absolute units (rem)
+        let expected = 1.0 / 0.75;
+        assert!(
+            (value - expected).abs() < 0.01,
+            "text-xs line-height should be ~{}, got {}",
+            expected,
+            value
+        );
+    }
+
+    #[test]
+    fn test_line_height_zero_normalizes_with_font_size() {
+        // CSS pattern for sub/sup: font-size: 75%; line-height: 0
+        // Kindle Previewer normalizes line-height: 0 to 1.0/font-size-ratio
+        // This maintains vertical rhythm (smaller text gets larger line-height multiplier)
+        // Example: font-size 75% -> line-height 1/0.75 = 1.33333
+        use crate::kfx::ion::decode_kfx_decimal;
+
+        let style = ParsedStyle {
+            font_size: Some(crate::css::CssValue::Percent(75.0)),
+            line_height: Some(crate::css::CssValue::Number(0.0)), // line-height: 0
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("sub-sup");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        // Should have LINE_HEIGHT (not skipped!)
+        assert!(
+            ion_map.contains_key(&sym::LINE_HEIGHT),
+            "Style with line-height: 0 should have LINE_HEIGHT (normalized to 1.0/font-size). Keys: {:?}",
+            ion_map.keys().collect::<Vec<_>>()
+        );
+
+        // Verify line-height value
+        let lh_struct = match ion_map.get(&sym::LINE_HEIGHT) {
+            Some(IonValue::Struct(s)) => s,
+            _ => panic!("Expected line-height struct"),
+        };
+
+        let value = match lh_struct.get(&sym::VALUE) {
+            Some(IonValue::Decimal(bytes)) => decode_kfx_decimal(bytes),
+            _ => panic!("Expected decimal value"),
+        };
+
+        // line-height 0 with font-size 75% normalizes to:
+        // 1.0 / 0.75 = 1.33333
+        // Then divided by 1.2 for KFX: 1.33333 / 1.2 = 1.11111
+        let expected = (1.0 / 0.75) / 1.2; // = 1.11111
+        assert!(
+            (value - expected).abs() < 0.01,
+            "line-height: 0 with font-size: 75% should become ~{} in KFX, got {}",
+            expected,
+            value
         );
     }
 }
