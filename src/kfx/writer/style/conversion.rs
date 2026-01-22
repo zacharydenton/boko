@@ -280,6 +280,9 @@ pub fn style_to_ion(
     // P2 Phase 2: Float property
     add_float(&mut style_ion, style);
 
+    // P2 Phase 2: Layout hints for semantic elements
+    add_layout_hints(&mut style_ion, style);
+
     IonValue::Struct(style_ion)
 }
 
@@ -1003,6 +1006,18 @@ fn add_float(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
             CssFloat::SnapBlock => sym::FLOAT_SNAP_BLOCK,
         };
         style_ion.insert(sym::FLOAT, IonValue::Symbol(float_sym));
+    }
+}
+
+// P2 Phase 2: Layout hints for semantic elements
+fn add_layout_hints(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Add heading hint for h1-h6 elements
+    if style.is_heading {
+        // $761: [$760] - layout hints list containing heading hint
+        style_ion.insert(
+            sym::LAYOUT_HINTS,
+            IonValue::List(vec![IonValue::Symbol(sym::LAYOUT_HINT_HEADING)]),
+        );
     }
 }
 
@@ -2368,6 +2383,69 @@ mod tests {
         assert!(
             !ion_map.contains_key(&sym::FLOAT),
             "float: none should not be output"
+        );
+    }
+
+    // P2 Phase 2 Tests: Layout hints
+    #[test]
+    fn test_heading_style_has_layout_hints() {
+        let style = ParsedStyle {
+            is_heading: true,
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            ion_map.contains_key(&sym::LAYOUT_HINTS),
+            "Heading style should have LAYOUT_HINTS ($761)"
+        );
+
+        match ion_map.get(&sym::LAYOUT_HINTS) {
+            Some(IonValue::List(list)) => {
+                assert_eq!(list.len(), 1, "Layout hints should have 1 element");
+                match &list[0] {
+                    IonValue::Symbol(s) => {
+                        assert_eq!(
+                            *s,
+                            sym::LAYOUT_HINT_HEADING,
+                            "Expected heading hint ($760)"
+                        );
+                    }
+                    _ => panic!("Expected symbol in layout hints list"),
+                }
+            }
+            _ => panic!("Expected list for LAYOUT_HINTS"),
+        }
+    }
+
+    #[test]
+    fn test_non_heading_style_no_layout_hints() {
+        let style = ParsedStyle {
+            is_heading: false,
+            font_weight: Some(crate::css::FontWeight::Bold),
+            ..Default::default()
+        };
+
+        let mut symtab = SymbolTable::new();
+        let style_sym = symtab.get_or_intern("test-style");
+        let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+        let ion_map = match ion {
+            IonValue::Struct(map) => map,
+            _ => panic!("Expected struct"),
+        };
+
+        assert!(
+            !ion_map.contains_key(&sym::LAYOUT_HINTS),
+            "Non-heading style should not have LAYOUT_HINTS"
         );
     }
 }

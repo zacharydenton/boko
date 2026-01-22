@@ -301,6 +301,11 @@ fn extract_from_node(
                 computed_style.merge(&inline);
             }
 
+            // Mark heading elements (h1-h6) for layout hints
+            if matches!(tag_name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                direct_with_inline.is_heading = true;
+            }
+
             // Skip hidden elements (display: none) - handles epub/mobi conditional content
             // Exception: BR elements are structural (line breaks) and should never be skipped
             // even if CSS sets display:none (common in Standard Ebooks verse styling)

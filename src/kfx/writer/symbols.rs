@@ -296,6 +296,14 @@ pub mod sym {
     pub const FLOAT_SNAP_BLOCK: u64 = 786; // $786 - float: snap-block (KFX-specific)
 
     // ==========================================================================
+    // LAYOUT HINTS (P2 Phase 2)
+    // ==========================================================================
+    pub const LAYOUT_HINTS: u64 = 761; // $761 - layout hints list
+    pub const LAYOUT_HINT_HEADING: u64 = 760; // $760 - heading hint
+    pub const LAYOUT_HINT_CAPTION: u64 = 453; // $453 - caption hint
+    pub const LAYOUT_HINT_FIGURE: u64 = 282; // $282 - figure hint
+
+    // ==========================================================================
     // BORDER RADIUS ($459-$462)
     // ==========================================================================
     pub const BORDER_RADIUS_TL: u64 = 459; // $459 - border-top-left-radius

@@ -596,6 +596,8 @@ pub struct ParsedStyle {
     pub is_image: bool,
     /// Whether this style is for an inline element like a link (uses $127: $349 instead of $383)
     pub is_inline: bool,
+    /// Whether this style is for a heading element (h1-h6) - adds layout hints
+    pub is_heading: bool,
     /// Actual image width in pixels (set for image styles when dimensions are known)
     pub image_width_px: Option<u32>,
     /// Actual image height in pixels (set for image styles when dimensions are known)
@@ -784,6 +786,10 @@ impl ParsedStyle {
         // is_inline is preserved if already set (once marked as inline, stays inline)
         if other.is_inline {
             self.is_inline = true;
+        }
+        // is_heading is preserved if already set (once marked as heading, stays heading)
+        if other.is_heading {
+            self.is_heading = true;
         }
         // Image dimensions - preserve if set
         if other.image_width_px.is_some() {
@@ -1201,6 +1207,7 @@ impl PartialEq for ParsedStyle {
             && self.opacity == other.opacity
             && self.is_image == other.is_image
             && self.is_inline == other.is_inline
+            && self.is_heading == other.is_heading
             // Note: image_width_px and image_height_px are intentionally excluded
             && self.lang == other.lang
             // P1: List style properties
@@ -1289,6 +1296,7 @@ impl std::hash::Hash for ParsedStyle {
         self.opacity.hash(state);
         self.is_image.hash(state);
         self.is_inline.hash(state);
+        self.is_heading.hash(state);
         // Note: image_width_px and image_height_px are intentionally excluded
         self.lang.hash(state);
         // P1: List style properties
