@@ -27,12 +27,8 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
     let is_image_style = style.is_image;
     let is_inline_style = style.is_inline;
 
-    // Inline styles (for links/anchors) are minimal
-    // Note: $127 is hyphens property, not block type - don't output unless hyphens is specified
-    if is_inline_style {
-        return IonValue::Struct(style_ion);
-    }
-
+    // Font and text properties (inline-safe: font-family, size, weight, style, color, decorations)
+    // These apply to both block and inline styles
     if !is_image_style {
         // Font family - use string value (verified via CSS mapping)
         if let Some(ref family) = style.font_family {
@@ -52,14 +48,42 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         if let Some(ref lang) = style.lang {
             style_ion.insert(sym::LANGUAGE, IonValue::String(lang.clone()));
         }
-
-        // Note: $127 is hyphens property (not block type as previously thought)
-        // Only output when CSS hyphens is explicitly specified
-        // Reference KFX doesn't add hyphens as a default for all styles
     }
 
-    // Font properties (size, weight, style)
+    // Font properties (size, weight, style) - inline-safe
     super::font::add_all(&mut style_ion, style, is_image_style);
+
+    // Inline styles skip block-level properties (text-align, margins, padding, etc.)
+    if is_inline_style {
+        // Add text decorations (underline, etc.) - these ARE inline properties
+        add_text_decorations(&mut style_ion, style);
+
+        // Add vertical-align - inline property
+        add_vertical_align(&mut style_ion, style);
+
+        // Add line-height if specified - inline property
+        if let Some(ref lh) = style.line_height {
+            if let Some(val) = lh.to_kfx_ion() {
+                style_ion.insert(sym::LINE_HEIGHT, val);
+            }
+        }
+
+        // Add letter/word spacing - inline properties
+        if let Some(ref spacing) = style.letter_spacing {
+            if let Some(val) = spacing_to_ion(spacing) {
+                style_ion.insert(sym::LETTER_SPACING, val);
+            }
+        }
+        if let Some(ref spacing) = style.word_spacing {
+            if let Some(val) = spacing_to_ion(spacing) {
+                style_ion.insert(sym::WORD_SPACING, val);
+            }
+        }
+
+        return IonValue::Struct(style_ion);
+    }
+
+    // Block-level properties below this point
 
     // Text align - skip left (default value)
     if let Some(align) = style.text_align {

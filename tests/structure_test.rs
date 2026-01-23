@@ -638,3 +638,284 @@ fn test_kfx_poetry_has_separate_lines() {
         "Should find 'Zeus' text in KFX output"
     );
 }
+
+// ============================================================================
+// KFX Inline Style Test
+// ============================================================================
+//
+// Regression test for inline styles. The imprint.xhtml section has external links:
+//
+// | Text                                       | Offset | Length | URL                                      |
+// |--------------------------------------------|--------|--------|------------------------------------------|
+// | "Standard Ebooks"                          | 71     | 15     | https://standardebooks.org/              |
+// | "Perseus Digital Library"                  | 59     | 23     | http://www.perseus.tufts.edu/...         |
+// | "Internet Archive"                         | 113    | 16     | https://archive.org/...                  |
+// | "CC0 1.0 Universal Public Domain Ded..."   | 462    | 42     | https://creativecommons.org/...          |
+// | "Uncopyright"                              | 544    | 11     | (internal link)                          |
+// | "standardebooks.org"                       | 282    | 18     | https://standardebooks.org/              |
+//
+// The regression was: inline styles inherited block properties (text-align, margins),
+// causing link text to be invisible (underlined but 0-width).
+
+use boko::kfx::ion::{IonParser, IonValue};
+use boko::kfx::writer::sym;
+use std::collections::{HashMap, HashSet};
+use std::io::Cursor;
+
+/// Block-level properties that must not appear in inline styles
+const BLOCK_PROPERTIES: &[u64] = &[
+    sym::TEXT_ALIGN,   // $34
+    sym::SPACE_BEFORE, // $47
+    sym::MARGIN_LEFT,  // $48
+    sym::SPACE_AFTER,  // $49
+    sym::MARGIN_RIGHT, // $50
+    sym::STYLE_WIDTH,  // $56
+    sym::STYLE_HEIGHT, // $57
+];
+
+/// Parse KFX container, returns map of entity_type -> [(id, payload)]
+fn parse_kfx_container(data: &[u8]) -> HashMap<u32, Vec<(u32, Vec<u8>)>> {
+    let mut entities = HashMap::new();
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        return entities;
+    }
+
+    let header_len = u32::from_le_bytes(data[6..10].try_into().unwrap()) as usize;
+    let ion_magic: [u8; 4] = [0xe0, 0x01, 0x00, 0xea];
+    let mut pos = 18;
+
+    while pos + 24 <= data.len() && data[pos..pos + 4] != ion_magic {
+        let id = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        let etype = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap());
+        let offset = u64::from_le_bytes(data[pos + 8..pos + 16].try_into().unwrap()) as usize;
+        let length = u64::from_le_bytes(data[pos + 16..pos + 24].try_into().unwrap()) as usize;
+
+        let start = header_len + offset;
+        if start + length <= data.len() {
+            entities
+                .entry(etype)
+                .or_insert_with(Vec::new)
+                .push((id, data[start..start + length].to_vec()));
+        }
+        pos += 24;
+    }
+    entities
+}
+
+/// Parse entity payload to ION (skips ENTY header)
+fn parse_entity_ion(payload: &[u8]) -> Option<IonValue> {
+    if payload.len() < 10 || &payload[0..4] != b"ENTY" {
+        return None;
+    }
+    let header_len = u32::from_le_bytes(payload[6..10].try_into().unwrap()) as usize;
+    if header_len >= payload.len() {
+        return None;
+    }
+    IonParser::new(&payload[header_len..]).parse().ok()
+}
+
+/// Inline run: (offset, length, anchor_ref)
+#[derive(Debug, PartialEq)]
+struct InlineRun {
+    offset: i64,
+    length: i64,
+    anchor: Option<u64>,
+}
+
+/// Recursively collect inline runs from content blocks
+fn collect_inline_runs(value: &IonValue, runs: &mut Vec<InlineRun>) {
+    match value {
+        IonValue::Struct(map) => {
+            if let Some(IonValue::List(list)) = map.get(&sym::INLINE_STYLE_RUNS) {
+                for run in list {
+                    let offset = run.get(sym::OFFSET).and_then(|v| v.as_int()).unwrap_or(0);
+                    let length = run.get(sym::COUNT).and_then(|v| v.as_int()).unwrap_or(0);
+                    let anchor = run.get(sym::ANCHOR_REF).and_then(|v| v.as_symbol());
+                    runs.push(InlineRun { offset, length, anchor });
+                }
+            }
+            for (_, child) in map {
+                collect_inline_runs(child, runs);
+            }
+        }
+        IonValue::List(items) => items.iter().for_each(|i| collect_inline_runs(i, runs)),
+        IonValue::Annotated(_, inner) => collect_inline_runs(inner, runs),
+        _ => {}
+    }
+}
+
+/// Recursively collect style refs used in inline runs
+fn collect_inline_style_refs(value: &IonValue, refs: &mut HashSet<u64>) {
+    match value {
+        IonValue::Struct(map) => {
+            if let Some(IonValue::List(list)) = map.get(&sym::INLINE_STYLE_RUNS) {
+                for run in list {
+                    if let Some(s) = run.get(sym::STYLE).and_then(|v| v.as_symbol()) {
+                        refs.insert(s);
+                    }
+                }
+            }
+            for (_, child) in map {
+                collect_inline_style_refs(child, refs);
+            }
+        }
+        IonValue::List(items) => items.iter().for_each(|i| collect_inline_style_refs(i, refs)),
+        IonValue::Annotated(_, inner) => collect_inline_style_refs(inner, refs),
+        _ => {}
+    }
+}
+
+/// Check if style has block properties
+fn has_block_props(style: &IonValue) -> Vec<u64> {
+    let inner = style.unwrap_annotated();
+    let Some(map) = inner.as_struct() else { return vec![] };
+    BLOCK_PROPERTIES.iter().filter(|&&p| map.contains_key(&p)).copied().collect()
+}
+
+/// Get anchor URL from page_template entity (external links)
+fn get_anchor_url(anchor_entities: &[(u32, Vec<u8>)], anchor_sym: u64) -> Option<String> {
+    for (_, payload) in anchor_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let inner = ion.unwrap_annotated();
+            if let Some(map) = inner.as_struct() {
+                if map.get(&sym::TEMPLATE_NAME).and_then(|v| v.as_symbol()) == Some(anchor_sym) {
+                    return map.get(&sym::EXTERNAL_URL).and_then(|v| v.as_string()).map(|s| s.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check if anchor is internal (has POSITION_INFO instead of EXTERNAL_URL)
+fn is_internal_anchor(anchor_entities: &[(u32, Vec<u8>)], anchor_sym: u64) -> bool {
+    for (_, payload) in anchor_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let inner = ion.unwrap_annotated();
+            if let Some(map) = inner.as_struct() {
+                if map.get(&sym::TEMPLATE_NAME).and_then(|v| v.as_symbol()) == Some(anchor_sym) {
+                    // Internal if has POSITION_INFO but no EXTERNAL_URL
+                    return map.contains_key(&sym::POSITION_INFO) && !map.contains_key(&sym::EXTERNAL_URL);
+                }
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn test_kfx_inline_styles_no_block_properties() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory (no file I/O)
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse container
+    let entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let style_entities = entities.get(&157).unwrap_or(&empty);
+    let content_entities = entities.get(&259).unwrap_or(&empty);
+    let anchor_entities = entities.get(&266).unwrap_or(&empty);
+
+    // Build style map: symbol -> IonValue
+    let mut styles: HashMap<u64, IonValue> = HashMap::new();
+    for (_, payload) in style_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let inner = ion.unwrap_annotated();
+            if let Some(sym) = inner.as_struct().and_then(|m| m.get(&sym::STYLE_NAME)).and_then(|v| v.as_symbol()) {
+                styles.insert(sym, ion.clone());
+            }
+        }
+    }
+
+    // Collect all inline style refs and runs
+    let mut inline_style_refs = HashSet::new();
+    let mut inline_runs = Vec::new();
+    for (_, payload) in content_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            collect_inline_style_refs(&ion, &mut inline_style_refs);
+            collect_inline_runs(&ion, &mut inline_runs);
+        }
+    }
+
+    println!("Styles: {}, Inline style refs: {}, Inline runs: {}",
+        styles.len(), inline_style_refs.len(), inline_runs.len());
+
+    // =========================================================================
+    // 1. Inline styles must not have block properties
+    // =========================================================================
+    for style_sym in &inline_style_refs {
+        if let Some(style) = styles.get(style_sym) {
+            let bad = has_block_props(style);
+            assert!(bad.is_empty(),
+                "Style ${} has block properties: {:?}", style_sym, bad);
+        }
+    }
+    println!("[OK] No inline styles have block properties");
+
+    // =========================================================================
+    // 2. Inline runs must have valid offset/length
+    // =========================================================================
+    for run in &inline_runs {
+        assert!(run.offset >= 0, "Run has negative offset: {:?}", run);
+        assert!(run.length >= 0, "Run has negative length: {:?}", run);
+    }
+    println!("[OK] All inline runs have valid offset/length");
+
+    // =========================================================================
+    // 3. Runs with anchors must have correct offset, length, and URL
+    // =========================================================================
+    // Expected external links from imprint.xhtml (from reference KFX):
+    // Format: (domain, offset, length)
+    let expected_external_links = [
+        ("standardebooks.org", 71, 15),   // "Standard Ebooks"
+        ("perseus.tufts.edu", 59, 23),    // "Perseus Digital Library"
+        ("archive.org", 113, 16),         // "Internet Archive"
+        ("creativecommons.org", 462, 42), // "CC0 1.0 Universal..."
+    ];
+
+    let runs_with_anchors: Vec<_> = inline_runs.iter()
+        .filter(|r| r.anchor.is_some())
+        .collect();
+    println!("Runs with anchors: {}", runs_with_anchors.len());
+
+    // Check expected external links are present with correct offset and length
+    for (domain, expected_offset, expected_len) in expected_external_links {
+        let found = runs_with_anchors.iter().find(|r| {
+            if let Some(anchor_sym) = r.anchor {
+                if let Some(url) = get_anchor_url(anchor_entities, anchor_sym) {
+                    return url.contains(domain);
+                }
+            }
+            false
+        });
+        assert!(found.is_some(), "Missing link to {}", domain);
+        let run = found.unwrap();
+        assert_eq!(run.offset, expected_offset as i64,
+            "Wrong offset for {} link: expected {}, got {}", domain, expected_offset, run.offset);
+        assert_eq!(run.length, expected_len as i64,
+            "Wrong length for {} link: expected {}, got {}", domain, expected_len, run.length);
+        println!("[OK] Found {} link (offset={}, length={})", domain, run.offset, run.length);
+    }
+
+    // =========================================================================
+    // Verify internal "Uncopyright" link (from reference KFX: offset=544, length=11)
+    // This link points to an internal anchor (#uncopyright) rather than external URL
+    let uncopyright = runs_with_anchors.iter().find(|r| {
+        if let Some(anchor_sym) = r.anchor {
+            is_internal_anchor(anchor_entities, anchor_sym) && r.length == 11
+        } else {
+            false
+        }
+    });
+    assert!(uncopyright.is_some(), "Missing internal 'Uncopyright' link");
+    let uncopyright = uncopyright.unwrap();
+    assert_eq!(uncopyright.offset, 544, "Wrong offset for Uncopyright link: expected 544, got {}", uncopyright.offset);
+    assert_eq!(uncopyright.length, 11, "Wrong length for Uncopyright link: expected 11, got {}", uncopyright.length);
+    println!("[OK] Found internal 'Uncopyright' link (offset={}, length={})", uncopyright.offset, uncopyright.length);
+
+    println!("\n=== All verifications passed ===");
+}

@@ -584,6 +584,41 @@ impl ParsedStyle {
 
         props.join("; ")
     }
+
+    /// Create an inline-only version of this style, keeping only inline-appropriate properties.
+    /// Block-level properties (text-align, margins, padding, etc.) are excluded.
+    /// Used for inline style runs in KFX where block properties shouldn't appear.
+    pub fn to_inline_only(&self) -> ParsedStyle {
+        ParsedStyle {
+            // Inline font/text properties
+            font_family: self.font_family.clone(),
+            font_size: self.font_size.clone(),
+            font_weight: self.font_weight,
+            font_style: self.font_style,
+            font_variant: self.font_variant,
+            text_transform: self.text_transform,
+            color: self.color.clone(),
+            background_color: self.background_color.clone(),
+            line_height: self.line_height.clone(),
+            letter_spacing: self.letter_spacing.clone(),
+            word_spacing: self.word_spacing.clone(),
+            vertical_align: self.vertical_align,
+            text_decoration_underline: self.text_decoration_underline,
+            text_decoration_overline: self.text_decoration_overline,
+            text_decoration_line_through: self.text_decoration_line_through,
+            text_decoration_line_style: self.text_decoration_line_style,
+            opacity: self.opacity,
+            baseline_shift: self.baseline_shift.clone(),
+            unicode_bidi: self.unicode_bidi,
+            text_emphasis_style: self.text_emphasis_style,
+            text_emphasis_color: self.text_emphasis_color.clone(),
+            lang: self.lang.clone(),
+            // Mark as inline style
+            is_inline: true,
+            // Block-level properties excluded (use defaults)
+            ..Default::default()
+        }
+    }
 }
 
 /// Convert CssValue to CSS string representation

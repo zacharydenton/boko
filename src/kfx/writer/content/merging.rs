@@ -98,7 +98,7 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
 
                 if style_differs || has_anchor || has_element_id {
                     // Determine the style for this run:
-                    // - If style differs from base (bold, italic, etc.), use the full style
+                    // - If style differs from base (bold, italic, etc.), use inline-only properties
                     // - If only anchor/element_id differs (plain link), use a minimal inline style
                     let run_style = if !style_differs && (has_anchor || has_element_id) {
                         // Anchor-only run: create minimal inline style
@@ -108,8 +108,9 @@ pub fn merge_text_with_inline_runs(items: Vec<ContentItem>) -> Vec<ContentItem> 
                             ..Default::default()
                         }
                     } else {
-                        // Style differs: use the actual style
-                        style
+                        // Style differs: convert to inline-only (strips block-level properties)
+                        // This prevents margins, text-align, etc. from appearing in inline runs
+                        style.to_inline_only()
                     };
 
                     inline_runs.push(StyleRun {
