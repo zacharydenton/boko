@@ -24,6 +24,9 @@ pub mod font;
 pub mod layout;
 pub mod spacing;
 
+#[cfg(test)]
+mod tests;
+
 pub use conversion::*;
 
 use std::collections::HashMap;
@@ -347,158 +350,6 @@ pub fn break_value_to_symbol(break_val: crate::css::BreakValue) -> u64 {
         BreakValue::Avoid | BreakValue::AvoidPage | BreakValue::AvoidColumn => sym::BREAK_AVOID, // $353
         BreakValue::Page | BreakValue::Left | BreakValue::Right | BreakValue::Column => {
             sym::BREAK_ALWAYS // $352
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_color_uses_argb_format() {
-        // Reference KFX uses ARGB format 0xFFRRGGBB for colors
-        // This ensures alpha channel is set to 255 (opaque)
-        let red = Color::Rgba(255, 0, 0, 255);
-        let ion = red.to_kfx_ion().expect("Should produce ION value");
-
-        match ion {
-            IonValue::Int(val) => {
-                // Should be 0xFFFF0000 = 4294901760
-                assert_eq!(val, 0xFFFF0000u32 as i64, "Red color should be 0xFFFF0000");
-            }
-            _ => panic!("Expected Int value"),
-        }
-    }
-
-    #[test]
-    fn test_color_black_uses_argb_format() {
-        // Black should be 0xFF000000, not 0x00000000
-        let black = Color::Rgba(0, 0, 0, 255);
-        let ion = black.to_kfx_ion().expect("Should produce ION value");
-
-        match ion {
-            IonValue::Int(val) => {
-                // Should be 0xFF000000 = 4278190080
-                assert_eq!(
-                    val, 0xFF000000u32 as i64,
-                    "Black color should be 0xFF000000"
-                );
-            }
-            _ => panic!("Expected Int value"),
-        }
-    }
-
-    #[test]
-    fn test_color_preserves_rgb_values() {
-        // Test that RGB values are correctly encoded in ARGB format
-        let color = Color::Rgba(0x12, 0x34, 0x56, 255);
-        let ion = color.to_kfx_ion().expect("Should produce ION value");
-
-        match ion {
-            IonValue::Int(val) => {
-                // Should be 0xFF123456
-                let expected = 0xFF123456i64;
-                assert_eq!(val, expected, "Color #123456 should be 0xFF123456");
-            }
-            _ => panic!("Expected Int value"),
-        }
-    }
-
-    #[test]
-    fn test_vertical_spacing_uses_multiplier() {
-        // Vertical spacing (margin-top/bottom) uses UNIT_MULTIPLIER
-        // and is normalized by dividing by 1.2 (default line-height)
-        let margin = CssValue::Em(1.2); // 1.2em
-        let ion = spacing_to_multiplier(&margin).expect("Should produce ION value");
-
-        match ion {
-            IonValue::Struct(s) => {
-                // Unit should be UNIT_MULTIPLIER ($310)
-                match s.get(&sym::UNIT) {
-                    Some(IonValue::Symbol(unit)) => {
-                        assert_eq!(
-                            *unit,
-                            sym::UNIT_MULTIPLIER,
-                            "Vertical spacing should use UNIT_MULTIPLIER ($310)"
-                        );
-                    }
-                    _ => panic!("Expected Symbol for unit"),
-                }
-            }
-            _ => panic!("Expected Struct value"),
-        }
-    }
-
-    #[test]
-    fn test_horizontal_spacing_uses_percent() {
-        // Horizontal spacing (margin-left/right) uses UNIT_PERCENT directly
-        let margin = CssValue::Percent(5.0); // 5%
-        let ion = margin.to_kfx_ion().expect("Should produce ION value");
-
-        match ion {
-            IonValue::Struct(s) => {
-                // Unit should be UNIT_PERCENT ($314)
-                match s.get(&sym::UNIT) {
-                    Some(IonValue::Symbol(unit)) => {
-                        assert_eq!(
-                            *unit,
-                            sym::UNIT_PERCENT,
-                            "Horizontal spacing should use UNIT_PERCENT ($314)"
-                        );
-                    }
-                    _ => panic!("Expected Symbol for unit"),
-                }
-            }
-            _ => panic!("Expected Struct value"),
-        }
-    }
-
-    #[test]
-    fn test_add_margins_uses_axis_specific_units() {
-        // Test that add_margins applies correct units per axis
-        let mut style = HashMap::new();
-
-        // Add margins with same CSS value for all sides
-        let margin = CssValue::Em(1.0);
-        add_margins(
-            &mut style,
-            Some(&margin), // top
-            Some(&margin), // right
-            Some(&margin), // bottom
-            Some(&margin), // left
-        );
-
-        // Vertical (top/bottom) should use UNIT_MULTIPLIER
-        if let Some(IonValue::Struct(top)) = style.get(&MARGIN_SYMS.top) {
-            match top.get(&sym::UNIT) {
-                Some(IonValue::Symbol(unit)) => {
-                    assert_eq!(
-                        *unit,
-                        sym::UNIT_MULTIPLIER,
-                        "margin-top should use UNIT_MULTIPLIER"
-                    );
-                }
-                _ => panic!("Expected Symbol for margin-top unit"),
-            }
-        } else {
-            panic!("Expected Struct for margin-top");
-        }
-
-        // Horizontal (right/left) should use UNIT_PERCENT
-        if let Some(IonValue::Struct(right)) = style.get(&MARGIN_SYMS.right) {
-            match right.get(&sym::UNIT) {
-                Some(IonValue::Symbol(unit)) => {
-                    assert_eq!(
-                        *unit,
-                        sym::UNIT_PERCENT,
-                        "margin-right should use UNIT_PERCENT"
-                    );
-                }
-                _ => panic!("Expected Symbol for margin-right unit"),
-            }
-        } else {
-            panic!("Expected Struct for margin-right");
         }
     }
 }
