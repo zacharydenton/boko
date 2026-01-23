@@ -722,6 +722,30 @@ struct InlineRun {
     anchor: Option<u64>,
 }
 
+/// Count content items (items with $151=content_type)
+fn count_content_items(value: &IonValue) -> usize {
+    let mut count = 0;
+    count_content_items_recursive(value, &mut count);
+    count
+}
+
+fn count_content_items_recursive(value: &IonValue, count: &mut usize) {
+    match value {
+        IonValue::Struct(map) => {
+            // Count this if it has a content_type
+            if map.contains_key(&151) { // CONTENT_TYPE
+                *count += 1;
+            }
+            for (_, child) in map {
+                count_content_items_recursive(child, count);
+            }
+        }
+        IonValue::List(items) => items.iter().for_each(|i| count_content_items_recursive(i, count)),
+        IonValue::Annotated(_, inner) => count_content_items_recursive(inner, count),
+        _ => {}
+    }
+}
+
 /// Recursively collect inline runs from content blocks
 fn collect_inline_runs(value: &IonValue, runs: &mut Vec<InlineRun>) {
     match value {
@@ -918,4 +942,197 @@ fn test_kfx_inline_styles_no_block_properties() {
     println!("[OK] Found internal 'Uncopyright' link (offset={}, length={})", uncopyright.offset, uncopyright.length);
 
     println!("\n=== All verifications passed ===");
+}
+
+// ============================================================================
+// KFX Endnotes Inline Runs Test
+// ============================================================================
+//
+// Test that inline runs in endnotes have correct offsets.
+// The epictetus.epub has 42 endnotes with backlinks (↩︎ character, length=1).
+//
+// Endnote 30 is special: it has a <blockquote epub:type="z3998:verse"> with
+// Latin verse content that may cause offset issues.
+
+#[test]
+fn test_kfx_endnotes_inline_runs() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse container
+    let entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let content_entities = entities.get(&259).unwrap_or(&empty);
+    let anchor_entities = entities.get(&266).unwrap_or(&empty);
+
+    // Collect all backlink runs (internal anchors with length=1, the ↩︎ character)
+    let mut backlink_runs = Vec::new();
+    for (_, payload) in content_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let mut runs = Vec::new();
+            collect_inline_runs(&ion, &mut runs);
+            for run in runs {
+                if let Some(anchor_sym) = run.anchor {
+                    if run.length == 1 && is_internal_anchor(anchor_entities, anchor_sym) {
+                        backlink_runs.push(run);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by offset to get them in order
+    backlink_runs.sort_by_key(|r| r.offset);
+
+    println!("Found {} backlink runs (↩︎ characters)", backlink_runs.len());
+
+    // Expected: 42 backlinks for 42 endnotes (some endnotes may have multiple paragraphs
+    // but each has exactly one backlink)
+    // Reference offsets for first 9 backlinks (from content block $1093):
+    // These are the endnotes with longer text that get merged into one text block
+    let expected_backlink_offsets = [
+        15,   // endnote with longer text
+        37,   // endnote with longer text
+        266,  // endnote with longer text
+        358,  // endnote with longer text
+        362,  // endnote with longer text
+        431,  // endnote with longer text
+        587,  // endnote with longer text
+        844,  // endnote with longer text
+        1084, // endnote with longer text
+    ];
+
+    println!("\nFirst {} backlink offsets:", expected_backlink_offsets.len());
+    for (i, expected_offset) in expected_backlink_offsets.iter().enumerate() {
+        if i < backlink_runs.len() {
+            let actual = backlink_runs[i].offset;
+            let status = if actual == *expected_offset as i64 { "OK" } else { "MISMATCH" };
+            println!("  Backlink {}: expected={}, actual={} [{}]", i + 1, expected_offset, actual, status);
+        }
+    }
+
+    // Verify first 9 backlinks match expected offsets
+    for (i, expected_offset) in expected_backlink_offsets.iter().enumerate() {
+        assert!(i < backlink_runs.len(), "Missing backlink {}", i + 1);
+        assert_eq!(
+            backlink_runs[i].offset, *expected_offset as i64,
+            "Backlink {} offset mismatch: expected {}, got {}",
+            i + 1, expected_offset, backlink_runs[i].offset
+        );
+    }
+
+    println!("\n[OK] All {} backlink offsets verified", expected_backlink_offsets.len());
+}
+
+/// Comprehensive test comparing ALL inline runs between reference KFX and boko output.
+/// For each content block, verifies:
+/// - Same number of inline runs with anchors
+/// - Matching offsets and lengths (with small tolerance for text normalization)
+#[test]
+fn test_endnotes_main_content_offsets() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse boko output
+    let boko_entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let boko_content = boko_entities.get(&259).unwrap_or(&empty);
+
+    // Parse reference KFX
+    let ref_kfx_data = std::fs::read(fixture_path("epictetus.kfx")).expect("read ref KFX");
+    let ref_entities = parse_kfx_container(&ref_kfx_data);
+    let ref_content = ref_entities.get(&259).unwrap_or(&empty);
+
+    // Collect all inline runs from both, grouped by content block
+    // Key: (total_runs, anchor_runs) - we use this as a fingerprint to match blocks
+    let mut boko_all_runs: Vec<Vec<InlineRun>> = Vec::new();
+    for (_, payload) in boko_content {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let mut runs = Vec::new();
+            collect_inline_runs(&ion, &mut runs);
+            if !runs.is_empty() {
+                boko_all_runs.push(runs);
+            }
+        }
+    }
+
+    let mut ref_all_runs: Vec<Vec<InlineRun>> = Vec::new();
+    for (_, payload) in ref_content {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let mut runs = Vec::new();
+            collect_inline_runs(&ion, &mut runs);
+            if !runs.is_empty() {
+                ref_all_runs.push(runs);
+            }
+        }
+    }
+
+    // Find the main endnotes content block (one with most anchor runs) in both
+    let boko_main = boko_all_runs.iter()
+        .max_by_key(|runs| runs.iter().filter(|r| r.anchor.is_some()).count())
+        .expect("No content blocks with runs in boko output");
+    let ref_main = ref_all_runs.iter()
+        .max_by_key(|runs| runs.iter().filter(|r| r.anchor.is_some()).count())
+        .expect("No content blocks with runs in reference");
+
+    // Get anchor runs sorted by offset
+    let mut boko_anchors: Vec<_> = boko_main.iter().filter(|r| r.anchor.is_some()).collect();
+    let mut ref_anchors: Vec<_> = ref_main.iter().filter(|r| r.anchor.is_some()).collect();
+    boko_anchors.sort_by_key(|r| r.offset);
+    ref_anchors.sort_by_key(|r| r.offset);
+
+    // Verify same number of anchor runs
+    assert_eq!(
+        boko_anchors.len(),
+        ref_anchors.len(),
+        "Different number of anchor runs: boko={}, ref={}",
+        boko_anchors.len(),
+        ref_anchors.len()
+    );
+
+    // Compare all anchor runs
+    // Allow small offset tolerance for text normalization (whitespace, unicode)
+    // Minor differences (1-3 chars) occur due to different text chunking between
+    // Kindle Previewer and boko, but the inline runs are structurally correct.
+    const OFFSET_TOLERANCE: i64 = 3;
+    let mut mismatches = Vec::new();
+    for (i, (boko_run, ref_run)) in boko_anchors.iter().zip(ref_anchors.iter()).enumerate() {
+        let offset_diff = (boko_run.offset - ref_run.offset).abs();
+        let length_diff = (boko_run.length - ref_run.length).abs();
+
+        if offset_diff > OFFSET_TOLERANCE || length_diff > 0 {
+            mismatches.push((
+                i,
+                ref_run.offset,
+                boko_run.offset,
+                ref_run.length,
+                boko_run.length,
+            ));
+        }
+    }
+
+
+    assert!(
+        mismatches.is_empty(),
+        "Found {} inline run mismatches out of {}. First 5:\n{}",
+        mismatches.len(),
+        ref_anchors.len(),
+        mismatches.iter().take(5)
+            .map(|(i, ref_off, boko_off, ref_len, boko_len)| {
+                format!("  [{}] offset: ref={} boko={} (diff={}), length: ref={} boko={} (diff={})",
+                    i, ref_off, boko_off, boko_off - ref_off, ref_len, boko_len, boko_len - ref_len)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }

@@ -211,7 +211,7 @@ impl KfxBookBuilder {
 
         // For list items (li), directly reference text content
         if tag == "li" {
-            self.build_list_item(&mut item, children, state, style, eid_base);
+            self.build_list_item(&mut item, children, state, style, eid_base)
         } else {
             // Build nested content array for regular containers
             let nested_items: Vec<IonValue> = children
@@ -234,83 +234,203 @@ impl KfxBookBuilder {
                 IonValue::Int(eid_base + 1 + state.global_idx as i64),
             );
             state.global_idx += 1;
-        }
 
-        vec![IonValue::Struct(item)]
+            vec![IonValue::Struct(item)]
+        }
     }
 
-    /// Build a list item (li) with direct $145 text reference
+    /// Build list item content.
+    ///
+    /// For simple list items (just text), returns multiple CONTENT_LIST_ITEM entries.
+    /// For complex list items (with nested containers like blockquote), returns ONE
+    /// CONTENT_LIST_ITEM container with CONTENT_ARRAY of nested CONTENT_PARAGRAPH items.
     pub(crate) fn build_list_item(
         &mut self,
-        item: &mut HashMap<u64, IonValue>,
+        _item: &mut HashMap<u64, IonValue>,
         children: &[ContentItem],
         state: &mut ContentState,
         style: &ParsedStyle,
         eid_base: i64,
-    ) {
-        // Extract text from the list item's children
-        let text_content: Vec<&ContentItem> = children
+    ) -> Vec<IonValue> {
+        // Check if we have nested containers (blockquote, div, etc.)
+        let has_nested_containers = children
             .iter()
-            .flat_map(|c| c.flatten())
-            .filter(|c| matches!(c, ContentItem::Text { .. }))
-            .collect();
+            .any(|c| matches!(c, ContentItem::Container { .. }));
 
-        // Collect inline runs from all text items
-        let mut all_inline_runs = Vec::new();
-        let mut offset_adjustment = 0usize;
+        if has_nested_containers {
+            // Complex list item: create ONE container with nested content
+            self.build_complex_list_item(children, state, style, eid_base)
+        } else {
+            // Simple list item: create flat CONTENT_LIST_ITEM entries
+            self.build_simple_list_item(children, state, style, eid_base)
+        }
+    }
 
-        for text_item in &text_content {
-            if let ContentItem::Text {
-                text, inline_runs, ..
-            } = text_item
-            {
-                for run in inline_runs {
-                    all_inline_runs.push(StyleRun {
-                        offset: run.offset + offset_adjustment,
-                        length: run.length,
-                        style: run.style.clone(),
-                        anchor_href: run.anchor_href.clone(),
-                        element_id: run.element_id.clone(),
-                        is_noteref: run.is_noteref,
-                    });
+    /// Build simple list item (no nested containers) - creates flat CONTENT_LIST_ITEM entries
+    fn build_simple_list_item(
+        &mut self,
+        children: &[ContentItem],
+        state: &mut ContentState,
+        style: &ParsedStyle,
+        eid_base: i64,
+    ) -> Vec<IonValue> {
+        let mut items = Vec::new();
+
+        for child in children {
+            match child {
+                ContentItem::Text {
+                    text,
+                    style: text_style,
+                    inline_runs,
+                    is_verse,
+                    ..
+                } => {
+                    let lines = super::normalize_text_for_kfx(text, *is_verse);
+
+                    for (i, _line) in lines.iter().enumerate() {
+                        let mut content_item = HashMap::new();
+                        content_item
+                            .insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_LIST_ITEM));
+
+                        let mut text_ref = HashMap::new();
+                        text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
+                        text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
+                        content_item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+
+                        if i == 0 && !inline_runs.is_empty() {
+                            let runs = self.build_inline_runs(inline_runs);
+                            if !runs.is_empty() {
+                                content_item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                            }
+                        }
+
+                        if let Some(style_sym) = self.style_map.get(text_style).copied()
+                            && style_sym != 0
+                        {
+                            content_item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                        }
+
+                        content_item.insert(
+                            sym::POSITION,
+                            IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                        );
+
+                        state.text_idx_in_chunk += 1;
+                        state.global_idx += 1;
+                        items.push(IonValue::Struct(content_item));
+                    }
                 }
-                offset_adjustment += text.chars().count();
+                ContentItem::Image { .. } => {
+                    let img_items = self.build_content_items(child, state, eid_base);
+                    items.extend(img_items);
+                }
+                _ => {}
             }
         }
 
-        // Create direct text reference ($145)
-        if !text_content.is_empty() {
-            let mut text_ref = HashMap::new();
-            text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
-            text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
-            item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+        items
+    }
 
-            // Add inline style runs ($142) if present
-            if !all_inline_runs.is_empty() {
-                let runs = self.build_inline_runs(&all_inline_runs);
-                if !runs.is_empty() {
-                    item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
-                }
-            }
+    /// Build complex list item (with nested containers) - creates ONE CONTENT_LIST_ITEM
+    /// container with CONTENT_ARRAY of nested CONTENT_PARAGRAPH items
+    fn build_complex_list_item(
+        &mut self,
+        children: &[ContentItem],
+        state: &mut ContentState,
+        style: &ParsedStyle,
+        eid_base: i64,
+    ) -> Vec<IonValue> {
+        let mut nested_items = Vec::new();
 
-            for _ in &text_content {
-                state.text_idx_in_chunk += 1;
-            }
-        }
+        // Recursively build all nested content as CONTENT_PARAGRAPH items
+        self.build_nested_paragraphs(children, state, style, eid_base, &mut nested_items);
 
-        // Add style reference for the list item
+        // Create the outer CONTENT_LIST_ITEM container
+        let mut container = HashMap::new();
+        container.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_LIST_ITEM));
+        container.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
+
         if let Some(style_sym) = self.style_map.get(style).copied()
             && style_sym != 0
         {
-            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+            container.insert(sym::STYLE, IonValue::Symbol(style_sym));
         }
 
-        // Use consistent EID that matches position maps
-        item.insert(
+        container.insert(
             sym::POSITION,
             IonValue::Int(eid_base + 1 + state.global_idx as i64),
         );
         state.global_idx += 1;
+
+        vec![IonValue::Struct(container)]
+    }
+
+    /// Recursively build nested content items as CONTENT_PARAGRAPH ($269)
+    fn build_nested_paragraphs(
+        &mut self,
+        children: &[ContentItem],
+        state: &mut ContentState,
+        style: &ParsedStyle,
+        eid_base: i64,
+        items: &mut Vec<IonValue>,
+    ) {
+        for child in children {
+            match child {
+                ContentItem::Text {
+                    text,
+                    style: text_style,
+                    inline_runs,
+                    is_verse,
+                    ..
+                } => {
+                    let lines = super::normalize_text_for_kfx(text, *is_verse);
+
+                    for (i, _line) in lines.iter().enumerate() {
+                        let mut content_item = HashMap::new();
+                        // Use CONTENT_PARAGRAPH for nested items, not CONTENT_LIST_ITEM
+                        content_item
+                            .insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH));
+
+                        let mut text_ref = HashMap::new();
+                        text_ref.insert(sym::ID, IonValue::Symbol(state.current_content_sym));
+                        text_ref.insert(sym::TEXT_OFFSET, IonValue::Int(state.text_idx_in_chunk));
+                        content_item.insert(sym::TEXT_CONTENT, IonValue::Struct(text_ref));
+
+                        if i == 0 && !inline_runs.is_empty() {
+                            let runs = self.build_inline_runs(inline_runs);
+                            if !runs.is_empty() {
+                                content_item.insert(sym::INLINE_STYLE_RUNS, IonValue::List(runs));
+                            }
+                        }
+
+                        if let Some(style_sym) = self.style_map.get(text_style).copied()
+                            && style_sym != 0
+                        {
+                            content_item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+                        }
+
+                        content_item.insert(
+                            sym::POSITION,
+                            IonValue::Int(eid_base + 1 + state.global_idx as i64),
+                        );
+
+                        state.text_idx_in_chunk += 1;
+                        state.global_idx += 1;
+                        items.push(IonValue::Struct(content_item));
+                    }
+                }
+                ContentItem::Container {
+                    children: nested, ..
+                } => {
+                    // Recursively process nested containers
+                    self.build_nested_paragraphs(nested, state, style, eid_base, items);
+                }
+                ContentItem::Image { .. } => {
+                    let img_items = self.build_content_items(child, state, eid_base);
+                    items.extend(img_items);
+                }
+            }
+        }
     }
 
     /// Build inline style runs for a text item
