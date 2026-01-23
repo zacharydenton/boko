@@ -51,12 +51,10 @@ pub(crate) fn normalize_text_for_kfx(text: &str, is_verse: bool) -> Vec<String> 
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect()
+    } else if text.trim().is_empty() {
+        vec![]
     } else {
-        if text.trim().is_empty() {
-            vec![]
-        } else {
-            vec![text.to_string()]
-        }
+        vec![text.to_string()]
     }
 }
 
