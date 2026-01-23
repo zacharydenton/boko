@@ -103,7 +103,7 @@ pub struct StyleRun {
     pub style: ParsedStyle,
     /// Optional anchor href for hyperlinks in this range
     pub anchor_href: Option<String>,
-    /// Optional element ID from inline element (e.g., <a id="noteref-1">)
+    /// Optional element ID from inline element (e.g., `<a id="noteref-1">`)
     /// Used for anchor targets (back-links)
     pub element_id: Option<String>,
     /// Whether this link is a noteref (reference to a footnote/endnote)
