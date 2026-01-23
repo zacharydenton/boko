@@ -734,6 +734,59 @@ fn test_border_spacing_parsing() {
 }
 
 #[test]
+fn test_pseudo_element_styles_not_applied_to_element() {
+    // CSS rules targeting ::before or ::after pseudo-elements should NOT
+    // apply their styles to the actual element. The pseudo-element creates
+    // content that doesn't exist in the DOM.
+    //
+    // This is a regression test for the colophon rendering issue where
+    // p + p::before { width: 25%; } was being applied to the paragraph itself,
+    // causing an extremely narrow column.
+    let css = r#"
+        section p {
+            text-align: center;
+        }
+        section p + p::before {
+            border-top: 1px solid;
+            content: "";
+            display: block;
+            width: 25%;
+        }
+    "#;
+
+    let stylesheet = Stylesheet::parse(css);
+
+    // The p element should have text-align: center but NOT width: 25%
+    // because the width is only for the ::before pseudo-element
+    let html = r#"<section><p>First</p><p>Second</p></section>"#;
+    let doc = kuchiki::parse_html().one(html);
+
+    // Check the second paragraph (which matches p + p)
+    let second_p = doc.select("p:nth-child(2)").unwrap().next().unwrap();
+    let p_style = stylesheet.get_direct_style_for_element(&second_p);
+
+    // Should have text-align: center from the first rule
+    assert_eq!(
+        p_style.text_align,
+        Some(TextAlign::Center),
+        "p element should have text-align: center"
+    );
+
+    // Should NOT have width from the ::before rule
+    assert!(
+        p_style.width.is_none(),
+        "p element should NOT have width from ::before pseudo-element rule, got {:?}",
+        p_style.width
+    );
+
+    // Should NOT have border from the ::before rule
+    assert!(
+        p_style.border_top.is_none(),
+        "p element should NOT have border from ::before pseudo-element rule"
+    );
+}
+
+#[test]
 fn test_border_width_style_shorthand_parsing() {
     let css = r#"
         .border-width { border-width: 1px; }

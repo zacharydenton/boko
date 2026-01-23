@@ -123,6 +123,11 @@ impl Stylesheet {
 
 /// Clean a CSS selector by removing pseudo-elements that kuchiki doesn't support.
 /// This allows rules like `*,::after,::before { ... }` to work.
+///
+/// IMPORTANT: Selectors that specifically target pseudo-elements (like `p::before`)
+/// are skipped entirely because the styles apply to the pseudo-element, not the element.
+/// Only pure pseudo-element selectors in a list (like `*,::before,::after`) are handled
+/// by keeping the non-pseudo parts.
 fn clean_selector(selector: &str) -> String {
     // Split by comma to handle selector lists
     let parts: Vec<&str> = selector.split(',').collect();
@@ -131,26 +136,49 @@ fn clean_selector(selector: &str) -> String {
     let cleaned: Vec<String> = parts
         .iter()
         .map(|s| s.trim())
-        // Remove parts that are just pseudo-elements
-        .filter(|s| !s.starts_with("::") && !s.starts_with(':'))
-        // For parts that contain pseudo-elements, strip them
-        .map(|s| {
-            // Remove ::before, ::after, etc. from the end
+        .filter_map(|s| {
+            // Pure pseudo-elements like "::before" or "::after" - skip them
+            if s.starts_with("::") || s.starts_with(':') {
+                return None;
+            }
+
+            // If selector ends with a pseudo-element like "p::before" or "p + p::before",
+            // skip it entirely - the styles are for the pseudo-element, not the element
             if let Some(idx) = s.find("::") {
-                s[..idx].trim().to_string()
-            } else if let Some(idx) = s.find(':') {
-                // Also handle single-colon pseudo-classes like :hover
-                // But preserve structural pseudo-classes if they're the whole selector
+                // Check if this is "element::pseudo" (should skip) vs something else
+                let before = s[..idx].trim();
+                if !before.is_empty() {
+                    // This is like "p::before" - skip the entire selector
+                    // The styles are meant for the pseudo-element, not the p
+                    return None;
+                }
+            }
+
+            // Handle single-colon pseudo-classes like :hover, :first-child, etc.
+            // These are interactive/structural and don't make sense for static content
+            if let Some(idx) = s.find(':') {
                 let before = &s[..idx];
                 if before.is_empty() {
-                    // Pure pseudo-class like :root or :host
-                    s.to_string()
-                } else {
-                    before.trim().to_string()
+                    // Pure pseudo-class like :root or :host - keep it
+                    return Some(s.to_string());
                 }
-            } else {
-                s.to_string()
+                // Element with pseudo-class like "p:hover" - skip interactive ones
+                // but keep the base element for structural ones
+                let pseudo_part = &s[idx..];
+                // Skip interactive pseudo-classes entirely
+                if pseudo_part.starts_with(":hover")
+                    || pseudo_part.starts_with(":active")
+                    || pseudo_part.starts_with(":focus")
+                    || pseudo_part.starts_with(":visited")
+                {
+                    return None;
+                }
+                // For other pseudo-classes, keep just the element part
+                return Some(before.trim().to_string());
             }
+
+            // No pseudo-anything - keep as is
+            Some(s.to_string())
         })
         // Filter out empty strings
         .filter(|s| !s.is_empty())
