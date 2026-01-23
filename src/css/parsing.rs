@@ -8,10 +8,10 @@ use cssparser::{Parser, Token};
 use super::BreakValue;
 use super::style::ParsedStyle;
 use super::types::{
-    Border, BorderCollapse, BorderStyle, BoxSizing, Clear, Color, CssFloat, CssValue, Display,
-    FontStyle, FontVariant, FontWeight, Hyphens, LineBreak, ListStylePosition, ListStyleType,
-    Overflow, Position, TextAlign, TextCombineUpright, TextOrientation, TextTransform, UnicodeBidi,
-    VerticalAlign, Visibility, WordBreak, WritingMode,
+    Border, BorderCollapse, BorderStyle, BoxSizing, Clear, Color, CssFloat, CssValue, Direction,
+    Display, FontStyle, FontVariant, FontWeight, Hyphens, LineBreak, ListStylePosition,
+    ListStyleType, Overflow, Position, TextAlign, TextCombineUpright, TextOrientation,
+    TextTransform, UnicodeBidi, VerticalAlign, Visibility, WordBreak, WritingMode,
 };
 
 /// Parse a declaration block (property: value; ...)
@@ -317,6 +317,15 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "position" => {
             style.position = parse_position(values);
         }
+        "top" => {
+            style.top = parse_length_value(values);
+        }
+        "right" => {
+            style.right = parse_length_value(values);
+        }
+        "bottom" => {
+            style.bottom = parse_length_value(values);
+        }
         "left" => {
             style.left = parse_length_value(values);
         }
@@ -425,6 +434,15 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                 }
             }
         }
+        "text-decoration-color" => {
+            // Parse the color and apply to all active decorations
+            // When text-decoration-color is set, it applies to underline, overline, and line-through
+            if let Some(color) = parse_color(values) {
+                style.text_decoration_underline_color = Some(color.clone());
+                style.text_decoration_overline_color = Some(color.clone());
+                style.text_decoration_line_through_color = Some(color);
+            }
+        }
         "opacity" => {
             if let Some(Token::Number { value, .. }) = values.first() {
                 // Clamp to 0-1 and convert to 0-100
@@ -467,6 +485,16 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
         "text-shadow" => {
             style.text_shadow = parse_shadow_value(values);
         }
+        // Background image
+        "background-image" => {
+            style.background_image = parse_background_image(values);
+        }
+        "background" => {
+            // Shorthand - extract url() if present
+            if let Some(url) = parse_background_image(values) {
+                style.background_image = Some(url);
+            }
+        }
         // CSS hyphens property (also handle vendor prefixes)
         "hyphens" | "-webkit-hyphens" | "-moz-hyphens" | "-epub-hyphens" => {
             if let Some(Token::Ident(val)) = values.first() {
@@ -499,6 +527,16 @@ fn apply_property(style: &mut ParsedStyle, property: &str, values: &[Token]) {
                     "bidi-override" => Some(UnicodeBidi::BidiOverride),
                     "isolate-override" => Some(UnicodeBidi::IsolateOverride),
                     "plaintext" => Some(UnicodeBidi::Plaintext),
+                    _ => None,
+                };
+            }
+        }
+        // CSS direction property (LTR/RTL)
+        "direction" => {
+            if let Some(Token::Ident(val)) = values.first() {
+                style.direction = match val.to_ascii_lowercase().as_str() {
+                    "ltr" => Some(Direction::Ltr),
+                    "rtl" => Some(Direction::Rtl),
                     _ => None,
                 };
             }
@@ -1014,4 +1052,28 @@ fn parse_shadow_value(values: &[Token]) -> Option<String> {
     } else {
         Some(parts.join(" "))
     }
+}
+
+/// Parse background-image: url(...) to extract the URL
+fn parse_background_image(values: &[Token]) -> Option<String> {
+    for token in values {
+        match token {
+            Token::UnquotedUrl(url) => {
+                return Some(url.to_string());
+            }
+            Token::QuotedString(url) => {
+                // Handle url("...") case where quoted string follows url function
+                return Some(url.to_string());
+            }
+            Token::Ident(name) if name.to_ascii_lowercase() == "none" => {
+                return None;
+            }
+            Token::Function(name) if name.to_ascii_lowercase() == "url" => {
+                // The URL content would be in subsequent tokens
+                continue;
+            }
+            _ => continue,
+        }
+    }
+    None
 }

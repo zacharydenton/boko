@@ -71,7 +71,7 @@ pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<S
                     }
                     *content_eid += 1;
                 }
-                ContentItem::Image { .. } => {
+                ContentItem::Image { .. } | ContentItem::Svg { .. } => {
                     *content_eid += 1;
                 }
                 ContentItem::Container {
@@ -193,7 +193,7 @@ pub fn build_position_id_map(chapters: &[ChapterData], has_cover: bool) -> IonVa
                 *char_offset += text.len() as i64;
                 *eid += 1;
             }
-            ContentItem::Image { .. } => {
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => {
                 let mut entry = HashMap::new();
                 entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
                 entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
@@ -287,7 +287,7 @@ pub fn build_location_map(chapters: &[ChapterData], has_cover: bool) -> IonValue
                     *content_eid += 1;
                     *char_pos = end;
                 }
-                ContentItem::Image { .. } => {
+                ContentItem::Image { .. } | ContentItem::Svg { .. } => {
                     ranges.push(ContentRange {
                         eid: *content_eid,
                         char_start: *char_pos,

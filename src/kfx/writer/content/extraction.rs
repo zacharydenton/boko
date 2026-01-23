@@ -105,8 +105,8 @@ pub(crate) fn extract_from_node(
         NodeData::Element(element) => {
             let tag_name = element.name.local.as_ref();
 
-            // Skip non-content tags
-            if matches!(tag_name, "script" | "style" | "head" | "title" | "svg") {
+            // Skip non-content tags (but NOT svg - we handle that specially)
+            if matches!(tag_name, "script" | "style" | "head" | "title") {
                 return vec![];
             }
 
@@ -176,6 +176,32 @@ pub(crate) fn extract_from_node(
                     }];
                 }
                 return vec![]; // img is self-closing, no children to process
+            }
+
+            // Handle SVG elements - serialize as inline SVG content
+            if tag_name == "svg" {
+                let attrs = element.attributes.borrow();
+                // Serialize the entire SVG element including children
+                let svg_data = serialize_node_as_xml(node);
+                let mut svg_style = direct_with_inline.clone();
+                svg_style.is_image = true; // SVG is treated like an image for layout
+
+                // Extract dimensions from width/height attrs or viewBox
+                let (width, height) = extract_svg_dimensions(&attrs);
+
+                // Extract alt text from title element or aria-label
+                let alt = attrs
+                    .get("aria-label")
+                    .map(|s| s.to_string())
+                    .or_else(|| find_svg_title(node));
+
+                return vec![ContentItem::Svg {
+                    svg_data,
+                    style: svg_style,
+                    alt,
+                    width,
+                    height,
+                }];
             }
 
             // Handle <br> elements - create line break for poetry/verse
@@ -401,6 +427,62 @@ pub(crate) fn extract_from_node(
             children
         }
     }
+}
+
+/// Extract width and height from SVG attributes or viewBox
+fn extract_svg_dimensions(
+    attrs: &std::cell::Ref<kuchiki::Attributes>,
+) -> (Option<u32>, Option<u32>) {
+    // Try explicit width/height attributes first
+    let width = attrs
+        .get("width")
+        .and_then(|w| w.trim_end_matches("px").parse::<f32>().ok())
+        .map(|w| w as u32);
+    let height = attrs
+        .get("height")
+        .and_then(|h| h.trim_end_matches("px").parse::<f32>().ok())
+        .map(|h| h as u32);
+
+    if width.is_some() && height.is_some() {
+        return (width, height);
+    }
+
+    // Fall back to viewBox if width/height not specified
+    if let Some(viewbox) = attrs.get("viewBox") {
+        let parts: Vec<&str> = viewbox.split_whitespace().collect();
+        if parts.len() == 4 {
+            let vb_width = parts[2].parse::<f32>().ok().map(|w| w as u32);
+            let vb_height = parts[3].parse::<f32>().ok().map(|h| h as u32);
+            return (width.or(vb_width), height.or(vb_height));
+        }
+    }
+
+    (width, height)
+}
+
+/// Find the title element within an SVG for alt text
+fn find_svg_title(node: &kuchiki::NodeRef) -> Option<String> {
+    for child in node.children() {
+        if let kuchiki::NodeData::Element(element) = child.data() {
+            if element.name.local.as_ref() == "title" {
+                // Get text content of title element
+                let text: String = child
+                    .descendants()
+                    .filter_map(|n| {
+                        if let kuchiki::NodeData::Text(text) = n.data() {
+                            Some(text.borrow().clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !text.trim().is_empty() {
+                    return Some(text.trim().to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

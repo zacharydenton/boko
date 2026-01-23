@@ -531,6 +531,14 @@ pub enum ColumnCount {
     Count(u32),
 }
 
+/// Text direction (LTR or RTL)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Direction {
+    #[default]
+    Ltr,
+    Rtl,
+}
+
 /// Unicode bidirectional text algorithm control
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum UnicodeBidi {

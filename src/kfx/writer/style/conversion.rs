@@ -5,10 +5,10 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    BorderCollapse, BoxSizing, ColumnCount, CssFloat, CssValue, FontVariant, Hyphens, LineBreak,
-    ListStylePosition, ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition, TextAlign,
-    TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, TextOrientation, UnicodeBidi,
-    WritingMode,
+    BorderCollapse, BoxSizing, ColumnCount, CssFloat, CssValue, Direction, FontVariant, Hyphens,
+    LineBreak, ListStylePosition, ListStyleType, ParsedStyle, RubyAlign, RubyMerge, RubyPosition,
+    TextAlign, TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, TextOrientation,
+    UnicodeBidi, WritingMode,
 };
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
@@ -246,6 +246,9 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
     // CSS unicode-bidi property ($674)
     add_unicode_bidi(&mut style_ion, style);
 
+    // CSS direction property ($192)
+    add_direction(&mut style_ion, style);
+
     // CSS line-break property ($780)
     add_line_break(&mut style_ion, style);
 
@@ -383,28 +386,55 @@ fn add_text_decorations(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedSt
         }
     };
 
-    // Handle underline with optional line style
+    // Helper to convert color to KFX value (RGB as 24-bit integer)
+    fn color_to_ion(color: &crate::css::Color) -> Option<IonValue> {
+        use crate::css::Color;
+        match color {
+            Color::Rgba(r, g, b, _) => {
+                let rgb = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
+                Some(IonValue::Int(rgb as i64))
+            }
+            Color::Current | Color::Transparent => None,
+        }
+    }
+
+    // Handle underline with optional line style and color
     if style.text_decoration_underline {
         style_ion.insert(
             sym::TEXT_DECORATION_UNDERLINE,
             IonValue::Symbol(style_sym(line_style)),
         );
+        if let Some(ref color) = style.text_decoration_underline_color {
+            if let Some(ion_color) = color_to_ion(color) {
+                style_ion.insert(sym::TEXT_DECORATION_UNDERLINE_COLOR, ion_color);
+            }
+        }
     }
 
-    // Handle overline with optional line style
+    // Handle overline with optional line style and color
     if style.text_decoration_overline {
         style_ion.insert(
             sym::TEXT_DECORATION_OVERLINE,
             IonValue::Symbol(style_sym(line_style)),
         );
+        if let Some(ref color) = style.text_decoration_overline_color {
+            if let Some(ion_color) = color_to_ion(color) {
+                style_ion.insert(sym::TEXT_DECORATION_OVERLINE_COLOR, ion_color);
+            }
+        }
     }
 
-    // Handle line-through with optional line style
+    // Handle line-through with optional line style and color
     if style.text_decoration_line_through {
         style_ion.insert(
             sym::TEXT_DECORATION_LINE_THROUGH,
             IonValue::Symbol(style_sym(line_style)),
         );
+        if let Some(ref color) = style.text_decoration_line_through_color {
+            if let Some(ion_color) = color_to_ion(color) {
+                style_ion.insert(sym::TEXT_DECORATION_LINE_THROUGH_COLOR, ion_color);
+            }
+        }
     }
 }
 
@@ -781,6 +811,19 @@ fn add_unicode_bidi(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle)
     }
 }
 
+/// CSS direction property ($192) for LTR/RTL text direction
+fn add_direction(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Only output direction if CSS explicitly specifies it
+    // LTR is the default and should not be output
+    if let Some(dir) = style.direction {
+        let dir_sym = match dir {
+            Direction::Ltr => return,              // Default, don't output
+            Direction::Rtl => sym::DIRECTION_RTL,  // $375
+        };
+        style_ion.insert(sym::DIRECTION, IonValue::Symbol(dir_sym));
+    }
+}
+
 /// CSS line-break property ($780) for CJK line breaking rules
 fn add_line_break(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     // Only output line-break if CSS explicitly specifies it
@@ -858,7 +901,7 @@ pub fn collect_and_create_styles(
                     styles.insert(run.style.clone());
                 }
             }
-            ContentItem::Image { .. } => {}
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => {}
         }
     }
 

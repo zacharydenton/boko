@@ -34,6 +34,9 @@ pub struct ParsedStyle {
     pub border_right: Option<Border>,
     pub display: Option<Display>,
     pub position: Option<Position>,
+    pub top: Option<CssValue>,
+    pub right: Option<CssValue>,
+    pub bottom: Option<CssValue>,
     pub left: Option<CssValue>,
     pub width: Option<CssValue>,
     pub height: Option<CssValue>,
@@ -60,6 +63,9 @@ pub struct ParsedStyle {
     pub text_decoration_overline: bool,
     pub text_decoration_line_through: bool,
     pub text_decoration_line_style: Option<TextDecorationLineStyle>,
+    pub text_decoration_underline_color: Option<Color>,
+    pub text_decoration_overline_color: Option<Color>,
+    pub text_decoration_line_through_color: Option<Color>,
     pub opacity: Option<u8>,
     pub is_image: bool,
     pub is_inline: bool,
@@ -75,6 +81,8 @@ pub struct ParsedStyle {
     pub text_combine_upright: Option<TextCombineUpright>,
     pub box_shadow: Option<String>,
     pub text_shadow: Option<String>,
+    /// Background image URL (from background-image: url(...))
+    pub background_image: Option<String>,
     pub ruby_position: Option<RubyPosition>,
     pub ruby_align: Option<RubyAlign>,
     pub ruby_merge: Option<RubyMerge>,
@@ -92,6 +100,7 @@ pub struct ParsedStyle {
     pub hyphens: Option<Hyphens>,
     pub box_sizing: Option<BoxSizing>,
     pub unicode_bidi: Option<UnicodeBidi>,
+    pub direction: Option<Direction>,
     pub line_break: Option<LineBreak>,
     pub text_orientation: Option<TextOrientation>,
 }
@@ -174,6 +183,15 @@ impl ParsedStyle {
         if other.position.is_some() {
             self.position = other.position;
         }
+        if other.top.is_some() {
+            self.top.clone_from(&other.top);
+        }
+        if other.right.is_some() {
+            self.right.clone_from(&other.right);
+        }
+        if other.bottom.is_some() {
+            self.bottom.clone_from(&other.bottom);
+        }
         if other.left.is_some() {
             self.left.clone_from(&other.left);
         }
@@ -252,6 +270,18 @@ impl ParsedStyle {
         if other.text_decoration_line_style.is_some() {
             self.text_decoration_line_style = other.text_decoration_line_style;
         }
+        if other.text_decoration_underline_color.is_some() {
+            self.text_decoration_underline_color
+                .clone_from(&other.text_decoration_underline_color);
+        }
+        if other.text_decoration_overline_color.is_some() {
+            self.text_decoration_overline_color
+                .clone_from(&other.text_decoration_overline_color);
+        }
+        if other.text_decoration_line_through_color.is_some() {
+            self.text_decoration_line_through_color
+                .clone_from(&other.text_decoration_line_through_color);
+        }
         if other.opacity.is_some() {
             self.opacity = other.opacity;
         }
@@ -290,6 +320,9 @@ impl ParsedStyle {
         }
         if other.text_shadow.is_some() {
             self.text_shadow.clone_from(&other.text_shadow);
+        }
+        if other.background_image.is_some() {
+            self.background_image.clone_from(&other.background_image);
         }
         if other.ruby_position.is_some() {
             self.ruby_position = other.ruby_position;
@@ -344,6 +377,9 @@ impl ParsedStyle {
         }
         if other.unicode_bidi.is_some() {
             self.unicode_bidi = other.unicode_bidi;
+        }
+        if other.direction.is_some() {
+            self.direction = other.direction;
         }
         if other.line_break.is_some() {
             self.line_break = other.line_break;
@@ -406,6 +442,9 @@ impl ParsedStyle {
             && self.border_radius_bl.is_none()
             && self.display.is_none()
             && self.position.is_none()
+            && self.top.is_none()
+            && self.right.is_none()
+            && self.bottom.is_none()
             && self.left.is_none()
             && self.visibility.is_none()
             && self.overflow.is_none()
@@ -432,11 +471,13 @@ impl ParsedStyle {
             && self.hyphens.is_none()
             && self.box_sizing.is_none()
             && self.unicode_bidi.is_none()
+            && self.direction.is_none()
             && self.line_break.is_none()
             && self.text_orientation.is_none()
             && self.border_collapse.is_none()
             && self.border_spacing_horizontal.is_none()
             && self.border_spacing_vertical.is_none()
+            && self.background_image.is_none()
     }
 
     /// Convert this style to a CSS declaration string.
@@ -610,6 +651,9 @@ impl ParsedStyle {
             text_decoration_overline: self.text_decoration_overline,
             text_decoration_line_through: self.text_decoration_line_through,
             text_decoration_line_style: self.text_decoration_line_style,
+            text_decoration_underline_color: self.text_decoration_underline_color.clone(),
+            text_decoration_overline_color: self.text_decoration_overline_color.clone(),
+            text_decoration_line_through_color: self.text_decoration_line_through_color.clone(),
             opacity: self.opacity,
             baseline_shift: self.baseline_shift.clone(),
             unicode_bidi: self.unicode_bidi,
@@ -741,6 +785,9 @@ impl PartialEq for ParsedStyle {
             && self.border_right == other.border_right
             && normalize_display(&self.display) == normalize_display(&other.display)
             && self.position == other.position
+            && self.top == other.top
+            && self.right == other.right
+            && self.bottom == other.bottom
             && self.left == other.left
             && self.width == other.width
             && self.height == other.height
@@ -767,6 +814,9 @@ impl PartialEq for ParsedStyle {
             && self.text_decoration_overline == other.text_decoration_overline
             && self.text_decoration_line_through == other.text_decoration_line_through
             && self.text_decoration_line_style == other.text_decoration_line_style
+            && self.text_decoration_underline_color == other.text_decoration_underline_color
+            && self.text_decoration_overline_color == other.text_decoration_overline_color
+            && self.text_decoration_line_through_color == other.text_decoration_line_through_color
             && self.opacity == other.opacity
             && self.is_image == other.is_image
             && self.is_inline == other.is_inline
@@ -778,6 +828,7 @@ impl PartialEq for ParsedStyle {
             && self.text_combine_upright == other.text_combine_upright
             && self.box_shadow == other.box_shadow
             && self.text_shadow == other.text_shadow
+            && self.background_image == other.background_image
             && self.ruby_position == other.ruby_position
             && self.ruby_align == other.ruby_align
             && self.ruby_merge == other.ruby_merge
@@ -795,6 +846,7 @@ impl PartialEq for ParsedStyle {
             && self.hyphens == other.hyphens
             && self.box_sizing == other.box_sizing
             && self.unicode_bidi == other.unicode_bidi
+            && self.direction == other.direction
             && self.line_break == other.line_break
             && self.text_orientation == other.text_orientation
     }
@@ -829,6 +881,9 @@ impl std::hash::Hash for ParsedStyle {
         self.border_right.hash(state);
         normalize_display(&self.display).hash(state);
         self.position.hash(state);
+        self.top.hash(state);
+        self.right.hash(state);
+        self.bottom.hash(state);
         self.left.hash(state);
         self.width.hash(state);
         self.height.hash(state);
@@ -855,6 +910,9 @@ impl std::hash::Hash for ParsedStyle {
         self.text_decoration_overline.hash(state);
         self.text_decoration_line_through.hash(state);
         self.text_decoration_line_style.hash(state);
+        self.text_decoration_underline_color.hash(state);
+        self.text_decoration_overline_color.hash(state);
+        self.text_decoration_line_through_color.hash(state);
         self.opacity.hash(state);
         self.is_image.hash(state);
         self.is_inline.hash(state);
@@ -866,6 +924,7 @@ impl std::hash::Hash for ParsedStyle {
         self.text_combine_upright.hash(state);
         self.box_shadow.hash(state);
         self.text_shadow.hash(state);
+        self.background_image.hash(state);
         self.ruby_position.hash(state);
         self.ruby_align.hash(state);
         self.ruby_merge.hash(state);
@@ -878,5 +937,11 @@ impl std::hash::Hash for ParsedStyle {
         self.baseline_shift.hash(state);
         self.column_count.hash(state);
         self.float.hash(state);
+        self.hyphens.hash(state);
+        self.box_sizing.hash(state);
+        self.unicode_bidi.hash(state);
+        self.direction.hash(state);
+        self.line_break.hash(state);
+        self.text_orientation.hash(state);
     }
 }

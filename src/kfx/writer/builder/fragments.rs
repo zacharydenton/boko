@@ -342,7 +342,7 @@ impl KfxBookBuilder {
                         styles.insert(run.style.clone());
                     }
                 }
-                ContentItem::Image { .. } => {}
+                ContentItem::Image { .. } | ContentItem::Svg { .. } => {}
             }
         }
 

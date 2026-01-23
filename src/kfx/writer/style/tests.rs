@@ -1011,6 +1011,84 @@ fn test_text_decoration_line_through_double() {
     }
 }
 
+#[test]
+fn test_text_decoration_underline_color() {
+    let style = ParsedStyle {
+        text_decoration_underline: true,
+        text_decoration_underline_color: Some(crate::css::Color::Rgba(255, 0, 0, 255)),
+        ..Default::default()
+    };
+
+    let mut symtab = SymbolTable::new();
+    let style_sym = symtab.get_or_intern("test-style");
+    let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+    let ion_map = match ion {
+        IonValue::Struct(map) => map,
+        _ => panic!("Expected struct"),
+    };
+
+    // Should have underline decoration
+    assert!(
+        ion_map.contains_key(&sym::TEXT_DECORATION_UNDERLINE),
+        "Style should have TEXT_DECORATION_UNDERLINE"
+    );
+
+    // Should have underline color ($24) with red (#FF0000 = 16711680)
+    assert!(
+        ion_map.contains_key(&sym::TEXT_DECORATION_UNDERLINE_COLOR),
+        "Style should have TEXT_DECORATION_UNDERLINE_COLOR ($24)"
+    );
+    match ion_map.get(&sym::TEXT_DECORATION_UNDERLINE_COLOR) {
+        Some(IonValue::Int(color)) => {
+            assert_eq!(
+                *color, 0xFF0000,
+                "Expected red color (0xFF0000)"
+            );
+        }
+        _ => panic!("Expected Int for TEXT_DECORATION_UNDERLINE_COLOR"),
+    }
+}
+
+#[test]
+fn test_text_decoration_line_through_color() {
+    let style = ParsedStyle {
+        text_decoration_line_through: true,
+        text_decoration_line_through_color: Some(crate::css::Color::Rgba(0, 255, 0, 255)),
+        ..Default::default()
+    };
+
+    let mut symtab = SymbolTable::new();
+    let style_sym = symtab.get_or_intern("test-style");
+    let ion = style_to_ion(&style, style_sym, &mut symtab);
+
+    let ion_map = match ion {
+        IonValue::Struct(map) => map,
+        _ => panic!("Expected struct"),
+    };
+
+    // Should have line-through decoration
+    assert!(
+        ion_map.contains_key(&sym::TEXT_DECORATION_LINE_THROUGH),
+        "Style should have TEXT_DECORATION_LINE_THROUGH"
+    );
+
+    // Should have line-through color ($28) with green (#00FF00 = 65280)
+    assert!(
+        ion_map.contains_key(&sym::TEXT_DECORATION_LINE_THROUGH_COLOR),
+        "Style should have TEXT_DECORATION_LINE_THROUGH_COLOR ($28)"
+    );
+    match ion_map.get(&sym::TEXT_DECORATION_LINE_THROUGH_COLOR) {
+        Some(IonValue::Int(color)) => {
+            assert_eq!(
+                *color, 0x00FF00,
+                "Expected green color (0x00FF00)"
+            );
+        }
+        _ => panic!("Expected Int for TEXT_DECORATION_LINE_THROUGH_COLOR"),
+    }
+}
+
 // P2 Phase 2 Tests: Transform properties
 #[test]
 fn test_transform_translate() {

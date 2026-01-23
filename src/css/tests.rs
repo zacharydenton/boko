@@ -826,3 +826,156 @@ fn test_border_width_style_shorthand_parsing() {
     assert_eq!(combined_top.style, BorderStyle::Dashed);
     assert!(combined_top.color.is_some(), "border-color should be set");
 }
+
+#[test]
+fn test_position_coordinate_parsing() {
+    use super::types::Position;
+
+    let css = r#"
+        .absolute { position: absolute; top: 10px; left: 20px; }
+        .relative { position: relative; top: -5px; }
+        .fixed { position: fixed; bottom: 0; right: 0; }
+        .all-coords { position: absolute; top: 1em; right: 2em; bottom: 3em; left: 4em; }
+    "#;
+
+    let stylesheet = Stylesheet::parse(css);
+
+    // Test absolute positioning with top/left
+    let absolute = get_style_for(&stylesheet, r#"<div class="absolute">Test</div>"#, "div");
+    assert_eq!(absolute.position, Some(Position::Absolute));
+    assert!(
+        matches!(absolute.top, Some(CssValue::Px(v)) if (v - 10.0).abs() < 0.01),
+        "Expected top: 10px, got {:?}",
+        absolute.top
+    );
+    assert!(
+        matches!(absolute.left, Some(CssValue::Px(v)) if (v - 20.0).abs() < 0.01),
+        "Expected left: 20px, got {:?}",
+        absolute.left
+    );
+
+    // Test relative positioning with negative top
+    let relative = get_style_for(&stylesheet, r#"<div class="relative">Test</div>"#, "div");
+    assert_eq!(relative.position, Some(Position::Relative));
+    assert!(
+        matches!(relative.top, Some(CssValue::Px(v)) if (v - (-5.0)).abs() < 0.01),
+        "Expected top: -5px, got {:?}",
+        relative.top
+    );
+
+    // Test fixed positioning with bottom/right
+    let fixed = get_style_for(&stylesheet, r#"<div class="fixed">Test</div>"#, "div");
+    assert_eq!(fixed.position, Some(Position::Fixed));
+    assert!(
+        matches!(fixed.bottom, Some(CssValue::Px(v)) if v.abs() < 0.01),
+        "Expected bottom: 0, got {:?}",
+        fixed.bottom
+    );
+    assert!(
+        matches!(fixed.right, Some(CssValue::Px(v)) if v.abs() < 0.01),
+        "Expected right: 0, got {:?}",
+        fixed.right
+    );
+
+    // Test all coordinates
+    let all = get_style_for(&stylesheet, r#"<div class="all-coords">Test</div>"#, "div");
+    assert_eq!(all.position, Some(Position::Absolute));
+    assert!(
+        matches!(all.top, Some(CssValue::Em(v)) if (v - 1.0).abs() < 0.01),
+        "Expected top: 1em"
+    );
+    assert!(
+        matches!(all.right, Some(CssValue::Em(v)) if (v - 2.0).abs() < 0.01),
+        "Expected right: 2em"
+    );
+    assert!(
+        matches!(all.bottom, Some(CssValue::Em(v)) if (v - 3.0).abs() < 0.01),
+        "Expected bottom: 3em"
+    );
+    assert!(
+        matches!(all.left, Some(CssValue::Em(v)) if (v - 4.0).abs() < 0.01),
+        "Expected left: 4em"
+    );
+}
+
+#[test]
+fn test_direction_parsing() {
+    use super::types::{Direction, UnicodeBidi};
+
+    let css = r#"
+        .ltr { direction: ltr; }
+        .rtl { direction: rtl; }
+        .rtl-with-bidi { direction: rtl; unicode-bidi: embed; }
+    "#;
+
+    let stylesheet = Stylesheet::parse(css);
+
+    // Test LTR (explicit)
+    let ltr = get_style_for(&stylesheet, r#"<div class="ltr">Test</div>"#, "div");
+    assert_eq!(ltr.direction, Some(Direction::Ltr));
+
+    // Test RTL
+    let rtl = get_style_for(&stylesheet, r#"<div class="rtl">Test</div>"#, "div");
+    assert_eq!(rtl.direction, Some(Direction::Rtl));
+
+    // Test RTL with unicode-bidi
+    let rtl_bidi = get_style_for(&stylesheet, r#"<div class="rtl-with-bidi">Test</div>"#, "div");
+    assert_eq!(rtl_bidi.direction, Some(Direction::Rtl));
+    assert_eq!(rtl_bidi.unicode_bidi, Some(UnicodeBidi::Embed));
+}
+
+#[test]
+fn test_text_decoration_color_parsing() {
+    use super::types::Color;
+
+    let css = r#"
+        .red-underline { text-decoration: underline; text-decoration-color: red; }
+        .hex-color { text-decoration: line-through; text-decoration-color: #00ff00; }
+        .blue-overline { text-decoration: overline; text-decoration-color: blue; }
+    "#;
+
+    let stylesheet = Stylesheet::parse(css);
+
+    // Test red underline
+    let red = get_style_for(&stylesheet, r#"<span class="red-underline">Test</span>"#, "span");
+    assert!(red.text_decoration_underline);
+    assert_eq!(red.text_decoration_underline_color, Some(Color::Rgba(255, 0, 0, 255)));
+
+    // Test hex color with line-through
+    let hex = get_style_for(&stylesheet, r#"<span class="hex-color">Test</span>"#, "span");
+    assert!(hex.text_decoration_line_through);
+    assert_eq!(hex.text_decoration_line_through_color, Some(Color::Rgba(0, 255, 0, 255)));
+
+    // Test named color with overline
+    let blue = get_style_for(&stylesheet, r#"<span class="blue-overline">Test</span>"#, "span");
+    assert!(blue.text_decoration_overline);
+    assert_eq!(blue.text_decoration_overline_color, Some(Color::Rgba(0, 0, 255, 255)));
+}
+
+#[test]
+fn test_background_image_parsing() {
+    let css = r#"
+        .bg1 { background-image: url(image.png); }
+        .bg2 { background-image: url(path/to/image.jpg); }
+        .bg3 { background: url(bg.png) no-repeat; }
+        .none { background-image: none; }
+    "#;
+
+    let stylesheet = Stylesheet::parse(css);
+
+    // Test simple URL (unquoted)
+    let bg1 = get_style_for(&stylesheet, r#"<div class="bg1">Test</div>"#, "div");
+    assert_eq!(bg1.background_image, Some("image.png".to_string()));
+
+    // Test path URL (unquoted)
+    let bg2 = get_style_for(&stylesheet, r#"<div class="bg2">Test</div>"#, "div");
+    assert_eq!(bg2.background_image, Some("path/to/image.jpg".to_string()));
+
+    // Test background shorthand
+    let bg3 = get_style_for(&stylesheet, r#"<div class="bg3">Test</div>"#, "div");
+    assert_eq!(bg3.background_image, Some("bg.png".to_string()));
+
+    // Test none
+    let none = get_style_for(&stylesheet, r#"<div class="none">Test</div>"#, "div");
+    assert_eq!(none.background_image, None);
+}

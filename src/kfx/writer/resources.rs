@@ -221,5 +221,8 @@ pub fn populate_image_dimensions(
             }
         }
         ContentItem::Text { .. } => {}
+        ContentItem::Svg { .. } => {
+            // SVG dimensions are extracted during content extraction, not from resources
+        }
     }
 }

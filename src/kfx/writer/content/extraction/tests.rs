@@ -264,7 +264,7 @@ fn test_builder_collect_texts_preserves_newlines() {
                     }
                 }
             }
-            ContentItem::Image { .. } => {}
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => {}
             ContentItem::Container { children, .. } => {
                 for child in children {
                     builder_collect_texts(child, texts);
@@ -350,7 +350,9 @@ fn test_lang_attribute_extraction_from_fixture() {
 
     fn collect_langs(item: &ContentItem, langs: &mut HashSet<String>) {
         match item {
-            ContentItem::Text { style, .. } | ContentItem::Image { style, .. } => {
+            ContentItem::Text { style, .. }
+            | ContentItem::Image { style, .. }
+            | ContentItem::Svg { style, .. } => {
                 if let Some(ref lang) = style.lang {
                     langs.insert(lang.clone());
                 }

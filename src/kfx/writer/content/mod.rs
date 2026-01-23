@@ -137,6 +137,18 @@ pub enum ContentItem {
         /// Alt text for accessibility
         alt: Option<String>,
     },
+    /// SVG inline content
+    Svg {
+        /// Serialized SVG markup
+        svg_data: String,
+        style: ParsedStyle,
+        /// Alt text for accessibility (from title or aria-label)
+        alt: Option<String>,
+        /// Width in pixels (from width attr or viewBox)
+        width: Option<u32>,
+        /// Height in pixels (from height attr or viewBox)
+        height: Option<u32>,
+    },
     /// Container with nested content items (for block-level elements like sections, divs)
     Container {
         /// Style for the container itself
@@ -166,14 +178,17 @@ impl ContentItem {
         match self {
             ContentItem::Text { style, .. } => style,
             ContentItem::Image { style, .. } => style,
+            ContentItem::Svg { style, .. } => style,
             ContentItem::Container { style, .. } => style,
         }
     }
 
-    /// Get flattened iterator over all leaf items (text and images)
+    /// Get flattened iterator over all leaf items (text, images, and SVGs)
     pub fn flatten(&self) -> Vec<&ContentItem> {
         match self {
-            ContentItem::Text { .. } | ContentItem::Image { .. } => vec![self],
+            ContentItem::Text { .. } | ContentItem::Image { .. } | ContentItem::Svg { .. } => {
+                vec![self]
+            }
             ContentItem::Container { children, .. } => {
                 children.iter().flat_map(|c| c.flatten()).collect()
             }
@@ -184,7 +199,7 @@ impl ContentItem {
     pub fn total_text_size(&self) -> usize {
         match self {
             ContentItem::Text { text, .. } => text.len(),
-            ContentItem::Image { .. } => 1, // Images count as minimal size
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => 1, // Images/SVGs count as minimal size
             ContentItem::Container { children, .. } => {
                 children.iter().map(|c| c.total_text_size()).sum()
             }
@@ -194,7 +209,7 @@ impl ContentItem {
     /// Count total number of items including nested children (for EID calculation)
     pub fn count_items(&self) -> usize {
         match self {
-            ContentItem::Text { .. } | ContentItem::Image { .. } => 1,
+            ContentItem::Text { .. } | ContentItem::Image { .. } | ContentItem::Svg { .. } => 1,
             ContentItem::Container { children, .. } => {
                 1 + children.iter().map(|c| c.count_items()).sum::<usize>()
             }
@@ -227,7 +242,7 @@ impl ContentItem {
                     0
                 }
             }
-            ContentItem::Image { .. } => 1,
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => 1,
             ContentItem::Container { children, .. } => {
                 // Flattened: don't count container itself, just its flattened children
                 children.iter().map(|c| c.count_flattened_items()).sum()
@@ -260,7 +275,9 @@ fn collect_images_recursive(item: &ContentItem, hrefs: &mut std::collections::Ha
                 collect_images_recursive(child, hrefs);
             }
         }
-        ContentItem::Text { .. } => {}
+        ContentItem::Text { .. } | ContentItem::Svg { .. } => {
+            // Text and SVG don't reference external images
+        }
     }
 }
 

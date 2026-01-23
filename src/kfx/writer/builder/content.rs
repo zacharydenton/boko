@@ -36,6 +36,14 @@ impl KfxBookBuilder {
                 alt,
             } => self.build_image_item(resource_href, style, alt.as_deref(), state, eid_base),
 
+            ContentItem::Svg {
+                svg_data,
+                style,
+                alt,
+                width,
+                height,
+            } => self.build_svg_item(svg_data, style, alt.as_deref(), *width, *height, state, eid_base),
+
             ContentItem::Container {
                 style,
                 children,
@@ -145,6 +153,56 @@ impl KfxBookBuilder {
         // $584 = IMAGE_ALT_TEXT for accessibility
         let alt_text = alt.unwrap_or_default().to_string();
         item.insert(sym::IMAGE_ALT_TEXT, IonValue::String(alt_text));
+
+        // Add style reference if present
+        if let Some(style_sym) = self.style_map.get(style).copied()
+            && style_sym != 0
+        {
+            item.insert(sym::STYLE, IonValue::Symbol(style_sym));
+        }
+
+        // Use consistent EID that matches position maps
+        item.insert(
+            sym::POSITION,
+            IonValue::Int(eid_base + 1 + state.global_idx as i64),
+        );
+        state.global_idx += 1;
+
+        vec![IonValue::Struct(item)]
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_svg_item(
+        &mut self,
+        svg_data: &str,
+        style: &ParsedStyle,
+        alt: Option<&str>,
+        width: Option<u32>,
+        height: Option<u32>,
+        state: &mut ContentState,
+        eid_base: i64,
+    ) -> Vec<IonValue> {
+        let mut item = HashMap::new();
+
+        // Use SVG content type ($274)
+        item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::SVG_CONTENT));
+
+        // Store the SVG data as a string
+        // Note: KFX may expect this in a specific format - adjust if needed
+        item.insert(sym::VALUE, IonValue::String(svg_data.to_string()));
+
+        // $584 = IMAGE_ALT_TEXT for accessibility
+        if let Some(alt_text) = alt {
+            item.insert(sym::IMAGE_ALT_TEXT, IonValue::String(alt_text.to_string()));
+        }
+
+        // Add width/height if available
+        if let Some(w) = width {
+            item.insert(sym::WIDTH, IonValue::Int(w as i64));
+        }
+        if let Some(h) = height {
+            item.insert(sym::HEIGHT, IonValue::Int(h as i64));
+        }
 
         // Add style reference if present
         if let Some(style_sym) = self.style_map.get(style).copied()
@@ -325,7 +383,7 @@ impl KfxBookBuilder {
                         items.push(IonValue::Struct(content_item));
                     }
                 }
-                ContentItem::Image { .. } => {
+                ContentItem::Image { .. } | ContentItem::Svg { .. } => {
                     let img_items = self.build_content_items(child, state, eid_base);
                     items.extend(img_items);
                 }
@@ -435,7 +493,7 @@ impl KfxBookBuilder {
                     // Recursively process nested containers
                     self.build_nested_paragraphs(nested, state, eid_base, items);
                 }
-                ContentItem::Image { .. } => {
+                ContentItem::Image { .. } | ContentItem::Svg { .. } => {
                     let img_items = self.build_content_items(child, state, eid_base);
                     items.extend(img_items);
                 }

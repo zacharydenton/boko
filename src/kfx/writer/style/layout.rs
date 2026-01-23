@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::css::{Clear, CssValue, Overflow, ParsedStyle, Visibility, WordBreak};
+use crate::css::{Clear, CssValue, Overflow, ParsedStyle, Position, Visibility, WordBreak};
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 use crate::kfx::writer::symbols::sym;
 
@@ -12,6 +12,7 @@ use super::{ToKfxIon, break_value_to_symbol};
 pub fn add_all(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     add_dimensions(style_ion, style);
     add_min_max_dimensions(style_ion, style);
+    add_position_properties(style_ion, style);
     add_clear(style_ion, style);
     add_word_break(style_ion, style);
     add_overflow(style_ion, style);
@@ -62,6 +63,42 @@ pub fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyl
         if let Some(val) = height_val {
             style_ion.insert(sym::STYLE_HEIGHT, val);
         }
+    }
+}
+
+/// Add CSS position property and coordinates (top, right, bottom, left)
+pub fn add_position_properties(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    // Add position type ($183)
+    if let Some(position) = style.position {
+        let position_sym = match position {
+            Position::Static => return, // Static is default, no need to output
+            Position::Relative => sym::POSITION_RELATIVE,
+            Position::Absolute => sym::POSITION_ABSOLUTE,
+            Position::Fixed => sym::POSITION_FIXED,
+        };
+        style_ion.insert(sym::CSS_POSITION, IonValue::Symbol(position_sym));
+    }
+
+    // Add position coordinates ($58=top, $59=left, $60=bottom, $61=right)
+    if let Some(ref top) = style.top
+        && let Some(ion_val) = top.to_kfx_ion()
+    {
+        style_ion.insert(sym::POSITION_TOP, ion_val);
+    }
+    if let Some(ref right) = style.right
+        && let Some(ion_val) = right.to_kfx_ion()
+    {
+        style_ion.insert(sym::POSITION_RIGHT, ion_val);
+    }
+    if let Some(ref bottom) = style.bottom
+        && let Some(ion_val) = bottom.to_kfx_ion()
+    {
+        style_ion.insert(sym::POSITION_BOTTOM, ion_val);
+    }
+    if let Some(ref left) = style.left
+        && let Some(ion_val) = left.to_kfx_ion()
+    {
+        style_ion.insert(sym::POSITION_LEFT, ion_val);
     }
 }
 

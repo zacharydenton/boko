@@ -213,7 +213,11 @@ pub mod sym {
     pub const POSITION_OEB_PAGE_FOOT: u64 = 455; // $455 - position: oeb-page-foot
     pub const POSITION_RELATIVE: u64 = 488; // $488 - position: relative
     pub const POSITION_FIXED: u64 = 489; // $489 - position: fixed
-    // Note: Position coordinates use $58 (top), $59 (left), $60 (bottom), $61 (right)
+    // Position coordinate properties (reuse same symbols as vertical-align values)
+    pub const POSITION_TOP: u64 = 58; // $58 - top coordinate (same as VERTICAL_TOP)
+    pub const POSITION_LEFT: u64 = 59; // $59 - left coordinate (same as ALIGN_LEFT)
+    pub const POSITION_BOTTOM: u64 = 60; // $60 - bottom coordinate (same as VERTICAL_BOTTOM)
+    pub const POSITION_RIGHT: u64 = 61; // $61 - right coordinate (same as ALIGN_RIGHT)
 
     // ==========================================================================
     // OUTLINE PROPERTIES
@@ -617,7 +621,14 @@ pub mod sym {
     pub const JPG_FORMAT: u64 = 285; // $285 - JPEG image format
     pub const GIF_FORMAT: u64 = 286; // $286 - GIF image format (also used for fonts)
     pub const IMAGE_CONTENT: u64 = 271; // $271 - image content type
+    pub const SVG_CONTENT: u64 = 274; // $274 - SVG content type
     pub const IMAGE_ALT_TEXT: u64 = 584; // $584 - alt text for image accessibility
+
+    // Ruby content types (for Japanese furigana annotations)
+    // Note: These may overlap with ruby style property symbols in some contexts
+    pub const RUBY_CONTENT: u64 = 764; // $764 - ruby annotation container
+    pub const RUBY_TEXT_CONTENT: u64 = 765; // $765 - ruby text (rt element)
+    pub const RUBY_CONTAINER_CONTENT: u64 = 766; // $766 - ruby parenthesis (rp element)
     pub const MIME_TYPE: u64 = 162; // $162 - MIME type string
     pub const FONT_FORMAT: u64 = 286; // $286 - font format type
 
@@ -757,7 +768,11 @@ pub fn tag_to_content_type(tag: &str) -> Option<u64> {
         "tbody" => Some(sym::CONTENT_TBODY),
         "tfoot" => Some(sym::CONTENT_TFOOT),
         "hr" => Some(sym::HORIZONTAL_RULE),
-        _ => None, // Use CONTENT_PARAGRAPH for td, th, div, etc.
+        // Ruby annotation elements (for Japanese furigana)
+        "ruby" => Some(sym::RUBY_CONTENT),
+        "rt" => Some(sym::RUBY_TEXT_CONTENT),
+        "rp" => Some(sym::RUBY_CONTAINER_CONTENT),
+        _ => None, // Use CONTENT_PARAGRAPH for td, th, div, rb, etc.
     }
 }
 
