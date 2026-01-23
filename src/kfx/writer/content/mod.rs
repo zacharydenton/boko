@@ -200,6 +200,40 @@ impl ContentItem {
             }
         }
     }
+
+    /// Check if this container has nested containers in its children.
+    /// Used to determine if a list item needs complex (flattened) handling.
+    pub fn has_nested_containers(&self) -> bool {
+        match self {
+            ContentItem::Container { children, .. } => {
+                children.iter().any(|c| matches!(c, ContentItem::Container { .. }))
+            }
+            _ => false,
+        }
+    }
+
+    /// Count items when nested containers are flattened (for complex list items).
+    /// This matches the behavior of build_nested_paragraphs in the builder.
+    /// Intermediate containers don't get EIDs - only text and images do.
+    pub fn count_flattened_items(&self) -> usize {
+        match self {
+            ContentItem::Text { text, is_verse, .. } => {
+                // Text items may become multiple entries (split by newlines in verse)
+                if *is_verse {
+                    text.split('\n').filter(|s| !s.trim().is_empty()).count()
+                } else if !text.trim().is_empty() {
+                    1
+                } else {
+                    0
+                }
+            }
+            ContentItem::Image { .. } => 1,
+            ContentItem::Container { children, .. } => {
+                // Flattened: don't count container itself, just its flattened children
+                children.iter().map(|c| c.count_flattened_items()).sum()
+            }
+        }
+    }
 }
 
 /// Count total content items including nested containers

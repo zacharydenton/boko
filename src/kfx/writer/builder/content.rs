@@ -211,7 +211,7 @@ impl KfxBookBuilder {
 
         // For list items (li), directly reference text content
         if tag == "li" {
-            self.build_list_item(&mut item, children, state, style, eid_base)
+            self.build_list_item(classification, children, state, style, eid_base)
         } else {
             // Build nested content array for regular containers
             let nested_items: Vec<IonValue> = children
@@ -246,22 +246,24 @@ impl KfxBookBuilder {
     /// CONTENT_LIST_ITEM container with CONTENT_ARRAY of nested CONTENT_PARAGRAPH items.
     pub(crate) fn build_list_item(
         &mut self,
-        _item: &mut HashMap<u64, IonValue>,
+        classification: Option<u64>,
         children: &[ContentItem],
         state: &mut ContentState,
         style: &ParsedStyle,
         eid_base: i64,
     ) -> Vec<IonValue> {
         // Check if we have nested containers (blockquote, div, etc.)
+        // Note: This matches ContentItem::has_nested_containers() but operates on children slice
         let has_nested_containers = children
             .iter()
             .any(|c| matches!(c, ContentItem::Container { .. }));
 
         if has_nested_containers {
             // Complex list item: create ONE container with nested content
-            self.build_complex_list_item(children, state, style, eid_base)
+            self.build_complex_list_item(classification, children, state, style, eid_base)
         } else {
             // Simple list item: create flat CONTENT_LIST_ITEM entries
+            // Note: simple list items don't support classification as they're flat text entries
             self.build_simple_list_item(children, state, style, eid_base)
         }
     }
@@ -335,6 +337,7 @@ impl KfxBookBuilder {
     /// container with CONTENT_ARRAY of nested CONTENT_PARAGRAPH items
     fn build_complex_list_item(
         &mut self,
+        classification: Option<u64>,
         children: &[ContentItem],
         state: &mut ContentState,
         style: &ParsedStyle,
@@ -349,6 +352,11 @@ impl KfxBookBuilder {
         let mut container = HashMap::new();
         container.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_LIST_ITEM));
         container.insert(sym::CONTENT_ARRAY, IonValue::List(nested_items));
+
+        // Add classification ($615) for footnote/endnote containers
+        if let Some(class_sym) = classification {
+            container.insert(sym::CLASSIFICATION, IonValue::Symbol(class_sym));
+        }
 
         if let Some(style_sym) = self.style_map.get(style).copied()
             && style_sym != 0

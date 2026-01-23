@@ -187,9 +187,9 @@ pub fn build_anchor_symbols(
     symtab: &mut SymbolTable,
 ) -> HashMap<String, u64> {
     use crate::kfx::writer::content::ContentItem;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
-    fn collect_anchor_hrefs(item: &ContentItem, hrefs: &mut HashSet<String>) {
+    fn collect_anchor_hrefs(item: &ContentItem, hrefs: &mut BTreeSet<String>) {
         match item {
             ContentItem::Text { inline_runs, .. } => {
                 for run in inline_runs {
@@ -209,7 +209,9 @@ pub fn build_anchor_symbols(
         }
     }
 
-    let mut unique_hrefs: HashSet<String> = HashSet::new();
+    // Use BTreeSet for deterministic iteration order
+    // This ensures anchor symbols are assigned consistently
+    let mut unique_hrefs: BTreeSet<String> = BTreeSet::new();
     for chapter in chapters {
         for item in &chapter.content {
             collect_anchor_hrefs(item, &mut unique_hrefs);

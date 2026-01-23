@@ -296,21 +296,23 @@ pub(crate) fn extract_from_node(
                 };
 
                 // Detect footnote/endnote classification for popup support
+                // Note: epub:type can have multiple space-separated values (e.g., "endnote footnote")
                 let classification = {
                     let attrs = element.attributes.borrow();
-                    // Check epub:type attribute
+                    // Check epub:type attribute (may contain multiple space-separated values)
                     let epub_type = attrs.get("epub:type").map(|s| s.to_lowercase());
                     // Check role attribute (ARIA)
                     let role = attrs.get("role").map(|s| s.to_lowercase());
 
-                    if epub_type.as_deref() == Some("footnote")
-                        || role.as_deref() == Some("doc-footnote")
-                    {
-                        Some(sym::FOOTNOTE)
-                    } else if epub_type.as_deref() == Some("endnote")
+                    // Check for endnote first since "endnote footnote" should classify as endnote
+                    if epub_type.as_ref().map(|t| t.contains("endnote")).unwrap_or(false)
                         || role.as_deref() == Some("doc-endnote")
                     {
                         Some(sym::ENDNOTE)
+                    } else if epub_type.as_ref().map(|t| t.contains("footnote")).unwrap_or(false)
+                        || role.as_deref() == Some("doc-footnote")
+                    {
+                        Some(sym::FOOTNOTE)
                     } else {
                         None
                     }

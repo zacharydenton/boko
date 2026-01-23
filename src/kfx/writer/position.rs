@@ -77,16 +77,36 @@ pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<S
                 ContentItem::Container {
                     children,
                     element_id,
+                    tag,
                     ..
                 } => {
-                    for child in children {
-                        collect_anchor_eids_recursive(child, content_eid, source_path, anchor_eids);
+                    // Handle list items specially - complex list items flatten nested containers
+                    if tag == "li" && item.has_nested_containers() {
+                        // Complex list item: nested containers are flattened (no EIDs)
+                        // Only the outer list item and leaf text/image items get EIDs
+                        let flattened_count: usize = children.iter()
+                            .map(|c| c.count_flattened_items())
+                            .sum();
+                        *content_eid += flattened_count as i64;
+                        // List item container gets its EID after all flattened children
+                        let container_eid = *content_eid;
+                        *content_eid += 1;
+                        if let Some(id) = element_id {
+                            let key = format!("{}#{}", source_path, id);
+                            anchor_eids.insert(key, (container_eid, 0));
+                        }
+                    } else {
+                        // Normal container: process children recursively, then assign EID
+                        for child in children {
+                            collect_anchor_eids_recursive(child, content_eid, source_path, anchor_eids);
+                        }
+                        let container_eid = *content_eid;
+                        *content_eid += 1;
+                        if let Some(id) = element_id {
+                            let key = format!("{}#{}", source_path, id);
+                            anchor_eids.insert(key, (container_eid, 0));
+                        }
                     }
-                    if let Some(id) = element_id {
-                        let key = format!("{}#{}", source_path, id);
-                        anchor_eids.insert(key, (*content_eid, 0));
-                    }
-                    *content_eid += 1;
                 }
             }
         }

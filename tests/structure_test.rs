@@ -723,12 +723,14 @@ struct InlineRun {
 }
 
 /// Count content items (items with $151=content_type)
+#[allow(dead_code)]
 fn count_content_items(value: &IonValue) -> usize {
     let mut count = 0;
     count_content_items_recursive(value, &mut count);
     count
 }
 
+#[allow(dead_code)]
 fn count_content_items_recursive(value: &IonValue, count: &mut usize) {
     match value {
         IonValue::Struct(map) => {
@@ -1135,4 +1137,289 @@ fn test_endnotes_main_content_offsets() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+// ============================================================================
+// KFX Popup Footnotes / Endnotes Tests
+// ============================================================================
+//
+// Tests for popup footnotes feature:
+// 1. Noteref links ($616: $617) in inline runs point to correct endnotes
+// 2. Endnote containers have classification ($615: $619)
+//
+// The epictetus.epub has 42 endnotes in endnotes.xhtml, with noteref links
+// in enchiridion.xhtml. Each noteref link should point to the correct endnote
+// via anchor_ref ($179).
+
+/// Inline run with noteref marker
+#[derive(Debug)]
+struct NoterefRun {
+    #[allow(dead_code)]
+    offset: i64,
+    #[allow(dead_code)]
+    length: i64,
+    anchor: u64,
+    is_noteref: bool, // $616: $617 present
+}
+
+/// Collect inline runs that have noteref markers ($616: $617)
+fn collect_noteref_runs(value: &IonValue, runs: &mut Vec<NoterefRun>) {
+    match value {
+        IonValue::Struct(map) => {
+            if let Some(IonValue::List(list)) = map.get(&sym::INLINE_STYLE_RUNS) {
+                for run in list {
+                    let offset = run.get(sym::OFFSET).and_then(|v| v.as_int()).unwrap_or(0);
+                    let length = run.get(sym::COUNT).and_then(|v| v.as_int()).unwrap_or(0);
+                    let anchor = run.get(sym::ANCHOR_REF).and_then(|v| v.as_symbol());
+                    // Check for $616: $617 (noteref marker)
+                    let is_noteref = run.get(sym::NOTEREF_TYPE)
+                        .and_then(|v| v.as_symbol())
+                        .map(|s| s == sym::NOTEREF)
+                        .unwrap_or(false);
+
+                    if let Some(anchor) = anchor {
+                        runs.push(NoterefRun { offset, length, anchor, is_noteref });
+                    }
+                }
+            }
+            for (_, child) in map {
+                collect_noteref_runs(child, runs);
+            }
+        }
+        IonValue::List(items) => items.iter().for_each(|i| collect_noteref_runs(i, runs)),
+        IonValue::Annotated(_, inner) => collect_noteref_runs(inner, runs),
+        _ => {}
+    }
+}
+
+/// Count content items with classification ($615)
+fn count_classified_items(value: &IonValue, classification: u64) -> usize {
+    let mut count = 0;
+    count_classified_items_recursive(value, classification, &mut count);
+    count
+}
+
+fn count_classified_items_recursive(value: &IonValue, classification: u64, count: &mut usize) {
+    match value {
+        IonValue::Struct(map) => {
+            // Check if this item has the classification
+            if let Some(class_sym) = map.get(&sym::CLASSIFICATION).and_then(|v| v.as_symbol()) {
+                if class_sym == classification {
+                    *count += 1;
+                }
+            }
+            for (_, child) in map {
+                count_classified_items_recursive(child, classification, count);
+            }
+        }
+        IonValue::List(items) => items.iter().for_each(|i| count_classified_items_recursive(i, classification, count)),
+        IonValue::Annotated(_, inner) => count_classified_items_recursive(inner, classification, count),
+        _ => {}
+    }
+}
+
+/// Get anchor target EID from page_template entity
+fn get_anchor_eid(anchor_entities: &[(u32, Vec<u8>)], anchor_sym: u64) -> Option<i64> {
+    for (_, payload) in anchor_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let inner = ion.unwrap_annotated();
+            if let Some(map) = inner.as_struct() {
+                if map.get(&sym::TEMPLATE_NAME).and_then(|v| v.as_symbol()) == Some(anchor_sym) {
+                    // Get position info for internal anchors
+                    if let Some(pos_info) = map.get(&sym::POSITION_INFO) {
+                        let pos_inner = pos_info.unwrap_annotated();
+                        if let Some(pos_map) = pos_inner.as_struct() {
+                            return pos_map.get(&sym::POSITION).and_then(|v| v.as_int());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Test that noteref links have the $616: $617 marker for popup behavior
+#[test]
+fn test_kfx_noteref_links_have_popup_marker() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse container
+    let entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let content_entities = entities.get(&259).unwrap_or(&empty);
+    let anchor_entities = entities.get(&266).unwrap_or(&empty);
+
+    // Collect all noteref runs
+    let mut all_noteref_runs = Vec::new();
+    for (_, payload) in content_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            collect_noteref_runs(&ion, &mut all_noteref_runs);
+        }
+    }
+
+    // Filter to just the ones that are actually noterefs (have $616: $617)
+    let noteref_runs: Vec<_> = all_noteref_runs.iter()
+        .filter(|r| r.is_noteref)
+        .collect();
+
+    println!("Found {} runs with noteref marker ($616: $617)", noteref_runs.len());
+
+    // The epictetus.epub has 42 endnotes
+    // Each endnote reference in the main text should have a noteref marker
+    assert!(
+        noteref_runs.len() >= 40,
+        "Expected at least 40 noteref markers, got {}. \
+         Popup footnotes may not be working correctly.",
+        noteref_runs.len()
+    );
+
+    // Verify noteref links point to internal anchors (not external URLs)
+    let mut valid_noteref_count = 0;
+    for run in &noteref_runs {
+        if let Some(eid) = get_anchor_eid(anchor_entities, run.anchor) {
+            valid_noteref_count += 1;
+            // EIDs should be positive (local symbol table IDs start at 10)
+            assert!(eid > 0, "Noteref anchor has invalid EID: {}", eid);
+        }
+    }
+
+    println!("[OK] {} noteref links point to valid internal anchors", valid_noteref_count);
+    assert!(
+        valid_noteref_count >= 40,
+        "Expected at least 40 valid noteref anchors, got {}",
+        valid_noteref_count
+    );
+}
+
+/// Test that endnote containers have correct classification ($615: $619)
+#[test]
+fn test_kfx_endnotes_have_classification() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse container
+    let entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let content_entities = entities.get(&259).unwrap_or(&empty);
+
+    // Count endnote classifications
+    let mut endnote_count = 0;
+    let mut footnote_count = 0;
+    for (_, payload) in content_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            endnote_count += count_classified_items(&ion, sym::ENDNOTE);
+            footnote_count += count_classified_items(&ion, sym::FOOTNOTE);
+        }
+    }
+
+    println!("Found {} items with ENDNOTE classification ($615: $619)", endnote_count);
+    println!("Found {} items with FOOTNOTE classification ($615: $618)", footnote_count);
+
+    // The epictetus.epub uses endnotes (epub:type="endnote"), not footnotes
+    // There are 42 endnotes in the book
+    assert!(
+        endnote_count >= 40,
+        "Expected at least 40 endnote classifications, got {}. \
+         Endnotes may not be properly classified for popup support.",
+        endnote_count
+    );
+
+    println!("[OK] Endnotes have correct classification for popup support");
+}
+
+/// Test that noteref links point to unique endnotes (no off-by-one errors)
+///
+/// This is a regression test for the bug where anchor EIDs were miscalculated
+/// for complex list items (endnotes with nested containers like blockquote).
+/// The fix was to properly count flattened items in position.rs.
+///
+/// The noteref marker ($616: $617) is only applied to forward references
+/// (links from main text TO endnotes), not to backlinks (↩︎ from endnotes
+/// back to main text). This test verifies that each forward noteref points
+/// to a unique endnote EID.
+#[test]
+fn test_kfx_noteref_links_point_to_unique_endnotes() {
+    use boko::write_kfx_to_writer;
+
+    // Write KFX to memory
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse container
+    let entities = parse_kfx_container(&kfx_data);
+    let empty: Vec<(u32, Vec<u8>)> = vec![];
+    let content_entities = entities.get(&259).unwrap_or(&empty);
+    let anchor_entities = entities.get(&266).unwrap_or(&empty);
+
+    // Collect all noteref runs with their target EIDs
+    let mut noteref_eids: Vec<i64> = Vec::new();
+    for (_, payload) in content_entities {
+        if let Some(ion) = parse_entity_ion(payload) {
+            let mut runs = Vec::new();
+            collect_noteref_runs(&ion, &mut runs);
+            for run in runs {
+                if run.is_noteref {
+                    if let Some(eid) = get_anchor_eid(anchor_entities, run.anchor) {
+                        noteref_eids.push(eid);
+                    }
+                }
+            }
+        }
+    }
+
+    println!("Found {} noteref links with targets", noteref_eids.len());
+
+    // The epictetus.epub has 42 endnotes in Enchiridion + 56 in Fragments = 98 total
+    // Each noteref link should point to a unique endnote
+    //
+    // Note: The noteref marker is only on forward references (main text → endnotes).
+    // Backlinks (↩︎ from endnotes back to main text) are NOT noterefs - they don't
+    // trigger popup behavior, they navigate back.
+
+    // Verify all noteref links point to unique endnotes
+    let unique_eids: HashSet<i64> = noteref_eids.iter().copied().collect();
+    assert_eq!(
+        unique_eids.len(),
+        noteref_eids.len(),
+        "Noteref links should point to unique endnotes (expected {} unique, got {}). \
+         This may indicate an off-by-one bug in anchor EID calculation.",
+        noteref_eids.len(),
+        unique_eids.len()
+    );
+
+    // We should have at least 90 noterefs (42 Enchiridion + 56 Fragments - some may share)
+    assert!(
+        noteref_eids.len() >= 90,
+        "Expected at least 90 noteref links, got {}",
+        noteref_eids.len()
+    );
+
+    // All target EIDs should be in the endnotes section (higher than main content)
+    // The endnotes section starts around EID 1880
+    let min_eid = noteref_eids.iter().copied().min().unwrap_or(0);
+    let max_eid = noteref_eids.iter().copied().max().unwrap_or(0);
+    println!("  Target EID range: {} - {}", min_eid, max_eid);
+
+    // All targets should be in the endnotes section (high EIDs)
+    assert!(
+        min_eid >= 1800,
+        "Noteref targets should be in endnotes section (EID >= 1800), but min EID is {}",
+        min_eid
+    );
+
+    println!("[OK] All {} noteref links point to unique endnotes", noteref_eids.len());
 }
