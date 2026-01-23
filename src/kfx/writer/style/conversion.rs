@@ -12,9 +12,7 @@ use crate::css::{
 };
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
-use super::{
-    ToKfxIon, spacing_to_ion,
-};
+use super::{ToKfxIon, spacing_to_ion};
 use crate::kfx::writer::fragment::KfxFragment;
 use crate::kfx::writer::symbols::{SymbolTable, sym};
 
@@ -62,22 +60,22 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         add_vertical_align(&mut style_ion, style);
 
         // Add line-height if specified - inline property
-        if let Some(ref lh) = style.line_height {
-            if let Some(val) = lh.to_kfx_ion() {
-                style_ion.insert(sym::LINE_HEIGHT, val);
-            }
+        if let Some(ref lh) = style.line_height
+            && let Some(val) = lh.to_kfx_ion()
+        {
+            style_ion.insert(sym::LINE_HEIGHT, val);
         }
 
         // Add letter/word spacing - inline properties
-        if let Some(ref spacing) = style.letter_spacing {
-            if let Some(val) = spacing_to_ion(spacing) {
-                style_ion.insert(sym::LETTER_SPACING, val);
-            }
+        if let Some(ref spacing) = style.letter_spacing
+            && let Some(val) = spacing_to_ion(spacing)
+        {
+            style_ion.insert(sym::LETTER_SPACING, val);
         }
-        if let Some(ref spacing) = style.word_spacing {
-            if let Some(val) = spacing_to_ion(spacing) {
-                style_ion.insert(sym::WORD_SPACING, val);
-            }
+        if let Some(ref spacing) = style.word_spacing
+            && let Some(val) = spacing_to_ion(spacing)
+        {
+            style_ion.insert(sym::WORD_SPACING, val);
         }
 
         return IonValue::Struct(style_ion);
@@ -772,12 +770,12 @@ fn add_unicode_bidi(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle)
     // Normal is the default and should not be output
     if let Some(bidi) = style.unicode_bidi {
         let bidi_sym = match bidi {
-            UnicodeBidi::Normal => return, // Default, don't output
-            UnicodeBidi::Embed => sym::BIDI_EMBED,                   // $675
-            UnicodeBidi::Isolate => sym::BIDI_ISOLATE,               // $676
-            UnicodeBidi::BidiOverride => sym::BIDI_OVERRIDE,         // $677
+            UnicodeBidi::Normal => return,             // Default, don't output
+            UnicodeBidi::Embed => sym::BIDI_EMBED,     // $675
+            UnicodeBidi::Isolate => sym::BIDI_ISOLATE, // $676
+            UnicodeBidi::BidiOverride => sym::BIDI_OVERRIDE, // $677
             UnicodeBidi::IsolateOverride => sym::BIDI_ISOLATE_OVERRIDE, // $678
-            UnicodeBidi::Plaintext => sym::BIDI_PLAINTEXT,           // $679
+            UnicodeBidi::Plaintext => sym::BIDI_PLAINTEXT, // $679
         };
         style_ion.insert(sym::UNICODE_BIDI, IonValue::Symbol(bidi_sym));
     }
@@ -789,10 +787,10 @@ fn add_line_break(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     // Auto is the default and should not be output
     if let Some(lb) = style.line_break {
         let lb_sym = match lb {
-            LineBreak::Auto => return, // Default, don't output
-            LineBreak::Normal => sym::FONT_WEIGHT_NORMAL, // $350 (shared symbol)
-            LineBreak::Loose => sym::LINE_BREAK_LOOSE,    // $781
-            LineBreak::Strict => sym::LINE_BREAK_STRICT,  // $782
+            LineBreak::Auto => return,                       // Default, don't output
+            LineBreak::Normal => sym::FONT_WEIGHT_NORMAL,    // $350 (shared symbol)
+            LineBreak::Loose => sym::LINE_BREAK_LOOSE,       // $781
+            LineBreak::Strict => sym::LINE_BREAK_STRICT,     // $782
             LineBreak::Anywhere => sym::LINE_BREAK_ANYWHERE, // $783
         };
         style_ion.insert(sym::LINE_BREAK, IonValue::Symbol(lb_sym));
@@ -806,7 +804,7 @@ fn add_text_orientation(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedSt
     if let Some(orient) = style.text_orientation {
         let orient_sym = match orient {
             TextOrientation::Mixed => return, // Default, don't output
-            TextOrientation::Upright => sym::TEXT_ORIENTATION_UPRIGHT,   // $779
+            TextOrientation::Upright => sym::TEXT_ORIENTATION_UPRIGHT, // $779
             TextOrientation::Sideways => sym::TEXT_ORIENTATION_SIDEWAYS, // $778
         };
         style_ion.insert(sym::TEXT_ORIENTATION, IonValue::Symbol(orient_sym));

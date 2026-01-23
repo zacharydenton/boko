@@ -120,10 +120,10 @@ pub fn add_word_break(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyl
 
 /// Add overflow property
 pub fn add_overflow(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(overflow) = style.overflow {
-        if matches!(overflow, Overflow::Hidden | Overflow::Clip) {
-            style_ion.insert(sym::OVERFLOW_CLIP, IonValue::Bool(true));
-        }
+    if let Some(overflow) = style.overflow
+        && matches!(overflow, Overflow::Hidden | Overflow::Clip)
+    {
+        style_ion.insert(sym::OVERFLOW_CLIP, IonValue::Bool(true));
     }
 }
 

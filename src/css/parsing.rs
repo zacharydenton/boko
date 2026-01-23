@@ -5,14 +5,14 @@
 
 use cssparser::{Parser, Token};
 
+use super::BreakValue;
 use super::style::ParsedStyle;
 use super::types::{
     Border, BorderCollapse, BorderStyle, BoxSizing, Clear, Color, CssFloat, CssValue, Display,
     FontStyle, FontVariant, FontWeight, Hyphens, LineBreak, ListStylePosition, ListStyleType,
-    Overflow, Position, TextAlign, TextCombineUpright, TextOrientation, TextTransform,
-    UnicodeBidi, VerticalAlign, Visibility, WordBreak, WritingMode,
+    Overflow, Position, TextAlign, TextCombineUpright, TextOrientation, TextTransform, UnicodeBidi,
+    VerticalAlign, Visibility, WordBreak, WritingMode,
 };
-use super::BreakValue;
 
 /// Parse a declaration block (property: value; ...)
 pub(crate) fn parse_declaration_block<'i, 't>(input: &mut Parser<'i, 't>) -> ParsedStyle {

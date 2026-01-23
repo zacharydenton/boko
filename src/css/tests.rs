@@ -254,9 +254,8 @@ fn test_text_indent() {
 
 #[test]
 fn test_inline_style_parsing() {
-    let inline = Stylesheet::parse_inline_style(
-        "font-weight: bold; text-align: center; margin-top: 2em",
-    );
+    let inline =
+        Stylesheet::parse_inline_style("font-weight: bold; text-align: center; margin-top: 2em");
 
     assert!(matches!(inline.font_weight, Some(FontWeight::Bold)));
     assert_eq!(inline.text_align, Some(TextAlign::Center));
@@ -408,9 +407,7 @@ fn test_font_size_various_values() {
         r#"<div class="percent-small">Test</div>"#,
         "div",
     );
-    assert!(
-        matches!(pct_small.font_size, Some(CssValue::Percent(p)) if (p - 67.0).abs() < 0.01)
-    );
+    assert!(matches!(pct_small.font_size, Some(CssValue::Percent(p)) if (p - 67.0).abs() < 0.01));
 
     // smaller keyword
     let smaller = get_style_for(&stylesheet, r#"<div class="smaller">Test</div>"#, "div");
@@ -602,8 +599,7 @@ fn test_box_sizing_parsing() {
         border_box.box_sizing
     );
 
-    let content_box =
-        get_style_for(&stylesheet, r#"<div class="content-box">Test</div>"#, "div");
+    let content_box = get_style_for(&stylesheet, r#"<div class="content-box">Test</div>"#, "div");
     assert_eq!(
         content_box.box_sizing,
         Some(BoxSizing::ContentBox),
@@ -611,8 +607,7 @@ fn test_box_sizing_parsing() {
         content_box.box_sizing
     );
 
-    let padding_box =
-        get_style_for(&stylesheet, r#"<div class="padding-box">Test</div>"#, "div");
+    let padding_box = get_style_for(&stylesheet, r#"<div class="padding-box">Test</div>"#, "div");
     assert_eq!(
         padding_box.box_sizing,
         Some(BoxSizing::PaddingBox),

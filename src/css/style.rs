@@ -304,16 +304,19 @@ impl ParsedStyle {
             self.text_emphasis_style = other.text_emphasis_style;
         }
         if other.text_emphasis_color.is_some() {
-            self.text_emphasis_color.clone_from(&other.text_emphasis_color);
+            self.text_emphasis_color
+                .clone_from(&other.text_emphasis_color);
         }
         if other.border_collapse.is_some() {
             self.border_collapse = other.border_collapse;
         }
         if other.border_spacing_horizontal.is_some() {
-            self.border_spacing_horizontal.clone_from(&other.border_spacing_horizontal);
+            self.border_spacing_horizontal
+                .clone_from(&other.border_spacing_horizontal);
         }
         if other.border_spacing_vertical.is_some() {
-            self.border_spacing_vertical.clone_from(&other.border_spacing_vertical);
+            self.border_spacing_vertical
+                .clone_from(&other.border_spacing_vertical);
         }
         if other.drop_cap.is_some() {
             self.drop_cap = other.drop_cap;

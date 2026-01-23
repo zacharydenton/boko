@@ -184,8 +184,11 @@ impl KfxBookBuilder {
         }
 
         // Determine content type based on container type
-        let content_type =
-            crate::kfx::writer::symbols::container_content_type(tag, list_type.is_some(), tag == "li");
+        let content_type = crate::kfx::writer::symbols::container_content_type(
+            tag,
+            list_type.is_some(),
+            tag == "li",
+        );
         item.insert(sym::CONTENT_TYPE, IonValue::Symbol(content_type));
 
         // Add list type property for ol/ul containers
@@ -273,7 +276,7 @@ impl KfxBookBuilder {
         &mut self,
         children: &[ContentItem],
         state: &mut ContentState,
-        style: &ParsedStyle,
+        _style: &ParsedStyle,
         eid_base: i64,
     ) -> Vec<IonValue> {
         let mut items = Vec::new();
@@ -346,7 +349,7 @@ impl KfxBookBuilder {
         let mut nested_items = Vec::new();
 
         // Recursively build all nested content as CONTENT_PARAGRAPH items
-        self.build_nested_paragraphs(children, state, style, eid_base, &mut nested_items);
+        self.build_nested_paragraphs(children, state, eid_base, &mut nested_items);
 
         // Create the outer CONTENT_LIST_ITEM container
         let mut container = HashMap::new();
@@ -378,7 +381,6 @@ impl KfxBookBuilder {
         &mut self,
         children: &[ContentItem],
         state: &mut ContentState,
-        style: &ParsedStyle,
         eid_base: i64,
         items: &mut Vec<IonValue>,
     ) {
@@ -431,7 +433,7 @@ impl KfxBookBuilder {
                     children: nested, ..
                 } => {
                     // Recursively process nested containers
-                    self.build_nested_paragraphs(nested, state, style, eid_base, items);
+                    self.build_nested_paragraphs(nested, state, eid_base, items);
                 }
                 ContentItem::Image { .. } => {
                     let img_items = self.build_content_items(child, state, eid_base);

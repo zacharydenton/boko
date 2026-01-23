@@ -510,11 +510,7 @@ fn test_full_kfx_has_backlink_anchor_refs() {
     let mut inline_runs_count = 0;
     let mut content_block_frags = 0;
 
-    fn count_in_item(
-        item: &IonValue,
-        inline_runs_count: &mut usize,
-        anchor_ref_count: &mut usize,
-    ) {
+    fn count_in_item(item: &IonValue, inline_runs_count: &mut usize, anchor_ref_count: &mut usize) {
         if let IonValue::Struct(item_struct) = item {
             // Look for INLINE_STYLE_RUNS ($142)
             if let Some(IonValue::List(runs)) = item_struct.get(&sym::INLINE_STYLE_RUNS) {
@@ -736,8 +732,7 @@ fn test_table_content_types() {
     let table_ion = &ion_items[0];
 
     // Verify table has content type $278 (CONTENT_TABLE)
-    let content_type =
-        get_struct_field(table_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
+    let content_type = get_struct_field(table_ion, sym::CONTENT_TYPE).and_then(get_symbol_value);
     assert_eq!(
         content_type,
         Some(sym::CONTENT_TABLE),
@@ -1048,8 +1043,7 @@ fn test_noteref_inline_run_has_noteref_type() {
     let run_ion = &ion_runs[0];
 
     // Verify noteref has NOTEREF_TYPE ($616) with value NOTEREF ($617)
-    let noteref_type =
-        get_struct_field(run_ion, sym::NOTEREF_TYPE).and_then(get_symbol_value);
+    let noteref_type = get_struct_field(run_ion, sym::NOTEREF_TYPE).and_then(get_symbol_value);
     assert_eq!(
         noteref_type,
         Some(sym::NOTEREF),

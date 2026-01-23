@@ -205,9 +205,9 @@ impl ContentItem {
     /// Used to determine if a list item needs complex (flattened) handling.
     pub fn has_nested_containers(&self) -> bool {
         match self {
-            ContentItem::Container { children, .. } => {
-                children.iter().any(|c| matches!(c, ContentItem::Container { .. }))
-            }
+            ContentItem::Container { children, .. } => children
+                .iter()
+                .any(|c| matches!(c, ContentItem::Container { .. })),
             _ => false,
         }
     }

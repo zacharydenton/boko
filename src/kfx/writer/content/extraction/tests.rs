@@ -5,12 +5,12 @@ use std::collections::HashSet;
 use kuchiki::traits::*;
 
 use crate::css::{ParsedStyle, Stylesheet};
-use crate::kfx::writer::content::{ContentItem, ListType, StyleRun};
 use crate::kfx::writer::content::merging::{flatten_containers, merge_text_with_inline_runs};
+use crate::kfx::writer::content::{ContentItem, ListType, StyleRun};
 use crate::kfx::writer::symbols::sym;
 
-use super::extract_from_node;
 use super::extract_content_from_xhtml;
+use super::extract_from_node;
 
 /// Helper to collect all text content from ContentItems, splitting by newlines
 fn collect_all_texts(items: &[ContentItem]) -> Vec<String> {
@@ -50,7 +50,15 @@ fn test_br_tag_creates_line_break() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Should have a Container with Text items containing newline markers
@@ -89,7 +97,15 @@ fn test_br_with_spans_like_poetry() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     let texts = collect_all_texts(&flattened);
@@ -155,8 +171,7 @@ fn test_poetry_br_in_actual_epub() {
 
         // Use the same stylesheet parsing as the builder
         let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
-        let content =
-            extract_content_from_xhtml(&resource.data, &stylesheet, &enchiridion_path);
+        let content = extract_content_from_xhtml(&resource.data, &stylesheet, &enchiridion_path);
 
         // Collect all text content, looking for the Zeus poetry
         fn find_zeus_text(item: &ContentItem, found: &mut Vec<String>, raw: &mut Vec<String>) {
@@ -227,7 +242,15 @@ fn test_builder_collect_texts_preserves_newlines() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // This mimics the builder's collect_texts function
@@ -287,7 +310,15 @@ fn test_is_verse_preserved_through_flatten() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Simulate what the builder does: flatten items and check is_verse
@@ -341,8 +372,7 @@ fn test_lang_attribute_extraction_from_fixture() {
     for spine_item in &book.spine {
         if let Some(resource) = book.resources.get(&spine_item.href) {
             let stylesheet = Stylesheet::default();
-            let content =
-                extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
+            let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
             for item in &content {
                 collect_langs(item, &mut langs_found);
             }
@@ -375,7 +405,15 @@ fn test_br_inherits_is_verse_from_context() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Find the merged text item
@@ -423,7 +461,15 @@ fn test_normalize_text_for_kfx_splits_verse() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Find all text items and verify is_verse
@@ -488,7 +534,15 @@ fn test_ordered_list_creates_container_with_list_type() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Should have one Container for the <ol>
@@ -548,7 +602,15 @@ fn test_unordered_list_creates_container_with_list_type() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     assert_eq!(
@@ -595,7 +657,15 @@ fn test_display_none_elements_skipped() {
         .map(|n| n.as_node().clone())
         .unwrap();
 
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
     let texts = collect_all_texts(&flattened);
     let all_text = texts.join(" ");
@@ -633,7 +703,15 @@ fn test_mobi_fallback_skipped_via_display_none() {
         .map(|n| n.as_node().clone())
         .unwrap();
 
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
     let texts = collect_all_texts(&flattened);
     let all_text = texts.join(" ");
@@ -667,7 +745,15 @@ fn test_mathml_preserved_as_xml_string() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Find MathML text
@@ -708,7 +794,15 @@ fn test_mathml_with_mobi_fallback() {
         .map(|n| n.as_node().clone())
         .unwrap();
 
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Should have MathML
@@ -861,7 +955,15 @@ fn test_span_with_css_class_preserves_line_height() {
         .map(|n| n.as_node().clone())
         .unwrap();
 
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Find the text item and check its style has line-height
@@ -1260,7 +1362,10 @@ fn test_figure_element_sets_is_figure() {
     fn find_figure_style(items: &[ContentItem]) -> Option<bool> {
         for item in items {
             if let ContentItem::Container {
-                style, tag, children, ..
+                style,
+                tag,
+                children,
+                ..
             } = item
             {
                 if tag == "figure" {
@@ -1313,7 +1418,10 @@ fn test_figcaption_element_sets_is_caption() {
     fn find_figcaption_style(items: &[ContentItem]) -> Option<bool> {
         for item in items {
             if let ContentItem::Container {
-                style, tag, children, ..
+                style,
+                tag,
+                children,
+                ..
             } = item
             {
                 if tag == "figcaption" {
@@ -1363,7 +1471,10 @@ fn test_heading_element_sets_is_heading() {
     fn find_heading_style(items: &[ContentItem]) -> Option<bool> {
         for item in items {
             if let ContentItem::Container {
-                style, tag, children, ..
+                style,
+                tag,
+                children,
+                ..
             } = item
             {
                 if tag.starts_with('h') && tag.len() == 2 {
@@ -1403,16 +1514,24 @@ fn test_horizontal_rule_creates_container() {
         .unwrap();
 
     let stylesheet = Stylesheet::default();
-    let items = extract_from_node(&body, &stylesheet, &ParsedStyle::default(), "", None, false, false);
+    let items = extract_from_node(
+        &body,
+        &stylesheet,
+        &ParsedStyle::default(),
+        "",
+        None,
+        false,
+        false,
+    );
     let flattened = flatten_containers(items);
 
     // Should have 3 items: p, hr, p
     assert_eq!(flattened.len(), 3, "Should have 3 items (p, hr, p)");
 
     // Find the hr container
-    let hr_item = flattened.iter().find(|item| {
-        matches!(item, ContentItem::Container { tag, .. } if tag == "hr")
-    });
+    let hr_item = flattened
+        .iter()
+        .find(|item| matches!(item, ContentItem::Container { tag, .. } if tag == "hr"));
 
     assert!(hr_item.is_some(), "Should find an <hr> container");
 

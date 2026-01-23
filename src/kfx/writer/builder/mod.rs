@@ -243,8 +243,7 @@ impl KfxBookBuilder {
 
             let stylesheet = Stylesheet::parse_with_defaults(&combined_css);
 
-            let content =
-                extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
+            let content = extract_content_from_xhtml(&resource.data, &stylesheet, &spine_item.href);
 
             if content.is_empty() {
                 continue;

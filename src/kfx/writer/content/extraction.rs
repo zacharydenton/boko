@@ -8,7 +8,9 @@ use kuchiki::traits::*;
 use crate::css::{NodeRef, ParsedStyle, Stylesheet};
 use crate::kfx::writer::symbols::sym;
 
-use super::html_utils::{clean_text, is_block_element, resolve_relative_path, serialize_node_as_xml};
+use super::html_utils::{
+    clean_text, is_block_element, resolve_relative_path, serialize_node_as_xml,
+};
 use super::merging::{flatten_containers, merge_text_with_inline_runs};
 use super::{ContentItem, ListType};
 
@@ -305,11 +307,17 @@ pub(crate) fn extract_from_node(
                     let role = attrs.get("role").map(|s| s.to_lowercase());
 
                     // Check for endnote first since "endnote footnote" should classify as endnote
-                    if epub_type.as_ref().map(|t| t.contains("endnote")).unwrap_or(false)
+                    if epub_type
+                        .as_ref()
+                        .map(|t| t.contains("endnote"))
+                        .unwrap_or(false)
                         || role.as_deref() == Some("doc-endnote")
                     {
                         Some(sym::ENDNOTE)
-                    } else if epub_type.as_ref().map(|t| t.contains("footnote")).unwrap_or(false)
+                    } else if epub_type
+                        .as_ref()
+                        .map(|t| t.contains("footnote"))
+                        .unwrap_or(false)
                         || role.as_deref() == Some("doc-footnote")
                     {
                         Some(sym::FOOTNOTE)

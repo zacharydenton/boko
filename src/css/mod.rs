@@ -20,15 +20,7 @@ mod tests;
 
 // Re-export all public types for external use
 pub use style::ParsedStyle;
-pub use stylesheet::{CssRule, NodeRef, Stylesheet};
-pub use types::{
-    Border, BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, Color, ColumnCount,
-    CssFloat, CssValue, Display, DropCap, FontStyle, FontVariant, FontWeight, Hyphens, LineBreak,
-    ListStylePosition, ListStyleType, Overflow, Position, RubyAlign, RubyMerge, RubyPosition,
-    TextAlign, TextCombineUpright, TextDecorationLineStyle, TextEmphasisStyle, TextOrientation,
-    TextTransform, Transform, TransformOrigin, UnicodeBidi, VerticalAlign, Visibility, WordBreak,
-    WritingMode,
-};
+pub use stylesheet::{NodeRef, Stylesheet};
+pub use types::*;
 
 // Re-export kuchiki types needed by external code
-pub use kuchiki::{ElementData, NodeDataRef, Selectors};

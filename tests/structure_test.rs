@@ -735,14 +735,17 @@ fn count_content_items_recursive(value: &IonValue, count: &mut usize) {
     match value {
         IonValue::Struct(map) => {
             // Count this if it has a content_type
-            if map.contains_key(&151) { // CONTENT_TYPE
+            if map.contains_key(&151) {
+                // CONTENT_TYPE
                 *count += 1;
             }
             for (_, child) in map {
                 count_content_items_recursive(child, count);
             }
         }
-        IonValue::List(items) => items.iter().for_each(|i| count_content_items_recursive(i, count)),
+        IonValue::List(items) => items
+            .iter()
+            .for_each(|i| count_content_items_recursive(i, count)),
         IonValue::Annotated(_, inner) => count_content_items_recursive(inner, count),
         _ => {}
     }
@@ -757,7 +760,11 @@ fn collect_inline_runs(value: &IonValue, runs: &mut Vec<InlineRun>) {
                     let offset = run.get(sym::OFFSET).and_then(|v| v.as_int()).unwrap_or(0);
                     let length = run.get(sym::COUNT).and_then(|v| v.as_int()).unwrap_or(0);
                     let anchor = run.get(sym::ANCHOR_REF).and_then(|v| v.as_symbol());
-                    runs.push(InlineRun { offset, length, anchor });
+                    runs.push(InlineRun {
+                        offset,
+                        length,
+                        anchor,
+                    });
                 }
             }
             for (_, child) in map {
@@ -785,7 +792,9 @@ fn collect_inline_style_refs(value: &IonValue, refs: &mut HashSet<u64>) {
                 collect_inline_style_refs(child, refs);
             }
         }
-        IonValue::List(items) => items.iter().for_each(|i| collect_inline_style_refs(i, refs)),
+        IonValue::List(items) => items
+            .iter()
+            .for_each(|i| collect_inline_style_refs(i, refs)),
         IonValue::Annotated(_, inner) => collect_inline_style_refs(inner, refs),
         _ => {}
     }
@@ -794,8 +803,14 @@ fn collect_inline_style_refs(value: &IonValue, refs: &mut HashSet<u64>) {
 /// Check if style has block properties
 fn has_block_props(style: &IonValue) -> Vec<u64> {
     let inner = style.unwrap_annotated();
-    let Some(map) = inner.as_struct() else { return vec![] };
-    BLOCK_PROPERTIES.iter().filter(|&&p| map.contains_key(&p)).copied().collect()
+    let Some(map) = inner.as_struct() else {
+        return vec![];
+    };
+    BLOCK_PROPERTIES
+        .iter()
+        .filter(|&&p| map.contains_key(&p))
+        .copied()
+        .collect()
 }
 
 /// Get anchor URL from page_template entity (external links)
@@ -805,7 +820,10 @@ fn get_anchor_url(anchor_entities: &[(u32, Vec<u8>)], anchor_sym: u64) -> Option
             let inner = ion.unwrap_annotated();
             if let Some(map) = inner.as_struct() {
                 if map.get(&sym::TEMPLATE_NAME).and_then(|v| v.as_symbol()) == Some(anchor_sym) {
-                    return map.get(&sym::EXTERNAL_URL).and_then(|v| v.as_string()).map(|s| s.to_string());
+                    return map
+                        .get(&sym::EXTERNAL_URL)
+                        .and_then(|v| v.as_string())
+                        .map(|s| s.to_string());
                 }
             }
         }
@@ -821,7 +839,8 @@ fn is_internal_anchor(anchor_entities: &[(u32, Vec<u8>)], anchor_sym: u64) -> bo
             if let Some(map) = inner.as_struct() {
                 if map.get(&sym::TEMPLATE_NAME).and_then(|v| v.as_symbol()) == Some(anchor_sym) {
                     // Internal if has POSITION_INFO but no EXTERNAL_URL
-                    return map.contains_key(&sym::POSITION_INFO) && !map.contains_key(&sym::EXTERNAL_URL);
+                    return map.contains_key(&sym::POSITION_INFO)
+                        && !map.contains_key(&sym::EXTERNAL_URL);
                 }
             }
         }
@@ -851,7 +870,11 @@ fn test_kfx_inline_styles_no_block_properties() {
     for (_, payload) in style_entities {
         if let Some(ion) = parse_entity_ion(payload) {
             let inner = ion.unwrap_annotated();
-            if let Some(sym) = inner.as_struct().and_then(|m| m.get(&sym::STYLE_NAME)).and_then(|v| v.as_symbol()) {
+            if let Some(sym) = inner
+                .as_struct()
+                .and_then(|m| m.get(&sym::STYLE_NAME))
+                .and_then(|v| v.as_symbol())
+            {
                 styles.insert(sym, ion.clone());
             }
         }
@@ -867,8 +890,12 @@ fn test_kfx_inline_styles_no_block_properties() {
         }
     }
 
-    println!("Styles: {}, Inline style refs: {}, Inline runs: {}",
-        styles.len(), inline_style_refs.len(), inline_runs.len());
+    println!(
+        "Styles: {}, Inline style refs: {}, Inline runs: {}",
+        styles.len(),
+        inline_style_refs.len(),
+        inline_runs.len()
+    );
 
     // =========================================================================
     // 1. Inline styles must not have block properties
@@ -876,8 +903,12 @@ fn test_kfx_inline_styles_no_block_properties() {
     for style_sym in &inline_style_refs {
         if let Some(style) = styles.get(style_sym) {
             let bad = has_block_props(style);
-            assert!(bad.is_empty(),
-                "Style ${} has block properties: {:?}", style_sym, bad);
+            assert!(
+                bad.is_empty(),
+                "Style ${} has block properties: {:?}",
+                style_sym,
+                bad
+            );
         }
     }
     println!("[OK] No inline styles have block properties");
@@ -903,9 +934,7 @@ fn test_kfx_inline_styles_no_block_properties() {
         ("creativecommons.org", 462, 42), // "CC0 1.0 Universal..."
     ];
 
-    let runs_with_anchors: Vec<_> = inline_runs.iter()
-        .filter(|r| r.anchor.is_some())
-        .collect();
+    let runs_with_anchors: Vec<_> = inline_runs.iter().filter(|r| r.anchor.is_some()).collect();
     println!("Runs with anchors: {}", runs_with_anchors.len());
 
     // Check expected external links are present with correct offset and length
@@ -920,11 +949,20 @@ fn test_kfx_inline_styles_no_block_properties() {
         });
         assert!(found.is_some(), "Missing link to {}", domain);
         let run = found.unwrap();
-        assert_eq!(run.offset, expected_offset as i64,
-            "Wrong offset for {} link: expected {}, got {}", domain, expected_offset, run.offset);
-        assert_eq!(run.length, expected_len as i64,
-            "Wrong length for {} link: expected {}, got {}", domain, expected_len, run.length);
-        println!("[OK] Found {} link (offset={}, length={})", domain, run.offset, run.length);
+        assert_eq!(
+            run.offset, expected_offset as i64,
+            "Wrong offset for {} link: expected {}, got {}",
+            domain, expected_offset, run.offset
+        );
+        assert_eq!(
+            run.length, expected_len as i64,
+            "Wrong length for {} link: expected {}, got {}",
+            domain, expected_len, run.length
+        );
+        println!(
+            "[OK] Found {} link (offset={}, length={})",
+            domain, run.offset, run.length
+        );
     }
 
     // =========================================================================
@@ -939,9 +977,20 @@ fn test_kfx_inline_styles_no_block_properties() {
     });
     assert!(uncopyright.is_some(), "Missing internal 'Uncopyright' link");
     let uncopyright = uncopyright.unwrap();
-    assert_eq!(uncopyright.offset, 544, "Wrong offset for Uncopyright link: expected 544, got {}", uncopyright.offset);
-    assert_eq!(uncopyright.length, 11, "Wrong length for Uncopyright link: expected 11, got {}", uncopyright.length);
-    println!("[OK] Found internal 'Uncopyright' link (offset={}, length={})", uncopyright.offset, uncopyright.length);
+    assert_eq!(
+        uncopyright.offset, 544,
+        "Wrong offset for Uncopyright link: expected 544, got {}",
+        uncopyright.offset
+    );
+    assert_eq!(
+        uncopyright.length, 11,
+        "Wrong length for Uncopyright link: expected 11, got {}",
+        uncopyright.length
+    );
+    println!(
+        "[OK] Found internal 'Uncopyright' link (offset={}, length={})",
+        uncopyright.offset, uncopyright.length
+    );
 
     println!("\n=== All verifications passed ===");
 }
@@ -1009,12 +1058,25 @@ fn test_kfx_endnotes_inline_runs() {
         1084, // endnote with longer text
     ];
 
-    println!("\nFirst {} backlink offsets:", expected_backlink_offsets.len());
+    println!(
+        "\nFirst {} backlink offsets:",
+        expected_backlink_offsets.len()
+    );
     for (i, expected_offset) in expected_backlink_offsets.iter().enumerate() {
         if i < backlink_runs.len() {
             let actual = backlink_runs[i].offset;
-            let status = if actual == *expected_offset as i64 { "OK" } else { "MISMATCH" };
-            println!("  Backlink {}: expected={}, actual={} [{}]", i + 1, expected_offset, actual, status);
+            let status = if actual == *expected_offset as i64 {
+                "OK"
+            } else {
+                "MISMATCH"
+            };
+            println!(
+                "  Backlink {}: expected={}, actual={} [{}]",
+                i + 1,
+                expected_offset,
+                actual,
+                status
+            );
         }
     }
 
@@ -1022,13 +1084,19 @@ fn test_kfx_endnotes_inline_runs() {
     for (i, expected_offset) in expected_backlink_offsets.iter().enumerate() {
         assert!(i < backlink_runs.len(), "Missing backlink {}", i + 1);
         assert_eq!(
-            backlink_runs[i].offset, *expected_offset as i64,
+            backlink_runs[i].offset,
+            *expected_offset as i64,
             "Backlink {} offset mismatch: expected {}, got {}",
-            i + 1, expected_offset, backlink_runs[i].offset
+            i + 1,
+            expected_offset,
+            backlink_runs[i].offset
         );
     }
 
-    println!("\n[OK] All {} backlink offsets verified", expected_backlink_offsets.len());
+    println!(
+        "\n[OK] All {} backlink offsets verified",
+        expected_backlink_offsets.len()
+    );
 }
 
 /// Comprehensive test comparing ALL inline runs between reference KFX and boko output.
@@ -1080,10 +1148,12 @@ fn test_endnotes_main_content_offsets() {
     }
 
     // Find the main endnotes content block (one with most anchor runs) in both
-    let boko_main = boko_all_runs.iter()
+    let boko_main = boko_all_runs
+        .iter()
         .max_by_key(|runs| runs.iter().filter(|r| r.anchor.is_some()).count())
         .expect("No content blocks with runs in boko output");
-    let ref_main = ref_all_runs.iter()
+    let ref_main = ref_all_runs
+        .iter()
         .max_by_key(|runs| runs.iter().filter(|r| r.anchor.is_some()).count())
         .expect("No content blocks with runs in reference");
 
@@ -1123,16 +1193,25 @@ fn test_endnotes_main_content_offsets() {
         }
     }
 
-
     assert!(
         mismatches.is_empty(),
         "Found {} inline run mismatches out of {}. First 5:\n{}",
         mismatches.len(),
         ref_anchors.len(),
-        mismatches.iter().take(5)
+        mismatches
+            .iter()
+            .take(5)
             .map(|(i, ref_off, boko_off, ref_len, boko_len)| {
-                format!("  [{}] offset: ref={} boko={} (diff={}), length: ref={} boko={} (diff={})",
-                    i, ref_off, boko_off, boko_off - ref_off, ref_len, boko_len, boko_len - ref_len)
+                format!(
+                    "  [{}] offset: ref={} boko={} (diff={}), length: ref={} boko={} (diff={})",
+                    i,
+                    ref_off,
+                    boko_off,
+                    boko_off - ref_off,
+                    ref_len,
+                    boko_len,
+                    boko_len - ref_len
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1172,13 +1251,19 @@ fn collect_noteref_runs(value: &IonValue, runs: &mut Vec<NoterefRun>) {
                     let length = run.get(sym::COUNT).and_then(|v| v.as_int()).unwrap_or(0);
                     let anchor = run.get(sym::ANCHOR_REF).and_then(|v| v.as_symbol());
                     // Check for $616: $617 (noteref marker)
-                    let is_noteref = run.get(sym::NOTEREF_TYPE)
+                    let is_noteref = run
+                        .get(sym::NOTEREF_TYPE)
                         .and_then(|v| v.as_symbol())
                         .map(|s| s == sym::NOTEREF)
                         .unwrap_or(false);
 
                     if let Some(anchor) = anchor {
-                        runs.push(NoterefRun { offset, length, anchor, is_noteref });
+                        runs.push(NoterefRun {
+                            offset,
+                            length,
+                            anchor,
+                            is_noteref,
+                        });
                     }
                 }
             }
@@ -1212,8 +1297,12 @@ fn count_classified_items_recursive(value: &IonValue, classification: u64, count
                 count_classified_items_recursive(child, classification, count);
             }
         }
-        IonValue::List(items) => items.iter().for_each(|i| count_classified_items_recursive(i, classification, count)),
-        IonValue::Annotated(_, inner) => count_classified_items_recursive(inner, classification, count),
+        IonValue::List(items) => items
+            .iter()
+            .for_each(|i| count_classified_items_recursive(i, classification, count)),
+        IonValue::Annotated(_, inner) => {
+            count_classified_items_recursive(inner, classification, count)
+        }
         _ => {}
     }
 }
@@ -1265,11 +1354,12 @@ fn test_kfx_noteref_links_have_popup_marker() {
     }
 
     // Filter to just the ones that are actually noterefs (have $616: $617)
-    let noteref_runs: Vec<_> = all_noteref_runs.iter()
-        .filter(|r| r.is_noteref)
-        .collect();
+    let noteref_runs: Vec<_> = all_noteref_runs.iter().filter(|r| r.is_noteref).collect();
 
-    println!("Found {} runs with noteref marker ($616: $617)", noteref_runs.len());
+    println!(
+        "Found {} runs with noteref marker ($616: $617)",
+        noteref_runs.len()
+    );
 
     // The epictetus.epub has 42 endnotes
     // Each endnote reference in the main text should have a noteref marker
@@ -1290,7 +1380,10 @@ fn test_kfx_noteref_links_have_popup_marker() {
         }
     }
 
-    println!("[OK] {} noteref links point to valid internal anchors", valid_noteref_count);
+    println!(
+        "[OK] {} noteref links point to valid internal anchors",
+        valid_noteref_count
+    );
     assert!(
         valid_noteref_count >= 40,
         "Expected at least 40 valid noteref anchors, got {}",
@@ -1324,8 +1417,14 @@ fn test_kfx_endnotes_have_classification() {
         }
     }
 
-    println!("Found {} items with ENDNOTE classification ($615: $619)", endnote_count);
-    println!("Found {} items with FOOTNOTE classification ($615: $618)", footnote_count);
+    println!(
+        "Found {} items with ENDNOTE classification ($615: $619)",
+        endnote_count
+    );
+    println!(
+        "Found {} items with FOOTNOTE classification ($615: $618)",
+        footnote_count
+    );
 
     // The epictetus.epub uses endnotes (epub:type="endnote"), not footnotes
     // There are 42 endnotes in the book
@@ -1421,5 +1520,8 @@ fn test_kfx_noteref_links_point_to_unique_endnotes() {
         min_eid
     );
 
-    println!("[OK] All {} noteref links point to unique endnotes", noteref_eids.len());
+    println!(
+        "[OK] All {} noteref links point to unique endnotes",
+        noteref_eids.len()
+    );
 }

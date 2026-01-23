@@ -9,7 +9,14 @@ use crate::css::ParsedStyle;
 use super::{ContentItem, StyleRun};
 
 /// Pending text item: (text, style, anchor_href, element_id, is_verse, is_noteref)
-type PendingText = (String, ParsedStyle, Option<String>, Option<String>, bool, bool);
+type PendingText = (
+    String,
+    ParsedStyle,
+    Option<String>,
+    Option<String>,
+    bool,
+    bool,
+);
 
 /// Flatten only the outermost body/section wrappers to get a usable list of content items.
 /// Preserves all other HTML structure faithfully.

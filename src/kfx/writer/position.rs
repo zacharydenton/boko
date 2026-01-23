@@ -84,9 +84,8 @@ pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<S
                     if tag == "li" && item.has_nested_containers() {
                         // Complex list item: nested containers are flattened (no EIDs)
                         // Only the outer list item and leaf text/image items get EIDs
-                        let flattened_count: usize = children.iter()
-                            .map(|c| c.count_flattened_items())
-                            .sum();
+                        let flattened_count: usize =
+                            children.iter().map(|c| c.count_flattened_items()).sum();
                         *content_eid += flattened_count as i64;
                         // List item container gets its EID after all flattened children
                         let container_eid = *content_eid;
@@ -98,7 +97,12 @@ pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<S
                     } else {
                         // Normal container: process children recursively, then assign EID
                         for child in children {
-                            collect_anchor_eids_recursive(child, content_eid, source_path, anchor_eids);
+                            collect_anchor_eids_recursive(
+                                child,
+                                content_eid,
+                                source_path,
+                                anchor_eids,
+                            );
                         }
                         let container_eid = *content_eid;
                         *content_eid += 1;

@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use crate::css::{Color, CssValue, ParsedStyle};
 use crate::kfx::ion::IonValue;
-use crate::kfx::writer::symbols::{sym, SymbolTable};
+use crate::kfx::writer::symbols::{SymbolTable, sym};
 
 use super::conversion::style_to_ion;
-use super::{add_margins, spacing_to_multiplier, ToKfxIon, MARGIN_SYMS};
+use super::{MARGIN_SYMS, ToKfxIon, add_margins, spacing_to_multiplier};
 
 #[test]
 fn test_text_style_no_image_fit_baseline() {
@@ -1500,11 +1500,7 @@ fn test_figure_style_has_layout_hint_figure() {
             assert_eq!(list.len(), 1, "Layout hints should have 1 element");
             match &list[0] {
                 IonValue::Symbol(s) => {
-                    assert_eq!(
-                        *s,
-                        sym::LAYOUT_HINT_FIGURE,
-                        "Expected figure hint ($282)"
-                    );
+                    assert_eq!(*s, sym::LAYOUT_HINT_FIGURE, "Expected figure hint ($282)");
                 }
                 _ => panic!("Expected symbol in layout hints list"),
             }
@@ -1540,11 +1536,7 @@ fn test_caption_style_has_layout_hint_caption() {
             assert_eq!(list.len(), 1, "Layout hints should have 1 element");
             match &list[0] {
                 IonValue::Symbol(s) => {
-                    assert_eq!(
-                        *s,
-                        sym::LAYOUT_HINT_CAPTION,
-                        "Expected caption hint ($453)"
-                    );
+                    assert_eq!(*s, sym::LAYOUT_HINT_CAPTION, "Expected caption hint ($453)");
                 }
                 _ => panic!("Expected symbol in layout hints list"),
             }
