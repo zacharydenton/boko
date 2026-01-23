@@ -743,6 +743,36 @@ impl SymbolTable {
     }
 }
 
+// ============================================================================
+// Content Type Mapping
+// ============================================================================
+
+/// Map HTML tag name to KFX content type symbol.
+/// Returns None for tags that should use CONTENT_PARAGRAPH as default.
+pub fn tag_to_content_type(tag: &str) -> Option<u64> {
+    match tag {
+        "table" => Some(sym::CONTENT_TABLE),
+        "tr" => Some(sym::CONTENT_TABLE_ROW),
+        "thead" => Some(sym::CONTENT_THEAD),
+        "tbody" => Some(sym::CONTENT_TBODY),
+        "tfoot" => Some(sym::CONTENT_TFOOT),
+        "hr" => Some(sym::HORIZONTAL_RULE),
+        _ => None, // Use CONTENT_PARAGRAPH for td, th, div, etc.
+    }
+}
+
+/// Get the content type symbol for a container element.
+/// Handles special cases for lists and list items.
+pub fn container_content_type(tag: &str, is_list: bool, is_list_item: bool) -> u64 {
+    if is_list {
+        sym::CONTENT_LIST
+    } else if is_list_item {
+        sym::CONTENT_LIST_ITEM
+    } else {
+        tag_to_content_type(tag).unwrap_or(sym::CONTENT_PARAGRAPH)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

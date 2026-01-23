@@ -13,7 +13,7 @@ use crate::css::{
 use crate::kfx::ion::{IonValue, encode_kfx_decimal};
 
 use super::{
-    ToKfxIon, break_value_to_symbol, radius_to_ion, spacing_to_ion, spacing_to_multiplier,
+    ToKfxIon, spacing_to_ion,
 };
 use crate::kfx::writer::fragment::KfxFragment;
 use crate::kfx::writer::symbols::{SymbolTable, sym};
@@ -58,8 +58,8 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         // Reference KFX doesn't add hyphens as a default for all styles
     }
 
-    // Font size
-    add_font_size(&mut style_ion, style, is_image_style);
+    // Font properties (size, weight, style)
+    super::font::add_all(&mut style_ion, style, is_image_style);
 
     // Text align - skip left (default value)
     if let Some(align) = style.text_align {
@@ -75,12 +75,6 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         }
     }
 
-    // Font weight
-    add_font_weight(&mut style_ion, style);
-
-    // Font style
-    add_font_style(&mut style_ion, style);
-
     // Font variant
     if let Some(FontVariant::SmallCaps) = style.font_variant {
         style_ion.insert(
@@ -89,55 +83,25 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         );
     }
 
-    // Margins: top/bottom use UNIT_MULTIPLIER (space-before/after), left/right use UNIT_PERCENT
-    // This matches Kindle Previewer's output format
-    if let Some(ref val) = style.margin_top
-        && let Some(ion_val) = spacing_to_multiplier(val)
-    {
-        style_ion.insert(sym::SPACE_BEFORE, ion_val);
-    }
-    if let Some(ref val) = style.margin_bottom
-        && let Some(ion_val) = spacing_to_multiplier(val)
-    {
-        style_ion.insert(sym::SPACE_AFTER, ion_val);
-    }
-    // Left/right margins use percent (unchanged)
-    if let Some(ref val) = style.margin_left
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::MARGIN_LEFT, ion_val);
-    }
-    if let Some(ref val) = style.margin_right
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::MARGIN_RIGHT, ion_val);
-    }
-
-    // Padding: top/bottom use UNIT_MULTIPLIER (like margin top/bottom)
-    if let Some(ref val) = style.padding_top
-        && let Some(ion_val) = spacing_to_multiplier(val)
-    {
-        style_ion.insert(sym::PADDING_TOP, ion_val);
-    }
-    if let Some(ref val) = style.padding_bottom
-        && let Some(ion_val) = spacing_to_multiplier(val)
-    {
-        style_ion.insert(sym::PADDING_BOTTOM, ion_val);
-    }
-    // Padding left/right use their own symbols ($53, $55)
-    if let Some(ref val) = style.padding_left
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::PADDING_LEFT, ion_val);
-    }
-    if let Some(ref val) = style.padding_right
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::PADDING_RIGHT, ion_val);
-    }
+    // Margins and padding: vertical (top/bottom) use UNIT_MULTIPLIER, horizontal use UNIT_PERCENT
+    // See add_margins/add_padding in mod.rs for axis-specific conversion details
+    super::add_margins(
+        &mut style_ion,
+        style.margin_top.as_ref(),
+        style.margin_right.as_ref(),
+        style.margin_bottom.as_ref(),
+        style.margin_left.as_ref(),
+    );
+    super::add_padding(
+        &mut style_ion,
+        style.padding_top.as_ref(),
+        style.padding_right.as_ref(),
+        style.padding_bottom.as_ref(),
+        style.padding_left.as_ref(),
+    );
 
     // Width and height
-    add_dimensions(&mut style_ion, style);
+    super::layout::add_dimensions(&mut style_ion, style);
 
     // Image-specific properties
     if is_image_style {
@@ -145,14 +109,8 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         style_ion.insert(sym::IMAGE_LAYOUT, IonValue::Symbol(sym::ALIGN_CENTER));
     }
 
-    // Margin auto centering
-    add_margin_auto_centering(&mut style_ion, style, is_image_style);
-
-    // Text indent
-    add_text_indent(&mut style_ion, style);
-
-    // Line height
-    add_line_height(&mut style_ion, style, is_image_style);
+    // Text spacing (indent, line-height)
+    super::spacing::add_all(&mut style_ion, style, is_image_style);
 
     // Colors
     if let Some(ref color) = style.color
@@ -210,26 +168,16 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
         style_ion.insert(sym::OPACITY, IonValue::Decimal(encode_kfx_decimal(val)));
     }
 
-    // Min/max dimensions
-    add_min_max_dimensions(&mut style_ion, style);
-
-    // Clear
-    add_clear(&mut style_ion, style);
-
-    // Word break
-    add_word_break(&mut style_ion, style);
-
-    // Overflow
-    add_overflow(&mut style_ion, style);
-
-    // Visibility
-    add_visibility(&mut style_ion, style);
-
-    // Break properties
-    add_break_properties(&mut style_ion, style);
+    // Layout properties (min/max dimensions, clear, word-break, overflow, visibility, break)
+    super::layout::add_min_max_dimensions(&mut style_ion, style);
+    super::layout::add_clear(&mut style_ion, style);
+    super::layout::add_word_break(&mut style_ion, style);
+    super::layout::add_overflow(&mut style_ion, style);
+    super::layout::add_visibility(&mut style_ion, style);
+    super::layout::add_break_properties(&mut style_ion, style);
 
     // Border radius
-    add_border_radius(&mut style_ion, style);
+    add_border_radius_props(&mut style_ion, style);
 
     // P1: List style properties
     add_list_style(&mut style_ion, style);
@@ -292,287 +240,9 @@ pub fn style_to_ion(style: &ParsedStyle, style_sym: u64, _symtab: &mut SymbolTab
     IonValue::Struct(style_ion)
 }
 
-fn add_font_size(
-    style_ion: &mut HashMap<u64, IonValue>,
-    style: &ParsedStyle,
-    is_image_style: bool,
-) {
-    // Images don't get font-size
-    if is_image_style {
-        return;
-    }
-
-    // Only add font-size if explicitly set (reference omits default 1em)
-    if let Some(ref size) = style.font_size {
-        let size_val: f32 = match size {
-            CssValue::Em(v) | CssValue::Rem(v) => *v,
-            CssValue::Percent(v) => *v / 100.0,
-            CssValue::Keyword(k) => match k.as_str() {
-                "smaller" => 0.833333,
-                "larger" => 1.2,
-                "xx-small" => 0.5625,
-                "x-small" => 0.625,
-                "small" => 0.8125,
-                "medium" => 1.0,
-                "large" => 1.125,
-                "x-large" => 1.5,
-                "xx-large" => 2.0,
-                _ => return, // Unknown keyword, skip
-            },
-            CssValue::Px(v) => *v / 16.0, // Assume 16px = 1em
-            _ => return,
-        };
-
-        // Skip if value is effectively 1.0 (default)
-        if (size_val - 1.0).abs() < 0.001 {
-            return;
-        }
-
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM_FONTSIZE));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(size_val)));
-        style_ion.insert(sym::FONT_SIZE, IonValue::Struct(s));
-    }
-}
-
-fn add_font_weight(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref weight) = style.font_weight {
-        let weight_sym = if weight.is_bold() {
-            sym::FONT_WEIGHT_BOLD
-        } else {
-            match weight {
-                crate::css::FontWeight::Weight(100) => sym::FONT_WEIGHT_100,
-                crate::css::FontWeight::Weight(200) => sym::FONT_WEIGHT_200,
-                crate::css::FontWeight::Weight(300) => sym::FONT_WEIGHT_300,
-                crate::css::FontWeight::Weight(400) => sym::FONT_WEIGHT_NORMAL,
-                crate::css::FontWeight::Weight(500) => sym::FONT_WEIGHT_500,
-                crate::css::FontWeight::Weight(600) => sym::FONT_WEIGHT_600,
-                crate::css::FontWeight::Weight(700) => sym::FONT_WEIGHT_BOLD,
-                crate::css::FontWeight::Weight(800) => sym::FONT_WEIGHT_800,
-                crate::css::FontWeight::Weight(900) => sym::FONT_WEIGHT_900,
-                crate::css::FontWeight::Weight(n) if *n < 400 => sym::FONT_WEIGHT_300,
-                crate::css::FontWeight::Weight(n) if *n < 600 => sym::FONT_WEIGHT_500,
-                crate::css::FontWeight::Weight(_) => sym::FONT_WEIGHT_BOLD,
-                crate::css::FontWeight::Normal => sym::FONT_WEIGHT_NORMAL,
-                crate::css::FontWeight::Bold => sym::FONT_WEIGHT_BOLD,
-            }
-        };
-        // Include font-weight (Kindle Previewer includes normal explicitly)
-        style_ion.insert(sym::FONT_WEIGHT, IonValue::Symbol(weight_sym));
-    }
-}
-
-fn add_font_style(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(style_type) = style.font_style {
-        let style_sym = match style_type {
-            crate::css::FontStyle::Italic => sym::FONT_STYLE_ITALIC,
-            crate::css::FontStyle::Oblique => sym::FONT_STYLE_OBLIQUE,
-            crate::css::FontStyle::Normal => sym::FONT_STYLE_NORMAL,
-        };
-        // Include font-style (Kindle Previewer includes normal explicitly)
-        style_ion.insert(sym::FONT_STYLE, IonValue::Symbol(style_sym));
-    }
-}
-
-fn add_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref width) = style.width {
-        let width_val = match width {
-            CssValue::Percent(pct) => {
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Em(v) | CssValue::Rem(v) => {
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Px(v) => {
-                let pct = *v * 0.117;
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
-                Some(IonValue::Struct(s))
-            }
-            // P1: Handle viewport and other new units via ToKfxIon trait
-            _ => width.to_kfx_ion(),
-        };
-        if let Some(val) = width_val {
-            style_ion.insert(sym::STYLE_WIDTH, val);
-        }
-    }
-    if let Some(ref height) = style.height {
-        let height_val = match height {
-            CssValue::Percent(pct) => {
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*pct)));
-                Some(IonValue::Struct(s))
-            }
-            _ => height.to_kfx_ion(),
-        };
-        if let Some(val) = height_val {
-            style_ion.insert(sym::STYLE_HEIGHT, val);
-        }
-    }
-}
-
-fn add_margin_auto_centering(
-    _style_ion: &mut HashMap<u64, IonValue>,
-    style: &ParsedStyle,
-    _is_image_style: bool,
-) {
-    // Note: Reference KFX doesn't include IMAGE_FIT/IMAGE_LAYOUT for margin:auto centering
-    // on text styles. This function is kept for potential future use but currently does nothing
-    // for text elements. Image styles get IMAGE_FIT/IMAGE_LAYOUT added separately.
-    let _has_margin_auto_centering = matches!(
-        (&style.margin_left, &style.margin_right),
-        (Some(CssValue::Keyword(l)), Some(CssValue::Keyword(r)))
-        if l == "auto" && r == "auto"
-    );
-    // Intentionally not adding IMAGE_FIT/IMAGE_LAYOUT for text styles
-}
-
-fn add_text_indent(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref indent) = style.text_indent {
-        let em_val: Option<f32> = match indent {
-            CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
-            CssValue::Px(v) => Some(*v / 16.0),
-            CssValue::Percent(v) => Some(*v / 100.0),
-            _ => None,
-        };
-        if let Some(val) = em_val {
-            // Skip if value is effectively 0 (default)
-            if val.abs() < 0.001 {
-                return;
-            }
-
-            let mut s = HashMap::new();
-            // Reference uses percent for negative values (hanging indent), em for positive
-            if val < 0.0 {
-                // Convert em to percent: 1em = 3.125%
-                let percent_val = val * 3.125;
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(
-                    sym::VALUE,
-                    IonValue::Decimal(encode_kfx_decimal(percent_val)),
-                );
-            } else {
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
-            }
-            style_ion.insert(sym::TEXT_INDENT, IonValue::Struct(s));
-        }
-    }
-}
-
-/// Default line-height factor used by Kindle for normalization
-const DEFAULT_LINE_HEIGHT: f32 = 1.2;
-
-fn add_line_height(
-    style_ion: &mut HashMap<u64, IonValue>,
-    style: &ParsedStyle,
-    is_image_style: bool,
-) {
-    // Images don't get line-height
-    if is_image_style {
-        return;
-    }
-
-    // Reference adds LINE_HEIGHT: 1 for styles with vertical-align or headings
-    // even when CSS doesn't explicitly set line-height
-    let needs_default_line_height = style.vertical_align.is_some() || style.is_heading;
-
-    if let Some(ref height) = style.line_height {
-        // Get font-size ratio for normalization (percent or em/rem)
-        let font_size_rem: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
-            CssValue::Rem(v) => Some(*v),
-            _ => None,
-        });
-
-        // Get font-size as a ratio (for normalizing line-height: 0)
-        let font_size_ratio: Option<f32> = style.font_size.as_ref().and_then(|fs| match fs {
-            CssValue::Percent(v) => Some(*v / 100.0),
-            CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
-            _ => None,
-        });
-
-        // Track if this is a unitless line-height (Number/Percent)
-        // vs absolute units (em/rem/px) - only unitless values need division by 1.2
-        let (css_val, is_unitless): (Option<f32>, bool) = match height {
-            CssValue::Number(v) => (Some(*v), true),
-            CssValue::Percent(v) => (Some(*v / 100.0), true),
-            CssValue::Em(v) => (Some(*v), false),
-            CssValue::Rem(v) => {
-                // Normalize rem line-height relative to rem font-size
-                // CSS: font-size: 0.875rem; line-height: 1.25rem
-                // -> line-height in em = 1.25 / 0.875 = 1.42857
-                let normalized = if let Some(fs_rem) = font_size_rem {
-                    *v / fs_rem
-                } else {
-                    // No font-size in rem, use line-height as-is
-                    *v
-                };
-                (Some(normalized), false)
-            }
-            CssValue::Px(v) => (Some(*v / 16.0), false),
-            _ => (None, false),
-        };
-
-        if let Some(val) = css_val {
-            // Handle special case: line-height: 0 with a font-size ratio
-            // CSS pattern for sub/sup: font-size: 75%; line-height: 0
-            // Kindle normalizes this to line-height = 1.0 / font-size-ratio
-            // This maintains vertical rhythm (smaller text gets larger line-height multiplier)
-            let normalized_val = if val.abs() < 0.001 {
-                // line-height is effectively 0
-                if let Some(fs_ratio) = font_size_ratio {
-                    if fs_ratio > 0.001 {
-                        // Normalize to 1.0 / font-size-ratio
-                        Some(1.0 / fs_ratio)
-                    } else {
-                        None // Skip if font-size is also 0
-                    }
-                } else {
-                    None // No font-size ratio, skip line-height: 0
-                }
-            } else {
-                // Output line-height even if 1.0 - reference KFX includes it
-                // for styles with vertical-align, headings, etc.
-                // Normal case: use the value as-is
-                Some(val)
-            };
-
-            if let Some(final_val) = normalized_val {
-                // Only divide by 1.2 for unitless line-height values (CSS multipliers)
-                // Absolute units (em/rem/px) have already been normalized to em and
-                // don't need the conversion to KFX multiplier space
-                // Note: normalized line-height: 0 is treated as unitless since we computed the ratio
-                let kfx_val = if is_unitless || val.abs() < 0.001 {
-                    final_val / DEFAULT_LINE_HEIGHT
-                } else {
-                    final_val
-                };
-
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
-                style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
-                return; // Already set, don't add default
-            }
-        }
-    }
-
-    // Add default LINE_HEIGHT: 1 for styles with vertical-align or headings
-    if needs_default_line_height {
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(1.0)));
-        style_ion.insert(sym::LINE_HEIGHT, IonValue::Struct(s));
-    }
-}
+// ============================================================================
+// Border and Decoration Functions
+// ============================================================================
 
 fn add_borders(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
     use crate::css::BorderStyle;
@@ -716,108 +386,18 @@ fn add_text_decorations(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedSt
     }
 }
 
-fn add_min_max_dimensions(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(ref val) = style.min_width
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::MIN_WIDTH, ion_val);
-    }
-    if let Some(ref val) = style.min_height
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::MIN_HEIGHT, ion_val);
-    }
-    if let Some(ref val) = style.max_width
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::MAX_WIDTH, ion_val);
-    }
-    if let Some(ref val) = style.max_height
-        && let Some(ion_val) = val.to_kfx_ion()
-    {
-        style_ion.insert(sym::STYLE_HEIGHT, ion_val);
-    }
-}
+// ============================================================================
+// Border Radius
+// ============================================================================
 
-fn add_clear(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(clear) = style.clear {
-        use crate::css::Clear;
-        let clear_sym = match clear {
-            Clear::None => sym::TEXT_TRANSFORM_NONE,
-            Clear::Left => sym::ALIGN_LEFT,
-            Clear::Right => sym::ALIGN_RIGHT,
-            Clear::Both => sym::CLEAR_BOTH,
-        };
-        if clear != Clear::None {
-            style_ion.insert(sym::CLEAR, IonValue::Symbol(clear_sym));
-        }
-    }
-}
-
-fn add_word_break(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(word_break) = style.word_break {
-        use crate::css::WordBreak;
-        let break_sym = match word_break {
-            WordBreak::Normal => sym::FONT_WEIGHT_NORMAL,
-            WordBreak::BreakAll => sym::WORD_BREAK_ALL,
-            WordBreak::KeepAll => sym::FONT_WEIGHT_NORMAL,
-        };
-        if word_break != WordBreak::Normal {
-            style_ion.insert(sym::WORD_BREAK, IonValue::Symbol(break_sym));
-        }
-    }
-}
-
-fn add_overflow(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(overflow) = style.overflow {
-        use crate::css::Overflow;
-        if matches!(overflow, Overflow::Hidden | Overflow::Clip) {
-            style_ion.insert(sym::OVERFLOW_CLIP, IonValue::Bool(true));
-        }
-    }
-}
-
-fn add_visibility(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    if let Some(visibility) = style.visibility {
-        use crate::css::Visibility;
-        style_ion.insert(
-            sym::VISIBILITY,
-            IonValue::Bool(visibility == Visibility::Visible),
-        );
-    }
-}
-
-fn add_break_properties(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    // Use legacy page-break-* symbols ($133-$135) per KFX spec
-    if let Some(break_val) = style.break_before {
-        let break_sym = break_value_to_symbol(break_val);
-        style_ion.insert(sym::PAGE_BREAK_BEFORE, IonValue::Symbol(break_sym));
-    }
-    if let Some(break_val) = style.break_after {
-        let break_sym = break_value_to_symbol(break_val);
-        style_ion.insert(sym::PAGE_BREAK_AFTER, IonValue::Symbol(break_sym));
-    }
-    if let Some(break_val) = style.break_inside {
-        let break_sym = break_value_to_symbol(break_val);
-        style_ion.insert(sym::BREAK_INSIDE, IonValue::Symbol(break_sym));
-    }
-}
-
-fn add_border_radius(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
-    let radii = [
-        (style.border_radius_tl.as_ref(), sym::BORDER_RADIUS_TL),
-        (style.border_radius_tr.as_ref(), sym::BORDER_RADIUS_TR),
-        (style.border_radius_br.as_ref(), sym::BORDER_RADIUS_BR),
-        (style.border_radius_bl.as_ref(), sym::BORDER_RADIUS_BL),
-    ];
-
-    for (radius, sym) in radii {
-        if let Some(r) = radius
-            && let Some(ion_val) = radius_to_ion(r)
-        {
-            style_ion.insert(sym, ion_val);
-        }
-    }
+fn add_border_radius_props(style_ion: &mut HashMap<u64, IonValue>, style: &ParsedStyle) {
+    super::add_border_radius(
+        style_ion,
+        style.border_radius_tl.as_ref(),
+        style.border_radius_tr.as_ref(),
+        style.border_radius_br.as_ref(),
+        style.border_radius_bl.as_ref(),
+    );
 }
 
 // P1: List style properties

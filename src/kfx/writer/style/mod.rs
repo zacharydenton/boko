@@ -1,9 +1,28 @@
 //! CSS to KFX style conversion.
 //!
 //! This module handles converting CSS properties to KFX ION format,
-//! including the ToKfxIon trait and FourSided property abstraction.
+//! including the ToKfxIon trait and specialized property modules.
+//!
+//! # Axis-Specific Unit Conversion
+//!
+//! KFX uses different unit systems for vertical and horizontal spacing:
+//!
+//! - **Vertical (top/bottom)**: Uses `UNIT_MULTIPLIER` ($310), values normalized
+//!   by dividing by 1.2 (default line-height). CSS `margin-top: 1em` becomes
+//!   `{$306: $310, $307: 0.833}` (1.0 / 1.2 ≈ 0.833).
+//!
+//! - **Horizontal (left/right)**: Uses `UNIT_PERCENT` ($314) directly.
+//!   CSS `margin-left: 5%` becomes `{$306: $314, $307: 5.0}`.
+//!
+//! This matches Kindle Previewer's output format, where vertical spacing is
+//! relative to line-height and horizontal spacing is relative to container width.
+//!
+//! See [`add_margins`], [`add_padding`], and [`spacing_to_multiplier`] for details.
 
 mod conversion;
+pub mod font;
+pub mod layout;
+pub mod spacing;
 
 pub use conversion::*;
 
@@ -20,144 +39,62 @@ pub trait ToKfxIon {
     fn to_kfx_ion(&self) -> Option<IonValue>;
 }
 
+// ============================================================================
+// Unit Value Construction
+// ============================================================================
+
+/// Build a KFX unit-value struct: {$306: unit_symbol, $307: decimal_value}
+/// Returns None if value is effectively zero (abs < 0.001)
+fn unit_value(unit_sym: u64, value: f32) -> Option<IonValue> {
+    if value.abs() < 0.001 {
+        return None;
+    }
+    let mut s = HashMap::new();
+    s.insert(sym::UNIT, IonValue::Symbol(unit_sym));
+    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(value)));
+    Some(IonValue::Struct(s))
+}
+
+/// Build a KFX unit-value struct, always (even for zero values)
+/// Used when zero is a meaningful value that should be output
+pub fn unit_value_always(unit_sym: u64, value: f32) -> IonValue {
+    let mut s = HashMap::new();
+    s.insert(sym::UNIT, IonValue::Symbol(unit_sym));
+    s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(value)));
+    IonValue::Struct(s)
+}
+
+// ============================================================================
+// CssValue → KFX ION Conversion
+// ============================================================================
+
 /// Convert a CssValue to Ion for margins/padding
 /// Format: {$306: unit_symbol, $307: decimal_value}
 impl ToKfxIon for CssValue {
     fn to_kfx_ion(&self) -> Option<IonValue> {
         match self {
-            CssValue::Px(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                // Convert px to percent (approximate: 1px ~ 0.117% based on mapping)
-                let pct = *v * 0.117;
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Em(v) | CssValue::Rem(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                // Convert em to percent (3.125% per 1em based on mapping)
-                let pct = *v * 3.125;
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(pct)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Percent(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PERCENT));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Number(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                // Unitless number - use multiplier
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            // P1: Additional viewport units
-            CssValue::Vw(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VW));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Vh(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VH));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Vmin(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VMIN));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Vmax(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_VMAX));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Ch(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_CH));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Ex(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EX));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            // Physical units - convert to px equivalent for KFX
-            CssValue::Cm(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_CM));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Mm(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MM));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::In(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_IN));
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
-            CssValue::Pt(v) => {
-                if v.abs() < 0.001 {
-                    return None;
-                }
-                let mut s = HashMap::new();
-                s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX)); // pt uses px symbol
-                s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(*v)));
-                Some(IonValue::Struct(s))
-            }
+            // Relative units converted to percent
+            CssValue::Px(v) => unit_value(sym::UNIT_PERCENT, *v * 0.117),
+            CssValue::Em(v) | CssValue::Rem(v) => unit_value(sym::UNIT_PERCENT, *v * 3.125),
+            CssValue::Percent(v) => unit_value(sym::UNIT_PERCENT, *v),
+            CssValue::Number(v) => unit_value(sym::UNIT_MULTIPLIER, *v),
+
+            // Viewport units
+            CssValue::Vw(v) => unit_value(sym::UNIT_VW, *v),
+            CssValue::Vh(v) => unit_value(sym::UNIT_VH, *v),
+            CssValue::Vmin(v) => unit_value(sym::UNIT_VMIN, *v),
+            CssValue::Vmax(v) => unit_value(sym::UNIT_VMAX, *v),
+
+            // Font-relative units
+            CssValue::Ch(v) => unit_value(sym::UNIT_CH, *v),
+            CssValue::Ex(v) => unit_value(sym::UNIT_EX, *v),
+
+            // Physical units
+            CssValue::Cm(v) => unit_value(sym::UNIT_CM, *v),
+            CssValue::Mm(v) => unit_value(sym::UNIT_MM, *v),
+            CssValue::In(v) => unit_value(sym::UNIT_IN, *v),
+            CssValue::Pt(v) => unit_value(sym::UNIT_PX, *v), // pt uses px symbol
+
             _ => None,
         }
     }
@@ -249,13 +186,14 @@ pub fn radius_to_ion(val: &CssValue) -> Option<IonValue> {
         CssValue::Percent(v) => Some(*v * 45.0), // percent to px approximation
         _ => None,
     };
-    px_val.map(|v| {
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_PX));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(v)));
-        IonValue::Struct(s)
-    })
+    // Note: radius values are always output even if zero, so we use unit_value_always
+    // but filter None from the match above
+    px_val.map(|v| unit_value_always(sym::UNIT_PX, v))
 }
+
+// ============================================================================
+// Four-Sided Property Helpers
+// ============================================================================
 
 /// Symbols for four-sided properties (margin, padding, border, radius)
 pub struct FourSidedSyms {
@@ -265,28 +203,99 @@ pub struct FourSidedSyms {
     pub left: u64,
 }
 
-/// Four-sided property abstraction for margin, padding, border, radius
-pub struct FourSided<'a, T> {
-    pub top: Option<&'a T>,
-    pub right: Option<&'a T>,
-    pub bottom: Option<&'a T>,
-    pub left: Option<&'a T>,
+/// Symbol constants for margin properties
+pub const MARGIN_SYMS: FourSidedSyms = FourSidedSyms {
+    top: sym::SPACE_BEFORE,
+    right: sym::MARGIN_RIGHT,
+    bottom: sym::SPACE_AFTER,
+    left: sym::MARGIN_LEFT,
+};
+
+/// Symbol constants for padding properties
+pub const PADDING_SYMS: FourSidedSyms = FourSidedSyms {
+    top: sym::PADDING_TOP,
+    right: sym::PADDING_RIGHT,
+    bottom: sym::PADDING_BOTTOM,
+    left: sym::PADDING_LEFT,
+};
+
+/// Symbol constants for border radius properties
+pub const BORDER_RADIUS_SYMS: FourSidedSyms = FourSidedSyms {
+    top: sym::BORDER_RADIUS_TL,
+    right: sym::BORDER_RADIUS_TR,
+    bottom: sym::BORDER_RADIUS_BR,
+    left: sym::BORDER_RADIUS_BL,
+};
+
+/// Add a spacing property with axis-specific conversion.
+///
+/// Vertical (top/bottom) uses UNIT_MULTIPLIER (normalized by line-height).
+/// Horizontal (left/right) uses UNIT_PERCENT.
+fn add_spacing_property(
+    style: &mut HashMap<u64, IonValue>,
+    value: Option<&CssValue>,
+    sym: u64,
+    is_vertical: bool,
+) {
+    if let Some(val) = value {
+        let ion_val = if is_vertical {
+            spacing_to_multiplier(val)
+        } else {
+            val.to_kfx_ion()
+        };
+        if let Some(v) = ion_val {
+            style.insert(sym, v);
+        }
+    }
 }
 
-impl<'a, T: ToKfxIon> FourSided<'a, T> {
-    /// Add all four sides to a style struct
-    pub fn add_to_style(&self, style: &mut HashMap<u64, IonValue>, syms: &FourSidedSyms) {
-        if let Some(v) = self.top.and_then(|t| t.to_kfx_ion()) {
-            style.insert(syms.top, v);
-        }
-        if let Some(v) = self.right.and_then(|r| r.to_kfx_ion()) {
-            style.insert(syms.right, v);
-        }
-        if let Some(v) = self.bottom.and_then(|b| b.to_kfx_ion()) {
-            style.insert(syms.bottom, v);
-        }
-        if let Some(v) = self.left.and_then(|l| l.to_kfx_ion()) {
-            style.insert(syms.left, v);
+/// Add all four margin properties with axis-specific conversion
+pub fn add_margins(
+    style: &mut HashMap<u64, IonValue>,
+    top: Option<&CssValue>,
+    right: Option<&CssValue>,
+    bottom: Option<&CssValue>,
+    left: Option<&CssValue>,
+) {
+    add_spacing_property(style, top, MARGIN_SYMS.top, true);
+    add_spacing_property(style, right, MARGIN_SYMS.right, false);
+    add_spacing_property(style, bottom, MARGIN_SYMS.bottom, true);
+    add_spacing_property(style, left, MARGIN_SYMS.left, false);
+}
+
+/// Add all four padding properties with axis-specific conversion
+pub fn add_padding(
+    style: &mut HashMap<u64, IonValue>,
+    top: Option<&CssValue>,
+    right: Option<&CssValue>,
+    bottom: Option<&CssValue>,
+    left: Option<&CssValue>,
+) {
+    add_spacing_property(style, top, PADDING_SYMS.top, true);
+    add_spacing_property(style, right, PADDING_SYMS.right, false);
+    add_spacing_property(style, bottom, PADDING_SYMS.bottom, true);
+    add_spacing_property(style, left, PADDING_SYMS.left, false);
+}
+
+/// Add all four border radius properties
+pub fn add_border_radius(
+    style: &mut HashMap<u64, IonValue>,
+    top_left: Option<&CssValue>,
+    top_right: Option<&CssValue>,
+    bottom_right: Option<&CssValue>,
+    bottom_left: Option<&CssValue>,
+) {
+    let corners = [
+        (top_left, BORDER_RADIUS_SYMS.top),
+        (top_right, BORDER_RADIUS_SYMS.right),
+        (bottom_right, BORDER_RADIUS_SYMS.bottom),
+        (bottom_left, BORDER_RADIUS_SYMS.left),
+    ];
+    for (value, sym) in corners {
+        if let Some(val) = value
+            && let Some(ion) = radius_to_ion(val)
+        {
+            style.insert(sym, ion);
         }
     }
 }
@@ -295,59 +304,39 @@ impl<'a, T: ToKfxIon> FourSided<'a, T> {
 pub fn spacing_to_ion(spacing: &CssValue) -> Option<IonValue> {
     let em_val: Option<f32> = match spacing {
         CssValue::Em(v) | CssValue::Rem(v) => Some(*v),
-        CssValue::Px(v) => Some(*v * 0.45 / 1.0), // px to em approximation based on mapping
+        CssValue::Px(v) => Some(*v * 0.45), // px to em approximation based on mapping
         CssValue::Keyword(k) if k == "normal" => Some(0.0),
         _ => None,
     };
-    em_val.map(|val| {
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_EM));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(val)));
-        IonValue::Struct(s)
-    })
+    // Spacing values always output (including zero for "normal")
+    em_val.map(|val| unit_value_always(sym::UNIT_EM, val))
 }
 
 /// Default line-height factor used by Kindle for normalization
 const DEFAULT_LINE_HEIGHT: f32 = 1.2;
 
 /// Convert margin-top/bottom to UNIT_MULTIPLIER format for space-before/space-after
-/// Reference KFX uses UNIT_MULTIPLIER with values divided by 1.2 (default line-height)
-/// This converts CSS margins (relative to font-size) to KFX multipliers (relative to line-height)
+///
+/// Vertical spacing (margin-top/bottom, padding-top/bottom) is normalized relative to
+/// line-height (divided by 1.2) and uses UNIT_MULTIPLIER. This matches Kindle Previewer's
+/// output format and converts CSS margins (relative to font-size) to KFX multipliers
+/// (relative to line-height).
 pub fn spacing_to_multiplier(spacing: &CssValue) -> Option<IonValue> {
     let css_val: Option<f32> = match spacing {
-        CssValue::Em(v) | CssValue::Rem(v) => {
-            if v.abs() < 0.001 {
-                None
-            } else {
-                Some(*v)
-            }
-        }
+        CssValue::Em(v) | CssValue::Rem(v) => (*v).abs().ge(&0.001).then_some(*v),
         CssValue::Px(v) => {
             let em = *v / 16.0; // Convert px to em (16px = 1em)
-            if em.abs() < 0.001 { None } else { Some(em) }
+            em.abs().ge(&0.001).then_some(em)
         }
         CssValue::Percent(v) => {
-            // Percent of line-height, approximate as multiplier
-            let mult = *v / 100.0;
-            if mult.abs() < 0.001 { None } else { Some(mult) }
+            let mult = *v / 100.0; // Percent of line-height as multiplier
+            mult.abs().ge(&0.001).then_some(mult)
         }
-        CssValue::Number(v) => {
-            if v.abs() < 0.001 {
-                None
-            } else {
-                Some(*v)
-            }
-        }
+        CssValue::Number(v) => (*v).abs().ge(&0.001).then_some(*v),
         _ => None,
     };
-    css_val.map(|val| {
-        // Kindle Previewer divides vertical margins by 1.2 (default line-height factor)
-        let kfx_val = val / DEFAULT_LINE_HEIGHT;
-        let mut s = HashMap::new();
-        s.insert(sym::UNIT, IonValue::Symbol(sym::UNIT_MULTIPLIER));
-        s.insert(sym::VALUE, IonValue::Decimal(encode_kfx_decimal(kfx_val)));
-        IonValue::Struct(s)
-    })
+    // Kindle Previewer divides vertical margins by 1.2 (default line-height factor)
+    css_val.and_then(|val| unit_value(sym::UNIT_MULTIPLIER, val / DEFAULT_LINE_HEIGHT))
 }
 
 /// Convert break property value to symbol
@@ -413,6 +402,103 @@ mod tests {
                 assert_eq!(val, expected, "Color #123456 should be 0xFF123456");
             }
             _ => panic!("Expected Int value"),
+        }
+    }
+
+    #[test]
+    fn test_vertical_spacing_uses_multiplier() {
+        // Vertical spacing (margin-top/bottom) uses UNIT_MULTIPLIER
+        // and is normalized by dividing by 1.2 (default line-height)
+        let margin = CssValue::Em(1.2); // 1.2em
+        let ion = spacing_to_multiplier(&margin).expect("Should produce ION value");
+
+        match ion {
+            IonValue::Struct(s) => {
+                // Unit should be UNIT_MULTIPLIER ($310)
+                match s.get(&sym::UNIT) {
+                    Some(IonValue::Symbol(unit)) => {
+                        assert_eq!(
+                            *unit,
+                            sym::UNIT_MULTIPLIER,
+                            "Vertical spacing should use UNIT_MULTIPLIER ($310)"
+                        );
+                    }
+                    _ => panic!("Expected Symbol for unit"),
+                }
+            }
+            _ => panic!("Expected Struct value"),
+        }
+    }
+
+    #[test]
+    fn test_horizontal_spacing_uses_percent() {
+        // Horizontal spacing (margin-left/right) uses UNIT_PERCENT directly
+        let margin = CssValue::Percent(5.0); // 5%
+        let ion = margin.to_kfx_ion().expect("Should produce ION value");
+
+        match ion {
+            IonValue::Struct(s) => {
+                // Unit should be UNIT_PERCENT ($314)
+                match s.get(&sym::UNIT) {
+                    Some(IonValue::Symbol(unit)) => {
+                        assert_eq!(
+                            *unit,
+                            sym::UNIT_PERCENT,
+                            "Horizontal spacing should use UNIT_PERCENT ($314)"
+                        );
+                    }
+                    _ => panic!("Expected Symbol for unit"),
+                }
+            }
+            _ => panic!("Expected Struct value"),
+        }
+    }
+
+    #[test]
+    fn test_add_margins_uses_axis_specific_units() {
+        // Test that add_margins applies correct units per axis
+        let mut style = HashMap::new();
+
+        // Add margins with same CSS value for all sides
+        let margin = CssValue::Em(1.0);
+        add_margins(
+            &mut style,
+            Some(&margin), // top
+            Some(&margin), // right
+            Some(&margin), // bottom
+            Some(&margin), // left
+        );
+
+        // Vertical (top/bottom) should use UNIT_MULTIPLIER
+        if let Some(IonValue::Struct(top)) = style.get(&MARGIN_SYMS.top) {
+            match top.get(&sym::UNIT) {
+                Some(IonValue::Symbol(unit)) => {
+                    assert_eq!(
+                        *unit,
+                        sym::UNIT_MULTIPLIER,
+                        "margin-top should use UNIT_MULTIPLIER"
+                    );
+                }
+                _ => panic!("Expected Symbol for margin-top unit"),
+            }
+        } else {
+            panic!("Expected Struct for margin-top");
+        }
+
+        // Horizontal (right/left) should use UNIT_PERCENT
+        if let Some(IonValue::Struct(right)) = style.get(&MARGIN_SYMS.right) {
+            match right.get(&sym::UNIT) {
+                Some(IonValue::Symbol(unit)) => {
+                    assert_eq!(
+                        *unit,
+                        sym::UNIT_PERCENT,
+                        "margin-right should use UNIT_PERCENT"
+                    );
+                }
+                _ => panic!("Expected Symbol for margin-right unit"),
+            }
+        } else {
+            panic!("Expected Struct for margin-right");
         }
     }
 }

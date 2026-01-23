@@ -6,10 +6,18 @@
 //! - Content chunking for large chapters
 //! - XHTML content extraction
 //! - Content validation (P3 improvement)
+//!
+//! Submodules:
+//! - `extraction`: Core XHTML→ContentItem conversion
+//! - `html_utils`: HTML/XML utility functions
+//! - `merging`: Post-processing (flatten, merge inline runs)
 
 mod extraction;
+pub(crate) mod html_utils;
+pub(crate) mod merging;
 
 pub use extraction::*;
+pub use merging::{flatten_containers, merge_text_with_inline_runs};
 
 use crate::css::ParsedStyle;
 
