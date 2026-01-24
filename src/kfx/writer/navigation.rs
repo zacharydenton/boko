@@ -380,13 +380,9 @@ fn build_page_list_entries(chapters: &[ChapterData], has_cover: bool) -> Vec<Ion
 
     let mut chunks: Vec<ContentChunk> = Vec::new();
 
-    // Add cover if present (cover image counts as 1 position)
+    // Skip cover in page list - it shouldn't count as page 1
+    // But still advance EID base to keep EID calculations correct
     if has_cover {
-        chunks.push(ContentChunk {
-            eid: eid_base + 1, // Cover image EID
-            length: 1,
-            is_section_start: true,
-        });
         eid_base += 2;
     }
 

@@ -515,6 +515,89 @@ fn test_kfx_page_list_navigation() {
     );
 }
 
+/// Test that page 1 points to content, not cover
+///
+/// The cover image should not be included in the page list. Page 1 should
+/// point to the first actual content section (e.g., Titlepage), not the cover.
+#[test]
+fn test_kfx_page_list_skips_cover() {
+    use boko::write_kfx_to_writer;
+    use std::io::Cursor;
+
+    // Generate KFX
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse KFX to extract entities
+    let entities = parse_kfx_container(&kfx_data);
+
+    // Get book navigation
+    let nav = get_book_navigation(&entities).expect("missing book_navigation");
+    let containers = extract_nav_containers(&nav);
+
+    // Find page list container ($237)
+    let page_list = containers
+        .iter()
+        .find(|c| c.nav_type == sym::PAGE_LIST_NAV_TYPE)
+        .expect("Page list container not found");
+
+    // Find TOC container to get known EIDs
+    let toc = containers
+        .iter()
+        .find(|c| c.nav_type == sym::TOC)
+        .expect("TOC container not found");
+
+    // Get cover EID from landmarks
+    let landmarks = containers
+        .iter()
+        .find(|c| c.nav_type == sym::LANDMARKS_NAV_TYPE)
+        .expect("Landmarks container not found");
+
+    let cover_eid = landmarks
+        .entries
+        .iter()
+        .find(|e| e.landmark_type == Some(sym::LANDMARK_COVER))
+        .and_then(|e| e.position);
+
+    // Get first content EID (Titlepage) from TOC
+    let first_content_eid = toc.entries.first().and_then(|e| e.position);
+
+    println!("Cover EID: {:?}", cover_eid);
+    println!("First content EID (Titlepage): {:?}", first_content_eid);
+
+    // Page 1 should be the first entry in page list
+    let page_1 = page_list.entries.first().expect("Page list should have entries");
+    let page_1_eid = page_1.position.expect("Page 1 should have position");
+
+    println!("Page 1 title: {}", page_1.title);
+    println!("Page 1 EID: {}", page_1_eid);
+
+    // Verify page 1 title is "1"
+    assert_eq!(page_1.title, "1", "First page should be labeled '1'");
+
+    // Verify page 1 does NOT point to cover
+    if let Some(cover) = cover_eid {
+        assert_ne!(
+            page_1_eid, cover,
+            "Page 1 should not point to cover (EID {})",
+            cover
+        );
+    }
+
+    // Verify page 1 points to first content section
+    if let Some(content) = first_content_eid {
+        assert_eq!(
+            page_1_eid, content,
+            "Page 1 should point to first content (EID {}), not EID {}",
+            content, page_1_eid
+        );
+    }
+
+    println!("[OK] Page 1 correctly skips cover and points to first content");
+}
+
 /// Test that TOC entries with special characters survive EPUB -> AZW3 -> EPUB roundtrip
 #[test]
 fn test_toc_text_preservation_roundtrip() {
