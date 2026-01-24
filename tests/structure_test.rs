@@ -1894,6 +1894,102 @@ fn test_kfx_navigation_targets_valid() {
     println!("[OK] All navigation targets point to valid EIDs");
 }
 
+/// Test that nested TOC entries inherit their parent's EID
+///
+/// In KFX format, nested TOC entries (children) should point to the same EID
+/// as their parent entry. This "merge IDs up the tree" behavior is required
+/// for the Kindle TOC popup to work correctly. Without it, the TOC menu
+/// opens but shows no entries.
+#[test]
+fn test_kfx_nested_toc_entries_inherit_parent_eid() {
+    use boko::write_kfx_to_writer;
+
+    // Generate boko KFX
+    let book = read_epub(fixture_path("epictetus.epub")).expect("Failed to read EPUB");
+    let mut buffer = Cursor::new(Vec::new());
+    write_kfx_to_writer(&book, &mut buffer).expect("Failed to write KFX");
+    let kfx_data = buffer.into_inner();
+
+    // Parse KFX
+    let entities = parse_kfx_container(&kfx_data);
+
+    // Extract navigation
+    let nav = get_book_navigation(&entities).expect("missing book_navigation");
+    let containers = extract_nav_containers(&nav);
+
+    // Find TOC container
+    let toc_container = containers
+        .iter()
+        .find(|c| c.nav_type == sym::TOC)
+        .expect("TOC container not found");
+
+    // Check that nested entries inherit parent EID
+    fn check_eid_inheritance(entries: &[NavEntry], parent_eid: Option<i64>, path: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+
+        for (i, entry) in entries.iter().enumerate() {
+            let entry_path = format!("{}[{}] '{}'", path, i, entry.title);
+
+            // If we have a parent EID and this entry has children, check inheritance
+            if let Some(parent) = parent_eid {
+                if let Some(pos) = entry.position {
+                    if pos != parent {
+                        violations.push(format!(
+                            "{}: EID {} should be {} (parent's EID)",
+                            entry_path, pos, parent
+                        ));
+                    }
+                }
+            }
+
+            // Check children - they should inherit THIS entry's EID
+            if !entry.children.is_empty() {
+                let child_violations = check_eid_inheritance(
+                    &entry.children,
+                    entry.position,
+                    &entry_path,
+                );
+                violations.extend(child_violations);
+            }
+        }
+
+        violations
+    }
+
+    // Top-level entries don't have a parent, so pass None
+    let violations = check_eid_inheritance(&toc_container.entries, None, "TOC");
+
+    if !violations.is_empty() {
+        println!("EID inheritance violations:");
+        for v in &violations {
+            println!("  {}", v);
+        }
+        panic!(
+            "Found {} nested entries not inheriting parent EID",
+            violations.len()
+        );
+    }
+
+    // Also verify we actually have nested entries to test
+    fn count_nested(entries: &[NavEntry]) -> usize {
+        entries
+            .iter()
+            .map(|e| e.children.len() + count_nested(&e.children))
+            .sum()
+    }
+
+    let nested_count = count_nested(&toc_container.entries);
+    assert!(
+        nested_count > 0,
+        "Test requires nested TOC entries to be meaningful"
+    );
+
+    println!(
+        "[OK] All {} nested TOC entries inherit parent EID",
+        nested_count
+    );
+}
+
 /// Test the raw Ion structure of navigation entries
 ///
 /// This test dumps the actual Ion structure to help debug format issues.
@@ -2297,7 +2393,6 @@ fn test_kfx_section_fragment_structure() {
 
     // Compare document_data ($538) structure
     println!("\n=== Document Data ($538) Comparison ===\n");
-    let empty: Vec<(u32, Vec<u8>)> = vec![];
 
     fn dump_doc_data_keys(entities: &HashMap<u32, Vec<(u32, Vec<u8>)>>, name: &str) {
         let empty: Vec<(u32, Vec<u8>)> = vec![];
