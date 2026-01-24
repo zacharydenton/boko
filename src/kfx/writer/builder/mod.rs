@@ -19,7 +19,7 @@ use crate::css::{ParsedStyle, Stylesheet};
 use crate::kfx::ion::IonValue;
 
 use super::content::{
-    ChapterData, ContentChunk, ContentItem, collect_referenced_images, count_content_items,
+    ChapterData, ContentChunk, ContentItem, collect_referenced_images, count_content_eids,
     extract_content_from_xhtml, extract_css_hrefs_from_xhtml,
 };
 use super::fragment::KfxFragment;
@@ -134,7 +134,7 @@ impl KfxBookBuilder {
         let first_content_eid = chapters
             .first()
             .and_then(|ch| builder.section_eids.get(&ch.source_path).copied());
-        builder.add_book_navigation_fragment(&book.toc, has_cover, first_content_eid);
+        builder.add_book_navigation_fragment(&book.toc, &chapters, has_cover, first_content_eid);
         builder.add_nav_unit_list();
 
         // Add styles
@@ -161,7 +161,7 @@ impl KfxBookBuilder {
                 .unwrap_or((1400, 2100));
 
             builder.add_cover_section(cover_sym, cover_width, cover_height, eid_base);
-            builder.add_auxiliary_data_for_section("cover");
+            builder.add_auxiliary_data_for_section("cover-section");
             eid_base += 2;
         }
 
@@ -175,9 +175,10 @@ impl KfxBookBuilder {
 
             builder.add_content_block_chunked(chapter, &chapter_chunks, eid_base);
             builder.add_section(chapter, eid_base);
-            builder.add_auxiliary_data_for_section(&chapter.id);
+            let section_fid = format!("section-{}", chapter.id);
+            builder.add_auxiliary_data_for_section(&section_fid);
 
-            let total_items = count_content_items(&chapter.content);
+            let total_items = count_content_eids(&chapter.content);
             eid_base += 1 + total_items as i64;
         }
 

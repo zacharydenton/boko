@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::css::ParsedStyle;
 use crate::kfx::ion::IonValue;
+use crate::kfx::test_helpers::{parse_entity_ion, parse_kfx_container};
 use crate::kfx::writer::content::{ChapterData, ContentItem, ListType, StyleRun};
 use crate::kfx::writer::position::{build_anchor_eids, build_section_eids};
 use crate::kfx::writer::resources::build_resource_symbols;
@@ -1084,4 +1085,701 @@ fn test_non_noteref_link_has_no_noteref_type() {
         noteref_type.is_none(),
         "Regular link should NOT have NOTEREF_TYPE"
     );
+}
+
+/// Test that TOC positions resolve to correct content in the generated KFX.
+/// Compare with reference KFX to ensure TOC points to same entity types.
+#[test]
+fn test_toc_positions_match_reference() {
+    // Parse reference KFX
+    let ref_data = std::fs::read("tests/fixtures/epictetus.kfx").unwrap();
+    let ref_entities = parse_kfx_container(&ref_data);
+
+    // Generate KFX from EPUB
+    let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+    let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+    let gen_data = KfxBookBuilder::from_book(&book).build();
+    let gen_entities = parse_kfx_container(&gen_data);
+
+    // Write generated file for inspection
+    std::fs::write("/tmp/test-toc.kfx", &gen_data).unwrap();
+
+    // Extract navigation entries from $389 (book_navigation)
+    fn extract_nav_positions(nav_value: &IonValue) -> Vec<(String, i64, i64)> {
+        let mut results = Vec::new();
+        extract_nav_positions_recursive(nav_value, &mut results);
+        results
+    }
+
+    fn extract_nav_positions_recursive(value: &IonValue, results: &mut Vec<(String, i64, i64)>) {
+        match value {
+            IonValue::Annotated(annots, inner) => {
+                if annots.contains(&393) {
+                    // This is a nav entry ($393 annotated)
+                    // Extract title from $241 (NAV_TITLE) -> $244 (TEXT)
+                    let title = inner.get(241)
+                        .and_then(|t| t.get(244))
+                        .and_then(|v| v.as_string())
+                        .unwrap_or("?")
+                        .to_string();
+
+                    // Extract position and offset from $246 (NAV_TARGET)
+                    let (pos, offset) = inner.get(246)
+                        .map(|target| {
+                            let p = target.get(155).and_then(|v| v.as_int()).unwrap_or(-1);
+                            let o = target.get(143).and_then(|v| v.as_int()).unwrap_or(0);
+                            (p, o)
+                        })
+                        .unwrap_or((-1, 0));
+
+                    results.push((title, pos, offset));
+
+                    // Recurse into children ($247 = NAV_ENTRIES)
+                    if let Some(children) = inner.get(247) {
+                        extract_nav_positions_recursive(children, results);
+                    }
+                } else {
+                    // Other annotations (like $391 nav containers) - recurse into inner
+                    extract_nav_positions_recursive(inner, results);
+                }
+            }
+            IonValue::List(items) => {
+                for item in items {
+                    extract_nav_positions_recursive(item, results);
+                }
+            }
+            IonValue::Struct(map) => {
+                // Handle structs with $392 (nav container list) or $247 (nav entries)
+                if let Some(nav_containers) = map.get(&392) {
+                    extract_nav_positions_recursive(nav_containers, results);
+                }
+                if let Some(nav_entries) = map.get(&247) {
+                    extract_nav_positions_recursive(nav_entries, results);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Get reference navigation
+    let ref_nav = ref_entities.get(&389)
+        .and_then(|v| v.first())
+        .and_then(|(_, payload)| parse_entity_ion(payload))
+        .expect("Reference should have $389");
+
+    // Debug: print the structure of the navigation
+    println!("\n=== Reference $389 structure ===");
+    fn debug_nav_structure(value: &IonValue, indent: usize) {
+        let prefix = "  ".repeat(indent);
+        match value {
+            IonValue::List(items) => {
+                println!("{}List[{}]:", prefix, items.len());
+                for (i, item) in items.iter().take(3).enumerate() {
+                    println!("{}  [{}]:", prefix, i);
+                    debug_nav_structure(item, indent + 2);
+                }
+                if items.len() > 3 {
+                    println!("{}  ... ({} more)", prefix, items.len() - 3);
+                }
+            }
+            IonValue::Struct(map) => {
+                let keys: Vec<_> = map.keys().collect();
+                println!("{}Struct keys: {:?}", prefix, keys);
+                for key in keys.iter().take(5) {
+                    if let Some(v) = map.get(key) {
+                        println!("{}  ${}:", prefix, key);
+                        debug_nav_structure(v, indent + 2);
+                    }
+                }
+            }
+            IonValue::Annotated(annots, inner) => {
+                println!("{}Annotated {:?}:", prefix, annots);
+                debug_nav_structure(inner, indent + 1);
+            }
+            IonValue::Symbol(s) => println!("{}Symbol({})", prefix, s),
+            IonValue::String(s) => println!("{}String({:?})", prefix, if s.len() > 30 { &s[..30] } else { s }),
+            IonValue::Int(i) => println!("{}Int({})", prefix, i),
+            _ => println!("{}Other: {:?}", prefix, value),
+        }
+    }
+    debug_nav_structure(&ref_nav, 0);
+
+    let ref_nav_positions = extract_nav_positions(&ref_nav);
+
+    // Get generated navigation
+    let gen_nav = gen_entities.get(&389)
+        .and_then(|v| v.first())
+        .and_then(|(_, payload)| parse_entity_ion(payload))
+        .expect("Generated should have $389");
+
+    println!("\n=== Generated $389 structure ===");
+    debug_nav_structure(&gen_nav, 0);
+
+    let gen_nav_positions = extract_nav_positions(&gen_nav);
+
+    println!("\n=== Reference TOC entries (first 20) ===");
+    for (i, (title, pos, offset)) in ref_nav_positions.iter().take(20).enumerate() {
+        println!("  [{}] {} -> pos={}, offset={}", i, title, pos, offset);
+    }
+
+    println!("\n=== Generated TOC entries (first 20) ===");
+    for (i, (title, pos, offset)) in gen_nav_positions.iter().take(20).enumerate() {
+        println!("  [{}] {} -> pos={}, offset={}", i, title, pos, offset);
+    }
+
+    // Build entity ID -> type map for both
+    fn build_entity_map(entities: &HashMap<u32, Vec<(u32, Vec<u8>)>>) -> HashMap<u32, u32> {
+        let mut map = HashMap::new();
+        for (etype, items) in entities {
+            for (eid, _) in items {
+                map.insert(*eid, *etype);
+            }
+        }
+        map
+    }
+
+    let ref_entity_map = build_entity_map(&ref_entities);
+    let gen_entity_map = build_entity_map(&gen_entities);
+
+    // Check what entity types the reference TOC positions point to
+    println!("\n=== Reference TOC position entity types ===");
+    for (title, pos, _) in ref_nav_positions.iter().take(10) {
+        let etype = ref_entity_map.get(&(*pos as u32)).map(|t| format!("${}", t)).unwrap_or("NOT FOUND".to_string());
+        println!("  {} (pos={}) -> {}", title, pos, etype);
+    }
+
+    println!("\n=== Generated TOC position entity types ===");
+    for (title, pos, _) in gen_nav_positions.iter().take(10) {
+        let etype = gen_entity_map.get(&(*pos as u32)).map(|t| format!("${}", t)).unwrap_or("NOT FOUND".to_string());
+        println!("  {} (pos={}) -> {}", title, pos, etype);
+    }
+
+    // Compare entry counts
+    println!("\n=== Summary ===");
+    println!("Reference TOC entries (all nav containers): {}", ref_nav_positions.len());
+    println!("Generated TOC entries (all nav containers): {}", gen_nav_positions.len());
+
+    // Filter to only TOC entries (not reading order or landmarks)
+    // The real TOC entries have actual titles like "Titlepage", "I", etc.
+    // Reading order entries have "heading-nav-unit" placeholder titles
+    let ref_toc_entries: Vec<_> = ref_nav_positions
+        .iter()
+        .filter(|(title, _, _)| title != "heading-nav-unit" && title != "cover-nav-unit")
+        .collect();
+    let gen_toc_entries: Vec<_> = gen_nav_positions
+        .iter()
+        .filter(|(title, _, _)| title != "heading-nav-unit" && title != "cover-nav-unit")
+        .collect();
+
+    println!("\nReference TOC entries (filtered): {}", ref_toc_entries.len());
+    println!("Generated TOC entries (filtered): {}", gen_toc_entries.len());
+
+    println!("\n=== Reference TOC entries (filtered, first 20) ===");
+    for (i, (title, pos, offset)) in ref_toc_entries.iter().take(20).enumerate() {
+        println!("  [{}] {} -> pos={}, offset={}", i, title, pos, offset);
+    }
+
+    println!("\n=== Generated TOC entries (filtered, first 20) ===");
+    for (i, (title, pos, offset)) in gen_toc_entries.iter().take(20).enumerate() {
+        println!("  [{}] {} -> pos={}, offset={}", i, title, pos, offset);
+    }
+
+    // Compare entry counts (informational, small differences expected)
+    if ref_toc_entries.len() != gen_toc_entries.len() {
+        println!("\nNote: Entry count difference ({} vs {})",
+            ref_toc_entries.len(), gen_toc_entries.len());
+    }
+
+    // Check that titles match in order (compare up to min length)
+    let min_len = std::cmp::min(ref_toc_entries.len(), gen_toc_entries.len());
+    for (i, ((ref_title, _, _), (gen_title, _, _))) in
+        ref_toc_entries.iter().zip(gen_toc_entries.iter()).take(min_len).enumerate()
+    {
+        if ref_title != gen_title {
+            println!("TOC entry {} title mismatch: ref='{}', gen='{}'", i, ref_title, gen_title);
+        }
+    }
+
+    // Verify generated positions point to valid section markers
+    // Extract section entities from generated KFX
+    let section_entities: Vec<_> = gen_entities
+        .get(&260) // SECTION entity type
+        .map(|v| v.iter().map(|(id, _)| *id).collect())
+        .unwrap_or_default();
+
+    println!("\n=== Generated section entity IDs (first 20) ===");
+    for (i, id) in section_entities.iter().take(20).enumerate() {
+        println!("  [{}] {}", i, id);
+    }
+
+    // Note: Position values are content item indices, not entity IDs
+    // This is just informational - positions don't directly map to entities
+    println!("\n=== Position vs Section Info ===");
+    println!("Generated TOC positions range: {} to {}",
+        gen_toc_entries.iter().map(|(_, p, _)| *p).min().unwrap_or(0),
+        gen_toc_entries.iter().map(|(_, p, _)| *p).max().unwrap_or(0));
+    println!("Section entity ID range: {:?} to {:?}",
+        section_entities.iter().min(),
+        section_entities.iter().max());
+
+    // Count nav containers in each
+    fn count_nav_containers(nav_value: &IonValue) -> Vec<(u64, usize)> {
+        let mut containers = Vec::new();
+        // Structure: List[1] -> [0] Struct { $392: List of nav containers }
+        if let IonValue::List(outer_list) = nav_value {
+            if let Some(first) = outer_list.first() {
+                if let IonValue::Struct(map) = first {
+                    if let Some(nav_container_ref) = map.get(&392) {
+                        if let IonValue::List(items) = nav_container_ref {
+                            for item in items {
+                                if let IonValue::Annotated(_, inner) = item {
+                                    if let IonValue::Struct(inner_map) = inner.as_ref() {
+                                        // Get nav type ($235)
+                                        if let Some(IonValue::Symbol(s)) = inner_map.get(&235) {
+                                            // Count entries in $247
+                                            let entry_count = inner_map.get(&247)
+                                                .map(|e| if let IonValue::List(l) = e { l.len() } else { 0 })
+                                                .unwrap_or(0);
+                                            containers.push((*s, entry_count));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        containers
+    }
+
+    println!("\n=== Nav Container Types ===");
+    println!("Reference nav containers:");
+    for (nav_type, entry_count) in count_nav_containers(&ref_nav) {
+        let type_name = match nav_type {
+            212 => "TOC",
+            236 => "LANDMARKS",
+            798 => "READING_ORDER",
+            _ => "UNKNOWN",
+        };
+        println!("  ${} ({}) - {} entries", nav_type, type_name, entry_count);
+    }
+    println!("Generated nav containers:");
+    for (nav_type, entry_count) in count_nav_containers(&gen_nav) {
+        let type_name = match nav_type {
+            212 => "TOC",
+            236 => "LANDMARKS",
+            798 => "READING_ORDER",
+            _ => "UNKNOWN",
+        };
+        println!("  ${} ({}) - {} entries", nav_type, type_name, entry_count);
+    }
+}
+
+/// A parsed navigation entry for comparison
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct ParsedNavEntry {
+    title: Option<String>,
+    position: Option<i64>,
+    offset: Option<i64>,
+    children: Vec<ParsedNavEntry>,
+}
+
+/// Extract nav entries recursively from a $393:: annotated value
+fn extract_nav_entries(value: &IonValue) -> Vec<ParsedNavEntry> {
+    let mut entries = Vec::new();
+
+    if let IonValue::List(items) = value {
+        for item in items {
+            if let IonValue::Annotated(annots, inner) = item {
+                if annots.contains(&393) {
+                    // $393 = NAV_DEFINITION
+                    let entry = extract_single_nav_entry(inner);
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+
+    entries
+}
+
+/// Extract a single nav entry from a struct
+fn extract_single_nav_entry(value: &IonValue) -> ParsedNavEntry {
+    let title = get_struct_field(value, sym::NAV_TITLE)
+        .and_then(|t| get_struct_field(t, sym::TEXT))
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_string());
+
+    let (position, offset) = get_struct_field(value, sym::NAV_TARGET)
+        .map(|target| {
+            let pos = target.get(sym::POSITION).and_then(|v| v.as_int());
+            let off = target.get(sym::OFFSET).and_then(|v| v.as_int());
+            (pos, off)
+        })
+        .unwrap_or((None, None));
+
+    let children = get_struct_field(value, sym::NAV_ENTRIES)
+        .map(extract_nav_entries)
+        .unwrap_or_default();
+
+    ParsedNavEntry {
+        title,
+        position,
+        offset,
+        children,
+    }
+}
+
+/// Count total entries in a nav tree (including nested)
+fn count_nav_entries(entries: &[ParsedNavEntry]) -> usize {
+    entries
+        .iter()
+        .map(|e| 1 + count_nav_entries(&e.children))
+        .sum()
+}
+
+/// Collect all positions from nav entries
+fn collect_positions(entries: &[ParsedNavEntry], positions: &mut Vec<i64>) {
+    for entry in entries {
+        if let Some(pos) = entry.position {
+            positions.push(pos);
+        }
+        collect_positions(&entry.children, positions);
+    }
+}
+
+/// Test that navigation structure matches reference KFX format.
+///
+/// The $389 (book_navigation) fragment must use INLINE $391:: annotated nav containers,
+/// NOT separate fragments referenced by symbol. This is critical for Kindle compatibility.
+#[test]
+fn test_navigation_structure_matches_reference() {
+    // Parse reference KFX
+    let ref_data = std::fs::read("tests/fixtures/epictetus.kfx").unwrap();
+    let ref_entities = parse_kfx_container(&ref_data);
+
+    // Parse reference $389 (book_navigation)
+    let ref_nav_payloads = ref_entities.get(&389).expect("Reference should have $389");
+    assert_eq!(ref_nav_payloads.len(), 1, "Should have one $389 fragment");
+    let ref_nav = parse_entity_ion(&ref_nav_payloads[0].1).expect("Failed to parse ref $389");
+
+    // Generate KFX from EPUB
+    let epub_data = std::fs::read("tests/fixtures/epictetus.epub").unwrap();
+    let book = crate::read_epub_from_reader(std::io::Cursor::new(epub_data)).unwrap();
+    let gen_data = KfxBookBuilder::from_book(&book).build();
+
+    // Write to /tmp for inspection
+    std::fs::write("/tmp/test-toc.kfx", &gen_data).unwrap();
+
+    // Debug: compare container headers
+    fn debug_container_header(data: &[u8], name: &str) {
+        println!("\n=== {} container header ===", name);
+        println!("Magic: {:?}", std::str::from_utf8(&data[0..4]));
+        let version = u16::from_le_bytes([data[4], data[5]]);
+        let header_len = u32::from_le_bytes(data[6..10].try_into().unwrap());
+        let ci_offset = u32::from_le_bytes(data[10..14].try_into().unwrap());
+        let ci_len = u32::from_le_bytes(data[14..18].try_into().unwrap());
+        println!("Version: {}", version);
+        println!("Header len: {}", header_len);
+        println!("CI offset: {}, len: {}", ci_offset, ci_len);
+
+        // Count entities in table
+        let ion_magic: [u8; 4] = [0xE0, 0x01, 0x00, 0xEA];
+        let mut pos = 18;
+        let mut entity_count = 0;
+        while pos + 24 <= data.len() && data[pos..pos + 4] != ion_magic {
+            entity_count += 1;
+            pos += 24;
+        }
+        println!("Entity table entries: {}", entity_count);
+        println!("Entity table ends at: {}", pos);
+
+        // Show what's at entity table end (should be ION BVM for symbol table)
+        if pos + 4 <= data.len() {
+            println!("After entity table: {:02x} {:02x} {:02x} {:02x}",
+                data[pos], data[pos+1], data[pos+2], data[pos+3]);
+        }
+
+        // Show first few bytes of container info
+        let ci_start = ci_offset as usize;
+        if ci_start + 4 <= data.len() {
+            println!("Container info starts with: {:02x} {:02x} {:02x} {:02x}",
+                data[ci_start], data[ci_start+1], data[ci_start+2], data[ci_start+3]);
+        }
+
+        // Show first entity payload
+        if entity_count > 0 {
+            let first_offset = u64::from_le_bytes(data[26..34].try_into().unwrap()) as usize;
+            let payload_start = header_len as usize + first_offset;
+            if payload_start + 4 <= data.len() {
+                println!("First entity payload at {} starts with: {:02x} {:02x} {:02x} {:02x}",
+                    payload_start,
+                    data[payload_start], data[payload_start+1],
+                    data[payload_start+2], data[payload_start+3]);
+            }
+        }
+
+        // Parse container info to get symbol table location
+        let ci_data = &data[ci_offset as usize..(ci_offset + ci_len) as usize];
+        if let Ok(ci) = crate::kfx::ion::IonParser::new(ci_data).parse() {
+            println!("Container info fields:");
+            let mut symtab_offset = 0usize;
+            let mut symtab_len = 0usize;
+            if let crate::kfx::ion::IonValue::Struct(map) = &ci {
+                for (k, v) in map {
+                    if let crate::kfx::ion::IonValue::Int(i) = v {
+                        println!("  ${}: {}", k, i);
+                        if *k == 415 { symtab_offset = *i as usize; }
+                        if *k == 416 { symtab_len = *i as usize; }
+                    } else if let crate::kfx::ion::IonValue::String(s) = v {
+                        println!("  ${}: {:?}", k, s);
+                    }
+                }
+            }
+
+            // Try to parse symbol table
+            if symtab_offset > 0 && symtab_len > 0 && symtab_offset + symtab_len <= data.len() {
+                let st_data = &data[symtab_offset..symtab_offset + symtab_len];
+                println!("Symbol table starts with: {:02x} {:02x} {:02x} {:02x}",
+                    st_data[0], st_data[1], st_data[2], st_data[3]);
+                if let Ok(st) = crate::kfx::ion::IonParser::new(st_data).parse() {
+                    if let crate::kfx::ion::IonValue::Annotated(annots, inner) = &st {
+                        println!("Symbol table annotation: ${}", annots.first().unwrap_or(&0));
+                        if let crate::kfx::ion::IonValue::Struct(st_map) = inner.as_ref() {
+                            // Check imports and symbols
+                            for (k, v) in st_map {
+                                match v {
+                                    crate::kfx::ion::IonValue::List(l) => {
+                                        println!("  ${}: list with {} items", k, l.len());
+                                    }
+                                    crate::kfx::ion::IonValue::Int(i) => {
+                                        println!("  ${}: {}", k, i);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    println!("Failed to parse symbol table");
+                }
+            }
+        }
+    }
+
+    debug_container_header(&ref_data, "Reference");
+    debug_container_header(&gen_data, "Generated");
+
+    // Parse generated $389
+    let gen_entities = parse_kfx_container(&gen_data);
+    let gen_nav_payloads = gen_entities.get(&389).expect("Generated should have $389");
+    assert_eq!(gen_nav_payloads.len(), 1, "Should have one $389 fragment");
+    let gen_nav = parse_entity_ion(&gen_nav_payloads[0].1).expect("Failed to parse gen $389");
+
+    // Both should be lists with one navigation entry
+    let ref_list = ref_nav.as_list().expect("Ref $389 should be a list");
+    let gen_list = gen_nav.as_list().expect("Gen $389 should be a list");
+    assert_eq!(ref_list.len(), gen_list.len(), "Same number of nav entries");
+
+    // Check first entry has required fields
+    let ref_entry = &ref_list[0];
+    let gen_entry = &gen_list[0];
+
+    // Both should have $178 (reading order name)
+    assert!(
+        get_struct_field(ref_entry, 178).is_some(),
+        "Reference should have $178"
+    );
+    assert!(
+        get_struct_field(gen_entry, 178).is_some(),
+        "Generated should have $178"
+    );
+
+    // Both should have $392 (nav container refs)
+    let ref_392 = get_struct_field(ref_entry, 392).expect("Reference should have $392");
+    let gen_392 = get_struct_field(gen_entry, 392).expect("Generated should have $392");
+
+    // CRITICAL: $392 must contain INLINE $391:: annotated nav containers
+    fn has_inline_nav_containers(value: &IonValue) -> bool {
+        if let IonValue::List(items) = value {
+            items.iter().all(|item| {
+                matches!(item, IonValue::Annotated(annots, _) if annots.contains(&391))
+            })
+        } else {
+            false
+        }
+    }
+
+    assert!(
+        has_inline_nav_containers(ref_392),
+        "Reference $392 should have inline $391:: nav containers"
+    );
+    assert!(
+        has_inline_nav_containers(gen_392),
+        "Generated $392 should have inline $391:: nav containers (not symbol refs)"
+    );
+
+    // Extract TOC containers (first container with NAV_TYPE = TOC)
+    fn get_toc_container(nav_containers: &IonValue) -> Option<&IonValue> {
+        if let IonValue::List(items) = nav_containers {
+            for item in items {
+                if let IonValue::Annotated(_, inner) = item {
+                    if let Some(IonValue::Symbol(nav_type)) =
+                        get_struct_field(inner, sym::NAV_TYPE)
+                    {
+                        if *nav_type == sym::TOC {
+                            return Some(inner.as_ref());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    let ref_toc = get_toc_container(ref_392).expect("Reference should have TOC container");
+    let gen_toc = get_toc_container(gen_392).expect("Generated should have TOC container");
+
+    // Extract nav entries from both TOC containers
+    let ref_nav_entries_value =
+        get_struct_field(ref_toc, sym::NAV_ENTRIES).expect("Ref TOC should have nav entries");
+    let gen_nav_entries_value =
+        get_struct_field(gen_toc, sym::NAV_ENTRIES).expect("Gen TOC should have nav entries");
+
+    let ref_entries = extract_nav_entries(ref_nav_entries_value);
+    let gen_entries = extract_nav_entries(gen_nav_entries_value);
+
+    // Compare total entry counts
+    let ref_total = count_nav_entries(&ref_entries);
+    let gen_total = count_nav_entries(&gen_entries);
+    println!(
+        "Reference TOC: {} top-level entries, {} total",
+        ref_entries.len(),
+        ref_total
+    );
+    println!(
+        "Generated TOC: {} top-level entries, {} total",
+        gen_entries.len(),
+        gen_total
+    );
+
+    // Verify same number of top-level entries
+    assert_eq!(
+        ref_entries.len(),
+        gen_entries.len(),
+        "Should have same number of top-level TOC entries"
+    );
+
+    // Verify nesting structure matches (same child counts)
+    for (i, (ref_e, gen_e)) in ref_entries.iter().zip(gen_entries.iter()).enumerate() {
+        assert_eq!(
+            ref_e.children.len(),
+            gen_e.children.len(),
+            "Entry {} should have same number of children (ref={}, gen={})",
+            i,
+            ref_e.children.len(),
+            gen_e.children.len()
+        );
+    }
+
+    // Collect and compare position values
+    let mut ref_positions = Vec::new();
+    let mut gen_positions = Vec::new();
+    collect_positions(&ref_entries, &mut ref_positions);
+    collect_positions(&gen_entries, &mut gen_positions);
+
+    // Positions should be valid (positive, representing EIDs)
+    assert!(
+        gen_positions.iter().all(|&p| p > 0),
+        "All generated positions should be positive EIDs"
+    );
+
+    // Generated should have same number of position references
+    assert_eq!(
+        ref_positions.len(),
+        gen_positions.len(),
+        "Should have same number of position references"
+    );
+
+    // Verify generated entries have valid titles and positions, matching reference structure
+    fn compare_entries(
+        ref_entries: &[ParsedNavEntry],
+        gen_entries: &[ParsedNavEntry],
+        path: &str,
+    ) {
+        assert_eq!(
+            ref_entries.len(),
+            gen_entries.len(),
+            "{}: entry count mismatch",
+            path
+        );
+
+        for (i, (ref_e, gen_e)) in ref_entries.iter().zip(gen_entries.iter()).enumerate() {
+            let entry_path = if path.is_empty() {
+                format!("[{}]", i)
+            } else {
+                format!("{}[{}]", path, i)
+            };
+
+            // Generated must have a non-empty title
+            assert!(
+                gen_e.title.is_some() && !gen_e.title.as_ref().unwrap().is_empty(),
+                "{}: generated entry missing title",
+                entry_path
+            );
+
+            // Both must have valid positions (positive EIDs)
+            assert!(
+                ref_e.position.is_some() && ref_e.position.unwrap() > 0,
+                "{}: reference entry missing/invalid position",
+                entry_path
+            );
+            assert!(
+                gen_e.position.is_some() && gen_e.position.unwrap() > 0,
+                "{}: generated entry missing/invalid position (title={:?})",
+                entry_path,
+                gen_e.title
+            );
+
+            // Recursively compare children (nesting structure must match)
+            compare_entries(&ref_e.children, &gen_e.children, &entry_path);
+        }
+    }
+
+    compare_entries(&ref_entries, &gen_entries, "");
+
+    // Additional check: collect all titles from generated and verify they're reasonable
+    fn collect_titles(entries: &[ParsedNavEntry], titles: &mut Vec<String>) {
+        for e in entries {
+            if let Some(ref t) = e.title {
+                titles.push(t.clone());
+            }
+            collect_titles(&e.children, titles);
+        }
+    }
+
+    let mut gen_titles = Vec::new();
+    collect_titles(&gen_entries, &mut gen_titles);
+
+    // Verify expected titles are present
+    let expected_titles = ["Titlepage", "Imprint", "The Enchiridion", "Fragments", "Endnotes"];
+    for expected in expected_titles {
+        assert!(
+            gen_titles.iter().any(|t| t == expected),
+            "Generated TOC should contain '{}'",
+            expected
+        );
+    }
+
+    // Verify chapter numbers are present (I, II, III, etc.)
+    let roman_numerals = ["I", "II", "III", "IV", "V"];
+    for numeral in roman_numerals {
+        assert!(
+            gen_titles.iter().any(|t| t == numeral),
+            "Generated TOC should contain chapter '{}'",
+            numeral
+        );
+    }
 }

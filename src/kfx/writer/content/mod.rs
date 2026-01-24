@@ -249,11 +249,59 @@ impl ContentItem {
             }
         }
     }
+
+    /// Count the number of EIDs that will be generated for this content item.
+    /// This matches the actual EID generation in build_content_items.
+    ///
+    /// Key differences from count_items():
+    /// - Text: verse text splits into multiple lines; empty text returns 0
+    /// - List items (li): simple list items don't get container EID; complex ones do
+    /// - Nested containers in complex list items don't get EIDs
+    pub fn count_eids(&self) -> usize {
+        match self {
+            ContentItem::Text { text, is_verse, .. } => {
+                // Matches normalize_text_for_kfx logic
+                if *is_verse {
+                    text.split('\n').filter(|s| !s.trim().is_empty()).count()
+                } else if text.trim().is_empty() {
+                    0
+                } else {
+                    1
+                }
+            }
+            ContentItem::Image { .. } | ContentItem::Svg { .. } => 1,
+            ContentItem::Container {
+                children, tag, ..
+            } => {
+                if tag == "li" {
+                    // List items have special handling
+                    if self.has_nested_containers() {
+                        // Complex list item: flattened children + 1 for container
+                        let flattened_count: usize =
+                            children.iter().map(|c| c.count_flattened_items()).sum();
+                        flattened_count + 1
+                    } else {
+                        // Simple list item: just count children's EIDs (no container EID)
+                        children.iter().map(|c| c.count_eids()).sum()
+                    }
+                } else {
+                    // Regular container: children EIDs + 1 for container
+                    children.iter().map(|c| c.count_eids()).sum::<usize>() + 1
+                }
+            }
+        }
+    }
 }
 
 /// Count total content items including nested containers
 pub fn count_content_items(items: &[ContentItem]) -> usize {
     items.iter().map(|item| item.count_items()).sum()
+}
+
+/// Count total EIDs that will be generated for content items.
+/// This matches the actual EID generation in build_content_items.
+pub fn count_content_eids(items: &[ContentItem]) -> usize {
+    items.iter().map(|item| item.count_eids()).sum()
 }
 
 /// Collect all referenced image hrefs from content items

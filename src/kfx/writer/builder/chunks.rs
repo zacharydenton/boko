@@ -103,6 +103,7 @@ impl KfxBookBuilder {
         // Create content block with the cover image
         let mut image_item = HashMap::new();
         image_item.insert(sym::CONTENT_TYPE, IonValue::Symbol(sym::IMAGE_CONTENT));
+        image_item.insert(sym::POSITION, IonValue::Int(eid_base + 1)); // EID for position tracking
         image_item.insert(sym::RESOURCE_NAME, IonValue::Symbol(cover_sym));
         image_item.insert(sym::STYLE_NAME, IonValue::Symbol(cover_style_sym));
 
@@ -120,16 +121,19 @@ impl KfxBookBuilder {
         ));
 
         // Create section referencing the cover content block
+        // Cover section $141 entry must have all fields INSIDE the entry (not at section level)
+        // Reference structure: $141: [{$155, $156, $159, $176, $66, $67}]
         let mut section = HashMap::new();
         section.insert(sym::SECTION_NAME, IonValue::Symbol(cover_section_sym));
-        section.insert(sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE));
-        section.insert(sym::SECTION_WIDTH, IonValue::Int(width as i64));
-        section.insert(sym::SECTION_HEIGHT, IonValue::Int(height as i64));
         section.insert(
             sym::SECTION_CONTENT,
             IonValue::List(vec![IonValue::OrderedStruct(vec![
                 (sym::POSITION, IonValue::Int(eid_base)),
+                (sym::PAGE_LAYOUT, IonValue::Symbol(sym::LAYOUT_FULL_PAGE)),
+                (sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTAINER_INFO)),
                 (sym::CONTENT_NAME, IonValue::Symbol(cover_block_sym)),
+                (sym::SECTION_WIDTH, IonValue::Int(width as i64)),
+                (sym::SECTION_HEIGHT, IonValue::Int(height as i64)),
             ])]),
         );
 

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::kfx::ion::IonValue;
 
-use super::content::{ChapterData, ContentItem, count_content_items};
+use super::content::{ChapterData, ContentItem, count_content_eids};
 use super::symbols::{SymbolTable, sym};
 
 /// Build section EID mapping for internal link targets
@@ -25,7 +25,7 @@ pub fn build_section_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<
 
     for chapter in chapters {
         section_eids.insert(chapter.source_path.clone(), eid_base + 1);
-        let total_items = count_content_items(&chapter.content);
+        let total_items = count_content_eids(&chapter.content);
         eid_base += 1 + total_items as i64;
     }
 
@@ -124,7 +124,7 @@ pub fn build_anchor_eids(chapters: &[ChapterData], has_cover: bool) -> HashMap<S
             );
         }
 
-        let total_items = count_content_items(&chapter.content);
+        let total_items = count_content_eids(&chapter.content);
         eid_base += 1 + total_items as i64;
     }
 
@@ -141,7 +141,18 @@ pub fn build_position_map(
     let mut entries = Vec::new();
     let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
+    // Add cover section entry if present
     if has_cover {
+        let cover_section_sym = symtab.get_or_intern("cover-section");
+        // Cover has 2 EIDs: section (eid_base) and content item (eid_base + 1)
+        let cover_eids = vec![
+            IonValue::Int(eid_base),
+            IonValue::Int(eid_base + 1),
+        ];
+        let mut cover_entry = HashMap::new();
+        cover_entry.insert(sym::ENTITY_ID_LIST, IonValue::List(cover_eids));
+        cover_entry.insert(sym::SECTION_NAME, IonValue::Symbol(cover_section_sym));
+        entries.push(IonValue::Struct(cover_entry));
         eid_base += 2;
     }
 
@@ -149,7 +160,7 @@ pub fn build_position_map(
         let section_id = format!("section-{}", chapter.id);
         let section_sym = symtab.get_or_intern(&section_id);
 
-        let total_items = count_content_items(&chapter.content);
+        let total_items = count_content_eids(&chapter.content);
         let mut eids = Vec::new();
         eids.push(IonValue::Int(eid_base));
         for i in 0..total_items {
@@ -169,63 +180,137 @@ pub fn build_position_map(
 
 /// Build position ID map fragment ($265)
 /// Maps character offsets to EIDs
+///
+/// The position ID map tracks character positions in the book and which EID
+/// contains each position. This is used for reading progress tracking.
+/// Only TEXT content items are included - containers are skipped since they
+/// don't contribute readable content.
 pub fn build_position_id_map(chapters: &[ChapterData], has_cover: bool) -> IonValue {
     let mut entries = Vec::new();
     let mut char_offset = 0i64;
     let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
+    /// Add an entry to the position ID map
+    fn add_entry(entries: &mut Vec<IonValue>, char_offset: i64, eid: i64) {
+        let mut entry = HashMap::new();
+        entry.insert(sym::EID_INDEX, IonValue::Int(char_offset));
+        entry.insert(sym::EID_VALUE, IonValue::Int(eid));
+        entries.push(IonValue::Struct(entry));
+    }
+
+    // Add cover section entries if present
+    // Cover gets 2 EIDs: section (eid_base) and image (eid_base + 1)
+    // Both get entries in position_id_map for consistency
     if has_cover {
+        add_entry(&mut entries, char_offset, eid_base); // Cover section
+        char_offset += 1;
+        add_entry(&mut entries, char_offset, eid_base + 1); // Cover image
+        char_offset += 1;
         eid_base += 2;
     }
 
-    fn add_entries_recursive(
+    /// Process items and add text entries to position ID map.
+    /// Also advances eid counter for all items (including containers).
+    fn process_items_recursive(
         item: &ContentItem,
         eid: &mut i64,
         char_offset: &mut i64,
         entries: &mut Vec<IonValue>,
     ) {
         match item {
-            ContentItem::Text { text, .. } => {
-                let mut entry = HashMap::new();
-                entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
-                entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
-                entries.push(IonValue::Struct(entry));
-                *char_offset += text.len() as i64;
-                *eid += 1;
+            ContentItem::Text { text, is_verse, .. } => {
+                // Match normalize_text_for_kfx behavior
+                if *is_verse {
+                    for line in text.split('\n').filter(|s| !s.trim().is_empty()) {
+                        add_entry(entries, *char_offset, *eid);
+                        *char_offset += line.trim().len() as i64;
+                        *eid += 1;
+                    }
+                } else if !text.trim().is_empty() {
+                    add_entry(entries, *char_offset, *eid);
+                    *char_offset += text.len() as i64;
+                    *eid += 1;
+                }
+                // Empty text: no entry, no EID
             }
             ContentItem::Image { .. } | ContentItem::Svg { .. } => {
-                let mut entry = HashMap::new();
-                entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
-                entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
-                entries.push(IonValue::Struct(entry));
+                // Images/SVGs advance position but get entry in map
+                add_entry(entries, *char_offset, *eid);
                 *char_offset += 1;
                 *eid += 1;
             }
-            ContentItem::Container { children, .. } => {
-                for child in children {
-                    add_entries_recursive(child, eid, char_offset, entries);
+            ContentItem::Container {
+                children, tag, ..
+            } => {
+                if tag == "li" && item.has_nested_containers() {
+                    // Complex list item: flattened children + container
+                    fn process_flattened(
+                        item: &ContentItem,
+                        eid: &mut i64,
+                        char_offset: &mut i64,
+                        entries: &mut Vec<IonValue>,
+                    ) {
+                        match item {
+                            ContentItem::Text { text, is_verse, .. } => {
+                                if *is_verse {
+                                    for line in text.split('\n').filter(|s| !s.trim().is_empty()) {
+                                        add_entry(entries, *char_offset, *eid);
+                                        *char_offset += line.trim().len() as i64;
+                                        *eid += 1;
+                                    }
+                                } else if !text.trim().is_empty() {
+                                    add_entry(entries, *char_offset, *eid);
+                                    *char_offset += text.len() as i64;
+                                    *eid += 1;
+                                }
+                            }
+                            ContentItem::Image { .. } | ContentItem::Svg { .. } => {
+                                add_entry(entries, *char_offset, *eid);
+                                *char_offset += 1;
+                                *eid += 1;
+                            }
+                            ContentItem::Container { children, .. } => {
+                                // Nested container is flattened - no EID for it
+                                for child in children {
+                                    process_flattened(child, eid, char_offset, entries);
+                                }
+                            }
+                        }
+                    }
+
+                    for child in children {
+                        process_flattened(child, eid, char_offset, entries);
+                    }
+                    // Complex list item container gets EID but NO entry in position map
+                    // (containers don't contribute readable content)
+                    *char_offset += 1;
+                    *eid += 1;
+                } else if tag == "li" {
+                    // Simple list item: children get EIDs, no container EID
+                    for child in children {
+                        process_items_recursive(child, eid, char_offset, entries);
+                    }
+                } else {
+                    // Regular container: children then container
+                    for child in children {
+                        process_items_recursive(child, eid, char_offset, entries);
+                    }
+                    // Container gets EID but NO entry in position ID map
+                    *char_offset += 1;
+                    *eid += 1;
                 }
-                let mut entry = HashMap::new();
-                entry.insert(sym::EID_INDEX, IonValue::Int(*char_offset));
-                entry.insert(sym::EID_VALUE, IonValue::Int(*eid));
-                entries.push(IonValue::Struct(entry));
-                *char_offset += 1;
-                *eid += 1;
             }
         }
     }
 
     for chapter in chapters {
         let section_eid = eid_base;
-        let mut section_entry = HashMap::new();
-        section_entry.insert(sym::EID_INDEX, IonValue::Int(char_offset));
-        section_entry.insert(sym::EID_VALUE, IonValue::Int(section_eid));
-        entries.push(IonValue::Struct(section_entry));
+        add_entry(&mut entries, char_offset, section_eid);
         char_offset += 1;
 
         let mut content_eid = eid_base + 1;
         for content_item in &chapter.content {
-            add_entries_recursive(
+            process_items_recursive(
                 content_item,
                 &mut content_eid,
                 &mut char_offset,
@@ -233,133 +318,237 @@ pub fn build_position_id_map(chapters: &[ChapterData], has_cover: bool) -> IonVa
             );
         }
 
-        let total_items = count_content_items(&chapter.content);
+        let total_items = count_content_eids(&chapter.content);
         eid_base += 1 + total_items as i64;
     }
 
     // End marker
-    let mut end_entry = HashMap::new();
-    end_entry.insert(sym::EID_INDEX, IonValue::Int(char_offset));
-    end_entry.insert(sym::EID_VALUE, IonValue::Int(0));
-    entries.push(IonValue::Struct(end_entry));
+    add_entry(&mut entries, char_offset, 0);
 
     IonValue::List(entries)
 }
 
 /// Build location map fragment ($550)
+///
+/// The location map provides "locations" (similar to page numbers) throughout the book.
+/// Each location represents approximately 110 characters of content.
+///
+/// Key behavior from kfxinput:
+/// - Location boundaries reset at each section start
+/// - Entries are created at 110-character intervals
+/// - Each entry has an EID and offset within that EID
 pub fn build_location_map(chapters: &[ChapterData], has_cover: bool) -> IonValue {
     const CHARS_PER_LOCATION: usize = 110;
 
-    #[derive(Debug)]
-    struct ContentRange {
+    /// A content chunk with position info for location mapping
+    struct ContentChunk {
         eid: i64,
-        char_start: usize,
-        char_end: usize,
+        length: usize,
+        is_section_start: bool,
     }
 
-    let mut content_ranges: Vec<ContentRange> = Vec::new();
+    let mut chunks: Vec<ContentChunk> = Vec::new();
     let mut eid_base = SymbolTable::LOCAL_MIN_ID as i64;
 
+    // Add cover as first chunk if present
+    // Cover image counts as 1 position (like images in content)
     if has_cover {
+        chunks.push(ContentChunk {
+            eid: eid_base + 1, // Cover image EID (section is eid_base, image is eid_base+1)
+            length: 1,
+            is_section_start: true,
+        });
         eid_base += 2;
     }
 
-    let mut total_chars: usize = 0;
-
     for chapter in chapters {
         let mut content_eid = eid_base + 1;
+        let mut is_first_in_section = true;
 
-        fn collect_ranges_recursive(
+        fn collect_chunks_recursive(
             item: &ContentItem,
             content_eid: &mut i64,
-            char_pos: &mut usize,
-            ranges: &mut Vec<ContentRange>,
+            chunks: &mut Vec<ContentChunk>,
+            is_first: &mut bool,
         ) {
             match item {
-                ContentItem::Text { text, .. } => {
-                    let start = *char_pos;
-                    let end = start + text.len();
-                    ranges.push(ContentRange {
-                        eid: *content_eid,
-                        char_start: start,
-                        char_end: end,
-                    });
-                    *content_eid += 1;
-                    *char_pos = end;
+                ContentItem::Text { text, is_verse, .. } => {
+                    // Match normalize_text_for_kfx behavior for verse text
+                    if *is_verse {
+                        for line in text.split('\n').filter(|s| !s.trim().is_empty()) {
+                            let length = line.trim().len();
+                            chunks.push(ContentChunk {
+                                eid: *content_eid,
+                                length,
+                                is_section_start: *is_first,
+                            });
+                            *is_first = false;
+                            *content_eid += 1;
+                        }
+                    } else if !text.trim().is_empty() {
+                        let length = text.len();
+                        chunks.push(ContentChunk {
+                            eid: *content_eid,
+                            length,
+                            is_section_start: *is_first,
+                        });
+                        *is_first = false;
+                        *content_eid += 1;
+                    }
+                    // Empty text: no EID, no chunk
                 }
                 ContentItem::Image { .. } | ContentItem::Svg { .. } => {
-                    ranges.push(ContentRange {
+                    // Images/SVGs count as 1 character position
+                    chunks.push(ContentChunk {
                         eid: *content_eid,
-                        char_start: *char_pos,
-                        char_end: *char_pos,
+                        length: 1,
+                        is_section_start: *is_first,
                     });
+                    *is_first = false;
                     *content_eid += 1;
                 }
-                ContentItem::Container { children, .. } => {
-                    for child in children {
-                        collect_ranges_recursive(child, content_eid, char_pos, ranges);
+                ContentItem::Container { children, tag, .. } => {
+                    if tag == "li" && item.has_nested_containers() {
+                        // Complex list item: flattened children + container
+                        fn collect_flattened(
+                            item: &ContentItem,
+                            content_eid: &mut i64,
+                            chunks: &mut Vec<ContentChunk>,
+                            is_first: &mut bool,
+                        ) {
+                            match item {
+                                ContentItem::Text { text, is_verse, .. } => {
+                                    if *is_verse {
+                                        for line in
+                                            text.split('\n').filter(|s| !s.trim().is_empty())
+                                        {
+                                            let length = line.trim().len();
+                                            chunks.push(ContentChunk {
+                                                eid: *content_eid,
+                                                length,
+                                                is_section_start: *is_first,
+                                            });
+                                            *is_first = false;
+                                            *content_eid += 1;
+                                        }
+                                    } else if !text.trim().is_empty() {
+                                        let length = text.len();
+                                        chunks.push(ContentChunk {
+                                            eid: *content_eid,
+                                            length,
+                                            is_section_start: *is_first,
+                                        });
+                                        *is_first = false;
+                                        *content_eid += 1;
+                                    }
+                                }
+                                ContentItem::Image { .. } | ContentItem::Svg { .. } => {
+                                    chunks.push(ContentChunk {
+                                        eid: *content_eid,
+                                        length: 1,
+                                        is_section_start: *is_first,
+                                    });
+                                    *is_first = false;
+                                    *content_eid += 1;
+                                }
+                                ContentItem::Container { children, .. } => {
+                                    // Recursively flatten - container doesn't get EID
+                                    for child in children {
+                                        collect_flattened(child, content_eid, chunks, is_first);
+                                    }
+                                }
+                            }
+                        }
+
+                        for child in children {
+                            collect_flattened(child, content_eid, chunks, is_first);
+                        }
+                        // Complex list item container gets EID after children
+                        chunks.push(ContentChunk {
+                            eid: *content_eid,
+                            length: 1,
+                            is_section_start: false, // Container is never first
+                        });
+                        *content_eid += 1;
+                    } else if tag == "li" {
+                        // Simple list item: children get EIDs, no container EID
+                        for child in children {
+                            collect_chunks_recursive(child, content_eid, chunks, is_first);
+                        }
+                    } else {
+                        // Regular container: children then container
+                        for child in children {
+                            collect_chunks_recursive(child, content_eid, chunks, is_first);
+                        }
+                        // Container gets EID but minimal length for position purposes
+                        chunks.push(ContentChunk {
+                            eid: *content_eid,
+                            length: 1,
+                            is_section_start: false, // Container is never first
+                        });
+                        *content_eid += 1;
                     }
-                    ranges.push(ContentRange {
-                        eid: *content_eid,
-                        char_start: *char_pos,
-                        char_end: *char_pos,
-                    });
-                    *content_eid += 1;
                 }
             }
         }
 
         for content_item in &chapter.content {
-            collect_ranges_recursive(
+            collect_chunks_recursive(
                 content_item,
                 &mut content_eid,
-                &mut total_chars,
-                &mut content_ranges,
+                &mut chunks,
+                &mut is_first_in_section,
             );
         }
 
-        let total_items = count_content_items(&chapter.content);
+        let total_items = count_content_eids(&chapter.content);
         eid_base += 1 + total_items as i64;
     }
 
+    // Generate location entries following kfxinput's algorithm:
+    // - Track cumulative position (pid) across all chunks
+    // - Reset next_loc_position at each section boundary
+    // - Emit location entries at CHARS_PER_LOCATION intervals
     let mut location_entries = Vec::new();
-    let mut added_eids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut pid: usize = 0; // Cumulative position
+    let mut next_loc_position: usize = 0;
+    let mut in_section = false;
 
-    // Add an entry for every content item at offset 0
-    for range in &content_ranges {
-        if !added_eids.contains(&range.eid) {
-            location_entries.push(IonValue::OrderedStruct(vec![
-                (sym::POSITION, IonValue::Int(range.eid)),
-                (sym::OFFSET, IonValue::Int(0)),
-            ]));
-            added_eids.insert(range.eid);
+    for chunk in &chunks {
+        let mut eid_loc_offset: usize = 0;
+        let mut loc_pid = pid;
+
+        // Reset location boundary at section start (key insight from kfxinput)
+        if chunk.is_section_start {
+            next_loc_position = loc_pid;
+            in_section = true;
         }
-    }
 
-    // Add additional entries at character position boundaries
-    let num_locations = (total_chars / CHARS_PER_LOCATION).max(1);
-    for loc_idx in 1..num_locations {
-        let char_pos = loc_idx * CHARS_PER_LOCATION;
-
-        let range = content_ranges
-            .iter()
-            .find(|r| char_pos >= r.char_start && char_pos < r.char_end)
-            .or_else(|| content_ranges.last());
-
-        if let Some(range) = range {
-            let offset_within_item = if char_pos >= range.char_start {
-                (char_pos - range.char_start) as i64
-            } else {
-                0
-            };
-
-            if offset_within_item > 0 {
+        // Process this chunk, potentially emitting multiple location entries
+        loop {
+            // Emit location entry if we're at a boundary
+            if loc_pid == next_loc_position && in_section {
                 location_entries.push(IonValue::OrderedStruct(vec![
-                    (sym::POSITION, IonValue::Int(range.eid)),
-                    (sym::OFFSET, IonValue::Int(offset_within_item)),
+                    (sym::POSITION, IonValue::Int(chunk.eid)),
+                    (sym::OFFSET, IonValue::Int(eid_loc_offset as i64)),
                 ]));
+                next_loc_position += CHARS_PER_LOCATION;
             }
+
+            let eid_remaining = chunk.length - eid_loc_offset;
+            let loc_remaining = next_loc_position.saturating_sub(loc_pid);
+
+            // If remaining content in this EID fits within current location span, move on
+            if eid_remaining <= loc_remaining {
+                break;
+            }
+
+            // Otherwise, advance within this EID to the next location boundary
+            eid_loc_offset += loc_remaining;
+            loc_pid = next_loc_position;
         }
+
+        pid += chunk.length;
     }
 
     let mut wrapper = HashMap::new();

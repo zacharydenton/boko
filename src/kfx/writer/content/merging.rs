@@ -19,22 +19,127 @@ type PendingText = (
 );
 
 /// Flatten only the outermost body/section wrappers to get a usable list of content items.
+/// Also unwraps heading containers (h1-h6) that contain only a single text item,
+/// producing flat TEXT items with heading styles that match reference KFX format.
 /// Preserves all other HTML structure faithfully.
+/// When flattening a container with an element_id (for TOC anchors), propagates the ID
+/// to the first child item so anchor navigation still works.
 pub fn flatten_containers(items: Vec<ContentItem>) -> Vec<ContentItem> {
     items
         .into_iter()
         .flat_map(|item| {
-            match &item {
-                ContentItem::Container { tag, children, .. }
-                    if tag == "body" || tag == "section" || tag == "article" || tag == "main" =>
-                {
+            match item {
+                ContentItem::Container {
+                    tag,
+                    children,
+                    element_id,
+                    ..
+                } if tag == "body" || tag == "section" || tag == "article" || tag == "main" => {
                     // Recursively flatten body/section wrappers
-                    flatten_containers(children.clone())
+                    let mut flattened = flatten_containers(children);
+
+                    // Propagate element_id to first child for TOC anchor navigation
+                    if let Some(id) = element_id {
+                        if let Some(first) = flattened.first_mut() {
+                            propagate_element_id(first, id);
+                        }
+                    }
+
+                    flattened
+                }
+                // Unwrap heading containers that only contain text
+                // This produces flat TEXT items with role=3 like the reference KFX,
+                // which is required for TOC navigation to work on Kindle devices
+                ContentItem::Container {
+                    ref tag,
+                    ref children,
+                    ..
+                } if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+                    && children.len() == 1
+                    && matches!(children[0], ContentItem::Text { .. }) =>
+                {
+                    // Extract components from the container
+                    if let ContentItem::Container {
+                        style: container_style,
+                        mut children,
+                        element_id,
+                        ..
+                    } = item
+                    {
+                        if let ContentItem::Text {
+                            text,
+                            style: child_style,
+                            inline_runs,
+                            anchor_href,
+                            element_id: child_element_id,
+                            is_verse,
+                            is_noteref,
+                        } = children.remove(0)
+                        {
+                            // Merge container style with child style
+                            // Container has heading-specific properties (is_heading, margins, etc.)
+                            let mut merged_style = child_style;
+                            merged_style.is_heading = container_style.is_heading;
+                            // Copy block-level styles from heading container if not set
+                            if merged_style.text_align.is_none() {
+                                merged_style.text_align = container_style.text_align;
+                            }
+                            if merged_style.margin_top.is_none() {
+                                merged_style.margin_top = container_style.margin_top;
+                            }
+                            if merged_style.margin_bottom.is_none() {
+                                merged_style.margin_bottom = container_style.margin_bottom;
+                            }
+                            if merged_style.font_size.is_none() {
+                                merged_style.font_size = container_style.font_size;
+                            }
+                            if merged_style.font_weight.is_none() {
+                                merged_style.font_weight = container_style.font_weight;
+                            }
+                            if merged_style.line_height.is_none() {
+                                merged_style.line_height = container_style.line_height;
+                            }
+
+                            return vec![ContentItem::Text {
+                                text,
+                                style: merged_style,
+                                inline_runs,
+                                anchor_href,
+                                // Prefer child's element_id, fall back to container's
+                                element_id: child_element_id.or(element_id),
+                                is_verse,
+                                is_noteref,
+                            }];
+                        }
+                    }
+                    unreachable!()
                 }
                 _ => vec![item],
             }
         })
         .collect()
+}
+
+/// Propagate an element ID to a content item for anchor navigation.
+/// This is used when flattening section containers - the section's ID needs
+/// to be preserved on the first child so TOC navigation works correctly.
+fn propagate_element_id(item: &mut ContentItem, id: String) {
+    match item {
+        ContentItem::Text { element_id, .. } => {
+            if element_id.is_none() {
+                *element_id = Some(id);
+            }
+        }
+        ContentItem::Container { element_id, .. } => {
+            if element_id.is_none() {
+                *element_id = Some(id);
+            }
+        }
+        ContentItem::Image { .. } | ContentItem::Svg { .. } => {
+            // Images/SVGs don't have element_id fields, but they're rarely
+            // the first child of a section anyway
+        }
+    }
 }
 
 /// Merge consecutive Text items into a single Text item with inline style runs

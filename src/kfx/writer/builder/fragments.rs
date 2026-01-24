@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use crate::book::Book;
 use crate::css::ParsedStyle;
 use crate::kfx::ion::IonValue;
-use crate::kfx::writer::content::{ChapterData, ContentItem, count_content_items};
+use crate::kfx::writer::content::{ChapterData, ContentItem, count_content_eids};
 use crate::kfx::writer::fragment::KfxFragment;
 use crate::kfx::writer::navigation::{build_book_navigation, build_nav_unit_list};
 use crate::kfx::writer::position::{build_location_map, build_position_id_map, build_position_map};
@@ -298,15 +298,21 @@ impl KfxBookBuilder {
         ));
     }
 
-    /// Add book navigation fragment
+    /// Add book navigation fragment ($389)
+    ///
+    /// Creates a $389 fragment with INLINE $391:: nav containers and $393:: nav entries.
+    /// This matches the reference KFX format where navigation is a single fragment
+    /// with annotated inline values, not separate fragments.
     pub(crate) fn add_book_navigation_fragment(
         &mut self,
         toc: &[crate::book::TocEntry],
+        chapters: &[ChapterData],
         has_cover: bool,
         first_content_eid: Option<i64>,
     ) {
         let nav_value = build_book_navigation(
             toc,
+            chapters,
             &self.section_eids,
             &self.anchor_eids,
             &mut self.symtab,
@@ -376,10 +382,13 @@ impl KfxBookBuilder {
         let mut section = HashMap::new();
         section.insert(sym::SECTION_NAME, IonValue::Symbol(section_sym));
 
+        // Section content entry must include CONTENT_TYPE ($159) for TOC navigation to work
+        // Reference KFX files have $159: $269 (CONTENT_PARAGRAPH) for text sections
         section.insert(
             sym::SECTION_CONTENT,
             IonValue::List(vec![IonValue::OrderedStruct(vec![
                 (sym::POSITION, IonValue::Int(eid_base)),
+                (sym::CONTENT_TYPE, IonValue::Symbol(sym::CONTENT_PARAGRAPH)),
                 (sym::CONTENT_NAME, IonValue::Symbol(block_sym)),
             ])]),
         );
@@ -392,9 +401,14 @@ impl KfxBookBuilder {
     }
 
     /// Add auxiliary data fragment for a section
-    pub(crate) fn add_auxiliary_data_for_section(&mut self, section_id: &str) {
-        let aux_id = format!("aux-{}", section_id);
-        let aux_sym = self.symtab.get_or_intern(&aux_id);
+    ///
+    /// `section_fid` should be the exact FID string used when creating the section fragment.
+    /// For cover: "cover-section"
+    /// For chapters: "section-chapter-N"
+    pub(crate) fn add_auxiliary_data_for_section(&mut self, section_fid: &str) {
+        let aux_id = format!("aux-{}", section_fid);
+        // Get the section symbol directly - no transformation needed
+        let section_sym = self.symtab.get_or_intern(section_fid);
 
         let mut metadata_entry = HashMap::new();
         metadata_entry.insert(sym::VALUE, IonValue::Bool(true));
@@ -404,7 +418,8 @@ impl KfxBookBuilder {
         );
 
         let mut aux = HashMap::new();
-        aux.insert(sym::AUX_DATA_REF, IonValue::Symbol(aux_sym));
+        // Reference the section symbol
+        aux.insert(sym::AUX_DATA_REF, IonValue::Symbol(section_sym));
         aux.insert(
             sym::METADATA,
             IonValue::List(vec![IonValue::Struct(metadata_entry)]),
@@ -460,7 +475,7 @@ impl KfxBookBuilder {
         }
 
         for chapter in chapters {
-            let total_items = count_content_items(&chapter.content);
+            let total_items = count_content_eids(&chapter.content);
             for (i, item) in chapter.content.iter().enumerate() {
                 let content_eid = eid_base + 1 + i as i64;
                 let item_len = match item {

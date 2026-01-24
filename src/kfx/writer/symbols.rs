@@ -527,7 +527,11 @@ pub mod sym {
     pub const NAV_TYPE: u64 = 235; // $235 - navigation type
     pub const TOC: u64 = 212; // $212 - table of contents nav type
     pub const LANDMARKS_NAV_TYPE: u64 = 236; // $236 - landmarks navigation type value
-    pub const LANDMARKS: u64 = 237; // $237 - landmarks
+    pub const HEADINGS_NAV_TYPE: u64 = 798; // $798 - headings navigation type (for TOC display)
+    pub const READING_ORDER_FRONTMATTER: u64 = 800; // $800 - reading order frontmatter type
+    pub const READING_ORDER_BODYMATTER: u64 = 801; // $801 - reading order bodymatter type
+    pub const READING_ORDER_BACKMATTER: u64 = 802; // $802 - reading order backmatter type
+    pub const PAGE_LIST_NAV_TYPE: u64 = 237; // $237 - page list navigation type
     pub const LANDMARK_TYPE: u64 = 238; // $238 - landmark type field
     pub const NAV_ID: u64 = 239; // $239 - nav container id reference
     pub const NAV_UNIT_REF: u64 = 240; // $240 - nav unit reference
@@ -736,7 +740,7 @@ impl SymbolTable {
         let mut import = HashMap::new();
         import.insert(4, IonValue::String("YJ_symbols".to_string())); // name
         import.insert(5, IonValue::Int(10)); // version
-        import.insert(8, IonValue::Int(Self::LOCAL_MIN_ID as i64 - 1)); // max_id
+        import.insert(8, IonValue::Int(Self::LOCAL_MIN_ID as i64 - 1)); // max_id for import
 
         let mut symtab = HashMap::new();
         symtab.insert(6, IonValue::List(vec![IonValue::Struct(import)])); // imports
@@ -749,6 +753,10 @@ impl SymbolTable {
                 .collect();
             symtab.insert(7, IonValue::List(symbols)); // symbols
         }
+
+        // Add top-level max_id: total symbols available = base max_id + local symbols
+        let total_max_id = Self::LOCAL_MIN_ID as i64 - 1 + self.local_symbols.len() as i64;
+        symtab.insert(8, IonValue::Int(total_max_id)); // max_id at top level
 
         IonValue::Struct(symtab)
     }

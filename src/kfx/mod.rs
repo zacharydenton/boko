@@ -6,6 +6,8 @@
 pub mod ion;
 mod reader;
 pub mod style;
+#[doc(hidden)]
+pub mod test_helpers;
 pub mod writer;
 
 pub use reader::{read_kfx, read_kfx_from_reader};

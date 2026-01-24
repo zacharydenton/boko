@@ -1448,6 +1448,8 @@ fn test_figcaption_element_sets_is_caption() {
 #[test]
 fn test_heading_element_sets_is_heading() {
     // Test that h1-h6 elements set is_heading on style
+    // Note: Simple headings (containing only text) are flattened to Text items
+    // with is_heading=true, matching the reference KFX format
     let html = r#"
         <html>
         <body>
@@ -1472,19 +1474,26 @@ fn test_heading_element_sets_is_heading() {
 
     fn find_heading_style(items: &[ContentItem]) -> Option<bool> {
         for item in items {
-            if let ContentItem::Container {
-                style,
-                tag,
-                children,
-                ..
-            } = item
-            {
-                if tag.starts_with('h') && tag.len() == 2 {
-                    return Some(style.is_heading);
+            match item {
+                // Simple headings are flattened to Text items with is_heading=true
+                ContentItem::Text { style, .. } if style.is_heading => {
+                    return Some(true);
                 }
-                if let Some(result) = find_heading_style(children) {
-                    return Some(result);
+                // Complex headings remain as Containers
+                ContentItem::Container {
+                    style,
+                    tag,
+                    children,
+                    ..
+                } => {
+                    if tag.starts_with('h') && tag.len() == 2 {
+                        return Some(style.is_heading);
+                    }
+                    if let Some(result) = find_heading_style(children) {
+                        return Some(result);
+                    }
                 }
+                _ => {}
             }
         }
         None
