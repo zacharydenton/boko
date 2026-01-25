@@ -165,6 +165,109 @@ impl SemanticMap {
         self.datetime.get(&node).map(|s| s.as_str())
     }
 
+    // --- Generic access ---
+
+    /// Get an attribute by name.
+    ///
+    /// This provides uniform access to semantic attributes, useful for
+    /// exporters that need to query multiple attributes dynamically.
+    ///
+    /// # Supported attribute names
+    ///
+    /// - `"href"` - Link target
+    /// - `"src"` - Image source
+    /// - `"alt"` - Alternative text
+    /// - `"id"` - Element ID
+    /// - `"title"` - Tooltip text
+    /// - `"lang"` - Language code
+    /// - `"epub:type"` - EPUB semantic type
+    /// - `"role"` - WAI-ARIA role
+    /// - `"datetime"` - Machine-readable date
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use boko::ir::{SemanticMap, NodeId};
+    ///
+    /// let mut semantics = SemanticMap::new();
+    /// let node = NodeId(1);
+    ///
+    /// semantics.set_attr(node, "href", "https://example.com");
+    /// assert_eq!(semantics.get_attr(node, "href"), Some("https://example.com"));
+    /// ```
+    pub fn get_attr(&self, node: NodeId, name: &str) -> Option<&str> {
+        match name {
+            "href" => self.href(node),
+            "src" => self.src(node),
+            "alt" => self.alt(node),
+            "id" => self.id(node),
+            "title" => self.title(node),
+            "lang" | "xml:lang" => self.lang(node),
+            "epub:type" => self.epub_type(node),
+            "role" => self.aria_role(node),
+            "datetime" => self.datetime(node),
+            _ => None,
+        }
+    }
+
+    /// Set an attribute by name.
+    ///
+    /// Returns `true` if the attribute name was recognized, `false` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use boko::ir::{SemanticMap, NodeId};
+    ///
+    /// let mut semantics = SemanticMap::new();
+    /// let node = NodeId(1);
+    ///
+    /// assert!(semantics.set_attr(node, "alt", "A photo"));
+    /// assert!(!semantics.set_attr(node, "unknown", "value")); // Unrecognized
+    /// ```
+    pub fn set_attr(&mut self, node: NodeId, name: &str, value: impl Into<String>) -> bool {
+        let value = value.into();
+        match name {
+            "href" => {
+                self.set_href(node, value);
+                true
+            }
+            "src" => {
+                self.set_src(node, value);
+                true
+            }
+            "alt" => {
+                self.set_alt(node, value);
+                true
+            }
+            "id" => {
+                self.set_id(node, value);
+                true
+            }
+            "title" => {
+                self.set_title(node, value);
+                true
+            }
+            "lang" | "xml:lang" => {
+                self.set_lang(node, value);
+                true
+            }
+            "epub:type" => {
+                self.set_epub_type(node, value);
+                true
+            }
+            "role" => {
+                self.set_aria_role(node, value);
+                true
+            }
+            "datetime" => {
+                self.set_datetime(node, value);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Get the total number of stored attributes.
     pub fn len(&self) -> usize {
         self.href.len()

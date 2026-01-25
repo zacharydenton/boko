@@ -250,6 +250,58 @@ impl ComputedStyle {
     pub fn is_default(&self) -> bool {
         *self == ComputedStyle::default()
     }
+
+    // --- Modifier checks for exporters ---
+
+    /// Check if the style is bold (font-weight >= 700).
+    #[inline]
+    pub fn is_bold(&self) -> bool {
+        self.font_weight.0 >= 700
+    }
+
+    /// Check if the style is italic.
+    #[inline]
+    pub fn is_italic(&self) -> bool {
+        matches!(self.font_style, FontStyle::Italic | FontStyle::Oblique)
+    }
+
+    /// Check if the style has underline decoration.
+    #[inline]
+    pub fn is_underline(&self) -> bool {
+        self.text_decoration_underline
+    }
+
+    /// Check if the style has strikethrough decoration.
+    #[inline]
+    pub fn is_strikethrough(&self) -> bool {
+        self.text_decoration_line_through
+    }
+
+    /// Check if the style is superscript.
+    #[inline]
+    pub fn is_superscript(&self) -> bool {
+        self.vertical_align_super
+    }
+
+    /// Check if the style is subscript.
+    #[inline]
+    pub fn is_subscript(&self) -> bool {
+        self.vertical_align_sub
+    }
+
+    /// Check if the style uses a monospace font.
+    pub fn is_monospace(&self) -> bool {
+        self.font_family
+            .as_ref()
+            .map(|f| {
+                let lower = f.to_lowercase();
+                lower.contains("mono")
+                    || lower.contains("courier")
+                    || lower.contains("consolas")
+                    || lower.contains("menlo")
+            })
+            .unwrap_or(false)
+    }
 }
 
 impl ToCss for ComputedStyle {
