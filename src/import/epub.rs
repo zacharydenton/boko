@@ -8,7 +8,7 @@ use std::sync::Arc;
 use zip::ZipArchive;
 
 use crate::book::{Metadata, TocEntry};
-use crate::epub::{parse_container_xml, parse_ncx, parse_opf, strip_bom};
+use crate::epub::{parse_container_xml, parse_ncx, parse_opf};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, ByteSourceCursor, FileSource};
 
@@ -128,8 +128,8 @@ impl EpubImporter {
 
         // 3. Parse OPF
         let opf_bytes = read_entry(&source, &zip_index, &opf_path)?;
-        let opf_str = String::from_utf8(strip_bom(&opf_bytes).to_vec())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let hint_encoding = crate::util::extract_xml_encoding(&opf_bytes);
+        let opf_str = crate::util::decode_text(&opf_bytes, hint_encoding);
         let opf = parse_opf(&opf_str)?;
 
         // 4. Build spine
@@ -156,8 +156,8 @@ impl EpubImporter {
         let toc = if let Some(ncx_href) = &opf.ncx_href {
             let ncx_path = format!("{}{}", opf_base, ncx_href);
             if let Ok(ncx_bytes) = read_entry(&source, &zip_index, &ncx_path) {
-                let ncx_str = String::from_utf8(strip_bom(&ncx_bytes).to_vec())
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let hint_encoding = crate::util::extract_xml_encoding(&ncx_bytes);
+                let ncx_str = crate::util::decode_text(&ncx_bytes, hint_encoding);
                 let toc_entries = parse_ncx(&ncx_str)?;
                 // Prepend base path to hrefs (NCX uses relative paths)
                 prepend_base_to_toc(&toc_entries, &opf_base)

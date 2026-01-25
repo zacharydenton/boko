@@ -19,6 +19,9 @@ use super::Exporter;
 pub struct EpubConfig {
     /// Compression level for deflate (0-9, default 6).
     pub compression_level: Option<u32>,
+    /// If true, normalize content through IR pipeline for clean, consistent output.
+    /// Default is false (passthrough mode preserves original HTML/CSS).
+    pub normalize: bool,
 }
 
 /// EPUB format exporter.
@@ -64,6 +67,17 @@ impl Default for EpubExporter {
 
 impl Exporter for EpubExporter {
     fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
+        if self.config.normalize {
+            self.export_normalized(book, writer)
+        } else {
+            self.export_raw(book, writer)
+        }
+    }
+}
+
+impl EpubExporter {
+    /// Export with passthrough mode (preserves original HTML/CSS).
+    fn export_raw<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
         let mut zip = ZipWriter::new(writer);
 
         let compression_level = self.config.compression_level.unwrap_or(6);
@@ -154,6 +168,115 @@ impl Exporter for EpubExporter {
 
             zip.start_file(&zip_path, deflated).map_err(io_error)?;
             zip.write_all(&content)?;
+        }
+
+        zip.finish().map_err(io_error)?;
+        Ok(())
+    }
+
+    /// Export with normalized content (IR pipeline produces clean, consistent output).
+    fn export_normalized<W: Write + Seek>(
+        &self,
+        book: &mut Book,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        use super::normalize::normalize_book;
+
+        // Normalize the book content
+        let content = normalize_book(book)?;
+
+        let mut zip = ZipWriter::new(writer);
+
+        let compression_level = self.config.compression_level.unwrap_or(6);
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let deflated = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(Some(compression_level as i64));
+
+        // 1. Write mimetype (must be first, uncompressed)
+        zip.start_file("mimetype", stored).map_err(io_error)?;
+        zip.write_all(b"application/epub+zip")?;
+
+        // 2. Write container.xml
+        zip.start_file("META-INF/container.xml", deflated)
+            .map_err(io_error)?;
+        zip.write_all(CONTAINER_XML)?;
+
+        // 3. Build manifest
+        let mut manifest_items: Vec<ManifestItem> = Vec::new();
+        let mut spine_refs: Vec<String> = Vec::new();
+
+        // Add stylesheet to manifest
+        if !content.css.is_empty() {
+            manifest_items.push(ManifestItem {
+                id: "stylesheet".to_string(),
+                href: "OEBPS/style.css".to_string(),
+                media_type: "text/css".to_string(),
+            });
+        }
+
+        // Add chapters to manifest
+        for (i, _) in content.chapters.iter().enumerate() {
+            let id = format!("chapter_{}", i);
+            let href = format!("OEBPS/chapter_{}.xhtml", i);
+
+            manifest_items.push(ManifestItem {
+                id: id.clone(),
+                href,
+                media_type: "application/xhtml+xml".to_string(),
+            });
+            spine_refs.push(id);
+        }
+
+        // Add assets to manifest (from normalized content)
+        let mut asset_idx = 0;
+        for asset_path in &content.assets {
+            let media_type = guess_media_type(asset_path);
+            let id = format!("asset_{}", asset_idx);
+            let href = format!("OEBPS/{}", sanitize_path(asset_path));
+
+            manifest_items.push(ManifestItem {
+                id,
+                href,
+                media_type,
+            });
+            asset_idx += 1;
+        }
+
+        // 4. Write content.opf
+        let opf = generate_opf(book.metadata(), &manifest_items, &spine_refs);
+        zip.start_file("OEBPS/content.opf", deflated)
+            .map_err(io_error)?;
+        zip.write_all(opf.as_bytes())?;
+
+        // 5. Write toc.ncx
+        let ncx = generate_ncx(book.metadata(), book.toc());
+        zip.start_file("OEBPS/toc.ncx", deflated).map_err(io_error)?;
+        zip.write_all(ncx.as_bytes())?;
+
+        // 6. Write unified stylesheet
+        if !content.css.is_empty() {
+            zip.start_file("OEBPS/style.css", deflated)
+                .map_err(io_error)?;
+            zip.write_all(content.css.as_bytes())?;
+        }
+
+        // 7. Write synthesized chapters
+        for (i, chapter) in content.chapters.iter().enumerate() {
+            let zip_path = format!("OEBPS/chapter_{}.xhtml", i);
+            zip.start_file(&zip_path, deflated).map_err(io_error)?;
+            zip.write_all(chapter.document.as_bytes())?;
+        }
+
+        // 8. Write assets referenced by normalized content
+        for asset_path in &content.assets {
+            let zip_path = format!("OEBPS/{}", sanitize_path(asset_path));
+
+            // Try to load the asset from the book
+            if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
+                zip.start_file(&zip_path, deflated).map_err(io_error)?;
+                zip.write_all(&data)?;
+            }
         }
 
         zip.finish().map_err(io_error)?;

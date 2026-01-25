@@ -29,7 +29,9 @@ const XOR_KEY_LEN: usize = 20;
 /// Configuration for AZW3 export.
 #[derive(Debug, Clone, Default)]
 pub struct Azw3Config {
-    // Reserved for future options
+    /// If true, normalize content through IR pipeline for clean, consistent output.
+    /// Default is false (passthrough mode preserves original HTML/CSS).
+    pub normalize: bool,
 }
 
 /// AZW3/KF8 format exporter.
@@ -62,7 +64,7 @@ impl Default for Azw3Exporter {
 
 impl Exporter for Azw3Exporter {
     fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
-        let builder = Kf8Builder::new(book)?;
+        let builder = Kf8Builder::new(book, self.config.normalize)?;
         builder.write(writer)
     }
 }
@@ -86,7 +88,16 @@ struct SpineItem {
 
 impl BookContext {
     /// Collect all data from a Book into internal structures.
-    fn from_book(book: &mut Book) -> io::Result<Self> {
+    fn from_book(book: &mut Book, normalize: bool) -> io::Result<Self> {
+        if normalize {
+            Self::from_normalized(book)
+        } else {
+            Self::from_raw(book)
+        }
+    }
+
+    /// Collect raw (passthrough) content from the book.
+    fn from_raw(book: &mut Book) -> io::Result<Self> {
         // Collect metadata and TOC (these are borrowed, so clone)
         let metadata = book.metadata().clone();
         let toc = book.toc().to_vec();
@@ -142,6 +153,66 @@ impl BookContext {
             metadata,
         })
     }
+
+    /// Collect normalized content from the book through IR pipeline.
+    fn from_normalized(book: &mut Book) -> io::Result<Self> {
+        use super::normalize::normalize_book;
+
+        let normalized = normalize_book(book)?;
+
+        // Collect metadata and TOC
+        let metadata = book.metadata().clone();
+        let toc = book.toc().to_vec();
+
+        let mut resources = HashMap::new();
+
+        // Add unified CSS as a resource
+        if !normalized.css.is_empty() {
+            resources.insert(
+                "style.css".to_string(),
+                Resource {
+                    data: normalized.css.into_bytes(),
+                    media_type: "text/css".to_string(),
+                },
+            );
+        }
+
+        // Build spine from normalized chapters
+        let mut spine = Vec::with_capacity(normalized.chapters.len());
+        for (i, chapter) in normalized.chapters.iter().enumerate() {
+            let href = format!("chapter_{}.xhtml", i);
+            let data = chapter.document.as_bytes().to_vec();
+
+            // Add as resource
+            resources.insert(
+                href.clone(),
+                Resource {
+                    data: data.clone(),
+                    media_type: "application/xhtml+xml".to_string(),
+                },
+            );
+
+            spine.push(SpineItem { href, data });
+        }
+
+        // Add referenced assets
+        for asset_path in &normalized.assets {
+            if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
+                let media_type = guess_media_type(asset_path);
+                resources.insert(
+                    asset_path.clone(),
+                    Resource { data, media_type },
+                );
+            }
+        }
+
+        Ok(Self {
+            resources,
+            spine,
+            toc,
+            metadata,
+        })
+    }
 }
 
 struct Kf8Builder {
@@ -171,8 +242,8 @@ struct Kf8Builder {
 }
 
 impl Kf8Builder {
-    fn new(book: &mut Book) -> io::Result<Self> {
-        let ctx = BookContext::from_book(book)?;
+    fn new(book: &mut Book, normalize: bool) -> io::Result<Self> {
+        let ctx = BookContext::from_book(book, normalize)?;
 
         let mut builder = Self {
             ctx,

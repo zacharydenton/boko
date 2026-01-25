@@ -4,11 +4,14 @@
 //! - Format-agnostic types (`Metadata`, `TocEntry`, `Resource`, `SpineItem`)
 //! - The `Book` runtime handle for reading ebooks via importers
 
+use std::collections::BTreeMap;
 use std::io::{self, Seek, Write};
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use crate::export::{Azw3Exporter, EpubExporter, Exporter};
 use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, MobiImporter, SpineEntry};
+use crate::ir::IRChapter;
 
 // ============================================================================
 // Data Types
@@ -96,6 +99,9 @@ impl PartialOrd for TocEntry {
 /// ```
 pub struct Book {
     backend: Box<dyn Importer>,
+    /// Cache of parsed IR chapters to avoid re-parsing during normalized export.
+    /// Uses RwLock for thread-safe access and Arc for cheap cloning.
+    ir_cache: Arc<RwLock<BTreeMap<ChapterId, Arc<IRChapter>>>>,
 }
 
 impl Format {
@@ -133,7 +139,10 @@ impl Book {
             Format::Azw3 => Box::new(Azw3Importer::open(path.as_ref())?),
             Format::Mobi => Box::new(MobiImporter::open(path.as_ref())?),
         };
-        Ok(Self { backend })
+        Ok(Self {
+            backend,
+            ir_cache: Arc::new(RwLock::new(BTreeMap::new())),
+        })
     }
 
     /// Book metadata.
@@ -159,6 +168,90 @@ impl Book {
     /// Load raw chapter bytes.
     pub fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
         self.backend.load_raw(id)
+    }
+
+    /// Load a chapter as normalized IR.
+    ///
+    /// This parses the chapter's HTML content and any linked or inline CSS,
+    /// producing a normalized tree structure suitable for rendering.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::{Book, Role};
+    ///
+    /// let mut book = Book::open("input.epub")?;
+    /// let spine: Vec<_> = book.spine().to_vec();
+    ///
+    /// for entry in spine {
+    ///     let chapter = book.load_chapter(entry.id)?;
+    ///     for id in chapter.iter_dfs() {
+    ///         let node = chapter.node(id).unwrap();
+    ///         if node.role == Role::Paragraph {
+    ///             // Process paragraph...
+    ///         }
+    ///     }
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
+        self.backend.load_chapter(id)
+    }
+
+    /// Load a chapter as IR with caching.
+    ///
+    /// This method caches parsed IR chapters to avoid re-parsing when the same
+    /// chapter is loaded multiple times (e.g., during normalized export).
+    /// Returns an `Arc<IRChapter>` for cheap cloning and thread-safe sharing.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::Book;
+    ///
+    /// let mut book = Book::open("input.epub")?;
+    /// let spine: Vec<_> = book.spine().to_vec();
+    ///
+    /// // First call parses the chapter
+    /// let chapter1 = book.load_chapter_cached(spine[0].id)?;
+    ///
+    /// // Second call returns cached version (cheap Arc clone)
+    /// let chapter2 = book.load_chapter_cached(spine[0].id)?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn load_chapter_cached(&mut self, id: ChapterId) -> io::Result<Arc<IRChapter>> {
+        // Fast path: check read lock first
+        {
+            let cache = self.ir_cache.read().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned")
+            })?;
+            if let Some(chapter) = cache.get(&id) {
+                return Ok(Arc::clone(chapter));
+            }
+        }
+
+        // Slow path: load chapter (no lock held during IO)
+        let chapter = self.backend.load_chapter(id)?;
+        let chapter_arc = Arc::new(chapter);
+
+        // Write to cache
+        {
+            let mut cache = self.ir_cache.write().map_err(|_| {
+                io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned")
+            })?;
+            cache.insert(id, Arc::clone(&chapter_arc));
+        }
+
+        Ok(chapter_arc)
+    }
+
+    /// Clear the IR cache.
+    ///
+    /// Call this to free memory after normalized export is complete.
+    pub fn clear_cache(&mut self) {
+        if let Ok(mut cache) = self.ir_cache.write() {
+            cache.clear();
+        }
     }
 
     /// Load an asset by path.

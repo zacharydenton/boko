@@ -35,9 +35,11 @@
 //! ```
 
 pub mod book;
+pub mod compiler;
 pub mod export;
 pub mod import;
 pub mod io;
+pub mod ir;
 
 pub mod epub;
 pub mod kfx;
@@ -50,6 +52,8 @@ pub mod wasm;
 
 // Primary exports
 pub use book::{Book, Format, Metadata, Resource, TocEntry};
+pub use compiler::{compile_html, Origin, Stylesheet};
 pub use export::{Azw3Exporter, EpubExporter, Exporter};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};
+pub use ir::{IRChapter, Node, NodeId, Role, StyleId};

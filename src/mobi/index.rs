@@ -230,10 +230,7 @@ pub fn decode_string(data: &[u8], codec: &str) -> (String, usize) {
     }
 
     let bytes = &data[1..1 + length];
-    let s = match codec {
-        "utf-8" | "UTF-8" => String::from_utf8_lossy(bytes).to_string(),
-        _ => String::from_utf8_lossy(bytes).to_string(), // TODO: proper CP1252
-    };
+    let s = crate::util::decode_text(bytes, Some(codec)).into_owned();
 
     (s, length + 1)
 }
