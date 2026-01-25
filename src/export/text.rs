@@ -686,6 +686,9 @@ impl<W: Write> ExportContext<'_, W> {
     fn write_text(&mut self, text: &str, escape: bool) -> io::Result<()> {
         self.ensure_line_started()?;
 
+        // Strip soft hyphens (U+00AD) used for hyphenation hints in ebooks
+        let text = text.replace('\u{00AD}', "");
+
         // Normalize internal whitespace while preserving leading/trailing
         let has_leading = text.starts_with(char::is_whitespace);
         let has_trailing = text.ends_with(char::is_whitespace);
@@ -722,7 +725,8 @@ impl<W: Write> ExportContext<'_, W> {
     fn collect_text(&self, id: NodeId) -> String {
         let mut result = String::new();
         self.collect_text_recursive(id, &mut result);
-        result
+        // Strip soft hyphens (U+00AD) used for hyphenation hints in ebooks
+        result.replace('\u{00AD}', "")
     }
 
     fn collect_text_recursive(&self, id: NodeId, result: &mut String) {
