@@ -16,8 +16,6 @@ pub enum Format {
     Azw3,
     /// MOBI format (legacy Kindle). Writes as KF8/AZW3.
     Mobi,
-    /// KFX/KF10 format (latest Kindle)
-    Kfx,
 }
 
 /// Intermediate representation of an ebook.
@@ -95,7 +93,6 @@ impl Format {
                 "epub" => Some(Format::Epub),
                 "azw3" => Some(Format::Azw3),
                 "mobi" => Some(Format::Mobi),
-                "kfx" => Some(Format::Kfx),
                 _ => None,
             })
     }
@@ -142,7 +139,6 @@ impl Book {
         match format {
             Format::Epub => crate::epub::read_epub(path),
             Format::Azw3 | Format::Mobi => crate::mobi::read_mobi(path),
-            Format::Kfx => crate::kfx::read_kfx(path),
         }
     }
 
@@ -183,7 +179,6 @@ impl Book {
         match format {
             Format::Epub => crate::epub::write_epub(self, path),
             Format::Azw3 | Format::Mobi => crate::mobi::write_mobi(self, path),
-            Format::Kfx => crate::kfx::write_kfx(self, path),
         }
     }
 

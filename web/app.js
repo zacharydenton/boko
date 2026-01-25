@@ -1,4 +1,4 @@
-import init, { epub_to_azw3, epub_to_kfx, mobi_to_epub, mobi_to_azw3, mobi_to_kfx, kfx_to_epub, kfx_to_azw3 } from './pkg/boko.js';
+import init, { epub_to_azw3, mobi_to_epub, mobi_to_azw3 } from './pkg/boko.js';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -46,7 +46,6 @@ function getInputFormat(filename) {
     const ext = getFileExtension(filename);
     if (ext === 'epub') return 'epub';
     if (ext === 'azw3' || ext === 'mobi') return 'mobi';
-    if (ext === 'kfx') return 'kfx';
     return null;
 }
 
@@ -56,15 +55,8 @@ function updateOutputOptions(inputFormat) {
     if (inputFormat === 'epub') {
         outputFormat.innerHTML = `
             <option value="azw3">AZW3</option>
-            <option value="kfx">KFX</option>
         `;
     } else if (inputFormat === 'mobi') {
-        outputFormat.innerHTML = `
-            <option value="epub">EPUB</option>
-            <option value="azw3">AZW3</option>
-            <option value="kfx">KFX</option>
-        `;
-    } else if (inputFormat === 'kfx') {
         outputFormat.innerHTML = `
             <option value="epub">EPUB</option>
             <option value="azw3">AZW3</option>
@@ -163,28 +155,12 @@ async function convert() {
             outputData = epub_to_azw3(inputData);
             outputFilename = baseName + '.azw3';
             mimeType = 'application/x-mobi8-ebook';
-        } else if (inputFormat === 'epub' && targetFormat === 'kfx') {
-            outputData = epub_to_kfx(inputData);
-            outputFilename = baseName + '.kfx';
-            mimeType = 'application/octet-stream';
         } else if (inputFormat === 'mobi' && targetFormat === 'epub') {
             outputData = mobi_to_epub(inputData);
             outputFilename = baseName + '.epub';
             mimeType = 'application/epub+zip';
         } else if (inputFormat === 'mobi' && targetFormat === 'azw3') {
             outputData = mobi_to_azw3(inputData);
-            outputFilename = baseName + '.azw3';
-            mimeType = 'application/x-mobi8-ebook';
-        } else if (inputFormat === 'mobi' && targetFormat === 'kfx') {
-            outputData = mobi_to_kfx(inputData);
-            outputFilename = baseName + '.kfx';
-            mimeType = 'application/octet-stream';
-        } else if (inputFormat === 'kfx' && targetFormat === 'epub') {
-            outputData = kfx_to_epub(inputData);
-            outputFilename = baseName + '.epub';
-            mimeType = 'application/epub+zip';
-        } else if (inputFormat === 'kfx' && targetFormat === 'azw3') {
-            outputData = kfx_to_azw3(inputData);
             outputFilename = baseName + '.azw3';
             mimeType = 'application/x-mobi8-ebook';
         } else {

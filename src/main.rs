@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use boko::{read_epub, read_kfx, read_mobi, write_epub, write_kfx, write_mobi};
+use boko::{read_epub, read_mobi, write_epub, write_mobi};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -63,7 +63,6 @@ fn get_format(path: &str) -> Option<&'static str> {
         .and_then(|ext| match ext.as_str() {
             "epub" => Some("epub"),
             "azw3" | "mobi" => Some("mobi"),
-            "kfx" => Some("kfx"),
             _ => None,
         })
 }
@@ -74,7 +73,6 @@ fn show_info(path: &str) -> Result<(), String> {
     let book = match format {
         "epub" => read_epub(path).map_err(|e| e.to_string())?,
         "mobi" => read_mobi(path).map_err(|e| e.to_string())?,
-        "kfx" => read_kfx(path).map_err(|e| e.to_string())?,
         _ => unreachable!(),
     };
 
@@ -117,7 +115,6 @@ fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
     let book = match input_format {
         "epub" => read_epub(input).map_err(|e| e.to_string())?,
         "mobi" => read_mobi(input).map_err(|e| e.to_string())?,
-        "kfx" => read_kfx(input).map_err(|e| e.to_string())?,
         _ => unreachable!(),
     };
 
@@ -128,7 +125,6 @@ fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
     match output_format {
         "epub" => write_epub(&book, output).map_err(|e| e.to_string())?,
         "mobi" => write_mobi(&book, output).map_err(|e| e.to_string())?,
-        "kfx" => write_kfx(&book, output).map_err(|e| e.to_string())?,
         _ => unreachable!(),
     }
 

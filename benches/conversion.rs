@@ -3,12 +3,10 @@ use std::io::Cursor;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use boko::epub::{read_epub_from_reader, write_epub_to_writer};
-use boko::kfx::{read_kfx_from_reader, write_kfx_to_writer};
 use boko::mobi::{read_mobi_from_reader, write_mobi_to_writer};
 
 const EPUB_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.epub");
 const AZW3_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.azw3");
-const KFX_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.kfx");
 
 fn bench_write_azw3(c: &mut Criterion) {
     let book = read_epub_from_reader(Cursor::new(EPUB_BYTES)).unwrap();
@@ -48,32 +46,11 @@ fn bench_read_azw3(c: &mut Criterion) {
     });
 }
 
-fn bench_write_kfx(c: &mut Criterion) {
-    let book = read_epub_from_reader(Cursor::new(EPUB_BYTES)).unwrap();
-
-    c.bench_function("write_kfx", |b| {
-        b.iter(|| {
-            let mut output = Vec::new();
-            write_kfx_to_writer(&book, &mut output).unwrap();
-        });
-    });
-}
-
-fn bench_read_kfx(c: &mut Criterion) {
-    c.bench_function("read_kfx", |b| {
-        b.iter(|| {
-            read_kfx_from_reader(Cursor::new(KFX_BYTES)).unwrap();
-        });
-    });
-}
-
 criterion_group!(
     benches,
     bench_write_azw3,
     bench_write_epub,
-    bench_write_kfx,
     bench_read_epub,
     bench_read_azw3,
-    bench_read_kfx
 );
 criterion_main!(benches);
