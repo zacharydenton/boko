@@ -142,8 +142,8 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
     let role = node.role;
     let style_id = node.style;
 
-    // Handle text nodes specially (they're leaf nodes)
-    if role == Role::Text {
+    // Handle leaf text nodes (Text role with text content, no children)
+    if role == Role::Text && !node.text.is_empty() && node.first_child.is_none() {
         let text = ctx.ir.text(node.text);
         ctx.out.push_str(&escape_xml(text));
         return;
@@ -228,39 +228,39 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
 /// Returns (tag_name, is_void_element, is_block_element).
 fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
     match role {
-        // Block elements
+        // Root and containers
         Role::Root => ("div", false, true),
-        Role::Block => ("div", false, true),
-        Role::Paragraph => ("p", false, true),
+        Role::Container => ("div", false, true),
+
+        // Text (paragraphs, spans, etc.)
+        Role::Text => ("p", false, true),
+
+        // Headings with level
         Role::Heading(1) => ("h1", false, true),
         Role::Heading(2) => ("h2", false, true),
         Role::Heading(3) => ("h3", false, true),
         Role::Heading(4) => ("h4", false, true),
         Role::Heading(5) => ("h5", false, true),
         Role::Heading(6) => ("h6", false, true),
-        Role::Heading(_) => ("h6", false, true), // Fallback for invalid levels
+        Role::Heading(_) => ("h6", false, true), // Fallback
+
+        // Block elements
         Role::BlockQuote => ("blockquote", false, true),
-        Role::List { ordered: true } => ("ol", false, true),
-        Role::List { ordered: false } => ("ul", false, true),
+        Role::List => ("ul", false, true), // Default to unordered
         Role::ListItem => ("li", false, true),
         Role::Table => ("table", false, true),
         Role::TableRow => ("tr", false, true),
-        Role::TableCell { header: true } => ("th", false, true),
-        Role::TableCell { header: false } => ("td", false, true),
-        Role::Preformatted => ("pre", false, true),
+        Role::TableCell => ("td", false, true),
+        Role::Figure => ("figure", false, true),
+        Role::Sidebar => ("aside", false, true),
+        Role::Footnote => ("aside", false, true), // Footnotes as aside
 
         // Void elements (self-closing in XHTML)
         Role::Image => ("img", true, false),
-        Role::LineBreak => ("br", true, false),
-        Role::HorizontalRule => ("hr", true, true),
 
         // Inline elements
-        Role::Span => ("span", false, false),
+        Role::Inline => ("span", false, false),
         Role::Link => ("a", false, false),
-        Role::Emphasis => ("em", false, false),
-        Role::Strong => ("strong", false, false),
-        Role::Code => ("code", false, false),
-        Role::Text => ("", false, false), // Text nodes don't have a tag
     }
 }
 
@@ -288,13 +288,15 @@ mod tests {
     fn make_test_chapter() -> IRChapter {
         let mut chapter = IRChapter::new();
 
-        // Create a paragraph with text
-        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        // Create a paragraph (Text role) with text content
+        let para = chapter.alloc_node(Node::new(Role::Text));
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Hello, World!");
-        let text_node = chapter.alloc_node(Node::text(text_range));
-        chapter.append_child(para, text_node);
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(para, text_id);
 
         chapter
     }
@@ -320,15 +322,17 @@ mod tests {
         bold.font_weight = FontWeight::BOLD;
         let bold_id = chapter.styles.intern(bold);
 
-        // Create paragraph with bold style
-        let mut para_node = Node::new(Role::Paragraph);
+        // Create paragraph (Text role) with bold style
+        let mut para_node = Node::new(Role::Text);
         para_node.style = bold_id;
         let para = chapter.alloc_node(para_node);
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Bold text");
-        let text_node = chapter.alloc_node(Node::text(text_range));
-        chapter.append_child(para, text_node);
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(para, text_id);
 
         // Create style map
         let mut style_map = HashMap::new();
@@ -378,20 +382,24 @@ mod tests {
         let mut chapter = IRChapter::new();
 
         // Create: <ul><li>Item 1</li><li>Item 2</li></ul>
-        let ul = chapter.alloc_node(Node::new(Role::List { ordered: false }));
+        let ul = chapter.alloc_node(Node::new(Role::List));
         chapter.append_child(NodeId::ROOT, ul);
 
         let li1 = chapter.alloc_node(Node::new(Role::ListItem));
         chapter.append_child(ul, li1);
         let text1_range = chapter.append_text("Item 1");
-        let text1 = chapter.alloc_node(Node::text(text1_range));
-        chapter.append_child(li1, text1);
+        let mut text1 = Node::new(Role::Text);
+        text1.text = text1_range;
+        let text1_id = chapter.alloc_node(text1);
+        chapter.append_child(li1, text1_id);
 
         let li2 = chapter.alloc_node(Node::new(Role::ListItem));
         chapter.append_child(ul, li2);
         let text2_range = chapter.append_text("Item 2");
-        let text2 = chapter.alloc_node(Node::text(text2_range));
-        chapter.append_child(li2, text2);
+        let mut text2 = Node::new(Role::Text);
+        text2.text = text2_range;
+        let text2_id = chapter.alloc_node(text2);
+        chapter.append_child(li2, text2_id);
 
         let result = synthesize_html(&chapter, &HashMap::new());
 
@@ -432,34 +440,33 @@ mod tests {
     fn test_void_elements() {
         let mut chapter = IRChapter::new();
 
-        // Line break
-        let br = chapter.alloc_node(Node::new(Role::LineBreak));
-        chapter.append_child(NodeId::ROOT, br);
-
-        // Horizontal rule
-        let hr = chapter.alloc_node(Node::new(Role::HorizontalRule));
-        chapter.append_child(NodeId::ROOT, hr);
+        // Image (void element)
+        let img = chapter.alloc_node(Node::new(Role::Image));
+        chapter.append_child(NodeId::ROOT, img);
+        chapter.semantics.set_src(img, "test.png".to_string());
 
         let result = synthesize_html(&chapter, &HashMap::new());
 
-        // XHTML self-closing tags
-        assert!(result.body.contains("<br/>"));
-        assert!(result.body.contains("<hr/>"));
-        // Should NOT have closing tags
-        assert!(!result.body.contains("</br>"));
-        assert!(!result.body.contains("</hr>"));
+        // XHTML self-closing tag
+        assert!(result.body.contains("<img"));
+        assert!(result.body.contains("/>"));
+        // Should NOT have closing tag
+        assert!(!result.body.contains("</img>"));
     }
 
     #[test]
     fn test_heading_levels() {
         let mut chapter = IRChapter::new();
 
-        for level in 1..=6 {
+        for level in 1u8..=6 {
             let h = chapter.alloc_node(Node::new(Role::Heading(level)));
             chapter.append_child(NodeId::ROOT, h);
+
             let text_range = chapter.append_text(&format!("Heading {}", level));
-            let text = chapter.alloc_node(Node::text(text_range));
-            chapter.append_child(h, text);
+            let mut text = Node::new(Role::Text);
+            text.text = text_range;
+            let text_id = chapter.alloc_node(text);
+            chapter.append_child(h, text_id);
         }
 
         let result = synthesize_html(&chapter, &HashMap::new());

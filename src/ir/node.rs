@@ -10,47 +10,52 @@ impl NodeId {
 }
 
 /// Semantic role of a node (independent of source element).
+///
+/// This is a simplified role system focused on structural semantics.
+/// Visual styling (bold, italic, font-size) is handled by `ComputedStyle`.
+/// Semantic attributes (href, src, alt) are in `SemanticMap`.
+///
+/// Design principle: Roles map to markdown concepts:
+/// - Text (paragraphs, spans, code)
+/// - Heading(level) (h1-h6)
+/// - Link, Image
+/// - List, ListItem
+/// - BlockQuote
+/// - Table, TableRow, TableCell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Role {
-    /// Generic block container (div, section, article).
+    /// Text content - paragraphs, spans, code, preformatted, etc.
+    /// Styling (bold, italic, monospace) is in ComputedStyle.
     #[default]
-    Block,
-    /// Paragraph.
-    Paragraph,
-    /// Heading with level 1-6.
-    Heading(u8),
-    /// Inline span.
-    Span,
-    /// Hyperlink.
-    Link,
-    /// Image.
-    Image,
-    /// Emphasized text (em, i).
-    Emphasis,
-    /// Strong text (strong, b).
-    Strong,
-    /// Code/monospace text.
-    Code,
-    /// Block quote.
-    BlockQuote,
-    /// Ordered or unordered list.
-    List { ordered: bool },
-    /// List item.
-    ListItem,
-    /// Table.
-    Table,
-    /// Table row.
-    TableRow,
-    /// Table cell.
-    TableCell { header: bool },
-    /// Preformatted text.
-    Preformatted,
-    /// Line break.
-    LineBreak,
-    /// Horizontal rule.
-    HorizontalRule,
-    /// Text content (leaf node).
     Text,
+    /// Headings with level 1-6.
+    Heading(u8),
+    /// Generic layout/box container (div, section, br, hr, etc.)
+    Container,
+    /// Raster images. src/alt in SemanticMap.
+    Image,
+    /// Hyperlinks. href in SemanticMap.
+    Link,
+    /// List structure container (ol/ul - decoration is in style).
+    List,
+    /// Individual list items.
+    ListItem,
+    /// Table structure.
+    Table,
+    /// Table rows.
+    TableRow,
+    /// Table cells (header vs data is in style).
+    TableCell,
+    /// Sidebar/aside content.
+    Sidebar,
+    /// Footnote containers.
+    Footnote,
+    /// Figure/illustration wrappers.
+    Figure,
+    /// Inline element containers.
+    Inline,
+    /// Block quotes.
+    BlockQuote,
     /// Root document node.
     Root,
 }

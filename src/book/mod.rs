@@ -187,8 +187,8 @@ impl Book {
     ///     let chapter = book.load_chapter(entry.id)?;
     ///     for id in chapter.iter_dfs() {
     ///         let node = chapter.node(id).unwrap();
-    ///         if node.role == Role::Paragraph {
-    ///             // Process paragraph...
+    ///         if matches!(node.role, Role::Heading(_)) {
+    ///             // Process heading...
     ///         }
     ///     }
     /// }

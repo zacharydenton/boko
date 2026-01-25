@@ -248,17 +248,17 @@ mod tests {
         let html = "<html><body><p>Test paragraph</p></body></html>";
         let chapter = compile_html(html, &[]);
 
-        // Should have at least root + p + text
+        // Should have at least root + p (Text) + text content
         assert!(chapter.node_count() >= 3);
 
-        // Verify structure
-        let mut found_para = false;
+        // Verify there's at least one Text node
+        let mut found_text = false;
         for id in chapter.iter_dfs() {
-            if chapter.node(id).unwrap().role == Role::Paragraph {
-                found_para = true;
+            if chapter.node(id).unwrap().role == Role::Text {
+                found_text = true;
             }
         }
-        assert!(found_para);
+        assert!(found_text);
     }
 
     #[test]
@@ -269,16 +269,17 @@ mod tests {
         let author = Stylesheet::parse(css);
         let chapter = compile_html(html, &[(author, Origin::Author)]);
 
-        // Find the paragraph and check its style
+        // Find a styled Text node and check its style
         for id in chapter.iter_dfs() {
             let node = chapter.node(id).unwrap();
-            if node.role == Role::Paragraph {
+            if node.role == Role::Text {
                 let style = chapter.styles.get(node.style).unwrap();
-                assert_eq!(style.font_weight, crate::ir::FontWeight::BOLD);
-                return;
+                if style.font_weight == crate::ir::FontWeight::BOLD {
+                    return; // Found the styled paragraph
+                }
             }
         }
-        panic!("Paragraph not found");
+        panic!("Styled text not found");
     }
 
     #[test]

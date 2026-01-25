@@ -336,8 +336,10 @@ mod tests {
         chapter.append_child(NodeId::ROOT, h1);
 
         let text_range = chapter.append_text("Chapter One");
-        let text_node = chapter.alloc_node(Node::text(text_range));
-        chapter.append_child(h1, text_node);
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(h1, text_id);
 
         let title = extract_chapter_title(&chapter);
         assert_eq!(title, Some("Chapter One".to_string()));

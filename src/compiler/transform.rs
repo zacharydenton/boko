@@ -141,13 +141,21 @@ pub fn user_agent_stylesheet() -> Stylesheet {
 fn map_element_to_role(local_name: &LocalName) -> Role {
     match local_name.as_ref() {
         // Block containers
-        "div" | "section" | "article" | "aside" | "nav" | "header" | "footer" | "main"
-        | "figure" | "figcaption" | "address" | "details" | "summary" => Role::Block,
+        "div" | "section" | "article" | "nav" | "header" | "footer" | "main" | "address"
+        | "details" | "summary" | "br" | "hr" => Role::Container,
 
-        // Paragraphs
-        "p" => Role::Paragraph,
+        // Aside/sidebar
+        "aside" => Role::Sidebar,
 
-        // Headings
+        // Figure
+        "figure" | "figcaption" => Role::Figure,
+
+        // Text content (paragraphs, code, pre, spans, emphasis, etc.)
+        "p" | "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd"
+        | "samp" | "tt" | "sup" | "sub" | "pre" | "u" | "ins" | "s" | "strike" | "del"
+        | "small" | "mark" | "abbr" | "time" | "q" => Role::Text,
+
+        // Headings with level
         "h1" => Role::Heading(1),
         "h2" => Role::Heading(2),
         "h3" => Role::Heading(3),
@@ -155,40 +163,30 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         "h5" => Role::Heading(5),
         "h6" => Role::Heading(6),
 
-        // Inline elements
-        "span" => Role::Span,
+        // Links
         "a" => Role::Link,
+
+        // Images
         "img" => Role::Image,
-        "em" | "i" | "cite" | "var" | "dfn" => Role::Emphasis,
-        "strong" | "b" => Role::Strong,
-        "code" | "kbd" | "samp" | "tt" => Role::Code,
-        "sup" | "sub" => Role::Span, // Handle via style
 
         // Lists
-        "ul" => Role::List { ordered: false },
-        "ol" => Role::List { ordered: true },
+        "ul" | "ol" => Role::List,
         "li" => Role::ListItem,
 
-        // Quote
+        // Block quote
         "blockquote" => Role::BlockQuote,
-
-        // Preformatted
-        "pre" => Role::Preformatted,
-
-        // Line break
-        "br" => Role::LineBreak,
-
-        // Horizontal rule
-        "hr" => Role::HorizontalRule,
 
         // Tables
         "table" => Role::Table,
         "tr" => Role::TableRow,
-        "td" => Role::TableCell { header: false },
-        "th" => Role::TableCell { header: true },
+        "td" | "th" => Role::TableCell,
 
-        // Default to block for unknown elements
-        _ => Role::Block,
+        // Inline containers
+        "label" | "legend" | "output" | "data" | "ruby" | "rt" | "rp" | "bdi" | "bdo"
+        | "wbr" => Role::Inline,
+
+        // Default to container for unknown block elements
+        _ => Role::Container,
     }
 }
 
@@ -346,29 +344,24 @@ mod tests {
 
         let chapter = transform(&dom, &stylesheets);
 
-        // Should have root + paragraph + text
+        // Should have root + paragraph (Text) + text content
         assert!(chapter.node_count() >= 3);
 
-        // Find paragraph
-        let mut found_para = false;
+        // Find text nodes
         let mut found_text = false;
         for id in chapter.iter_dfs() {
             let node = chapter.node(id).unwrap();
-            if node.role == Role::Paragraph {
-                found_para = true;
-            }
-            if node.role == Role::Text {
+            if node.role == Role::Text && !node.text.is_empty() {
                 found_text = true;
                 let text = chapter.text(node.text);
                 assert!(text.contains("Hello"));
             }
         }
-        assert!(found_para);
         assert!(found_text);
     }
 
     #[test]
-    fn test_heading_roles() {
+    fn test_heading_levels() {
         let dom = parse_html("<html><body><h1>Title</h1><h2>Subtitle</h2></body></html>");
         let ua = user_agent_stylesheet();
         let stylesheets = vec![(ua, Origin::UserAgent)];

@@ -236,7 +236,7 @@ mod tests {
     fn test_node_tree() {
         let mut chapter = IRChapter::new();
 
-        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        let para = chapter.alloc_node(Node::new(Role::Text));
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Test content");
@@ -257,8 +257,8 @@ mod tests {
     fn test_dfs_iteration() {
         let mut chapter = IRChapter::new();
 
-        let para1 = chapter.alloc_node(Node::new(Role::Paragraph));
-        let para2 = chapter.alloc_node(Node::new(Role::Paragraph));
+        let para1 = chapter.alloc_node(Node::new(Role::Text));
+        let para2 = chapter.alloc_node(Node::new(Role::Text));
         chapter.append_child(NodeId::ROOT, para1);
         chapter.append_child(NodeId::ROOT, para2);
 
