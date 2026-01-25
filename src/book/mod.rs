@@ -165,32 +165,8 @@ impl Book {
 }
 
 // ============================================================================
-// Builder Methods
+// Constructors
 // ============================================================================
-
-impl Metadata {
-    pub fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            ..Default::default()
-        }
-    }
-
-    pub fn with_author(mut self, author: impl Into<String>) -> Self {
-        self.authors.push(author.into());
-        self
-    }
-
-    pub fn with_language(mut self, language: impl Into<String>) -> Self {
-        self.language = language.into();
-        self
-    }
-
-    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
-        self.identifier = identifier.into();
-        self
-    }
-}
 
 impl TocEntry {
     pub fn new(title: impl Into<String>, href: impl Into<String>) -> Self {
@@ -200,15 +176,5 @@ impl TocEntry {
             children: Vec::new(),
             play_order: None,
         }
-    }
-
-    pub fn with_child(mut self, child: TocEntry) -> Self {
-        self.children.push(child);
-        self
-    }
-
-    pub fn with_play_order(mut self, order: usize) -> Self {
-        self.play_order = Some(order);
-        self
     }
 }
