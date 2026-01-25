@@ -66,8 +66,23 @@ fn show_info(path: &str) -> Result<(), String> {
     if !meta.language.is_empty() {
         println!("Language: {}", meta.language);
     }
+    if !meta.identifier.is_empty() {
+        println!("Identifier: {}", meta.identifier);
+    }
     if let Some(ref publisher) = meta.publisher {
         println!("Publisher: {publisher}");
+    }
+    if let Some(ref date) = meta.date {
+        println!("Date: {date}");
+    }
+    if !meta.subjects.is_empty() {
+        println!("Subjects: {}", meta.subjects.join(", "));
+    }
+    if let Some(ref rights) = meta.rights {
+        println!("Rights: {rights}");
+    }
+    if let Some(ref cover) = meta.cover_image {
+        println!("Cover: {cover}");
     }
     if let Some(ref desc) = meta.description {
         let desc = desc.trim();
@@ -77,11 +92,36 @@ fn show_info(path: &str) -> Result<(), String> {
             println!("Description: {desc}");
         }
     }
-    println!("Chapters: {}", book.spine().len());
-    println!("TOC entries: {}", book.toc().len());
-    println!("Assets: {}", book.list_assets().len());
+
+    // Spine (chapters)
+    println!("\nSpine ({} chapters):", book.spine().len());
+    for entry in book.spine() {
+        let source = book.source_id(entry.id).unwrap_or("?");
+        println!("  [{}] {} ({} bytes)", entry.id.0, source, entry.size_estimate);
+    }
+
+    // Table of contents
+    println!("\nTable of Contents ({} entries):", book.toc().len());
+    print_toc(book.toc(), 1);
+
+    // Assets
+    let assets = book.list_assets();
+    println!("\nAssets ({}):", assets.len());
+    for asset in &assets {
+        println!("  {}", asset.display());
+    }
 
     Ok(())
+}
+
+fn print_toc(entries: &[boko::TocEntry], depth: usize) {
+    for entry in entries {
+        let indent = "  ".repeat(depth);
+        println!("{}{} -> {}", indent, entry.title, entry.href);
+        if !entry.children.is_empty() {
+            print_toc(&entry.children, depth + 1);
+        }
+    }
 }
 
 fn convert(_input: &str, _output: &str, _quiet: bool) -> Result<(), String> {

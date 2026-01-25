@@ -1,246 +1,24 @@
-//! EPUB format importer.
+//! EPUB parsing utilities (OPF, NCX, container.xml)
 
 use std::collections::HashMap;
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use zip::ZipArchive;
-
-use crate::book::{Metadata, TocEntry};
-use crate::import::{ChapterId, Importer, SpineEntry};
-use crate::io::{ByteSource, ByteSourceCursor, FileSource};
-
-/// EPUB format importer with random-access ZIP reading.
-pub struct EpubImporter {
-    /// Random-access byte source for the ZIP file.
-    source: Arc<dyn ByteSource>,
-
-    /// Cached ZIP entry locations: path -> (offset, compressed_size, compression_method).
-    zip_index: HashMap<String, ZipEntryLoc>,
-
-    /// Book metadata.
-    metadata: Metadata,
-
-    /// Table of contents.
-    toc: Vec<TocEntry>,
-
-    /// Reading order (spine).
-    spine: Vec<SpineEntry>,
-
-    /// Maps ChapterId -> ZIP path (e.g., "OEBPS/text/ch01.xhtml").
-    spine_paths: Vec<String>,
-
-    /// All asset paths in the ZIP.
-    assets: Vec<PathBuf>,
-
-    /// Base path of OPF file (e.g., "OEBPS/").
-    opf_base: String,
-}
-
-#[derive(Clone, Copy)]
-struct ZipEntryLoc {
-    /// Offset to the compressed data within the ZIP file.
-    data_offset: u64,
-    /// Size of the compressed data.
-    compressed_size: u64,
-    /// Compression method (0 = Store, 8 = Deflate).
-    compression: u16,
-}
-
-impl Importer for EpubImporter {
-    fn open(path: &Path) -> io::Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let source = Arc::new(FileSource::new(file)?);
-        Self::from_source(source)
-    }
-
-    fn metadata(&self) -> &Metadata {
-        &self.metadata
-    }
-
-    fn toc(&self) -> &[TocEntry] {
-        &self.toc
-    }
-
-    fn spine(&self) -> &[SpineEntry] {
-        &self.spine
-    }
-
-    fn source_id(&self, id: ChapterId) -> Option<&str> {
-        self.spine_paths.get(id.0 as usize).map(|s| s.as_str())
-    }
-
-    fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
-        let path = self.spine_paths.get(id.0 as usize).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("Chapter ID {} not found", id.0),
-            )
-        })?;
-        self.read_zip_entry(path)
-    }
-
-    fn list_assets(&self) -> Vec<PathBuf> {
-        self.assets.clone()
-    }
-
-    fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
-        let key = path.to_string_lossy().replace('\\', "/");
-        self.read_zip_entry(&key)
-    }
-}
-
-impl EpubImporter {
-    /// Create an importer from a ByteSource.
-    pub fn from_source(source: Arc<dyn ByteSource>) -> io::Result<Self> {
-        // 1. Scan ZIP directory and cache entry locations
-        let cursor = ByteSourceCursor::new(source.clone());
-        let mut archive = ZipArchive::new(cursor)?;
-
-        let mut zip_index = HashMap::new();
-        let mut assets = Vec::new();
-
-        for i in 0..archive.len() {
-            let file = archive.by_index(i)?;
-            let name = file.name().to_string();
-
-            zip_index.insert(
-                name.clone(),
-                ZipEntryLoc {
-                    data_offset: file.data_start(),
-                    compressed_size: file.compressed_size(),
-                    compression: compression_to_u16(file.compression()),
-                },
-            );
-            assets.push(PathBuf::from(name));
-        }
-
-        // 2. Find OPF path from container.xml
-        let container_bytes = read_zip_entry_raw(&source, &zip_index, "META-INF/container.xml")?;
-        let opf_path = parse_container_xml(&container_bytes)?;
-        let opf_base = Path::new(&opf_path)
-            .parent()
-            .map(|p| {
-                let s = p.to_string_lossy();
-                if s.is_empty() {
-                    String::new()
-                } else {
-                    format!("{}/", s)
-                }
-            })
-            .unwrap_or_default();
-
-        // 3. Parse OPF
-        let opf_bytes = read_zip_entry_raw(&source, &zip_index, &opf_path)?;
-        let opf_str = String::from_utf8(strip_bom(&opf_bytes).to_vec())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let opf = parse_opf(&opf_str, &opf_base)?;
-
-        // 4. Build spine
-        let mut spine = Vec::new();
-        let mut spine_paths = Vec::new();
-
-        for (i, spine_id) in opf.spine_ids.iter().enumerate() {
-            if let Some((href, _media_type)) = opf.manifest.get(spine_id) {
-                let full_path = format!("{}{}", opf_base, href);
-                let size_estimate = zip_index
-                    .get(&full_path)
-                    .map(|loc| loc.compressed_size as usize)
-                    .unwrap_or(0);
-
-                spine.push(SpineEntry {
-                    id: ChapterId(i as u32),
-                    size_estimate,
-                });
-                spine_paths.push(full_path);
-            }
-        }
-
-        // 5. Parse TOC (NCX)
-        let toc = if let Some(ncx_href) = &opf.ncx_href {
-            let ncx_path = format!("{}{}", opf_base, ncx_href);
-            if let Ok(ncx_bytes) = read_zip_entry_raw(&source, &zip_index, &ncx_path) {
-                let ncx_str = String::from_utf8(strip_bom(&ncx_bytes).to_vec())
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                parse_ncx(&ncx_str)?
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        Ok(Self {
-            source,
-            zip_index,
-            metadata: opf.metadata,
-            toc,
-            spine,
-            spine_paths,
-            assets,
-            opf_base,
-        })
-    }
-
-    /// Read and decompress a ZIP entry.
-    fn read_zip_entry(&self, path: &str) -> io::Result<Vec<u8>> {
-        read_zip_entry_raw(&self.source, &self.zip_index, path)
-    }
-}
-
-// ----------------------------------------------------------------------------
-// ZIP Helpers
-// ----------------------------------------------------------------------------
-
-fn read_zip_entry_raw(
-    source: &Arc<dyn ByteSource>,
-    index: &HashMap<String, ZipEntryLoc>,
-    path: &str,
-) -> io::Result<Vec<u8>> {
-    let loc = index.get(path).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("File not found in ZIP: {}", path),
-        )
-    })?;
-
-    // Read compressed data
-    let compressed = source.read_at(loc.data_offset, loc.compressed_size as usize)?;
-
-    // Decompress
-    match loc.compression {
-        0 => Ok(compressed), // Stored (no compression)
-        8 => {
-            // Deflate
-            let mut decoder = flate2::read::DeflateDecoder::new(&compressed[..]);
-            let mut out = Vec::new();
-            decoder.read_to_end(&mut out)?;
-            Ok(out)
-        }
-        method => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Unsupported compression method: {}", method),
-        )),
-    }
-}
-
-fn strip_bom(data: &[u8]) -> &[u8] {
-    if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        &data[3..]
-    } else {
-        data
-    }
-}
-
-// ----------------------------------------------------------------------------
-// XML Parsing (adapted from epub/reader.rs)
-// ----------------------------------------------------------------------------
+use std::io;
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
+use crate::book::{Metadata, TocEntry};
+
+/// Parsed OPF package data.
+pub struct OpfData {
+    pub metadata: Metadata,
+    /// Maps manifest id -> (href, media_type)
+    pub manifest: HashMap<String, (String, String)>,
+    pub spine_ids: Vec<String>,
+    pub ncx_href: Option<String>,
+}
+
+/// Parse META-INF/container.xml to find the OPF path.
+pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
     let content = String::from_utf8(strip_bom(bytes).to_vec())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -269,14 +47,8 @@ fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
     ))
 }
 
-struct OpfData {
-    metadata: Metadata,
-    manifest: HashMap<String, (String, String)>, // id -> (href, media_type)
-    spine_ids: Vec<String>,
-    ncx_href: Option<String>,
-}
-
-fn parse_opf(content: &str, _opf_base: &str) -> io::Result<OpfData> {
+/// Parse OPF package document.
+pub fn parse_opf(content: &str) -> io::Result<OpfData> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
@@ -301,8 +73,7 @@ fn parse_opf(content: &str, _opf_base: &str) -> io::Result<OpfData> {
                     b"title" | b"creator" | b"language" | b"identifier" | b"publisher"
                     | b"description" | b"subject" | b"date" | b"rights" => {
                         if in_metadata {
-                            current_element =
-                                Some(String::from_utf8_lossy(local).to_string());
+                            current_element = Some(String::from_utf8_lossy(local).to_string());
                             buf_text.clear();
                         }
                     }
@@ -443,7 +214,7 @@ fn parse_opf(content: &str, _opf_base: &str) -> io::Result<OpfData> {
         }
     }
 
-    // Detect cover image
+    // Detect cover image (EPUB3 property takes priority)
     let epub3_cover = manifest.values().find(|item| {
         item.properties
             .as_ref()
@@ -475,13 +246,8 @@ fn parse_opf(content: &str, _opf_base: &str) -> io::Result<OpfData> {
     })
 }
 
-struct ManifestItem {
-    href: String,
-    media_type: String,
-    properties: Option<String>,
-}
-
-fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
+/// Parse NCX table of contents.
+pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
     let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text(true);
 
@@ -591,6 +357,26 @@ fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
     Ok(stack.pop().map(|s| s.children).unwrap_or_default())
 }
 
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
+struct ManifestItem {
+    href: String,
+    media_type: String,
+    properties: Option<String>,
+}
+
+/// Strip UTF-8 BOM if present.
+pub fn strip_bom(data: &[u8]) -> &[u8] {
+    if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &data[3..]
+    } else {
+        data
+    }
+}
+
+/// Extract local name from namespaced XML name (e.g., "dc:title" -> "title").
 fn local_name(name: &[u8]) -> &[u8] {
     name.iter()
         .rposition(|&b| b == b':')
@@ -598,6 +384,7 @@ fn local_name(name: &[u8]) -> &[u8] {
         .unwrap_or(name)
 }
 
+/// Resolve XML entity references.
 fn resolve_entity(entity: &str) -> Option<String> {
     match entity {
         "apos" => return Some("'".to_string()),
@@ -623,12 +410,4 @@ fn resolve_entity(entity: &str) -> Option<String> {
     }
 
     None
-}
-
-fn compression_to_u16(method: zip::CompressionMethod) -> u16 {
-    match method {
-        zip::CompressionMethod::Stored => 0,
-        zip::CompressionMethod::Deflated => 8,
-        _ => 255, // Unknown
-    }
 }

@@ -7,8 +7,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::import::{ChapterId, Importer, SpineEntry};
-use crate::import::epub::EpubImporter;
+use crate::import::{ChapterId, EpubImporter, Importer, SpineEntry};
 
 // ============================================================================
 // Data Types

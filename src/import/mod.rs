@@ -4,7 +4,9 @@
 //! - **Track 1 (Normalization)**: Parse content into IR (not yet implemented)
 //! - **Track 2 (Raw Access)**: Provide raw bytes for conversion
 
-pub mod epub;
+mod epub;
+
+pub use epub::EpubImporter;
 
 use std::path::{Path, PathBuf};
 

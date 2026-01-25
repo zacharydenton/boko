@@ -37,10 +37,9 @@ pub mod book;
 pub mod import;
 pub mod io;
 
-// Legacy modules (disabled pending refactor)
-// pub mod epub;
+pub mod epub;
 pub mod kfx;
-// pub mod mobi;
+// pub mod mobi;  // disabled pending refactor
 
 pub(crate) mod util;
 

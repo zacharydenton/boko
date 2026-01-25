@@ -1,5 +1,5 @@
-mod reader;
-mod writer;
+//! EPUB format support - pure parsing functions.
 
-pub use reader::{read_epub, read_epub_from_reader};
-pub use writer::{write_epub, write_epub_to_writer};
+mod parser;
+
+pub use parser::{parse_container_xml, parse_ncx, parse_opf, strip_bom, OpfData};
