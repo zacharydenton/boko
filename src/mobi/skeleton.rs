@@ -161,6 +161,8 @@ pub struct ChunkerResult {
     pub id_map: HashMap<(String, String), String>,
     /// Maps aid -> (chunk_sequence_number, offset_in_chunk, offset_in_text)
     pub aid_offset_map: HashMap<String, (usize, usize, usize)>,
+    /// Maps file_href -> [(original_position, aid)] for filepos resolution
+    pub filepos_map: HashMap<String, Vec<(usize, String)>>,
 }
 
 /// Chunker - breaks HTML files into skeletons and chunks
@@ -168,6 +170,8 @@ pub struct Chunker {
     aid_counter: u32,
     /// Mapping of (file, id) -> aid built during processing
     id_map: HashMap<(String, String), String>,
+    /// Mapping of file_href -> [(original_position, aid)] for filepos resolution
+    filepos_map: HashMap<String, Vec<(usize, String)>>,
 }
 
 impl Chunker {
@@ -175,6 +179,7 @@ impl Chunker {
         Self {
             aid_counter: 0,
             id_map: HashMap::new(),
+            filepos_map: HashMap::new(),
         }
     }
 
@@ -237,6 +242,7 @@ impl Chunker {
             text,
             id_map: std::mem::take(&mut self.id_map),
             aid_offset_map,
+            filepos_map: std::mem::take(&mut self.filepos_map),
         }
     }
 
@@ -315,9 +321,15 @@ impl Chunker {
             &mut self.id_map,
         );
 
+        // Store position map for filepos resolution
+        if !result.position_map.is_empty() {
+            self.filepos_map
+                .insert(file_href.to_string(), result.position_map);
+        }
+
         Skeleton {
             file_number,
-            skeleton: result,
+            skeleton: result.html,
             chunks: Vec::new(), // No chunking - content stays in skeleton
             start_pos,
         }
@@ -364,7 +376,7 @@ mod tests {
             &mut chunker.aid_counter,
             &mut chunker.id_map,
         );
-        let result_str = String::from_utf8_lossy(&result);
+        let result_str = String::from_utf8_lossy(&result.html);
         assert!(result_str.contains("aid=\"0000\""));
         assert!(result_str.contains("aid=\"0001\""));
     }

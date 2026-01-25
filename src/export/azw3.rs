@@ -338,6 +338,7 @@ impl Kf8Builder {
             &chunker_result.text,
             &chunker_result.id_map,
             &chunker_result.aid_offset_map,
+            &chunker_result.filepos_map,
         );
         self.text_length = resolved_text.len();
 
@@ -378,6 +379,7 @@ impl Kf8Builder {
         text: &[u8],
         id_map: &HashMap<(String, String), String>,
         aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+        filepos_map: &HashMap<String, Vec<(usize, String)>>,
     ) -> Vec<u8> {
         use memchr::memmem;
 
@@ -396,14 +398,25 @@ impl Kf8Builder {
                 let placeholder = std::str::from_utf8(&text[start..end]).unwrap_or("");
 
                 if let Some((target_file, fragment)) = self.link_map.get(placeholder) {
-                    let key = (target_file.clone(), fragment.clone());
-                    let aid = id_map
-                        .get(&key)
-                        .or_else(|| id_map.get(&(target_file.clone(), String::new())));
+                    // Try to resolve the link target
+                    let resolved = if fragment.starts_with("filepos") {
+                        // MOBI filepos reference - use filepos_map
+                        resolve_filepos_to_offset(target_file, fragment, filepos_map, aid_offset_map)
+                    } else {
+                        // Standard element ID - use id_map
+                        let key = (target_file.clone(), fragment.clone());
+                        let aid = id_map
+                            .get(&key)
+                            .or_else(|| id_map.get(&(target_file.clone(), String::new())));
 
-                    if let Some(aid) = aid
-                        && let Some(&(seq_num, offset_in_chunk, _)) = aid_offset_map.get(aid)
-                    {
+                        aid.and_then(|aid| {
+                            aid_offset_map
+                                .get(aid)
+                                .map(|&(seq_num, offset_in_chunk, _)| (seq_num, offset_in_chunk))
+                        })
+                    };
+
+                    if let Some((seq_num, offset_in_chunk)) = resolved {
                         let mut replacement = [0u8; 34];
                         replacement[..15].copy_from_slice(b"kindle:pos:fid:");
                         let mut fid_buf = [0u8; 4];
@@ -504,6 +517,7 @@ impl Kf8Builder {
                 self.text_length as u32,
                 &chunker_result.id_map,
                 &chunker_result.aid_offset_map,
+                &chunker_result.filepos_map,
             );
 
             if !ncx_entries.is_empty() {
@@ -738,9 +752,11 @@ impl Kf8Builder {
             records.push((109, rights.as_bytes().to_vec()));
         }
 
-        // Cover offset
-        if self.ctx.metadata.cover_image.is_some() {
-            records.push((201, 0u32.to_be_bytes().to_vec()));
+        // Cover offset - find the index of the cover image in sorted image_hrefs
+        if let Some(ref cover_path) = self.ctx.metadata.cover_image {
+            if let Some(cover_idx) = self.image_hrefs.iter().position(|h| h == cover_path) {
+                records.push((201, (cover_idx as u32).to_be_bytes().to_vec()));
+            }
         }
 
         // Title
@@ -908,6 +924,7 @@ fn flatten_toc(
     text_length: u32,
     id_map: &HashMap<(String, String), String>,
     aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+    filepos_map: &HashMap<String, Vec<(usize, String)>>,
 ) -> Vec<NcxBuildEntry> {
     struct TempEntry {
         pos: u32,
@@ -927,6 +944,7 @@ fn flatten_toc(
         text_length: u32,
         id_map: &HashMap<(String, String), String>,
         aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+        filepos_map: &HashMap<String, Vec<(usize, String)>>,
         result: &mut Vec<TempEntry>,
     ) {
         for entry in entries {
@@ -941,12 +959,19 @@ fn flatten_toc(
                 (entry.href.clone(), String::new())
             };
 
-            let pos = id_map
-                .get(&(file.clone(), fragment.clone()))
-                .or_else(|| id_map.get(&(file, String::new())))
-                .and_then(|aid| aid_offset_map.get(aid))
-                .map(|&(_, _, off_text)| off_text as u32)
-                .unwrap_or(0);
+            // Try to find position for this TOC entry
+            let pos = if fragment.starts_with("filepos") {
+                // MOBI filepos anchor: parse position and find nearest aid
+                resolve_filepos(&file, &fragment, filepos_map, aid_offset_map)
+            } else {
+                // Standard HTML anchor: lookup by element id
+                id_map
+                    .get(&(file.clone(), fragment.clone()))
+                    .or_else(|| id_map.get(&(file.clone(), String::new())))
+                    .and_then(|aid| aid_offset_map.get(aid))
+                    .map(|&(_, _, off_text)| off_text as u32)
+            }
+            .unwrap_or(0);
 
             result.push(TempEntry {
                 pos,
@@ -968,12 +993,22 @@ fn flatten_toc(
                 text_length,
                 id_map,
                 aid_offset_map,
+                filepos_map,
                 result,
             );
         }
     }
 
-    flatten_recursive(entries, 0, -1, text_length, id_map, aid_offset_map, &mut result);
+    flatten_recursive(
+        entries,
+        0,
+        -1,
+        text_length,
+        id_map,
+        aid_offset_map,
+        filepos_map,
+        &mut result,
+    );
 
     result
         .into_iter()
@@ -987,6 +1022,77 @@ fn flatten_toc(
             last_child: e.children.last().map(|&i| i as i32).unwrap_or(-1),
         })
         .collect()
+}
+
+/// Resolve MOBI filepos anchor to text position.
+///
+/// MOBI files use `#fileposNNN` anchors where NNN is a byte position in the
+/// original HTML content. We use the filepos_map to find the aid that was
+/// closest to that position, then look up the aid's position in the
+/// transformed text.
+fn resolve_filepos(
+    file: &str,
+    fragment: &str,
+    filepos_map: &HashMap<String, Vec<(usize, String)>>,
+    aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+) -> Option<u32> {
+    // Parse the filepos number
+    let filepos_str = fragment.strip_prefix("filepos")?;
+    let target_pos: usize = filepos_str.parse().ok()?;
+
+    // Get the position map for this file
+    let positions = filepos_map.get(file)?;
+    if positions.is_empty() {
+        return None;
+    }
+
+    // Find the aid at or before target_pos using binary search
+    // positions is sorted by original position (ascending)
+    let idx = match positions.binary_search_by_key(&target_pos, |(pos, _)| *pos) {
+        Ok(i) => i,        // Exact match
+        Err(i) => i.saturating_sub(1), // Use previous entry (largest <= target)
+    };
+
+    let (_, aid) = &positions[idx];
+
+    // Look up the aid's position in the transformed text
+    aid_offset_map
+        .get(aid)
+        .map(|&(_, _, off_text)| off_text as u32)
+}
+
+/// Resolve MOBI filepos anchor to (fid, offset) for link resolution.
+///
+/// Similar to resolve_filepos but returns the seq_num and offset_in_chunk
+/// needed for kindle:pos:fid:XXXX:off:YYYYYY link format.
+fn resolve_filepos_to_offset(
+    file: &str,
+    fragment: &str,
+    filepos_map: &HashMap<String, Vec<(usize, String)>>,
+    aid_offset_map: &HashMap<String, (usize, usize, usize)>,
+) -> Option<(usize, usize)> {
+    // Parse the filepos number
+    let filepos_str = fragment.strip_prefix("filepos")?;
+    let target_pos: usize = filepos_str.parse().ok()?;
+
+    // Get the position map for this file
+    let positions = filepos_map.get(file)?;
+    if positions.is_empty() {
+        return None;
+    }
+
+    // Find the aid at or before target_pos using binary search
+    let idx = match positions.binary_search_by_key(&target_pos, |(pos, _)| *pos) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+
+    let (_, aid) = &positions[idx];
+
+    // Look up the aid's position - return (seq_num, offset_in_chunk)
+    aid_offset_map
+        .get(aid)
+        .map(|&(seq_num, offset_in_chunk, _)| (seq_num, offset_in_chunk))
 }
 
 /// Guess media type from file extension.
@@ -1020,5 +1126,89 @@ mod tests {
     fn test_sanitize_title() {
         assert_eq!(sanitize_title("Hello World"), "Hello_World");
         assert_eq!(sanitize_title("Test <Book>"), "Test_Book");
+    }
+
+    #[test]
+    fn test_resolve_filepos_exact_match() {
+        let mut filepos_map = HashMap::new();
+        filepos_map.insert(
+            "content.html".to_string(),
+            vec![
+                (100, "0001".to_string()),
+                (200, "0002".to_string()),
+                (300, "0003".to_string()),
+            ],
+        );
+
+        let mut aid_offset_map = HashMap::new();
+        aid_offset_map.insert("0001".to_string(), (0, 50, 100));
+        aid_offset_map.insert("0002".to_string(), (0, 150, 200));
+        aid_offset_map.insert("0003".to_string(), (0, 250, 300));
+
+        // Exact match at position 200
+        let result = resolve_filepos("content.html", "filepos200", &filepos_map, &aid_offset_map);
+        assert_eq!(result, Some(200));
+    }
+
+    #[test]
+    fn test_resolve_filepos_nearest_before() {
+        let mut filepos_map = HashMap::new();
+        filepos_map.insert(
+            "content.html".to_string(),
+            vec![
+                (100, "0001".to_string()),
+                (200, "0002".to_string()),
+                (300, "0003".to_string()),
+            ],
+        );
+
+        let mut aid_offset_map = HashMap::new();
+        aid_offset_map.insert("0001".to_string(), (0, 50, 100));
+        aid_offset_map.insert("0002".to_string(), (0, 150, 200));
+        aid_offset_map.insert("0003".to_string(), (0, 250, 300));
+
+        // Position 250 should resolve to aid at 200 (nearest before)
+        let result = resolve_filepos("content.html", "filepos250", &filepos_map, &aid_offset_map);
+        assert_eq!(result, Some(200));
+    }
+
+    #[test]
+    fn test_resolve_filepos_invalid_fragment() {
+        let filepos_map = HashMap::new();
+        let aid_offset_map = HashMap::new();
+
+        // Invalid fragment (not starting with "filepos")
+        let result = resolve_filepos("content.html", "anchor123", &filepos_map, &aid_offset_map);
+        assert_eq!(result, None);
+
+        // Invalid fragment (non-numeric after filepos)
+        let result = resolve_filepos("content.html", "fileposXYZ", &filepos_map, &aid_offset_map);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_filepos_to_offset() {
+        let mut filepos_map = HashMap::new();
+        filepos_map.insert(
+            "content.html".to_string(),
+            vec![
+                (100, "0001".to_string()),
+                (500, "0002".to_string()),
+            ],
+        );
+
+        let mut aid_offset_map = HashMap::new();
+        aid_offset_map.insert("0001".to_string(), (0, 50, 100));
+        aid_offset_map.insert("0002".to_string(), (1, 25, 500));
+
+        // Position 450 should resolve to aid at 100 (nearest before)
+        let result =
+            resolve_filepos_to_offset("content.html", "filepos450", &filepos_map, &aid_offset_map);
+        assert_eq!(result, Some((0, 50))); // seq_num=0, offset_in_chunk=50
+
+        // Exact match at 500
+        let result =
+            resolve_filepos_to_offset("content.html", "filepos500", &filepos_map, &aid_offset_map);
+        assert_eq!(result, Some((1, 25))); // seq_num=1, offset_in_chunk=25
     }
 }

@@ -88,7 +88,12 @@ impl Importer for MobiImporter {
 
         // Extract and cache content
         let text = self.extract_text()?;
-        let content = wrap_text_as_html(&text, &self.metadata.title, &self.mobi);
+        let wrapped = wrap_text_as_html(&text, &self.metadata.title, &self.mobi);
+
+        // Transform MOBI-specific attributes to standard HTML
+        let assets = self.discover_assets();
+        let content = transform_mobi_html(&wrapped, &assets);
+
         self.content_cache = Some(content.clone());
         Ok(content)
     }
@@ -157,11 +162,18 @@ impl MobiImporter {
         // Build metadata
         let mut metadata = build_metadata(&pdb, &mobi, &exth);
 
-        // Find cover image
-        if let Some(exth) = exth
-            && let Some(cover_idx) = exth.cover_offset {
-                metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
+        // Discover assets to get cover image path with correct extension
+        let assets = discover_assets_from_source(&source, &pdb, &mobi, file_len);
+
+        // Find cover image using discovered asset path
+        if let Some(ref exth) = exth
+            && let Some(cover_idx) = exth.cover_offset
+        {
+            // cover_offset is 0-indexed relative to first image
+            if let Some(cover_path) = assets.get(cover_idx as usize) {
+                metadata.cover_image = Some(cover_path.to_string_lossy().to_string());
             }
+        }
 
         // Parse NCX index for TOC (if available)
         let codec = match mobi.encoding {
@@ -312,6 +324,45 @@ impl MobiImporter {
 // Helpers
 // ============================================================================
 
+/// Discover asset paths by scanning image records (standalone function for early use).
+fn discover_assets_from_source(
+    source: &Arc<dyn ByteSource>,
+    pdb: &PdbInfo,
+    mobi: &MobiHeader,
+    file_len: u64,
+) -> Vec<PathBuf> {
+    let mut assets = Vec::new();
+
+    if mobi.first_image_index == NULL_INDEX {
+        return assets;
+    }
+
+    let first_img = mobi.first_image_index as usize;
+    for i in first_img..pdb.num_records as usize {
+        // Only read first 16 bytes to detect type (magic bytes)
+        if let Ok((start, end)) = pdb.record_range(i, file_len) {
+            let read_len = 16.min((end - start) as usize);
+            if let Ok(header) = source.read_at(start, read_len) {
+                if is_metadata_record(&header) {
+                    continue;
+                }
+                if let Some(media_type) = detect_image_type(&header) {
+                    let ext = match media_type {
+                        "image/jpeg" => "jpg",
+                        "image/png" => "png",
+                        "image/gif" => "gif",
+                        _ => "bin",
+                    };
+                    let idx = i - first_img;
+                    assets.push(PathBuf::from(format!("images/image_{idx:04}.{ext}")));
+                }
+            }
+        }
+    }
+
+    assets
+}
+
 fn build_metadata(
     pdb: &PdbInfo,
     mobi: &MobiHeader,
@@ -394,9 +445,151 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Transform MOBI-specific HTML attributes to standard HTML.
+///
+/// Converts:
+/// - `<img recindex="XXXXX">` to `<img src="images/image_XXXX.ext">`
+/// - `<a filepos=NNNNNNN>` to `<a href="#fileposNNNNNNN">`
+fn transform_mobi_html(html: &[u8], assets: &[PathBuf]) -> Vec<u8> {
+    use std::collections::HashMap;
+
+    // Build recindex -> asset path mapping
+    // recindex is 1-based, assets are 0-indexed
+    let mut recindex_map: HashMap<String, String> = HashMap::new();
+    for (i, asset) in assets.iter().enumerate() {
+        let recindex = format!("{:05}", i + 1);
+        recindex_map.insert(recindex, asset.to_string_lossy().to_string());
+    }
+
+    let mut output = Vec::with_capacity(html.len() + html.len() / 10);
+    let mut pos = 0;
+
+    while pos < html.len() {
+        // Look for recindex=" pattern
+        if pos + 10 < html.len() && &html[pos..pos + 10] == b"recindex=\"" {
+            // Found recindex, extract the value
+            let val_start = pos + 10;
+            if let Some(val_end_rel) = html[val_start..].iter().position(|&b| b == b'"') {
+                let val_end = val_start + val_end_rel;
+                let recindex = String::from_utf8_lossy(&html[val_start..val_end]).to_string();
+
+                if let Some(path) = recindex_map.get(&recindex) {
+                    // Replace with src="path"
+                    output.extend_from_slice(b"src=\"");
+                    output.extend_from_slice(path.as_bytes());
+                    output.push(b'"');
+                    pos = val_end + 1; // Skip past closing quote
+                    continue;
+                }
+            }
+        }
+
+        // Look for filepos= pattern (no quotes in MOBI)
+        if pos + 8 < html.len() && &html[pos..pos + 8] == b"filepos=" {
+            let val_start = pos + 8;
+            // Find end of number
+            let mut val_end = val_start;
+            while val_end < html.len() && html[val_end].is_ascii_digit() {
+                val_end += 1;
+            }
+
+            if val_end > val_start {
+                let filepos_str = String::from_utf8_lossy(&html[val_start..val_end]);
+                // Parse and convert to href="#fileposNNN"
+                if let Ok(filepos_num) = filepos_str.parse::<u64>() {
+                    output.extend_from_slice(b"href=\"#filepos");
+                    output.extend_from_slice(filepos_num.to_string().as_bytes());
+                    output.push(b'"');
+                    pos = val_end;
+                    continue;
+                }
+            }
+        }
+
+        // Copy byte as-is
+        output.push(html[pos]);
+        pos += 1;
+    }
+
+    output
+}
+
 /// Convert TocNode to TocEntry recursively.
 fn toc_node_to_entry(node: TocNode) -> TocEntry {
     let mut entry = TocEntry::new(&node.title, &node.href);
     entry.children = node.children.into_iter().map(toc_node_to_entry).collect();
     entry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transform_mobi_html_recindex() {
+        let assets = vec![
+            PathBuf::from("images/image_0000.jpg"),
+            PathBuf::from("images/image_0001.png"),
+        ];
+
+        // recindex is 1-based, so recindex="00001" maps to assets[0]
+        let html = b"<img recindex=\"00001\" width=\"100\">";
+        let result = transform_mobi_html(html, &assets);
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(result_str.contains("src=\"images/image_0000.jpg\""));
+        assert!(!result_str.contains("recindex"));
+        assert!(result_str.contains("width=\"100\""));
+    }
+
+    #[test]
+    fn test_transform_mobi_html_filepos() {
+        let assets = vec![];
+
+        let html = b"<a filepos=0001234>link</a>";
+        let result = transform_mobi_html(html, &assets);
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(result_str.contains("href=\"#filepos1234\""));
+        assert!(!result_str.contains("filepos="));
+    }
+
+    #[test]
+    fn test_transform_mobi_html_mixed() {
+        let assets = vec![PathBuf::from("images/image_0000.gif")];
+
+        let html = b"<p>Text <a filepos=0000100>link</a> and <img recindex=\"00001\"></p>";
+        let result = transform_mobi_html(html, &assets);
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(result_str.contains("href=\"#filepos100\""));
+        assert!(result_str.contains("src=\"images/image_0000.gif\""));
+        assert!(result_str.contains("<p>Text"));
+        assert!(result_str.contains("</p>"));
+    }
+
+    #[test]
+    fn test_transform_mobi_html_no_changes() {
+        let assets = vec![];
+
+        // Standard HTML without MOBI-specific attributes
+        let html = b"<p>Hello <a href=\"#anchor\">world</a></p>";
+        let result = transform_mobi_html(html, &assets);
+
+        assert_eq!(result, html.to_vec());
+    }
+
+    #[test]
+    fn test_transform_mobi_html_preserves_content() {
+        let assets = vec![PathBuf::from("images/cover.jpg")];
+
+        let html = b"<body><h1>Title</h1><img recindex=\"00001\"><p>Content</p></body>";
+        let result = transform_mobi_html(html, &assets);
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(result_str.contains("<body>"));
+        assert!(result_str.contains("<h1>Title</h1>"));
+        assert!(result_str.contains("<p>Content</p>"));
+        assert!(result_str.contains("</body>"));
+    }
 }

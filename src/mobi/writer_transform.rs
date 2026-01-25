@@ -476,16 +476,27 @@ pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, us
     output
 }
 
+/// Result of aid attribute insertion
+pub struct AidInsertResult {
+    /// The HTML with aid attributes added
+    pub html: Vec<u8>,
+    /// Mapping of original byte position -> aid for filepos resolution
+    pub position_map: Vec<(usize, String)>,
+}
+
 /// Optimized aid attribute insertion using byte operations
+///
+/// Returns the transformed HTML and a position map for filepos resolution.
 pub fn add_aid_attributes_fast(
     html: &[u8],
     file_href: &str,
     aid_counter: &mut u32,
     id_map: &mut HashMap<(String, String), String>,
-) -> Vec<u8> {
+) -> AidInsertResult {
     use super::skeleton::AID_ABLE_TAGS;
 
     let mut output = Vec::with_capacity(html.len() + html.len() / 5); // ~20% overhead for aids
+    let mut position_map = Vec::new();
     let mut pos = 0;
 
     while pos < html.len() {
@@ -547,6 +558,9 @@ pub fn add_aid_attributes_fast(
                     let aid_str = std::str::from_utf8(&aid_buf).unwrap().to_string();
                     *aid_counter += 1;
 
+                    // Record original position -> aid mapping for filepos resolution
+                    position_map.push((tag_start, aid_str.clone()));
+
                     // Extract id if present
                     if let Some(id_value) = extract_attribute_value(tag, b"id") {
                         let id_str = String::from_utf8_lossy(id_value).to_string();
@@ -606,7 +620,10 @@ pub fn add_aid_attributes_fast(
         }
     }
 
-    output
+    AidInsertResult {
+        html: output,
+        position_map,
+    }
 }
 
 #[cfg(test)]
@@ -652,7 +669,7 @@ mod tests {
         let mut aid_counter = 0u32;
         let mut id_map = HashMap::new();
         let result = add_aid_attributes_fast(html, "test.html", &mut aid_counter, &mut id_map);
-        let result_str = String::from_utf8_lossy(&result);
+        let result_str = String::from_utf8_lossy(&result.html);
 
         // Should produce <a id="tp" aid="0000"/> not <a id="tp"/ aid="0000"/>
         assert!(
@@ -664,7 +681,7 @@ mod tests {
             "should not have stray / before aid: {result_str}"
         );
         assert!(
-            result.ends_with_str(b"/>"),
+            result.html.ends_with_str(b"/>"),
             "should end with />: {result_str}"
         );
     }
