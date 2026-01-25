@@ -354,4 +354,112 @@ mod tests {
             Compression::PalmDoc
         );
     }
+
+    #[test]
+    fn test_mobi_header_parse_minimal() {
+        // Minimal 16-byte header
+        let mut data = vec![0u8; 16];
+        data[0..2].copy_from_slice(&2u16.to_be_bytes()); // PalmDoc compression
+        data[8..10].copy_from_slice(&10u16.to_be_bytes()); // text_record_count
+        data[10..12].copy_from_slice(&4096u16.to_be_bytes()); // text_record_size
+
+        let header = MobiHeader::parse(&data).unwrap();
+        assert_eq!(header.compression, Compression::PalmDoc);
+        assert_eq!(header.text_record_count, 10);
+        assert_eq!(header.text_record_size, 4096);
+        assert_eq!(header.encoding, Encoding::Cp1252); // default
+    }
+
+    #[test]
+    fn test_mobi_header_parse_with_encoding() {
+        let mut data = vec![0u8; 32];
+        data[0..2].copy_from_slice(&1u16.to_be_bytes()); // No compression
+        data[28..32].copy_from_slice(&65001u32.to_be_bytes()); // UTF-8 codepage
+
+        let header = MobiHeader::parse(&data).unwrap();
+        assert_eq!(header.compression, Compression::None);
+        assert_eq!(header.encoding, Encoding::Utf8);
+    }
+
+    #[test]
+    fn test_mobi_header_huffman_compression() {
+        let mut data = vec![0u8; 32];
+        data[0..2].copy_from_slice(&0x4448u16.to_be_bytes()); // "DH" = Huffman
+
+        let header = MobiHeader::parse(&data).unwrap();
+        assert_eq!(header.compression, Compression::Huffman);
+    }
+
+    #[test]
+    fn test_mobi_header_has_exth() {
+        let mut data = vec![0u8; 0x84];
+        // Set EXTH flag (bit 6 of exth_flags at offset 0x80)
+        data[0x80..0x84].copy_from_slice(&0x40u32.to_be_bytes());
+
+        let header = MobiHeader::parse(&data).unwrap();
+        assert!(header.has_exth());
+
+        // Without flag
+        data[0x80..0x84].copy_from_slice(&0u32.to_be_bytes());
+        let header = MobiHeader::parse(&data).unwrap();
+        assert!(!header.has_exth());
+    }
+
+    #[test]
+    fn test_mobi_header_too_short() {
+        let data = vec![0u8; 10];
+        assert!(MobiHeader::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_exth_header_parse() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"EXTH"); // signature
+        data.extend_from_slice(&100u32.to_be_bytes()); // header length
+        data.extend_from_slice(&2u32.to_be_bytes()); // 2 records
+
+        // Record 1: Author (type 100)
+        let author = b"Test Author";
+        data.extend_from_slice(&100u32.to_be_bytes()); // type
+        data.extend_from_slice(&(8 + author.len() as u32).to_be_bytes()); // length
+        data.extend_from_slice(author);
+
+        // Record 2: Title (type 503)
+        let title = b"Test Title";
+        data.extend_from_slice(&503u32.to_be_bytes()); // type
+        data.extend_from_slice(&(8 + title.len() as u32).to_be_bytes()); // length
+        data.extend_from_slice(title);
+
+        let exth = ExthHeader::parse(&data, Encoding::Utf8).unwrap();
+        assert_eq!(exth.authors, vec!["Test Author"]);
+        assert_eq!(exth.title, Some("Test Title".to_string()));
+    }
+
+    #[test]
+    fn test_exth_header_cover_offset() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"EXTH");
+        data.extend_from_slice(&20u32.to_be_bytes()); // header length
+        data.extend_from_slice(&1u32.to_be_bytes()); // 1 record
+
+        // Cover offset record (type 201)
+        data.extend_from_slice(&201u32.to_be_bytes()); // type
+        data.extend_from_slice(&12u32.to_be_bytes()); // length (8 + 4)
+        data.extend_from_slice(&42u32.to_be_bytes()); // cover offset value
+
+        let exth = ExthHeader::parse(&data, Encoding::Utf8).unwrap();
+        assert_eq!(exth.cover_offset, Some(42));
+    }
+
+    #[test]
+    fn test_exth_header_invalid_signature() {
+        let data = b"NOTEXTH_____";
+        assert!(ExthHeader::parse(data, Encoding::Utf8).is_err());
+    }
+
+    #[test]
+    fn test_exth_header_too_short() {
+        let data = b"EXTH";
+        assert!(ExthHeader::parse(data, Encoding::Utf8).is_err());
+    }
 }

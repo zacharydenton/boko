@@ -37,3 +37,30 @@ pub fn parse_base32(s: &[u8]) -> usize {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_base32() {
+        // Single digits
+        assert_eq!(parse_base32(b"0"), 0);
+        assert_eq!(parse_base32(b"1"), 1);
+        assert_eq!(parse_base32(b"9"), 9);
+        assert_eq!(parse_base32(b"A"), 10);
+        assert_eq!(parse_base32(b"V"), 31);
+
+        // Lowercase
+        assert_eq!(parse_base32(b"a"), 10);
+        assert_eq!(parse_base32(b"v"), 31);
+
+        // Multi-digit
+        assert_eq!(parse_base32(b"10"), 32); // 1*32 + 0
+        assert_eq!(parse_base32(b"100"), 1024); // 1*32*32 + 0*32 + 0
+
+        // Real kindle embed reference
+        assert_eq!(parse_base32(b"0001"), 1);
+        assert_eq!(parse_base32(b"000V"), 31);
+    }
+}

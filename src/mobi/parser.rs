@@ -372,3 +372,311 @@ where
         .filter_map(|idx| take_with_children(idx, &mut entries, &children_map))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_pdb_header(name: &str, num_records: u16, offsets: &[u32]) -> Vec<u8> {
+        let mut data = vec![0u8; 78 + num_records as usize * 8];
+
+        // Name (null-terminated, max 32 bytes)
+        let name_bytes = name.as_bytes();
+        data[..name_bytes.len().min(31)].copy_from_slice(&name_bytes[..name_bytes.len().min(31)]);
+
+        // Type/Creator = "BOOKMOBI"
+        data[60..68].copy_from_slice(b"BOOKMOBI");
+
+        // Number of records
+        data[76..78].copy_from_slice(&num_records.to_be_bytes());
+
+        // Record offsets
+        for (i, &offset) in offsets.iter().enumerate() {
+            let pos = 78 + i * 8;
+            data[pos..pos + 4].copy_from_slice(&offset.to_be_bytes());
+        }
+
+        data
+    }
+
+    #[test]
+    fn test_pdb_info_parse() {
+        let data = make_pdb_header("TestBook", 3, &[100, 200, 300]);
+
+        let (pdb, consumed) = PdbInfo::parse(&data).unwrap();
+        assert_eq!(pdb.name, "TestBook");
+        assert_eq!(pdb.num_records, 3);
+        assert_eq!(pdb.record_offsets, vec![100, 200, 300]);
+        assert_eq!(consumed, 78 + 3 * 8);
+    }
+
+    #[test]
+    fn test_pdb_info_record_range() {
+        let data = make_pdb_header("Book", 3, &[100, 200, 500]);
+        let (pdb, _) = PdbInfo::parse(&data).unwrap();
+
+        // Middle record
+        let (start, end) = pdb.record_range(1, 1000).unwrap();
+        assert_eq!(start, 200);
+        assert_eq!(end, 500);
+
+        // Last record uses file_len
+        let (start, end) = pdb.record_range(2, 1000).unwrap();
+        assert_eq!(start, 500);
+        assert_eq!(end, 1000);
+
+        // Out of bounds
+        assert!(pdb.record_range(5, 1000).is_err());
+    }
+
+    #[test]
+    fn test_pdb_info_invalid_type() {
+        let mut data = make_pdb_header("Book", 1, &[100]);
+        data[60..68].copy_from_slice(b"NOTABOOK");
+
+        assert!(PdbInfo::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_pdb_info_too_short() {
+        let data = vec![0u8; 50];
+        assert!(PdbInfo::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_detect_format_kf8() {
+        let mut header = MobiHeader::parse(&vec![0u8; 0x6C]).unwrap();
+        header.mobi_version = 8;
+
+        let format = detect_format(&header, None);
+        assert!(matches!(format, MobiFormat::Kf8));
+        assert!(format.is_kf8());
+        assert_eq!(format.record_offset(), 0);
+    }
+
+    #[test]
+    fn test_detect_format_combo() {
+        let header = MobiHeader::parse(&vec![0u8; 32]).unwrap();
+        let exth = ExthHeader {
+            kf8_boundary: Some(100),
+            ..Default::default()
+        };
+
+        let format = detect_format(&header, Some(&exth));
+        assert!(matches!(format, MobiFormat::Combo { kf8_record_offset: 100 }));
+        assert!(format.is_kf8());
+        assert_eq!(format.record_offset(), 100);
+    }
+
+    #[test]
+    fn test_detect_format_mobi6() {
+        let header = MobiHeader::parse(&vec![0u8; 32]).unwrap();
+
+        let format = detect_format(&header, None);
+        assert!(matches!(format, MobiFormat::Mobi6));
+        assert!(!format.is_kf8());
+        assert_eq!(format.record_offset(), 0);
+    }
+
+    #[test]
+    fn test_parse_fdst() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"FDST");
+        data.extend_from_slice(&12u32.to_be_bytes()); // section start offset
+        data.extend_from_slice(&2u32.to_be_bytes()); // 2 sections
+
+        // Section 1: 0-1000
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&1000u32.to_be_bytes());
+
+        // Section 2: 1000-2500
+        data.extend_from_slice(&1000u32.to_be_bytes());
+        data.extend_from_slice(&2500u32.to_be_bytes());
+
+        let flows = parse_fdst(&data).unwrap();
+        assert_eq!(flows, vec![(0, 1000), (1000, 2500)]);
+    }
+
+    #[test]
+    fn test_parse_fdst_empty() {
+        // Not FDST signature
+        let data = b"NOTFDST";
+        let flows = parse_fdst(data).unwrap();
+        assert!(flows.is_empty());
+
+        // Too short
+        let flows = parse_fdst(&[]).unwrap();
+        assert!(flows.is_empty());
+    }
+
+    #[test]
+    fn test_strip_trailing_data_no_flags() {
+        let record = b"hello world";
+        assert_eq!(strip_trailing_data(record, 0), record.as_slice());
+    }
+
+    #[test]
+    fn test_strip_trailing_data_multibyte_overlap() {
+        // Flag bit 0: multibyte overlap
+        // Last byte & 3 + 1 = overlap count
+        let mut record = b"hello world".to_vec();
+        record.push(0x02); // overlap = (2 & 3) + 1 = 3
+
+        let stripped = strip_trailing_data(&record, 0x01);
+        // 12 bytes total, overlap = 3, so 12 - 3 = 9 bytes remain
+        assert_eq!(stripped, b"hello wor");
+    }
+
+    #[test]
+    fn test_strip_trailing_data_empty() {
+        assert_eq!(strip_trailing_data(&[], 0xFF), &[]);
+    }
+
+    #[test]
+    fn test_detect_image_type() {
+        // JPEG
+        assert_eq!(detect_image_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+
+        // PNG
+        assert_eq!(detect_image_type(&[0x89, b'P', b'N', b'G']), Some("image/png"));
+
+        // GIF
+        assert_eq!(detect_image_type(b"GIF89a"), Some("image/gif"));
+
+        // BMP
+        assert_eq!(detect_image_type(b"BM\x00\x00"), Some("image/bmp"));
+
+        // Unknown
+        assert_eq!(detect_image_type(b"????"), None);
+
+        // Too short
+        assert_eq!(detect_image_type(&[0xFF, 0xD8]), None);
+    }
+
+    #[test]
+    fn test_detect_font_type() {
+        // TrueType
+        assert_eq!(detect_font_type(&[0x00, 0x01, 0x00, 0x00]), Some("ttf"));
+
+        // OpenType
+        assert_eq!(detect_font_type(b"OTTO"), Some("ttf"));
+
+        // WOFF
+        assert_eq!(detect_font_type(b"wOFF"), Some("woff"));
+
+        // Unknown
+        assert_eq!(detect_font_type(b"????"), None);
+
+        // Too short
+        assert_eq!(detect_font_type(&[0x00]), None);
+    }
+
+    #[test]
+    fn test_is_metadata_record() {
+        assert!(is_metadata_record(b"FLIS...."));
+        assert!(is_metadata_record(b"FCIS...."));
+        assert!(is_metadata_record(b"FDST...."));
+        assert!(is_metadata_record(b"FONT...."));
+        assert!(is_metadata_record(b"INDX...."));
+        assert!(is_metadata_record(b"BOUNDARY"));
+
+        assert!(!is_metadata_record(b"\x89PNG"));
+        assert!(!is_metadata_record(b"\xFF\xD8\xFF\xE0"));
+        assert!(!is_metadata_record(b"abc")); // too short
+    }
+
+    #[test]
+    fn test_build_toc_from_ncx_flat() {
+        let ncx = vec![
+            NcxEntry {
+                name: "0000".to_string(),
+                text: "Chapter 1".to_string(),
+                pos: 0,
+                length: 1000,
+                level: 0,
+                parent: -1,
+                pos_fid: None,
+            },
+            NcxEntry {
+                name: "0001".to_string(),
+                text: "Chapter 2".to_string(),
+                pos: 1000,
+                length: 1000,
+                level: 0,
+                parent: -1,
+                pos_fid: None,
+            },
+        ];
+
+        let toc = build_toc_from_ncx(&ncx, |e| format!("ch{}.html", e.pos));
+
+        assert_eq!(toc.len(), 2);
+        assert_eq!(toc[0].title, "Chapter 1");
+        assert_eq!(toc[0].href, "ch0.html");
+        assert_eq!(toc[1].title, "Chapter 2");
+        assert_eq!(toc[1].href, "ch1000.html");
+    }
+
+    #[test]
+    fn test_build_toc_from_ncx_nested() {
+        let ncx = vec![
+            NcxEntry {
+                name: "0000".to_string(),
+                text: "Part 1".to_string(),
+                pos: 0,
+                length: 2000,
+                level: 0,
+                parent: -1,
+                pos_fid: None,
+            },
+            NcxEntry {
+                name: "0001".to_string(),
+                text: "Chapter 1.1".to_string(),
+                pos: 0,
+                length: 1000,
+                level: 1,
+                parent: 0,
+                pos_fid: None,
+            },
+            NcxEntry {
+                name: "0002".to_string(),
+                text: "Chapter 1.2".to_string(),
+                pos: 1000,
+                length: 1000,
+                level: 1,
+                parent: 0,
+                pos_fid: None,
+            },
+        ];
+
+        let toc = build_toc_from_ncx(&ncx, |e| format!("#{}", e.pos));
+
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "Part 1");
+        assert_eq!(toc[0].children.len(), 2);
+        assert_eq!(toc[0].children[0].title, "Chapter 1.1");
+        assert_eq!(toc[0].children[1].title, "Chapter 1.2");
+    }
+
+    #[test]
+    fn test_build_toc_from_ncx_empty() {
+        let toc = build_toc_from_ncx(&[], |_| String::new());
+        assert!(toc.is_empty());
+    }
+
+    #[test]
+    fn test_build_toc_from_ncx_unescapes_html() {
+        let ncx = vec![NcxEntry {
+            name: "0000".to_string(),
+            text: "Tom &amp; Jerry".to_string(),
+            pos: 0,
+            length: 100,
+            level: 0,
+            parent: -1,
+            pos_fid: None,
+        }];
+
+        let toc = build_toc_from_ncx(&ncx, |_| "#0".to_string());
+        assert_eq!(toc[0].title, "Tom & Jerry");
+    }
+}
