@@ -221,25 +221,22 @@ fn parse_container_info_for_index(data: &[u8]) -> Option<(usize, usize)> {
     let mut index_length: Option<usize> = None;
 
     for element in reader.elements() {
-        if let Ok(elem) = element {
-            if let Some(strukt) = elem.as_struct() {
+        if let Ok(elem) = element
+            && let Some(strukt) = elem.as_struct() {
                 for field in strukt.iter() {
                     let (name, value) = field;
                     if let Some(field_name) = name.text() {
-                        if field_name == "bcIndexTabOffset" {
-                            if let Some(i) = value.as_i64() {
+                        if field_name == "bcIndexTabOffset"
+                            && let Some(i) = value.as_i64() {
                                 index_offset = Some(i as usize);
                             }
-                        }
-                        if field_name == "bcIndexTabLength" {
-                            if let Some(i) = value.as_i64() {
+                        if field_name == "bcIndexTabLength"
+                            && let Some(i) = value.as_i64() {
                                 index_length = Some(i as usize);
                             }
-                        }
                     }
                 }
             }
-        }
     }
 
     match (index_offset, index_length) {
@@ -274,25 +271,22 @@ fn parse_container_info_for_doc_symbols(data: &[u8]) -> Option<(usize, usize)> {
     let mut doc_sym_length: Option<usize> = None;
 
     for element in reader.elements() {
-        if let Ok(elem) = element {
-            if let Some(strukt) = elem.as_struct() {
+        if let Ok(elem) = element
+            && let Some(strukt) = elem.as_struct() {
                 for field in strukt.iter() {
                     let (name, value) = field;
                     if let Some(field_name) = name.text() {
-                        if field_name == "bcDocSymbolOffset" {
-                            if let Some(i) = value.as_i64() {
+                        if field_name == "bcDocSymbolOffset"
+                            && let Some(i) = value.as_i64() {
                                 doc_sym_offset = Some(i as usize);
                             }
-                        }
-                        if field_name == "bcDocSymbolLength" {
-                            if let Some(i) = value.as_i64() {
+                        if field_name == "bcDocSymbolLength"
+                            && let Some(i) = value.as_i64() {
                                 doc_sym_length = Some(i as usize);
                             }
-                        }
                     }
                 }
             }
-        }
     }
 
     match (doc_sym_offset, doc_sym_length) {
@@ -331,7 +325,7 @@ fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
                         (len, 2)
                     } else {
                         // Multi-byte VarUInt - simplified handling
-                        ((len & 0x7F) as usize, 2)
+                        ((len & 0x7F), 2)
                     }
                 } else {
                     break;
@@ -475,11 +469,11 @@ fn dump_ion_data_extended(data: &[u8], extended_symbols: &[String]) -> IonResult
 }
 
 /// Convert an Element to Ion text format, using $NNN for unknown symbols
-fn element_to_ion_text(elem: &ion_rs::Element, symbols: &[&str]) -> String {
-    element_to_ion_text_indented(elem, symbols, 0)
+fn element_to_ion_text(elem: &ion_rs::Element, _symbols: &[&str]) -> String {
+    element_to_ion_text_indented(elem, _symbols, 0)
 }
 
-fn element_to_ion_text_indented(elem: &ion_rs::Element, symbols: &[&str], indent: usize) -> String {
+fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], indent: usize) -> String {
     use ion_rs::IonType;
 
     let indent_str = "  ".repeat(indent);
@@ -584,14 +578,14 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, symbols: &[&str], indent
                     result.push_str("[]");
                 } else if items.len() == 1 && !matches!(items[0].ion_type(), IonType::Struct | IonType::List) {
                     result.push('[');
-                    result.push_str(&element_to_ion_text_indented(items[0], symbols, 0));
+                    result.push_str(&element_to_ion_text_indented(items[0], _symbols, 0));
                     result.push(']');
                 } else {
                     result.push_str("[\n");
                     let inner_indent = "  ".repeat(indent + 1);
                     for (i, item) in items.iter().enumerate() {
                         result.push_str(&inner_indent);
-                        result.push_str(&element_to_ion_text_indented(item, symbols, indent + 1));
+                        result.push_str(&element_to_ion_text_indented(item, _symbols, indent + 1));
                         if i < items.len() - 1 {
                             result.push(',');
                         }
@@ -607,7 +601,7 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, symbols: &[&str], indent
         IonType::SExp => {
             if let Some(sexp) = elem.as_sexp() {
                 result.push('(');
-                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_indented(e, symbols, 0)).collect();
+                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_indented(e, _symbols, 0)).collect();
                 result.push_str(&items.join(" "));
                 result.push(')');
             } else {
@@ -635,7 +629,7 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, symbols: &[&str], indent
                         result.push_str(&inner_indent);
                         result.push_str(&field_name);
                         result.push_str(": ");
-                        result.push_str(&element_to_ion_text_indented(value, symbols, indent + 1));
+                        result.push_str(&element_to_ion_text_indented(value, _symbols, indent + 1));
                         if i < fields.len() - 1 {
                             result.push(',');
                         }

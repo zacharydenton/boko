@@ -9,6 +9,11 @@ pub trait ByteSource: Send + Sync {
     /// Returns the total length of the source.
     fn len(&self) -> u64;
 
+    /// Returns true if the source is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Reads exactly `len` bytes starting at `offset`.
     /// This must NOT modify any internal cursor position.
     fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>>;

@@ -264,11 +264,10 @@ impl Azw3Importer {
         let toc = {
             let nodes = build_toc_from_ncx(&ncx, |entry| {
                 // KF8 uses pos_fid (file ID + offset) or falls back to byte position
-                if let Some((elem_idx, _offset)) = entry.pos_fid {
-                    if let Some(elem) = elems.get(elem_idx as usize) {
+                if let Some((elem_idx, _offset)) = entry.pos_fid
+                    && let Some(elem) = elems.get(elem_idx as usize) {
                         return format!("part{:04}.html", elem.file_number);
                     }
-                }
                 find_file_for_position(&files, entry.pos)
                     .map(|f| format!("part{:04}.html", f.file_number))
                     .unwrap_or_else(|| "part0000.html".to_string())
@@ -277,11 +276,10 @@ impl Azw3Importer {
         };
 
         // Find cover image
-        if let Some(exth) = exth {
-            if let Some(cover_idx) = exth.cover_offset {
+        if let Some(exth) = exth
+            && let Some(cover_idx) = exth.cover_offset {
                 metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
             }
-        }
 
         Ok(Self {
             source,

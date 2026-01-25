@@ -42,8 +42,6 @@ pub mod epub;
 pub mod kfx;
 pub mod mobi;
 
-pub(crate) mod util;
-
 #[cfg(feature = "wasm")]
 pub mod wasm;
 

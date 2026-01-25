@@ -158,11 +158,10 @@ impl MobiImporter {
         let mut metadata = build_metadata(&pdb, &mobi, &exth);
 
         // Find cover image
-        if let Some(exth) = exth {
-            if let Some(cover_idx) = exth.cover_offset {
+        if let Some(exth) = exth
+            && let Some(cover_idx) = exth.cover_offset {
                 metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
             }
-        }
 
         // Parse NCX index for TOC (if available)
         let codec = match mobi.encoding {

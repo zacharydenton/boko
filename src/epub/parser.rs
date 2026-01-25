@@ -223,11 +223,10 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
 
     if let Some(cover_item) = epub3_cover {
         metadata.cover_image = Some(cover_item.href.clone());
-    } else if let Some(cover_id) = epub2_cover_id {
-        if let Some(item) = manifest.get(&cover_id) {
+    } else if let Some(cover_id) = epub2_cover_id
+        && let Some(item) = manifest.get(&cover_id) {
             metadata.cover_image = Some(item.href.clone());
         }
-    }
 
     // Convert manifest to simple map
     let manifest_simple: HashMap<String, (String, String)> = manifest
@@ -401,13 +400,12 @@ fn resolve_entity(entity: &str) -> Option<String> {
         {
             return Some(c.to_string());
         }
-    } else if let Some(dec) = entity.strip_prefix('#') {
-        if let Ok(code) = dec.parse::<u32>()
+    } else if let Some(dec) = entity.strip_prefix('#')
+        && let Ok(code) = dec.parse::<u32>()
             && let Some(c) = char::from_u32(code)
         {
             return Some(c.to_string());
         }
-    }
 
     None
 }

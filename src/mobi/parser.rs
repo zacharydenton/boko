@@ -128,13 +128,12 @@ pub fn detect_format(mobi: &MobiHeader, exth: Option<&ExthHeader>) -> MobiFormat
     }
 
     // Check for combo file: EXTH 121 points to KF8 boundary
-    if let Some(kf8_idx) = exth.and_then(|e| e.kf8_boundary) {
-        if kf8_idx > 0 {
+    if let Some(kf8_idx) = exth.and_then(|e| e.kf8_boundary)
+        && kf8_idx > 0 {
             return MobiFormat::Combo {
                 kf8_record_offset: kf8_idx as usize,
             };
         }
-    }
 
     MobiFormat::Mobi6
 }
