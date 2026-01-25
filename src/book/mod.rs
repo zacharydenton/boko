@@ -4,9 +4,10 @@
 //! - Format-agnostic types (`Metadata`, `TocEntry`, `Resource`, `SpineItem`)
 //! - The `Book` runtime handle for reading ebooks via importers
 
-use std::io;
+use std::io::{self, Seek, Write};
 use std::path::Path;
 
+use crate::export::{Azw3Exporter, EpubExporter, Exporter};
 use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, MobiImporter, SpineEntry};
 
 // ============================================================================
@@ -22,6 +23,13 @@ pub enum Format {
     Azw3,
     /// MOBI format (legacy Kindle)
     Mobi,
+}
+
+/// A resource (image, font, CSS, etc.) with its data and media type.
+#[derive(Debug, Clone)]
+pub struct Resource {
+    pub data: Vec<u8>,
+    pub media_type: String,
 }
 
 /// Book metadata (Dublin Core + extensions)
@@ -161,6 +169,38 @@ impl Book {
     /// List all assets.
     pub fn list_assets(&self) -> Vec<std::path::PathBuf> {
         self.backend.list_assets()
+    }
+
+    /// Export the book to a different format.
+    ///
+    /// # Supported Export Formats
+    ///
+    /// | Format | Support |
+    /// |--------|---------|
+    /// | EPUB   | ✓       |
+    /// | AZW3   | ✓       |
+    /// | MOBI   | ✗       |
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::{Book, Format};
+    /// use std::fs::File;
+    ///
+    /// let mut book = Book::open("input.azw3")?;
+    /// let mut file = File::create("output.epub")?;
+    /// book.export(Format::Epub, &mut file)?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn export<W: Write + Seek>(&mut self, format: Format, writer: &mut W) -> io::Result<()> {
+        match format {
+            Format::Epub => EpubExporter::new().export(self, writer),
+            Format::Azw3 => Azw3Exporter::new().export(self, writer),
+            Format::Mobi => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "MOBI export is not supported; use AZW3 instead",
+            )),
+        }
     }
 }
 

@@ -1,119 +1,151 @@
-//! MOBI/AZW3 Writer
+//! AZW3/KF8 exporter.
 //!
-//! Creates KF8 (MOBI version 8) files from Book structures.
+//! Creates KF8 (Kindle Format 8) files from Book structures.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io::{self, Seek, Write};
 use std::path::Path;
 
-use crate::book::Book;
-
-use super::index::{
-    NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
-    calculate_cncx_offsets,
-};
-use super::skeleton::{Chunker, ChunkerResult};
-use super::writer_transform::{
-    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_4, write_base32_10,
-};
-
-use flate2::Compression;
 use flate2::write::ZlibEncoder;
+use flate2::Compression;
+
+use crate::book::{Book, Resource, TocEntry};
+use crate::mobi::index::{
+    build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx, calculate_cncx_offsets,
+    NcxBuildEntry,
+};
+use crate::mobi::skeleton::{Chunker, ChunkerResult};
+use crate::mobi::writer_transform::{
+    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_10, write_base32_4,
+};
+
+use super::Exporter;
 
 // Constants
 const RECORD_SIZE: usize = 4096;
 const NULL_INDEX: u32 = 0xFFFF_FFFF;
 const XOR_KEY_LEN: usize = 20;
 
-/// Create a FONT record from raw font data
-/// Format: 24-byte header + XOR key (20 bytes) + compressed/obfuscated data
-fn write_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
-    use std::io::Write as IoWrite;
+/// Configuration for AZW3 export.
+#[derive(Debug, Clone, Default)]
+pub struct Azw3Config {
+    // Reserved for future options
+}
 
-    let usize_val = data.len() as u32;
-    let mut flags: u32 = 0;
+/// AZW3/KF8 format exporter.
+///
+/// Creates KF8 files compatible with modern Kindle devices.
+pub struct Azw3Exporter {
+    config: Azw3Config,
+}
 
-    // Step 1: Zlib compress the data (level 6 is default, good balance of speed/size)
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(6));
-    encoder.write_all(data)?;
-    let mut compressed = encoder.finish()?;
-    flags |= 0b01; // Compression flag
-
-    // Step 2: XOR obfuscation (only if data >= 1040 bytes)
-    let mut xor_key = Vec::new();
-    if compressed.len() >= 1040 {
-        flags |= 0b10; // XOR obfuscation flag
-
-        // Generate random XOR key (use timestamp-based pseudo-random)
-        let seed = crate::util::time_seed_nanos();
-        xor_key = (0..XOR_KEY_LEN)
-            .map(|i| {
-                let mut x = seed.wrapping_add(i as u64);
-                x = x.wrapping_mul(6364136223846793005);
-                x = x.wrapping_add(1442695040888963407);
-                (x >> 33) as u8
-            })
-            .collect();
-
-        // XOR first 1040 bytes
-        for i in 0..1040.min(compressed.len()) {
-            compressed[i] ^= xor_key[i % XOR_KEY_LEN];
+impl Azw3Exporter {
+    /// Create a new exporter with default configuration.
+    pub fn new() -> Self {
+        Self {
+            config: Azw3Config::default(),
         }
     }
 
-    // Step 3: Build the FONT record
-    let key_start: u32 = 24; // Header is 24 bytes
-    let data_start: u32 = key_start + xor_key.len() as u32;
-
-    let mut record = Vec::with_capacity(24 + xor_key.len() + compressed.len());
-
-    // Header: FONT + 5 big-endian u32s
-    record.extend_from_slice(b"FONT");
-    record.extend_from_slice(&usize_val.to_be_bytes());
-    record.extend_from_slice(&flags.to_be_bytes());
-    record.extend_from_slice(&data_start.to_be_bytes());
-    record.extend_from_slice(&(xor_key.len() as u32).to_be_bytes());
-    record.extend_from_slice(&key_start.to_be_bytes());
-
-    // XOR key (if present)
-    record.extend_from_slice(&xor_key);
-
-    // Compressed (and possibly obfuscated) data
-    record.extend_from_slice(&compressed);
-
-    Ok(record)
+    /// Configure the exporter with custom settings.
+    pub fn with_config(mut self, config: Azw3Config) -> Self {
+        self.config = config;
+        self
+    }
 }
 
-/// Write a [`Book`] to a MOBI/AZW3 file on disk.
-///
-/// Creates a KF8 (Kindle Format 8) file compatible with modern Kindle devices.
-/// Includes proper INDX records for navigation, embedded fonts, and images.
-///
-/// # Example
-///
-/// ```no_run
-/// use boko::{read_epub, write_mobi};
-///
-/// let book = read_epub("input.epub")?;
-/// write_mobi(&book, "output.azw3")?;
-/// # Ok::<(), std::io::Error>(())
-/// ```
-pub fn write_mobi<P: AsRef<Path>>(book: &Book, path: P) -> io::Result<()> {
-    let file = std::fs::File::create(path)?;
-    let mut writer = io::BufWriter::new(file);
-    write_mobi_to_writer(book, &mut writer)
+impl Default for Azw3Exporter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-/// Write a [`Book`] to any [`Write`] destination.
-///
-/// Useful for writing to memory buffers or network streams.
-pub fn write_mobi_to_writer<W: Write>(book: &Book, writer: &mut W) -> io::Result<()> {
-    let mobi = MobiBuilder::new(book)?;
-    mobi.write(writer)
+impl Exporter for Azw3Exporter {
+    fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
+        let builder = Kf8Builder::new(book)?;
+        builder.write(writer)
+    }
 }
 
-struct MobiBuilder<'a> {
-    book: &'a Book,
+/// Internal context for collecting book data.
+struct BookContext {
+    /// Maps href -> Resource (data + media_type)
+    resources: HashMap<String, Resource>,
+    /// Spine items as (href, data) pairs
+    spine: Vec<SpineItem>,
+    /// TOC entries
+    toc: Vec<TocEntry>,
+    /// Metadata
+    metadata: crate::book::Metadata,
+}
+
+struct SpineItem {
+    href: String,
+    data: Vec<u8>,
+}
+
+impl BookContext {
+    /// Collect all data from a Book into internal structures.
+    fn from_book(book: &mut Book) -> io::Result<Self> {
+        // Collect metadata and TOC (these are borrowed, so clone)
+        let metadata = book.metadata().clone();
+        let toc = book.toc().to_vec();
+
+        // Collect spine items
+        let spine_entries: Vec<_> = book.spine().to_vec();
+        let mut spine = Vec::with_capacity(spine_entries.len());
+
+        for entry in &spine_entries {
+            let href = book
+                .source_id(entry.id)
+                .unwrap_or("unknown.xhtml")
+                .to_string();
+            let data = book.load_raw(entry.id)?;
+            spine.push(SpineItem { href, data });
+        }
+
+        // Collect assets
+        let asset_paths = book.list_assets();
+        let mut resources = HashMap::new();
+
+        for path in asset_paths {
+            let path_str = path.to_string_lossy().to_string();
+            let data = book.load_asset(&path)?;
+            let media_type = guess_media_type(&path_str);
+
+            resources.insert(
+                path_str,
+                Resource {
+                    data,
+                    media_type,
+                },
+            );
+        }
+
+        // Also add spine items as resources (needed for internal lookups)
+        for item in &spine {
+            if !resources.contains_key(&item.href) {
+                resources.insert(
+                    item.href.clone(),
+                    Resource {
+                        data: item.data.clone(),
+                        media_type: "application/xhtml+xml".to_string(),
+                    },
+                );
+            }
+        }
+
+        Ok(Self {
+            resources,
+            spine,
+            toc,
+            metadata,
+        })
+    }
+}
+
+struct Kf8Builder {
+    ctx: BookContext,
     records: Vec<Vec<u8>>,
     text_length: usize,
     last_text_record: u16,
@@ -122,15 +154,15 @@ struct MobiBuilder<'a> {
     frag_index: u32,
     ncx_index: u32,
     chunker_result: Option<ChunkerResult>,
-    /// Maps resource href to 1-indexed resource record number (for kindle:embed references)
+    /// Maps resource href to 1-indexed resource record number
     resource_map: HashMap<String, usize>,
     /// CSS flows (flow 0 is text, flows 1+ are CSS)
     css_flows: Vec<String>,
     /// Total flows length (text + CSS)
     flows_length: usize,
-    /// Ordered list of image hrefs (for writing after text)
+    /// Ordered list of image hrefs
     image_hrefs: Vec<String>,
-    /// Ordered list of font hrefs (for writing after images)
+    /// Ordered list of font hrefs
     font_hrefs: Vec<String>,
     /// Counter for link placeholders
     link_counter: usize,
@@ -138,10 +170,12 @@ struct MobiBuilder<'a> {
     link_map: HashMap<String, (String, String)>,
 }
 
-impl<'a> MobiBuilder<'a> {
-    fn new(book: &'a Book) -> io::Result<Self> {
+impl Kf8Builder {
+    fn new(book: &mut Book) -> io::Result<Self> {
+        let ctx = BookContext::from_book(book)?;
+
         let mut builder = Self {
-            book,
+            ctx,
             records: vec![Vec::new()], // Placeholder for record 0
             text_length: 0,
             last_text_record: 0,
@@ -159,9 +193,9 @@ impl<'a> MobiBuilder<'a> {
             link_map: HashMap::new(),
         };
 
-        builder.collect_resources()?; // Build resource_map (no records yet)
-        builder.build_text_records()?; // Text records 1-N (uses resource_map)
-        builder.write_resource_records()?; // Resource records after text
+        builder.collect_resources()?;
+        builder.build_text_records()?;
+        builder.write_resource_records()?;
         builder.build_kf8_indices()?;
         builder.build_fdst_record()?;
         builder.build_flis_fcis_eof()?;
@@ -170,11 +204,73 @@ impl<'a> MobiBuilder<'a> {
         Ok(builder)
     }
 
-    fn build_text_records(&mut self) -> io::Result<()> {
-        // Build CSS href -> flow index map (flow 0 is text, CSS starts at 1)
-        // MUST be sorted to match the order in collect_resources() / css_flows
+    fn collect_resources(&mut self) -> io::Result<()> {
+        // Collect images
+        self.image_hrefs = self
+            .ctx
+            .resources
+            .iter()
+            .filter(|(_, r)| r.media_type.starts_with("image/"))
+            .map(|(href, _)| href.clone())
+            .collect();
+        self.image_hrefs.sort();
+
+        // Collect fonts
+        self.font_hrefs = self
+            .ctx
+            .resources
+            .iter()
+            .filter(|(_, r)| {
+                r.media_type.contains("font")
+                    || r.media_type == "application/x-font-ttf"
+                    || r.media_type == "application/x-font-opentype"
+                    || r.media_type == "application/vnd.ms-opentype"
+                    || r.media_type == "font/ttf"
+                    || r.media_type == "font/otf"
+                    || r.media_type == "font/woff"
+            })
+            .map(|(href, _)| href.clone())
+            .collect();
+        self.font_hrefs.sort();
+
+        // Collect CSS
         let mut css_hrefs: Vec<_> = self
-            .book
+            .ctx
+            .resources
+            .iter()
+            .filter(|(_, r)| r.media_type == "text/css")
+            .map(|(href, _)| href.clone())
+            .collect();
+        css_hrefs.sort();
+
+        // Store CSS flows
+        for href in &css_hrefs {
+            if let Some(resource) = self.ctx.resources.get(href) {
+                let css = String::from_utf8_lossy(&resource.data).to_string();
+                self.css_flows.push(css);
+            }
+        }
+
+        // Build resource_map
+        let mut resource_idx = 1usize;
+
+        for href in &self.image_hrefs {
+            self.resource_map.insert(href.clone(), resource_idx);
+            resource_idx += 1;
+        }
+
+        for href in &self.font_hrefs {
+            self.resource_map.insert(href.clone(), resource_idx);
+            resource_idx += 1;
+        }
+
+        Ok(())
+    }
+
+    fn build_text_records(&mut self) -> io::Result<()> {
+        // Build CSS href -> flow index map
+        let mut css_hrefs: Vec<_> = self
+            .ctx
             .resources
             .iter()
             .filter(|(_, r)| r.media_type == "text/css")
@@ -184,34 +280,32 @@ impl<'a> MobiBuilder<'a> {
 
         let mut css_flow_map: HashMap<String, usize> = HashMap::new();
         for (i, href) in css_hrefs.iter().enumerate() {
-            css_flow_map.insert(href.clone(), i + 1); // Flows are 1-indexed (0 is text)
+            css_flow_map.insert(href.clone(), i + 1);
         }
 
-        // Build spine hrefs set for internal link detection
-        let spine_hrefs: HashSet<&str> = self.book.spine.iter().map(|s| s.href.as_str()).collect();
+        // Build spine hrefs set
+        let spine_hrefs: HashSet<&str> = self.ctx.spine.iter().map(|s| s.href.as_str()).collect();
 
-        // Collect and process HTML files from spine using optimized single-pass rewriting
+        // Process HTML files
         let mut html_files: Vec<(String, Vec<u8>)> = Vec::new();
         let mut link_counter = 0usize;
 
-        for spine_item in &self.book.spine {
-            if let Some(resource) = self.book.resources.get(&spine_item.href)
+        for spine_item in &self.ctx.spine {
+            if let Some(resource) = self.ctx.resources.get(&spine_item.href)
                 && resource.media_type == "application/xhtml+xml"
             {
-                // Single-pass HTML rewriting with byte-level operations
                 let result = rewrite_html_references_fast(
                     &resource.data,
                     &spine_item.href,
                     &css_flow_map,
                     &self.resource_map,
                     &spine_hrefs,
-                    &self.book.resources,
+                    &self.ctx.resources,
                     link_counter,
                 );
 
-                // Collect links for later resolution
+                // Collect links
                 for link in result.links {
-                    // Build placeholder string for link_map lookup
                     let mut base32_buf = [0u8; 10];
                     write_base32_10(link_counter + 1, &mut base32_buf);
                     let placeholder = format!(
@@ -228,18 +322,18 @@ impl<'a> MobiBuilder<'a> {
         }
         self.link_counter = link_counter;
 
-        // Rewrite CSS using optimized single-pass byte operations
+        // Rewrite CSS
         let rewritten_css: Vec<Vec<u8>> = self
             .css_flows
             .iter()
             .map(|css| rewrite_css_references_fast(css.as_bytes(), &self.resource_map))
             .collect();
 
-        // Process HTML with chunker (adds aids, prepares for KF8)
+        // Process with chunker
         let mut chunker = Chunker::new();
         let chunker_result = chunker.process(&html_files);
 
-        // Resolve internal link placeholders now that we have aid mappings
+        // Resolve link placeholders
         let resolved_text = self.resolve_link_placeholders(
             &chunker_result.text,
             &chunker_result.id_map,
@@ -247,7 +341,7 @@ impl<'a> MobiBuilder<'a> {
         );
         self.text_length = resolved_text.len();
 
-        // Build combined flow data: text (flow 0) + CSS flows (1+)
+        // Combine flows
         let mut all_flows = resolved_text;
         for css in &rewritten_css {
             all_flows.extend_from_slice(css);
@@ -260,12 +354,9 @@ impl<'a> MobiBuilder<'a> {
             let end = (pos + RECORD_SIZE).min(all_flows.len());
             let chunk = &all_flows[pos..end];
 
-            // Compress with PalmDOC
-            let compressed = super::palmdoc::compress(chunk);
-
-            // Add trailing byte (overlap byte for multibyte chars)
+            let compressed = crate::mobi::palmdoc::compress(chunk);
             let mut record = compressed;
-            record.push(0);
+            record.push(0); // Trailing byte
 
             self.records.push(record);
             pos = end;
@@ -274,9 +365,6 @@ impl<'a> MobiBuilder<'a> {
         self.last_text_record = (self.records.len() - 1) as u16;
         self.chunker_result = Some(chunker_result);
 
-        // Store flow boundaries for FDST (convert to String for compatibility)
-        // Flow 0: text (0 to text_length)
-        // Flow 1+: CSS flows
         self.css_flows = rewritten_css
             .into_iter()
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
@@ -285,10 +373,6 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    /// Resolve link placeholders after chunking
-    /// Replaces kindle:pos:fid:0000:off:XXXXXXXXXX with actual positions
-    /// Optimized to build result in single pass instead of repeated replacen calls
-    /// Uses SIMD-accelerated byte search instead of string operations
     fn resolve_link_placeholders(
         &self,
         text: &[u8],
@@ -298,83 +382,87 @@ impl<'a> MobiBuilder<'a> {
         use memchr::memmem;
 
         const PREFIX: &[u8] = b"kindle:pos:fid:0000:off:";
-        const PLACEHOLDER_LEN: usize = 34; // PREFIX (24) + base32 value (10)
+        const PLACEHOLDER_LEN: usize = 34;
 
         let finder = memmem::Finder::new(PREFIX);
-
-        // Collect all replacements with their positions: (start, end, replacement_bytes)
         let mut replacements: Vec<(usize, usize, [u8; 34])> = Vec::new();
 
-        // Find all placeholders using SIMD-accelerated search
         let mut search_start = 0;
         while let Some(pos) = finder.find(&text[search_start..]) {
             let start = search_start + pos;
             let end = start + PLACEHOLDER_LEN;
 
-            // Validate we have enough bytes
             if end <= text.len() {
                 let placeholder = std::str::from_utf8(&text[start..end]).unwrap_or("");
 
-                // Look up this placeholder in link_map to get target
                 if let Some((target_file, fragment)) = self.link_map.get(placeholder) {
-                    // Look up the target in id_map to get the aid
                     let key = (target_file.clone(), fragment.clone());
-                    let aid = id_map.get(&key).or_else(|| {
-                        // Fall back to file body (empty fragment)
-                        id_map.get(&(target_file.clone(), String::new()))
-                    });
+                    let aid = id_map
+                        .get(&key)
+                        .or_else(|| id_map.get(&(target_file.clone(), String::new())));
 
-                    if let Some(aid) = aid {
-                        // Look up the aid in aid_offset_map to get position
-                        if let Some(&(seq_num, offset_in_chunk, _offset_in_text)) =
-                            aid_offset_map.get(aid)
-                        {
-                            // Build replacement directly into fixed buffer (no allocation)
-                            // Format: "kindle:pos:fid:XXXX:off:YYYYYYYYYY" (34 bytes)
-                            let mut replacement = [0u8; 34];
-                            replacement[..15].copy_from_slice(b"kindle:pos:fid:");
-                            let mut fid_buf = [0u8; 4];
-                            write_base32_4(seq_num, &mut fid_buf);
-                            replacement[15..19].copy_from_slice(&fid_buf);
-                            replacement[19..24].copy_from_slice(b":off:");
-                            let mut off_buf = [0u8; 10];
-                            write_base32_10(offset_in_chunk, &mut off_buf);
-                            replacement[24..34].copy_from_slice(&off_buf);
-                            replacements.push((start, end, replacement));
-                        }
+                    if let Some(aid) = aid
+                        && let Some(&(seq_num, offset_in_chunk, _)) = aid_offset_map.get(aid)
+                    {
+                        let mut replacement = [0u8; 34];
+                        replacement[..15].copy_from_slice(b"kindle:pos:fid:");
+                        let mut fid_buf = [0u8; 4];
+                        write_base32_4(seq_num, &mut fid_buf);
+                        replacement[15..19].copy_from_slice(&fid_buf);
+                        replacement[19..24].copy_from_slice(b":off:");
+                        let mut off_buf = [0u8; 10];
+                        write_base32_10(offset_in_chunk, &mut off_buf);
+                        replacement[24..34].copy_from_slice(&off_buf);
+                        replacements.push((start, end, replacement));
                     }
                 }
             }
-            search_start = start + 1; // Move past this match to find next
+            search_start = start + 1;
         }
 
-        // If no replacements, return original
         if replacements.is_empty() {
             return text.to_vec();
         }
 
-        // Sort by position (should already be sorted, but ensure it)
         replacements.sort_by_key(|(start, _, _)| *start);
 
-        // Build result in single pass
         let mut result = Vec::with_capacity(text.len());
         let mut last_end = 0;
 
         for (start, end, replacement) in replacements {
-            // Copy text before this replacement
             result.extend_from_slice(&text[last_end..start]);
-            // Add replacement
             result.extend_from_slice(&replacement);
             last_end = end;
         }
-        // Copy remaining text after last replacement
         result.extend_from_slice(&text[last_end..]);
 
         result
     }
 
+    fn write_resource_records(&mut self) -> io::Result<()> {
+        if !self.image_hrefs.is_empty() || !self.font_hrefs.is_empty() {
+            self.first_resource_record = self.records.len() as u32;
+        }
+
+        // Write images
+        for href in &self.image_hrefs.clone() {
+            if let Some(resource) = self.ctx.resources.get(href) {
+                self.records.push(resource.data.clone());
+            }
+        }
+
+        // Write fonts as FONT records
+        for href in &self.font_hrefs.clone() {
+            if let Some(resource) = self.ctx.resources.get(href) {
+                let font_record = write_font_record(&resource.data)?;
+                self.records.push(font_record);
+            }
+        }
+
+        Ok(())
+    }
+
     fn build_kf8_indices(&mut self) -> io::Result<()> {
-        // Build SKEL and Fragment INDX records
         if let Some(ref chunker_result) = self.chunker_result {
             // Build SKEL index
             if !chunker_result.skel_table.is_empty() {
@@ -387,7 +475,6 @@ impl<'a> MobiBuilder<'a> {
 
             // Build Fragment/Chunk index
             if !chunker_result.chunk_table.is_empty() {
-                // Build CNCX for chunk selectors
                 let selectors: Vec<String> = chunker_result
                     .chunk_table
                     .iter()
@@ -402,20 +489,18 @@ impl<'a> MobiBuilder<'a> {
                     self.records.push(record);
                 }
 
-                // Add CNCX record after chunk index records
                 if !cncx.is_empty() {
                     self.records.push(cncx);
                 }
             }
         }
 
-        // Build NCX index for table of contents
-        if !self.book.toc.is_empty()
+        // Build NCX index
+        if !self.ctx.toc.is_empty()
             && let Some(ref chunker_result) = self.chunker_result
         {
-            // Flatten TOC entries (including children) into a list with hierarchy
             let ncx_entries = flatten_toc(
-                &self.book.toc,
+                &self.ctx.toc,
                 self.text_length as u32,
                 &chunker_result.id_map,
                 &chunker_result.aid_offset_map,
@@ -436,114 +521,19 @@ impl<'a> MobiBuilder<'a> {
         Ok(())
     }
 
-    /// Phase 1: Collect resources and build resource_map (before text records)
-    /// This populates resource_map for kindle:embed reference rewriting
-    fn collect_resources(&mut self) -> io::Result<()> {
-        // Collect images
-        self.image_hrefs = self
-            .book
-            .resources
-            .iter()
-            .filter(|(_, r)| r.media_type.starts_with("image/"))
-            .map(|(href, _)| href.clone())
-            .collect();
-        self.image_hrefs.sort();
-
-        // Collect fonts
-        self.font_hrefs = self
-            .book
-            .resources
-            .iter()
-            .filter(|(_, r)| {
-                r.media_type.contains("font")
-                    || r.media_type == "application/x-font-ttf"
-                    || r.media_type == "application/x-font-opentype"
-                    || r.media_type == "application/vnd.ms-opentype"
-                    || r.media_type == "font/ttf"
-                    || r.media_type == "font/otf"
-                    || r.media_type == "font/woff"
-            })
-            .map(|(href, _)| href.clone())
-            .collect();
-        self.font_hrefs.sort();
-
-        // Collect CSS (for flow tracking - actual CSS goes in text flows)
-        let mut css_hrefs: Vec<_> = self
-            .book
-            .resources
-            .iter()
-            .filter(|(_, r)| r.media_type == "text/css")
-            .map(|(href, _)| href.clone())
-            .collect();
-        css_hrefs.sort();
-
-        // Store CSS flows (will be appended to text)
-        for href in &css_hrefs {
-            if let Some(resource) = self.book.resources.get(href) {
-                let css = String::from_utf8_lossy(&resource.data).to_string();
-                self.css_flows.push(css);
-            }
-        }
-
-        // Build resource_map with indices (1-indexed for kindle:embed)
-        // Resources will be written after text records, but we need indices now
-        let mut resource_idx = 1usize;
-
-        for href in &self.image_hrefs {
-            self.resource_map.insert(href.clone(), resource_idx);
-            resource_idx += 1;
-        }
-
-        for href in &self.font_hrefs {
-            self.resource_map.insert(href.clone(), resource_idx);
-            resource_idx += 1;
-        }
-
-        Ok(())
-    }
-
-    /// Phase 2: Write resource records (after text records)
-    fn write_resource_records(&mut self) -> io::Result<()> {
-        // Set first resource record (now that text records are written)
-        if !self.image_hrefs.is_empty() || !self.font_hrefs.is_empty() {
-            self.first_resource_record = self.records.len() as u32;
-        }
-
-        // Write images as raw data
-        for href in &self.image_hrefs.clone() {
-            if let Some(resource) = self.book.resources.get(href) {
-                self.records.push(resource.data.clone());
-            }
-        }
-
-        // Write fonts as FONT records
-        for href in &self.font_hrefs.clone() {
-            if let Some(resource) = self.book.resources.get(href) {
-                let font_record = write_font_record(&resource.data)?;
-                self.records.push(font_record);
-            }
-        }
-
-        Ok(())
-    }
-
     fn build_fdst_record(&mut self) -> io::Result<()> {
-        // FDST (Flow Descriptor Table) - supports multiple flows
-        // Flow 0: text content
-        // Flows 1+: CSS stylesheets
-
-        let num_flows = 1 + self.css_flows.len(); // text + CSS flows
+        let num_flows = 1 + self.css_flows.len();
 
         let mut fdst = Vec::new();
         fdst.extend_from_slice(b"FDST");
-        fdst.extend_from_slice(&12u32.to_be_bytes()); // Offset to flow table
+        fdst.extend_from_slice(&12u32.to_be_bytes());
         fdst.extend_from_slice(&(num_flows as u32).to_be_bytes());
 
-        // Flow 0: text (0 to text_length)
+        // Flow 0: text
         fdst.extend_from_slice(&0u32.to_be_bytes());
         fdst.extend_from_slice(&(self.text_length as u32).to_be_bytes());
 
-        // Flow 1+: CSS flows
+        // CSS flows
         let mut offset = self.text_length;
         for css in &self.css_flows {
             let start = offset;
@@ -558,11 +548,11 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_flis_fcis_eof(&mut self) -> io::Result<()> {
-        // FLIS record
+        // FLIS
         let flis = b"FLIS\0\0\0\x08\0\x41\0\0\0\0\0\0\xff\xff\xff\xff\0\x01\0\x03\0\0\0\x03\0\0\0\x01\xff\xff\xff\xff";
         self.records.push(flis.to_vec());
 
-        // FCIS record
+        // FCIS
         let mut fcis = Vec::new();
         fcis.extend_from_slice(
             b"FCIS\x00\x00\x00\x14\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x00",
@@ -572,145 +562,141 @@ impl<'a> MobiBuilder<'a> {
         fcis.extend_from_slice(b"\x28\x00\x00\x00\x08\x00\x01\x00\x01\x00\x00\x00\x00");
         self.records.push(fcis);
 
-        // EOF record
+        // EOF
         self.records.push(b"\xe9\x8e\r\n".to_vec());
 
         Ok(())
     }
 
     fn build_record0(&mut self) -> io::Result<()> {
-        let title = &self.book.metadata.title;
+        let title = &self.ctx.metadata.title;
         let title_bytes = title.as_bytes();
 
-        // Build EXTH header
         let exth = self.build_exth();
         let exth_len = exth.len();
 
-        // Calculate offsets
         let mobi_header_len: u32 = 264;
         let title_offset = 16 + mobi_header_len + exth_len as u32;
-        let full_record_len = title_offset as usize + title_bytes.len() + 2; // +2 for null padding
+        let full_record_len = title_offset as usize + title_bytes.len() + 2;
 
-        let mut record0 = Vec::with_capacity(full_record_len + 8192); // Include padding
+        let mut record0 = Vec::with_capacity(full_record_len + 8192);
 
         // PalmDOC header (16 bytes)
         record0.extend_from_slice(&2u16.to_be_bytes()); // Compression: PalmDOC
-        record0.extend_from_slice(&[0, 0]); // Unused
+        record0.extend_from_slice(&[0, 0]);
         record0.extend_from_slice(&(self.text_length as u32).to_be_bytes());
         record0.extend_from_slice(&self.last_text_record.to_be_bytes());
         record0.extend_from_slice(&(RECORD_SIZE as u16).to_be_bytes());
-        record0.extend_from_slice(&0u16.to_be_bytes()); // Encryption: none
-        record0.extend_from_slice(&0u16.to_be_bytes()); // Unused
+        record0.extend_from_slice(&0u16.to_be_bytes()); // Encryption
+        record0.extend_from_slice(&0u16.to_be_bytes());
 
         // MOBI header
         record0.extend_from_slice(b"MOBI");
-        record0.extend_from_slice(&mobi_header_len.to_be_bytes()); // Header length
+        record0.extend_from_slice(&mobi_header_len.to_be_bytes());
         record0.extend_from_slice(&2u32.to_be_bytes()); // Book type
-        record0.extend_from_slice(&65001u32.to_be_bytes()); // UTF-8 encoding
-        record0.extend_from_slice(&rand_uid().to_be_bytes()); // UID
-        record0.extend_from_slice(&8u32.to_be_bytes()); // File version (KF8)
+        record0.extend_from_slice(&65001u32.to_be_bytes()); // UTF-8
+        record0.extend_from_slice(&rand_uid().to_be_bytes());
+        record0.extend_from_slice(&8u32.to_be_bytes()); // KF8 version
 
         // Meta indices (40-80)
         for _ in 0..10 {
             record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
         }
 
-        // First non-text record (80)
+        // First non-text record
         let first_non_text = (self.last_text_record as u32) + 1;
         record0.extend_from_slice(&first_non_text.to_be_bytes());
 
-        // Title offset (84)
+        // Title offset and length
         record0.extend_from_slice(&title_offset.to_be_bytes());
-
-        // Title length (88)
         record0.extend_from_slice(&(title_bytes.len() as u32).to_be_bytes());
 
-        // Language code (92) - English
+        // Language
         record0.extend_from_slice(&0x09u32.to_be_bytes());
 
-        // Dictionary in/out lang (96-104)
+        // Dictionary in/out
         record0.extend_from_slice(&0u32.to_be_bytes());
         record0.extend_from_slice(&0u32.to_be_bytes());
 
-        // Min version (104)
+        // Min version
         record0.extend_from_slice(&8u32.to_be_bytes());
 
-        // First resource record (108)
+        // First resource record
         record0.extend_from_slice(&self.first_resource_record.to_be_bytes());
 
-        // Huffman records (112-128)
+        // Huffman records
         for _ in 0..4 {
             record0.extend_from_slice(&0u32.to_be_bytes());
         }
 
-        // EXTH flags (128)
-        record0.extend_from_slice(&0x50u32.to_be_bytes()); // Has EXTH
+        // EXTH flags
+        record0.extend_from_slice(&0x50u32.to_be_bytes());
 
-        // Unknown (132-164)
+        // Unknown
         record0.extend_from_slice(&[0u8; 32]);
 
-        // Unknown index (164)
+        // Unknown index
         record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
 
-        // DRM (168-184)
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // DRM offset
-        record0.extend_from_slice(&0u32.to_be_bytes()); // DRM count
-        record0.extend_from_slice(&0u32.to_be_bytes()); // DRM size
-        record0.extend_from_slice(&0u32.to_be_bytes()); // DRM flags
+        // DRM
+        record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
+        record0.extend_from_slice(&0u32.to_be_bytes());
+        record0.extend_from_slice(&0u32.to_be_bytes());
+        record0.extend_from_slice(&0u32.to_be_bytes());
 
-        // Unknown (184-192)
+        // Unknown
         record0.extend_from_slice(&[0u8; 8]);
 
-        // FDST (192-200)
-        let fdst_record = (self.records.len() - 4) as u32; // FDST is 4 before end
+        // FDST
+        let fdst_record = (self.records.len() - 4) as u32;
         record0.extend_from_slice(&fdst_record.to_be_bytes());
-        let fdst_count = 1 + self.css_flows.len() as u32; // 1 text flow + N CSS flows
+        let fdst_count = 1 + self.css_flows.len() as u32;
         record0.extend_from_slice(&fdst_count.to_be_bytes());
 
-        // FCIS (200-208)
+        // FCIS
         let fcis_record = (self.records.len() - 2) as u32;
         record0.extend_from_slice(&fcis_record.to_be_bytes());
         record0.extend_from_slice(&1u32.to_be_bytes());
 
-        // FLIS (208-216)
+        // FLIS
         let flis_record = (self.records.len() - 3) as u32;
         record0.extend_from_slice(&flis_record.to_be_bytes());
         record0.extend_from_slice(&1u32.to_be_bytes());
 
-        // Unknown (216-224)
+        // Unknown
         record0.extend_from_slice(&[0u8; 8]);
 
-        // SRCS (224-232)
+        // SRCS
         record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
         record0.extend_from_slice(&0u32.to_be_bytes());
 
-        // Unknown (232-240)
+        // Unknown
         record0.extend_from_slice(&[0xFF; 8]);
 
-        // Extra data flags (240)
-        record0.extend_from_slice(&1u32.to_be_bytes()); // Multibyte overlap
+        // Extra data flags
+        record0.extend_from_slice(&1u32.to_be_bytes());
 
-        // KF8 indices (244-264)
-        record0.extend_from_slice(&self.ncx_index.to_be_bytes()); // NCX index
-        record0.extend_from_slice(&self.frag_index.to_be_bytes()); // Chunk/Fragment index
-        record0.extend_from_slice(&self.skel_index.to_be_bytes()); // Skel index
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // DATP index
-        record0.extend_from_slice(&NULL_INDEX.to_be_bytes()); // Guide index
+        // KF8 indices
+        record0.extend_from_slice(&self.ncx_index.to_be_bytes());
+        record0.extend_from_slice(&self.frag_index.to_be_bytes());
+        record0.extend_from_slice(&self.skel_index.to_be_bytes());
+        record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
+        record0.extend_from_slice(&NULL_INDEX.to_be_bytes());
 
-        // Unknown (264-280)
+        // Unknown
         record0.extend_from_slice(&[0xFF; 4]);
         record0.extend_from_slice(&[0; 4]);
         record0.extend_from_slice(&[0xFF; 4]);
         record0.extend_from_slice(&[0; 4]);
 
-        // EXTH header
+        // EXTH
         record0.extend_from_slice(&exth);
 
-        // Full title
+        // Title
         record0.extend_from_slice(title_bytes);
-        record0.extend_from_slice(&[0, 0]); // Null terminator + padding
+        record0.extend_from_slice(&[0, 0]);
 
-        // Padding (for Amazon's DTP service)
+        // Padding
         while record0.len() < full_record_len + 4096 {
             record0.push(0);
         }
@@ -720,60 +706,59 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn build_exth(&self) -> Vec<u8> {
-        let mut exth = Vec::new();
         let mut records: Vec<(u32, Vec<u8>)> = Vec::new();
 
-        // Authors (100)
-        for author in &self.book.metadata.authors {
+        // Authors
+        for author in &self.ctx.metadata.authors {
             records.push((100, author.as_bytes().to_vec()));
         }
 
-        // Publisher (101)
-        if let Some(ref publisher) = self.book.metadata.publisher {
+        // Publisher
+        if let Some(ref publisher) = self.ctx.metadata.publisher {
             records.push((101, publisher.as_bytes().to_vec()));
         }
 
-        // Description (103)
-        if let Some(ref desc) = self.book.metadata.description {
+        // Description
+        if let Some(ref desc) = self.ctx.metadata.description {
             records.push((103, desc.as_bytes().to_vec()));
         }
 
-        // Subjects (105)
-        for subject in &self.book.metadata.subjects {
+        // Subjects
+        for subject in &self.ctx.metadata.subjects {
             records.push((105, subject.as_bytes().to_vec()));
         }
 
-        // Publication date (106)
-        if let Some(ref date) = self.book.metadata.date {
+        // Date
+        if let Some(ref date) = self.ctx.metadata.date {
             records.push((106, date.as_bytes().to_vec()));
         }
 
-        // Rights (109)
-        if let Some(ref rights) = self.book.metadata.rights {
+        // Rights
+        if let Some(ref rights) = self.ctx.metadata.rights {
             records.push((109, rights.as_bytes().to_vec()));
         }
 
-        // Cover offset (201) - if we have a cover
-        if self.book.metadata.cover_image.is_some() {
+        // Cover offset
+        if self.ctx.metadata.cover_image.is_some() {
             records.push((201, 0u32.to_be_bytes().to_vec()));
         }
 
-        // Updated title (503)
-        records.push((503, self.book.metadata.title.as_bytes().to_vec()));
+        // Title
+        records.push((503, self.ctx.metadata.title.as_bytes().to_vec()));
 
-        // ASIN placeholder (113)
+        // ASIN placeholder
         records.push((113, b"EBOK000000".to_vec()));
 
-        // Document type (501)
+        // Document type
         records.push((501, b"EBOK".to_vec()));
 
-        // CDE Type (504)
+        // CDE Type
         records.push((504, b"EBOK".to_vec()));
 
         // Build EXTH
+        let mut exth = Vec::new();
         exth.extend_from_slice(b"EXTH");
 
-        // Calculate header length
         let mut content = Vec::new();
         content.extend_from_slice(&(records.len() as u32).to_be_bytes());
         for (rec_type, data) in &records {
@@ -796,7 +781,7 @@ impl<'a> MobiBuilder<'a> {
     }
 
     fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        // Calculate record offsets
+        // Calculate offsets
         let mut offsets = Vec::new();
         let pdb_header_size = 78 + 8 * self.records.len() + 2;
         let mut offset = pdb_header_size;
@@ -807,28 +792,28 @@ impl<'a> MobiBuilder<'a> {
         }
 
         // Write PDB header
-        let title = sanitize_title(&self.book.metadata.title);
+        let title = sanitize_title(&self.ctx.metadata.title);
         let mut title_bytes = [0u8; 32];
         let title_slice = title.as_bytes();
         let copy_len = title_slice.len().min(31);
         title_bytes[..copy_len].copy_from_slice(&title_slice[..copy_len]);
         writer.write_all(&title_bytes)?;
 
-        // Attributes, version, creation/modification dates
+        // Timestamps
         let now = crate::util::time_now_secs();
-        writer.write_all(&0u16.to_be_bytes())?; // Attributes
-        writer.write_all(&0u16.to_be_bytes())?; // Version
-        writer.write_all(&now.to_be_bytes())?; // Creation
-        writer.write_all(&now.to_be_bytes())?; // Modification
-        writer.write_all(&0u32.to_be_bytes())?; // Last backup
-        writer.write_all(&0u32.to_be_bytes())?; // Modification number
-        writer.write_all(&0u32.to_be_bytes())?; // App info
-        writer.write_all(&0u32.to_be_bytes())?; // Sort info
+        writer.write_all(&0u16.to_be_bytes())?;
+        writer.write_all(&0u16.to_be_bytes())?;
+        writer.write_all(&now.to_be_bytes())?;
+        writer.write_all(&now.to_be_bytes())?;
+        writer.write_all(&0u32.to_be_bytes())?;
+        writer.write_all(&0u32.to_be_bytes())?;
+        writer.write_all(&0u32.to_be_bytes())?;
+        writer.write_all(&0u32.to_be_bytes())?;
 
         // Type and Creator
         writer.write_all(b"BOOKMOBI")?;
 
-        // Unique ID seed, next record list ID
+        // UID seed, next record
         writer.write_all(&((2 * self.records.len() - 1) as u32).to_be_bytes())?;
         writer.write_all(&0u32.to_be_bytes())?;
 
@@ -838,7 +823,6 @@ impl<'a> MobiBuilder<'a> {
         // Record info list
         for (i, &offset) in offsets.iter().enumerate() {
             writer.write_all(&offset.to_be_bytes())?;
-            // Record attributes (unique ID)
             let id_bytes = ((2 * i) as u32).to_be_bytes();
             writer.write_all(&[0, id_bytes[1], id_bytes[2], id_bytes[3]])?;
         }
@@ -855,9 +839,58 @@ impl<'a> MobiBuilder<'a> {
     }
 }
 
+/// Create a FONT record from raw font data.
+fn write_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
+    let usize_val = data.len() as u32;
+    let mut flags: u32 = 0;
+
+    // Compress
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(6));
+    encoder.write_all(data)?;
+    let mut compressed = encoder.finish()?;
+    flags |= 0b01;
+
+    // XOR obfuscation
+    let mut xor_key = Vec::new();
+    if compressed.len() >= 1040 {
+        flags |= 0b10;
+
+        let seed = crate::util::time_seed_nanos();
+        xor_key = (0..XOR_KEY_LEN)
+            .map(|i| {
+                let mut x = seed.wrapping_add(i as u64);
+                x = x.wrapping_mul(6364136223846793005);
+                x = x.wrapping_add(1442695040888963407);
+                (x >> 33) as u8
+            })
+            .collect();
+
+        for i in 0..1040.min(compressed.len()) {
+            compressed[i] ^= xor_key[i % XOR_KEY_LEN];
+        }
+    }
+
+    let key_start: u32 = 24;
+    let data_start: u32 = key_start + xor_key.len() as u32;
+
+    let mut record = Vec::with_capacity(24 + xor_key.len() + compressed.len());
+
+    // Header
+    record.extend_from_slice(b"FONT");
+    record.extend_from_slice(&usize_val.to_be_bytes());
+    record.extend_from_slice(&flags.to_be_bytes());
+    record.extend_from_slice(&data_start.to_be_bytes());
+    record.extend_from_slice(&(xor_key.len() as u32).to_be_bytes());
+    record.extend_from_slice(&key_start.to_be_bytes());
+
+    record.extend_from_slice(&xor_key);
+    record.extend_from_slice(&compressed);
+
+    Ok(record)
+}
+
 fn rand_uid() -> u32 {
     let seed = crate::util::time_seed_nanos() as u32;
-    // Simple LCG
     seed.wrapping_mul(1103515245).wrapping_add(12345)
 }
 
@@ -869,28 +902,26 @@ fn sanitize_title(title: &str) -> String {
         .replace(' ', "_")
 }
 
-/// Flatten a hierarchical TOC into a linear list with parent/child indices
+/// Flatten hierarchical TOC into linear list.
 fn flatten_toc(
-    entries: &[crate::book::TocEntry],
+    entries: &[TocEntry],
     text_length: u32,
     id_map: &HashMap<(String, String), String>,
     aid_offset_map: &HashMap<String, (usize, usize, usize)>,
 ) -> Vec<NcxBuildEntry> {
-    // Intermediate entry with mutable child tracking
     struct TempEntry {
         pos: u32,
         length: u32,
         label: String,
         depth: u32,
         parent: i32,
-        children: Vec<usize>, // Indices of children
+        children: Vec<usize>,
     }
 
     let mut result: Vec<TempEntry> = Vec::new();
 
-    // Recursive helper to flatten depth-first
     fn flatten_recursive(
-        entries: &[crate::book::TocEntry],
+        entries: &[TocEntry],
         depth: u32,
         parent_idx: i32,
         text_length: u32,
@@ -901,7 +932,6 @@ fn flatten_toc(
         for entry in entries {
             let current_idx = result.len();
 
-            // Parse the href to get file and fragment
             let (file, fragment) = if let Some(hash_pos) = entry.href.find('#') {
                 (
                     entry.href[..hash_pos].to_string(),
@@ -911,15 +941,13 @@ fn flatten_toc(
                 (entry.href.clone(), String::new())
             };
 
-            // Look up position: href -> aid -> offset_in_text
             let pos = id_map
                 .get(&(file.clone(), fragment.clone()))
                 .or_else(|| id_map.get(&(file, String::new())))
                 .and_then(|aid| aid_offset_map.get(aid))
-                .map(|&(_seq, _off_chunk, off_text)| off_text as u32)
+                .map(|&(_, _, off_text)| off_text as u32)
                 .unwrap_or(0);
 
-            // Add this entry
             result.push(TempEntry {
                 pos,
                 length: text_length.saturating_sub(pos),
@@ -929,12 +957,10 @@ fn flatten_toc(
                 children: Vec::new(),
             });
 
-            // Track this entry as a child of its parent
             if parent_idx >= 0 {
                 result[parent_idx as usize].children.push(current_idx);
             }
 
-            // Recursively add children
             flatten_recursive(
                 &entry.children,
                 depth + 1,
@@ -947,17 +973,8 @@ fn flatten_toc(
         }
     }
 
-    flatten_recursive(
-        entries,
-        0,
-        -1,
-        text_length,
-        id_map,
-        aid_offset_map,
-        &mut result,
-    );
+    flatten_recursive(entries, 0, -1, text_length, id_map, aid_offset_map, &mut result);
 
-    // Convert to NcxBuildEntry with first_child/last_child
     result
         .into_iter()
         .map(|e| NcxBuildEntry {
@@ -970,6 +987,29 @@ fn flatten_toc(
             last_child: e.children.last().map(|&i| i as i32).unwrap_or(-1),
         })
         .collect()
+}
+
+/// Guess media type from file extension.
+fn guess_media_type(path: &str) -> String {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "xhtml" | "html" | "htm" => "application/xhtml+xml".to_string(),
+        "css" => "text/css".to_string(),
+        "jpg" | "jpeg" => "image/jpeg".to_string(),
+        "png" => "image/png".to_string(),
+        "gif" => "image/gif".to_string(),
+        "svg" => "image/svg+xml".to_string(),
+        "ttf" => "font/ttf".to_string(),
+        "otf" => "font/otf".to_string(),
+        "woff" => "font/woff".to_string(),
+        "woff2" => "font/woff2".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
 }
 
 #[cfg(test)]

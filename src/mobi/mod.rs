@@ -2,16 +2,13 @@
 
 mod headers;
 pub mod huffcdic;
-mod index;
+pub(crate) mod index;
 pub mod palmdoc;
 pub mod parser;
 
-// Old reader/writer disabled - use import::MobiImporter instead
-// mod skeleton;
-// mod transform;
-// mod reader;
-// mod writer;
-// mod writer_transform;
+// Internal modules for AZW3 export
+pub(crate) mod skeleton;
+pub(crate) mod writer_transform;
 
 pub use parser::{
     Compression, Encoding, ExthHeader, HuffCdicReader, MobiFormat, MobiHeader, NcxEntry, PdbInfo,

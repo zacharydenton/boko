@@ -560,6 +560,601 @@ pub fn parse_ncx_index(entries: &[IndexEntry], cncx: &Cncx) -> Vec<NcxEntry> {
     ncx_entries
 }
 
+// ============================================================================
+// INDX Record Generation (for writing KF8 files)
+// ============================================================================
+
+/// Encode a variable-width integer (forward encoding, high bit set on last byte)
+pub fn encint(val: u32) -> Vec<u8> {
+    if val == 0 {
+        return vec![0x80];
+    }
+
+    let mut result = Vec::new();
+    let mut v = val;
+    while v > 0 {
+        result.push((v & 0x7F) as u8);
+        v >>= 7;
+    }
+
+    // Set high bit on first byte (which becomes last after reverse)
+    if let Some(first) = result.first_mut() {
+        *first |= 0x80;
+    }
+
+    result.reverse();
+    result
+}
+
+/// Tag definition for TAGX section
+#[derive(Debug, Clone, Copy)]
+pub struct TagDef {
+    pub tag: u8,
+    pub values_per_entry: u8,
+    pub bitmask: u8,
+    pub eof: u8,
+}
+
+/// INDX record builder
+pub struct IndxBuilder {
+    entries: Vec<(String, Vec<u8>)>, // (name, encoded_data)
+    tagx: Vec<TagDef>,
+    control_byte_count: u8,
+    num_cncx: u32,
+}
+
+impl IndxBuilder {
+    pub fn new(tagx: Vec<TagDef>, control_byte_count: u8) -> Self {
+        Self {
+            entries: Vec::new(),
+            tagx,
+            control_byte_count,
+            num_cncx: 0,
+        }
+    }
+
+    pub fn set_cncx_count(&mut self, count: u32) {
+        self.num_cncx = count;
+    }
+
+    /// Add an entry with pre-encoded tag data
+    pub fn add_entry(&mut self, name: String, tag_data: Vec<u8>) {
+        self.entries.push((name, tag_data));
+    }
+
+    /// Build the INDX record(s)
+    pub fn build(&self) -> Vec<Vec<u8>> {
+        if self.entries.is_empty() {
+            return vec![self.build_header_record(0, 0)];
+        }
+
+        // For simplicity, put all entries in one record (works for small indices)
+        let (entry_data, idxt_offsets) = self.build_entries();
+        let idxt = self.build_idxt(&idxt_offsets, entry_data.len());
+
+        // Build the single data record
+        let data_record = self.build_data_record(&entry_data, &idxt);
+
+        // Build header record
+        let header_record = self.build_header_record(self.entries.len() as u32, 1);
+
+        vec![header_record, data_record]
+    }
+
+    fn build_header_record(&self, total_entries: u32, num_records: u32) -> Vec<u8> {
+        let mut record = Vec::new();
+
+        // INDX signature (offset 0)
+        record.extend_from_slice(b"INDX");
+
+        // len: Header length (offset 4)
+        record.extend_from_slice(&192u32.to_be_bytes());
+
+        // nul1: Unknown/zero (offset 8)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // type: Index type (offset 12) - 2 = inflection/KF8
+        record.extend_from_slice(&2u32.to_be_bytes());
+
+        // gen: Generation/unknown (offset 16)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // start: IDXT offset (offset 20) - 0 for header record
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // count: Number of data records (offset 24)
+        record.extend_from_slice(&num_records.to_be_bytes());
+
+        // code: Encoding (offset 28) - 65001 = UTF-8
+        record.extend_from_slice(&65001u32.to_be_bytes());
+
+        // lng: Language (offset 32)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // total: Total entries across all records (offset 36)
+        record.extend_from_slice(&total_entries.to_be_bytes());
+
+        // ordt: ORDT offset (offset 40)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ligt: LIGT offset (offset 44)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // nligt: Number of LIGT entries (offset 48)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ncncx: Number of CNCX records (offset 52)
+        record.extend_from_slice(&self.num_cncx.to_be_bytes());
+
+        // Unknown fields (27 u32s = 108 bytes) (offset 56-163)
+        record.extend_from_slice(&[0u8; 108]);
+
+        // ocnt (offset 164)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // oentries (offset 168)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt1 (offset 172)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt2 (offset 176)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // tagx: TAGX offset (offset 180) - points to TAGX after header
+        record.extend_from_slice(&192u32.to_be_bytes());
+
+        // Padding to reach 192 bytes (offsets 184-191)
+        record.extend_from_slice(&[0u8; 8]);
+
+        // TAGX section (after 192-byte header)
+        record.extend_from_slice(&self.build_tagx());
+
+        record
+    }
+
+    fn build_data_record(&self, entry_data: &[u8], idxt: &[u8]) -> Vec<u8> {
+        let mut record = Vec::new();
+
+        // Calculate IDXT offset
+        let idxt_offset = 192 + entry_data.len();
+
+        // INDX signature (offset 0)
+        record.extend_from_slice(b"INDX");
+
+        // len: Header length (offset 4)
+        record.extend_from_slice(&192u32.to_be_bytes());
+
+        // nul1: Unknown/zero (offset 8)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // type: Index type (offset 12)
+        record.extend_from_slice(&2u32.to_be_bytes());
+
+        // gen: Generation/unknown (offset 16)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // start: IDXT offset (offset 20)
+        record.extend_from_slice(&(idxt_offset as u32).to_be_bytes());
+
+        // count: Number of entries in this record (offset 24)
+        record.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
+
+        // code: Encoding (offset 28) - 65001 = UTF-8
+        record.extend_from_slice(&65001u32.to_be_bytes());
+
+        // lng: Language (offset 32)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // total: Total entries (offset 36)
+        record.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
+
+        // ordt: ORDT offset (offset 40)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ligt: LIGT offset (offset 44)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // nligt: Number of LIGT entries (offset 48)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ncncx: Number of CNCX records (offset 52)
+        record.extend_from_slice(&self.num_cncx.to_be_bytes());
+
+        // Unknown fields (27 u32s = 108 bytes) (offset 56-163)
+        record.extend_from_slice(&[0u8; 108]);
+
+        // ocnt (offset 164)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // oentries (offset 168)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt1 (offset 172)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // ordt2 (offset 176)
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // tagx: TAGX offset (offset 180) - 0 for data records
+        record.extend_from_slice(&0u32.to_be_bytes());
+
+        // Padding to reach 192 bytes (offsets 184-191)
+        record.extend_from_slice(&[0u8; 8]);
+
+        // Entry data
+        record.extend_from_slice(entry_data);
+
+        // IDXT
+        record.extend_from_slice(idxt);
+
+        // Pad to 4-byte boundary
+        while !record.len().is_multiple_of(4) {
+            record.push(0);
+        }
+
+        record
+    }
+
+    fn build_tagx(&self) -> Vec<u8> {
+        let mut tagx = Vec::new();
+
+        // TAGX signature
+        tagx.extend_from_slice(b"TAGX");
+
+        // Block size: 12 + (4 * num_tags)
+        let size = 12 + (4 * self.tagx.len()) as u32;
+        tagx.extend_from_slice(&size.to_be_bytes());
+
+        // Control byte count
+        tagx.extend_from_slice(&(self.control_byte_count as u32).to_be_bytes());
+
+        // Tag definitions
+        for tag in &self.tagx {
+            tagx.push(tag.tag);
+            tagx.push(tag.values_per_entry);
+            tagx.push(tag.bitmask);
+            tagx.push(tag.eof);
+        }
+
+        tagx
+    }
+
+    fn build_entries(&self) -> (Vec<u8>, Vec<u16>) {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+
+        for (name, tag_data) in &self.entries {
+            offsets.push((192 + data.len()) as u16);
+
+            let name_bytes = name.as_bytes();
+            data.push(name_bytes.len() as u8);
+            data.extend_from_slice(name_bytes);
+            data.extend_from_slice(tag_data);
+        }
+
+        (data, offsets)
+    }
+
+    fn build_idxt(&self, offsets: &[u16], entry_data_len: usize) -> Vec<u8> {
+        let mut idxt = Vec::new();
+
+        // IDXT signature
+        idxt.extend_from_slice(b"IDXT");
+
+        // Entry offsets (2 bytes each, big-endian)
+        for &offset in offsets {
+            idxt.extend_from_slice(&offset.to_be_bytes());
+        }
+
+        // Add end-of-data offset
+        let end_offset = (192 + entry_data_len) as u16;
+        idxt.extend_from_slice(&end_offset.to_be_bytes());
+
+        // Pad to 4-byte boundary
+        while !idxt.len().is_multiple_of(4) {
+            idxt.push(0);
+        }
+
+        idxt
+    }
+}
+
+// Skeleton index tags
+const SKEL_TAG_CHUNK_COUNT: TagDef = TagDef {
+    tag: 1,
+    values_per_entry: 1,
+    bitmask: 0x03,
+    eof: 0,
+};
+const SKEL_TAG_GEOMETRY: TagDef = TagDef {
+    tag: 6,
+    values_per_entry: 2,
+    bitmask: 0x0C,
+    eof: 0,
+};
+const SKEL_TAG_EOF: TagDef = TagDef {
+    tag: 0,
+    values_per_entry: 0,
+    bitmask: 0x00,
+    eof: 1,
+};
+
+/// Build skeleton index records
+pub fn build_skel_indx(skeletons: &[super::skeleton::SkelEntry]) -> Vec<Vec<u8>> {
+    let tagx = vec![SKEL_TAG_CHUNK_COUNT, SKEL_TAG_GEOMETRY, SKEL_TAG_EOF];
+    let mut builder = IndxBuilder::new(tagx, 1);
+
+    for skel in skeletons {
+        // Control byte: chunk_count in bits 0-1, geometry in bits 2-3
+        let ctrl = 0x03 | 0x0C; // Both tags present
+        let mut tag_data = vec![ctrl];
+
+        // Chunk count (tag 1)
+        tag_data.extend(encint(skel.chunk_count as u32));
+
+        // Geometry (tag 6): start_pos, length
+        tag_data.extend(encint(skel.start_pos as u32));
+        tag_data.extend(encint(skel.length as u32));
+
+        builder.add_entry(skel.name.clone(), tag_data);
+    }
+
+    builder.build()
+}
+
+// Chunk/Fragment index tags
+const CHUNK_TAG_CNCX: TagDef = TagDef {
+    tag: 2,
+    values_per_entry: 1,
+    bitmask: 0x01,
+    eof: 0,
+};
+const CHUNK_TAG_FILE_NUM: TagDef = TagDef {
+    tag: 3,
+    values_per_entry: 1,
+    bitmask: 0x02,
+    eof: 0,
+};
+const CHUNK_TAG_SEQ_NUM: TagDef = TagDef {
+    tag: 4,
+    values_per_entry: 1,
+    bitmask: 0x04,
+    eof: 0,
+};
+const CHUNK_TAG_GEOMETRY: TagDef = TagDef {
+    tag: 6,
+    values_per_entry: 2,
+    bitmask: 0x08,
+    eof: 0,
+};
+const CHUNK_TAG_EOF: TagDef = TagDef {
+    tag: 0,
+    values_per_entry: 0,
+    bitmask: 0x00,
+    eof: 1,
+};
+
+/// Build CNCX record from chunk selectors
+pub fn build_cncx(selectors: &[String]) -> Vec<u8> {
+    let mut cncx = Vec::new();
+
+    for selector in selectors {
+        let bytes = selector.as_bytes();
+        cncx.extend(encint(bytes.len() as u32));
+        cncx.extend_from_slice(bytes);
+    }
+
+    cncx
+}
+
+/// Build chunk/fragment index records
+pub fn build_chunk_indx(
+    chunks: &[super::skeleton::ChunkEntry],
+    cncx_offsets: &[u32],
+) -> Vec<Vec<u8>> {
+    let tagx = vec![
+        CHUNK_TAG_CNCX,
+        CHUNK_TAG_FILE_NUM,
+        CHUNK_TAG_SEQ_NUM,
+        CHUNK_TAG_GEOMETRY,
+        CHUNK_TAG_EOF,
+    ];
+    let mut builder = IndxBuilder::new(tagx, 1);
+
+    if !chunks.is_empty() {
+        builder.set_cncx_count(1);
+    }
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        // Control byte: all tags present
+        let ctrl = 0x01 | 0x02 | 0x04 | 0x08;
+        let mut tag_data = vec![ctrl];
+
+        // CNCX offset (tag 2)
+        let cncx_off = cncx_offsets.get(i).copied().unwrap_or(0);
+        tag_data.extend(encint(cncx_off));
+
+        // File number (tag 3)
+        tag_data.extend(encint(chunk.file_number as u32));
+
+        // Sequence number (tag 4)
+        tag_data.extend(encint(chunk.sequence_number as u32));
+
+        // Geometry (tag 6): start_pos, length
+        tag_data.extend(encint(chunk.start_pos as u32));
+        tag_data.extend(encint(chunk.length as u32));
+
+        // Entry name is insert_pos as string
+        let name = format!("{:010}", chunk.insert_pos);
+        builder.add_entry(name, tag_data);
+    }
+
+    builder.build()
+}
+
+/// Calculate CNCX offsets for a list of selectors
+pub fn calculate_cncx_offsets(selectors: &[String]) -> Vec<u32> {
+    let mut offsets = Vec::new();
+    let mut offset: u32 = 0;
+
+    for selector in selectors {
+        offsets.push(offset);
+        let len_bytes = encint(selector.len() as u32);
+        offset += len_bytes.len() as u32 + selector.len() as u32;
+    }
+
+    offsets
+}
+
+// NCX (Table of Contents) index tags
+const NCX_TAG_OFFSET: TagDef = TagDef {
+    tag: 1,
+    values_per_entry: 1,
+    bitmask: 0x01,
+    eof: 0,
+};
+const NCX_TAG_LENGTH: TagDef = TagDef {
+    tag: 2,
+    values_per_entry: 1,
+    bitmask: 0x02,
+    eof: 0,
+};
+const NCX_TAG_LABEL: TagDef = TagDef {
+    tag: 3,
+    values_per_entry: 1,
+    bitmask: 0x04,
+    eof: 0,
+};
+const NCX_TAG_DEPTH: TagDef = TagDef {
+    tag: 4,
+    values_per_entry: 1,
+    bitmask: 0x08,
+    eof: 0,
+};
+const NCX_TAG_PARENT: TagDef = TagDef {
+    tag: 21,
+    values_per_entry: 1,
+    bitmask: 0x10,
+    eof: 0,
+};
+const NCX_TAG_FIRST_CHILD: TagDef = TagDef {
+    tag: 22,
+    values_per_entry: 1,
+    bitmask: 0x20,
+    eof: 0,
+};
+const NCX_TAG_LAST_CHILD: TagDef = TagDef {
+    tag: 23,
+    values_per_entry: 1,
+    bitmask: 0x40,
+    eof: 0,
+};
+const NCX_TAG_EOF: TagDef = TagDef {
+    tag: 0,
+    values_per_entry: 0,
+    bitmask: 0x00,
+    eof: 1,
+};
+
+/// NCX entry for building table of contents
+#[derive(Debug, Clone)]
+pub struct NcxBuildEntry {
+    /// Position in text (byte offset)
+    pub pos: u32,
+    /// Length of the section
+    pub length: u32,
+    /// Label text (for CNCX)
+    pub label: String,
+    /// Depth level (0 = top level)
+    pub depth: u32,
+    /// Index of parent entry (-1 for root entries)
+    pub parent: i32,
+    /// Index of first child (-1 if no children)
+    pub first_child: i32,
+    /// Index of last child (-1 if no children)
+    pub last_child: i32,
+}
+
+/// Build NCX index for table of contents
+pub fn build_ncx_indx(entries: &[NcxBuildEntry]) -> (Vec<Vec<u8>>, Vec<u8>) {
+    let tagx = vec![
+        NCX_TAG_OFFSET,
+        NCX_TAG_LENGTH,
+        NCX_TAG_LABEL,
+        NCX_TAG_DEPTH,
+        NCX_TAG_PARENT,
+        NCX_TAG_FIRST_CHILD,
+        NCX_TAG_LAST_CHILD,
+        NCX_TAG_EOF,
+    ];
+    let mut builder = IndxBuilder::new(tagx, 2); // 2 control bytes for NCX
+
+    // Build CNCX with labels
+    let labels: Vec<String> = entries.iter().map(|e| e.label.clone()).collect();
+    let label_offsets = calculate_cncx_offsets(&labels);
+    let cncx = build_cncx(&labels);
+
+    if !entries.is_empty() {
+        builder.set_cncx_count(1);
+    }
+
+    for (i, entry) in entries.iter().enumerate() {
+        // Control byte 0: tags 1-4 and hierarchy tags
+        let mut ctrl: u8 = 0x0F; // Tags 1-4 always present
+
+        let has_parent = entry.parent >= 0;
+        let has_first_child = entry.first_child >= 0;
+        let has_last_child = entry.last_child >= 0;
+
+        if has_parent {
+            ctrl |= 0x10;
+        }
+        if has_first_child {
+            ctrl |= 0x20;
+        }
+        if has_last_child {
+            ctrl |= 0x40;
+        }
+
+        // Control byte 1 is unused
+        let mut tag_data = vec![ctrl, 0x00];
+
+        // Offset (tag 1)
+        tag_data.extend(encint(entry.pos));
+
+        // Length (tag 2)
+        tag_data.extend(encint(entry.length));
+
+        // Label (tag 3) - CNCX offset
+        let label_offset = label_offsets.get(i).copied().unwrap_or(0);
+        tag_data.extend(encint(label_offset));
+
+        // Depth (tag 4)
+        tag_data.extend(encint(entry.depth));
+
+        // Parent (tag 21)
+        if has_parent {
+            tag_data.extend(encint(entry.parent as u32));
+        }
+
+        // First child (tag 22)
+        if has_first_child {
+            tag_data.extend(encint(entry.first_child as u32));
+        }
+
+        // Last child (tag 23)
+        if has_last_child {
+            tag_data.extend(encint(entry.last_child as u32));
+        }
+
+        let name = format!("{i:04}");
+        builder.add_entry(name, tag_data);
+    }
+
+    (builder.build(), cncx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,5 +1175,130 @@ mod tests {
         assert_eq!(count_set_bits(1), 1);
         assert_eq!(count_set_bits(0b1010), 2);
         assert_eq!(count_set_bits(0xFF), 8);
+    }
+
+    #[test]
+    fn test_encint() {
+        // 0 encodes to 0x80
+        assert_eq!(encint(0), vec![0x80]);
+        // 1 encodes to 0x81
+        assert_eq!(encint(1), vec![0x81]);
+        // 127 encodes to 0xFF
+        assert_eq!(encint(127), vec![0xFF]);
+        // 128 encodes to 0x01, 0x80
+        assert_eq!(encint(128), vec![0x01, 0x80]);
+        // 255 encodes to 0x01, 0xFF
+        assert_eq!(encint(255), vec![0x01, 0xFF]);
+    }
+
+    #[test]
+    fn test_cncx_roundtrip() {
+        let labels = vec![
+            "Chapter 1".to_string(),
+            "Chapter 2".to_string(),
+            "Simple Text".to_string(),
+        ];
+
+        let cncx_bytes = build_cncx(&labels);
+        let offsets = calculate_cncx_offsets(&labels);
+
+        let parsed = Cncx::parse(&[cncx_bytes], "utf-8");
+
+        for (i, label) in labels.iter().enumerate() {
+            let offset = offsets[i];
+            let retrieved = parsed.get(offset);
+            assert_eq!(
+                retrieved,
+                Some(label),
+                "Label '{}' at offset {} not found correctly",
+                label,
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn test_ncx_index_roundtrip() {
+        let entries = vec![
+            NcxBuildEntry {
+                pos: 0,
+                length: 1000,
+                label: "Chapter 1".to_string(),
+                depth: 0,
+                parent: -1,
+                first_child: -1,
+                last_child: -1,
+            },
+            NcxBuildEntry {
+                pos: 1000,
+                length: 500,
+                label: "Chapter 2".to_string(),
+                depth: 0,
+                parent: -1,
+                first_child: -1,
+                last_child: -1,
+            },
+        ];
+
+        let (ncx_records, ncx_cncx) = build_ncx_indx(&entries);
+
+        // Should have 2 records: header + data
+        assert_eq!(ncx_records.len(), 2, "Should have header + data record");
+
+        // Parse the header
+        let header = IndxHeader::parse(&ncx_records[0]).expect("Failed to parse header");
+
+        // Find TAGX in header record
+        let tagx_start = header.tagx_offset as usize;
+        let (control_byte_count, tagx) =
+            parse_tagx(&ncx_records[0][tagx_start..]).expect("Failed to parse TAGX");
+
+        // Parse CNCX
+        let cncx = Cncx::parse(&[ncx_cncx], "utf-8");
+
+        // Parse the data record
+        let data_record = &ncx_records[1];
+        let data_header = IndxHeader::parse(data_record).expect("Failed to parse data header");
+
+        // Find IDXT
+        let idxt_pos = data_header.idxt_start as usize;
+        assert_eq!(
+            &data_record[idxt_pos..idxt_pos + 4],
+            b"IDXT",
+            "IDXT not found"
+        );
+
+        // Read entry positions
+        let mut positions: Vec<usize> = Vec::new();
+        for j in 0..data_header.entry_count as usize {
+            let off = idxt_pos + 4 + j * 2;
+            let pos = u16::from_be_bytes([data_record[off], data_record[off + 1]]) as usize;
+            positions.push(pos);
+        }
+        positions.push(idxt_pos);
+
+        // Parse each entry
+        let mut index_entries = Vec::new();
+        for j in 0..positions.len().saturating_sub(1) {
+            let start = positions[j];
+            let end = positions[j + 1];
+            let entry_data = &data_record[start..end];
+
+            let (name, consumed) = decode_string(entry_data, "utf-8");
+            let tag_data = &entry_data[consumed..];
+            let tags = get_tag_map(control_byte_count, &tagx, tag_data);
+
+            index_entries.push(IndexEntry { name, tags });
+        }
+
+        // Parse as NCX entries
+        let ncx_entries = parse_ncx_index(&index_entries, &cncx);
+
+        assert_eq!(ncx_entries.len(), 2, "Should have 2 NCX entries");
+        assert_eq!(ncx_entries[0].text, "Chapter 1", "First label should match");
+        assert_eq!(
+            ncx_entries[1].text, "Chapter 2",
+            "Second label should match"
+        );
     }
 }

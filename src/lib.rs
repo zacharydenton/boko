@@ -13,9 +13,9 @@
 //!
 //! | Format | Read | Write |
 //! |--------|------|-------|
-//! | EPUB   | ✓    | TODO  |
-//! | AZW3   | ✓    | TODO  |
-//! | MOBI   | ✓    | TODO  |
+//! | EPUB   | ✓    | ✓     |
+//! | AZW3   | ✓    | ✓     |
+//! | MOBI   | ✓    | -     |
 //!
 //! ## Quick Start
 //!
@@ -35,6 +35,7 @@
 //! ```
 
 pub mod book;
+pub mod export;
 pub mod import;
 pub mod io;
 
@@ -42,10 +43,13 @@ pub mod epub;
 pub mod kfx;
 pub mod mobi;
 
+pub(crate) mod util;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
 // Primary exports
-pub use book::{Book, Format, Metadata, TocEntry};
+pub use book::{Book, Format, Metadata, Resource, TocEntry};
+pub use export::{Azw3Exporter, EpubExporter, Exporter};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};
