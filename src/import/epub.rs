@@ -158,7 +158,9 @@ impl EpubImporter {
             if let Ok(ncx_bytes) = read_entry(&source, &zip_index, &ncx_path) {
                 let ncx_str = String::from_utf8(strip_bom(&ncx_bytes).to_vec())
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                parse_ncx(&ncx_str)?
+                let toc_entries = parse_ncx(&ncx_str)?;
+                // Prepend base path to hrefs (NCX uses relative paths)
+                prepend_base_to_toc(&toc_entries, &opf_base)
             } else {
                 Vec::new()
             }
@@ -224,5 +226,108 @@ fn compression_to_u16(method: zip::CompressionMethod) -> u16 {
         zip::CompressionMethod::Stored => 0,
         zip::CompressionMethod::Deflated => 8,
         _ => 255,
+    }
+}
+
+/// Prepend base path to TOC entry hrefs (NCX uses relative paths).
+fn prepend_base_to_toc(entries: &[TocEntry], base: &str) -> Vec<TocEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let href = if entry.href.starts_with('#') || entry.href.is_empty() {
+                entry.href.clone()
+            } else {
+                format!("{}{}", base, entry.href)
+            };
+            TocEntry {
+                title: entry.title.clone(),
+                href,
+                children: prepend_base_to_toc(&entry.children, base),
+                play_order: entry.play_order,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_prepend_base_to_toc_simple() {
+        let entries = vec![
+            TocEntry::new("Chapter 1", "text/ch1.xhtml"),
+            TocEntry::new("Chapter 2", "text/ch2.xhtml"),
+        ];
+
+        let result = prepend_base_to_toc(&entries, "OEBPS/");
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].href, "OEBPS/text/ch1.xhtml");
+        assert_eq!(result[1].href, "OEBPS/text/ch2.xhtml");
+    }
+
+    #[test]
+    fn test_prepend_base_to_toc_with_fragments() {
+        let entries = vec![
+            TocEntry::new("Section 1", "text/ch1.xhtml#section1"),
+            TocEntry::new("Section 2", "text/ch1.xhtml#section2"),
+        ];
+
+        let result = prepend_base_to_toc(&entries, "epub/");
+
+        assert_eq!(result[0].href, "epub/text/ch1.xhtml#section1");
+        assert_eq!(result[1].href, "epub/text/ch1.xhtml#section2");
+    }
+
+    #[test]
+    fn test_prepend_base_to_toc_preserves_anchor_only() {
+        let entries = vec![
+            TocEntry::new("Internal Link", "#footnote1"),
+            TocEntry::new("Empty", ""),
+        ];
+
+        let result = prepend_base_to_toc(&entries, "OEBPS/");
+
+        // Anchor-only hrefs should not be modified
+        assert_eq!(result[0].href, "#footnote1");
+        // Empty hrefs should not be modified
+        assert_eq!(result[1].href, "");
+    }
+
+    #[test]
+    fn test_prepend_base_to_toc_nested() {
+        let mut parent = TocEntry::new("Part I", "text/part1.xhtml");
+        parent.children = vec![
+            TocEntry::new("Chapter 1", "text/ch1.xhtml"),
+            TocEntry::new("Chapter 2", "text/ch2.xhtml"),
+        ];
+        let entries = vec![parent];
+
+        let result = prepend_base_to_toc(&entries, "epub/");
+
+        assert_eq!(result[0].href, "epub/text/part1.xhtml");
+        assert_eq!(result[0].children.len(), 2);
+        assert_eq!(result[0].children[0].href, "epub/text/ch1.xhtml");
+        assert_eq!(result[0].children[1].href, "epub/text/ch2.xhtml");
+    }
+
+    #[test]
+    fn test_prepend_base_to_toc_deeply_nested() {
+        let grandchild = TocEntry::new("Section", "text/ch1.xhtml#sec1");
+        let mut child = TocEntry::new("Chapter 1", "text/ch1.xhtml");
+        child.children = vec![grandchild];
+        let mut parent = TocEntry::new("Part I", "text/part1.xhtml");
+        parent.children = vec![child];
+        let entries = vec![parent];
+
+        let result = prepend_base_to_toc(&entries, "content/");
+
+        assert_eq!(result[0].href, "content/text/part1.xhtml");
+        assert_eq!(result[0].children[0].href, "content/text/ch1.xhtml");
+        assert_eq!(
+            result[0].children[0].children[0].href,
+            "content/text/ch1.xhtml#sec1"
+        );
     }
 }

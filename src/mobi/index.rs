@@ -886,14 +886,19 @@ pub fn build_skel_indx(skeletons: &[super::skeleton::SkelEntry]) -> Vec<Vec<u8>>
     let mut builder = IndxBuilder::new(tagx, 1);
 
     for skel in skeletons {
-        // Control byte: chunk_count in bits 0-1, geometry in bits 2-3
-        let ctrl = 0x03 | 0x0C; // Both tags present
-        let mut tag_data = vec![ctrl];
+        // Control byte calculation per Calibre:
+        // chunk_count: 2 values / vpe=1 = 2 entries. mask=3, shift=0. 3 & (2 << 0) = 2
+        // geometry: 4 values / vpe=2 = 2 entries. mask=12, shift=2. 12 & (2 << 2) = 8
+        // Total: 2 | 8 = 10 = 0x0A
+        let mut tag_data = vec![0x0A];
 
-        // Chunk count (tag 1)
+        // Chunk count (repeated twice per Calibre implementation)
+        tag_data.extend(encint(skel.chunk_count as u32));
         tag_data.extend(encint(skel.chunk_count as u32));
 
-        // Geometry (tag 6): start_pos, length
+        // Geometry: start_pos, length (repeated twice)
+        tag_data.extend(encint(skel.start_pos as u32));
+        tag_data.extend(encint(skel.length as u32));
         tag_data.extend(encint(skel.start_pos as u32));
         tag_data.extend(encint(skel.length as u32));
 
@@ -1300,5 +1305,102 @@ mod tests {
             ncx_entries[1].text, "Chapter 2",
             "Second label should match"
         );
+    }
+
+    #[test]
+    fn test_skel_index_roundtrip() {
+        use crate::mobi::skeleton::SkelEntry;
+
+        let entries = vec![
+            SkelEntry {
+                file_number: 0,
+                name: "SKEL0000000000".to_string(),
+                chunk_count: 1,
+                start_pos: 0,
+                length: 1000,
+            },
+            SkelEntry {
+                file_number: 1,
+                name: "SKEL0000000001".to_string(),
+                chunk_count: 2,
+                start_pos: 1000,
+                length: 2500,
+            },
+            SkelEntry {
+                file_number: 2,
+                name: "SKEL0000000002".to_string(),
+                chunk_count: 1,
+                start_pos: 3500,
+                length: 500,
+            },
+        ];
+
+        let skel_records = build_skel_indx(&entries);
+
+        // Should have 2 records: header + data
+        assert_eq!(skel_records.len(), 2, "Should have header + data record");
+
+        // Parse the header
+        let header = IndxHeader::parse(&skel_records[0]).expect("Failed to parse header");
+
+        // Find TAGX in header record
+        let tagx_start = header.tagx_offset as usize;
+        let (control_byte_count, tagx) =
+            parse_tagx(&skel_records[0][tagx_start..]).expect("Failed to parse TAGX");
+
+        // Parse the data record
+        let data_record = &skel_records[1];
+        let data_header = IndxHeader::parse(data_record).expect("Failed to parse data header");
+
+        // Find IDXT
+        let idxt_pos = data_header.idxt_start as usize;
+        assert_eq!(
+            &data_record[idxt_pos..idxt_pos + 4],
+            b"IDXT",
+            "IDXT not found"
+        );
+
+        // Read entry positions
+        let mut positions: Vec<usize> = Vec::new();
+        for j in 0..data_header.entry_count as usize {
+            let off = idxt_pos + 4 + j * 2;
+            let pos = u16::from_be_bytes([data_record[off], data_record[off + 1]]) as usize;
+            positions.push(pos);
+        }
+        positions.push(idxt_pos);
+
+        // Parse each entry
+        let mut index_entries = Vec::new();
+        for j in 0..positions.len().saturating_sub(1) {
+            let start = positions[j];
+            let end = positions[j + 1];
+            let entry_data = &data_record[start..end];
+
+            let (name, consumed) = decode_string(entry_data, "utf-8");
+            let tag_data = &entry_data[consumed..];
+            let tags = get_tag_map(control_byte_count, &tagx, tag_data);
+
+            index_entries.push(IndexEntry { name, tags });
+        }
+
+        // Parse as skeleton files
+        let skel_files = parse_skel_index(&index_entries);
+
+        assert_eq!(skel_files.len(), 3, "Should have 3 skeleton files");
+
+        // Verify first entry
+        assert_eq!(skel_files[0].file_number, 0);
+        assert_eq!(skel_files[0].start_pos, 0);
+        assert_eq!(skel_files[0].length, 1000);
+
+        // Verify second entry
+        assert_eq!(skel_files[1].file_number, 1);
+        assert_eq!(skel_files[1].start_pos, 1000);
+        assert_eq!(skel_files[1].length, 2500);
+
+        // Verify third entry
+        assert_eq!(skel_files[2].file_number, 2);
+        assert_eq!(skel_files[2].start_pos, 3500);
+        assert_eq!(skel_files[2].length, 500);
     }
 }
