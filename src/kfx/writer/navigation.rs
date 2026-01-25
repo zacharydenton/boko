@@ -52,7 +52,7 @@ pub fn build_book_navigation(
     let nav_toc_id = "nav-toc";
     let nav_toc_sym = symtab.get_or_intern(nav_toc_id);
 
-    let nav_entry_values = build_nav_entries_recursive(toc, section_eids, anchor_eids, None);
+    let nav_entry_values = build_nav_entries_recursive(toc, section_eids, anchor_eids);
 
     let toc_container = IonValue::OrderedStruct(vec![
         (sym::NAV_TYPE, IonValue::Symbol(sym::TOC)),
@@ -134,7 +134,8 @@ pub fn build_book_navigation(
 }
 
 /// Build headings navigation entries for $798 (HEADINGS) container
-/// These entries use "heading-nav-unit" as the label and point to section headings
+/// These entries use "heading-nav-unit" as the label and point to section headings.
+/// Nested entries inherit their parent's EID - this is required for the Kindle TOC popup to work.
 fn build_headings_entries(
     toc: &[TocEntry],
     section_eids: &HashMap<String, i64>,
@@ -147,6 +148,7 @@ fn build_headings_entries(
         section_eids: &HashMap<String, i64>,
         anchor_eids: &HashMap<String, (i64, i64)>,
         entries: &mut Vec<IonValue>,
+        parent_eid: Option<i64>,
     ) {
         for entry in toc_entries {
             // Parse the href to extract path and fragment
@@ -157,7 +159,10 @@ fn build_headings_entries(
             };
 
             // Look up the EID for this entry
-            let eid_offset = if fragment.is_some() {
+            // If we have a parent_eid, use that for nested entries (required for TOC popup)
+            let eid_offset = if let Some(parent) = parent_eid {
+                Some((parent, 0))
+            } else if fragment.is_some() {
                 anchor_eids
                     .get(&entry.href)
                     .copied()
@@ -186,16 +191,19 @@ fn build_headings_entries(
                     vec![sym::NAV_DEFINITION],
                     Box::new(nav_entry),
                 ));
-            }
 
-            // Recurse into children
-            if !entry.children.is_empty() {
-                collect_headings(&entry.children, section_eids, anchor_eids, entries);
+                // Recurse into children with THIS entry's EID so they inherit it
+                if !entry.children.is_empty() {
+                    collect_headings(&entry.children, section_eids, anchor_eids, entries, Some(eid));
+                }
+            } else if !entry.children.is_empty() {
+                // Entry has no EID but has children - recurse without parent EID
+                collect_headings(&entry.children, section_eids, anchor_eids, entries, None);
             }
         }
     }
 
-    collect_headings(toc, section_eids, anchor_eids, &mut entries);
+    collect_headings(toc, section_eids, anchor_eids, &mut entries, None);
     entries
 }
 
@@ -228,15 +236,10 @@ fn build_landmark_entry(title: &str, eid: i64, landmark_type: Option<u64>) -> Io
 }
 
 /// Recursively build nav entries with $393:: annotations, preserving TOC hierarchy
-///
-/// The `parent_eid` parameter is used to "merge IDs up the tree" - when a parent TOC
-/// entry has children, the children should use the parent's EID rather than looking up
-/// their own individual anchor EIDs. This matches the behavior of working KFX files.
 fn build_nav_entries_recursive(
     entries: &[TocEntry],
     section_eids: &HashMap<String, i64>,
     anchor_eids: &HashMap<String, (i64, i64)>,
-    parent_eid: Option<i64>,
 ) -> Vec<IonValue> {
     let mut nav_entries = Vec::new();
 
@@ -249,18 +252,9 @@ fn build_nav_entries_recursive(
         };
 
         // Look up the (EID, offset) for this entry
-        // If we have a parent_eid (we're a nested child), use that instead of our own anchor
-        let eid_offset = if let Some(parent) = parent_eid {
-            // Child entries use parent's EID - this is the "merge IDs up the tree" behavior
-            Some((parent, 0))
-        } else if fragment.is_some() {
-            anchor_eids
-                .get(&entry.href)
-                .copied()
-                .or_else(|| section_eids.get(path).map(|&eid| (eid, 0)))
-        } else {
-            section_eids.get(path).map(|&eid| (eid, 0))
-        };
+        // Always use section EID (not anchor EIDs) - this is required for the Kindle TOC popup.
+        // All entries within the same XHTML file will point to the file's first content EID.
+        let eid_offset = section_eids.get(path).map(|&eid| (eid, 0));
 
         if let Some((eid, offset)) = eid_offset {
             // Use OrderedStruct for nav_title to ensure consistent field ordering
@@ -281,10 +275,10 @@ fn build_nav_entries_recursive(
                 (sym::NAV_TARGET, nav_target),
             ];
 
-            // Recursively build children - pass THIS entry's EID so children inherit it
+            // Recursively build children
             if !entry.children.is_empty() {
                 let nested_entries =
-                    build_nav_entries_recursive(&entry.children, section_eids, anchor_eids, Some(eid));
+                    build_nav_entries_recursive(&entry.children, section_eids, anchor_eids);
                 if !nested_entries.is_empty() {
                     nav_entry_fields.push((sym::NAV_ENTRIES, IonValue::List(nested_entries)));
                 }
@@ -298,7 +292,7 @@ fn build_nav_entries_recursive(
         } else if !entry.children.is_empty() {
             // Entry itself doesn't map to a section, but children might
             let nested_entries =
-                build_nav_entries_recursive(&entry.children, section_eids, anchor_eids, None);
+                build_nav_entries_recursive(&entry.children, section_eids, anchor_eids);
             nav_entries.extend(nested_entries);
         }
     }
