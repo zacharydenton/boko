@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use boko::{Book, TocEntry};
+use boko::{Book, Format, TocEntry};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -27,7 +27,7 @@ enum Command {
         json: bool,
     },
 
-    /// Convert between formats (not yet implemented)
+    /// Convert between ebook formats
     Convert {
         /// Input file
         input: String,
@@ -228,6 +228,33 @@ fn print_toc_human(entries: &[TocEntry], depth: usize) {
     }
 }
 
-fn convert(_input: &str, _output: &str, _quiet: bool) -> Result<(), String> {
-    Err("Conversion not yet implemented in new architecture".to_string())
+fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
+    let output_format = Format::from_path(output).ok_or_else(|| {
+        format!(
+            "Unknown output format: {}. Supported: .epub, .azw3",
+            output
+        )
+    })?;
+
+    if output_format == Format::Mobi {
+        return Err("MOBI output is not supported; use .azw3 instead".to_string());
+    }
+
+    if !quiet {
+        eprintln!("Converting {} -> {}", input, output);
+    }
+
+    let mut book = Book::open(input).map_err(|e| format!("Failed to open input: {e}"))?;
+
+    let mut file =
+        std::fs::File::create(output).map_err(|e| format!("Failed to create output: {e}"))?;
+
+    book.export(output_format, &mut file)
+        .map_err(|e| format!("Conversion failed: {e}"))?;
+
+    if !quiet {
+        eprintln!("Done.");
+    }
+
+    Ok(())
 }
