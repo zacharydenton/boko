@@ -7,7 +7,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::import::{ChapterId, EpubImporter, Importer, SpineEntry};
+use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, MobiImporter, SpineEntry};
 
 // ============================================================================
 // Data Types
@@ -78,8 +78,9 @@ impl PartialOrd for TocEntry {
 /// let mut book = Book::open("input.epub")?;
 /// println!("Title: {}", book.metadata().title);
 ///
-/// // Load chapter content
-/// for entry in book.spine() {
+/// // Load chapter content (collect spine first to avoid borrow issues)
+/// let spine: Vec<_> = book.spine().to_vec();
+/// for entry in spine {
 ///     let raw = book.load_raw(entry.id)?;
 ///     println!("Chapter {}: {} bytes", entry.id.0, raw.len());
 /// }
@@ -121,13 +122,8 @@ impl Book {
     pub fn open_format(path: impl AsRef<Path>, format: Format) -> io::Result<Self> {
         let backend: Box<dyn Importer> = match format {
             Format::Epub => Box::new(EpubImporter::open(path.as_ref())?),
-            Format::Azw3 | Format::Mobi => {
-                // TODO: MobiImporter
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "MOBI importer not yet implemented",
-                ));
-            }
+            Format::Azw3 => Box::new(Azw3Importer::open(path.as_ref())?),
+            Format::Mobi => Box::new(MobiImporter::open(path.as_ref())?),
         };
         Ok(Self { backend })
     }

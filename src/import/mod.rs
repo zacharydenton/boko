@@ -4,9 +4,13 @@
 //! - **Track 1 (Normalization)**: Parse content into IR (not yet implemented)
 //! - **Track 2 (Raw Access)**: Provide raw bytes for conversion
 
+mod azw3;
 mod epub;
+mod mobi;
 
+pub use azw3::Azw3Importer;
 pub use epub::EpubImporter;
+pub use mobi::MobiImporter;
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +21,7 @@ use crate::book::{Metadata, TocEntry};
 pub struct ChapterId(pub u32);
 
 /// Entry in the reading order (spine).
+#[derive(Debug, Clone)]
 pub struct SpineEntry {
     /// Unique identifier for this chapter.
     pub id: ChapterId,

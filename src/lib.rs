@@ -14,8 +14,8 @@
 //! | Format | Read | Write |
 //! |--------|------|-------|
 //! | EPUB   | ✓    | TODO  |
-//! | AZW3   | TODO | TODO  |
-//! | MOBI   | TODO | TODO  |
+//! | AZW3   | ✓    | TODO  |
+//! | MOBI   | ✓    | TODO  |
 //!
 //! ## Quick Start
 //!
@@ -25,8 +25,9 @@
 //! let mut book = Book::open("input.epub")?;
 //! println!("Title: {}", book.metadata().title);
 //!
-//! // Iterate chapters
-//! for entry in book.spine() {
+//! // Iterate chapters (collect spine first to avoid borrow issues)
+//! let spine: Vec<_> = book.spine().to_vec();
+//! for entry in spine {
 //!     let content = book.load_raw(entry.id)?;
 //!     println!("Chapter: {} bytes", content.len());
 //! }
@@ -39,7 +40,7 @@ pub mod io;
 
 pub mod epub;
 pub mod kfx;
-// pub mod mobi;  // disabled pending refactor
+pub mod mobi;
 
 pub(crate) mod util;
 

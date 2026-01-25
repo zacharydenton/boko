@@ -291,6 +291,8 @@ pub struct ExthHeader {
     pub publisher: Option<String>,
     pub description: Option<String>,
     pub isbn: Option<String>,
+    pub asin: Option<String>,
+    pub source: Option<String>,
     pub subjects: Vec<String>,
     pub pub_date: Option<String>,
     pub rights: Option<String>,
@@ -364,6 +366,8 @@ impl ExthHeader {
                 }
                 106 => exth.pub_date = Some(decode(content).trim().to_string()),
                 109 => exth.rights = Some(decode(content).trim().to_string()),
+                112 => exth.source = Some(decode(content).trim().to_string()),
+                113 => exth.asin = Some(decode(content).trim().to_string()),
                 121 => {
                     if content.len() >= 4 {
                         let val =

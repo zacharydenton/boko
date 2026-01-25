@@ -1,5 +1,7 @@
 use std::fs::File;
 use std::io;
+#[cfg(not(unix))]
+use std::io::{Read, Seek, SeekFrom};
 
 /// A thread-safe, random-access source of bytes.
 /// Allows multiple threads to read different parts of the source simultaneously.

@@ -887,33 +887,8 @@ const SKEL_TAG_EOF: TagDef = TagDef {
     eof: 1,
 };
 
-/// Build skeleton index from skeleton entries
-pub fn build_skel_indx(skeletons: &[super::skeleton::SkelEntry]) -> Vec<Vec<u8>> {
-    let tagx = vec![SKEL_TAG_CHUNK_COUNT, SKEL_TAG_GEOMETRY, SKEL_TAG_EOF];
-    let mut builder = IndxBuilder::new(tagx, 1);
-
-    for skel in skeletons {
-        // Control byte calculation per Calibre:
-        // chunk_count: 2 values / vpe=1 = 2 entries. mask=3, shift=0. 3 & (2 << 0) = 2
-        // geometry: 4 values / vpe=2 = 2 entries. mask=12, shift=2. 12 & (2 << 2) = 8
-        // Total: 2 | 8 = 10 = 0x0A
-        let mut tag_data = vec![0x0A];
-
-        // Chunk count (repeated twice per Calibre implementation)
-        tag_data.extend(encint(skel.chunk_count as u32));
-        tag_data.extend(encint(skel.chunk_count as u32));
-
-        // Geometry: start_pos, length (repeated twice)
-        tag_data.extend(encint(skel.start_pos as u32));
-        tag_data.extend(encint(skel.length as u32));
-        tag_data.extend(encint(skel.start_pos as u32));
-        tag_data.extend(encint(skel.length as u32));
-
-        builder.add_entry(skel.name.clone(), tag_data);
-    }
-
-    builder.build()
-}
+// Writer function disabled - skeleton module not available
+// pub fn build_skel_indx(skeletons: &[super::skeleton::SkelEntry]) -> Vec<Vec<u8>> { ... }
 
 // Chunk/Fragment index tags
 const CHUNK_TAG_CNCX: TagDef = TagDef {
@@ -960,49 +935,8 @@ pub fn build_cncx(selectors: &[String]) -> Vec<u8> {
     cncx
 }
 
-/// Build fragment/chunk index from chunk entries
-pub fn build_chunk_indx(
-    chunks: &[super::skeleton::ChunkEntry],
-    cncx_offsets: &[u32],
-) -> Vec<Vec<u8>> {
-    let tagx = vec![
-        CHUNK_TAG_CNCX,
-        CHUNK_TAG_FILE_NUM,
-        CHUNK_TAG_SEQ_NUM,
-        CHUNK_TAG_GEOMETRY,
-        CHUNK_TAG_EOF,
-    ];
-    let mut builder = IndxBuilder::new(tagx, 1);
-
-    if !chunks.is_empty() {
-        builder.set_cncx_count(1); // We'll have one CNCX record
-    }
-
-    for (i, chunk) in chunks.iter().enumerate() {
-        // Control byte: 0x0F = all tags present
-        let mut tag_data = vec![0x0F];
-
-        // CNCX offset for selector
-        let cncx_offset = cncx_offsets.get(i).copied().unwrap_or(0);
-        tag_data.extend(encint(cncx_offset));
-
-        // File number
-        tag_data.extend(encint(chunk.file_number as u32));
-
-        // Sequence number
-        tag_data.extend(encint(chunk.sequence_number as u32));
-
-        // Geometry: start_pos, length
-        tag_data.extend(encint(chunk.start_pos as u32));
-        tag_data.extend(encint(chunk.length as u32));
-
-        // Entry name is insert position as 10-digit string
-        let name = format!("{:010}", chunk.insert_pos);
-        builder.add_entry(name, tag_data);
-    }
-
-    builder.build()
-}
+// Writer function disabled - skeleton module not available
+// pub fn build_chunk_indx(chunks: &[super::skeleton::ChunkEntry], cncx_offsets: &[u32]) -> Vec<Vec<u8>> { ... }
 
 /// Calculate CNCX offsets for a list of selectors
 pub fn calculate_cncx_offsets(selectors: &[String]) -> Vec<u32> {
