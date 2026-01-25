@@ -2,6 +2,13 @@
 //!
 //! Walks the IR tree and emits formatted text, preserving structure
 //! through indentation, bullets, and markdown conventions.
+//!
+//! Design follows Pandoc's Markdown writer patterns:
+//! - Variant-driven output (Markdown vs PlainText)
+//! - Text escaping for Markdown special characters
+//! - Tight/loose list detection
+//! - Footnote accumulation and end-of-document rendering
+//! - Dynamic code fence length
 
 use std::io::{self, Seek, Write};
 
@@ -79,6 +86,8 @@ impl Exporter for TextExporter {
                 list_stack: Vec::new(),
                 at_line_start: true,
                 pending_newline: false,
+                last_block_role: None,
+                footnotes: Vec::new(),
             };
 
             // Walk children of root
@@ -89,6 +98,14 @@ impl Exporter for TextExporter {
             // Ensure final newline
             if !ctx.at_line_start {
                 writeln!(ctx.writer)?;
+            }
+
+            // Render accumulated footnotes at end of chapter
+            if !ctx.footnotes.is_empty() && ctx.format == TextFormat::Markdown {
+                writeln!(ctx.writer)?;
+                for note in &ctx.footnotes {
+                    writeln!(ctx.writer, "[^{}]: {}", note.number, note.content)?;
+                }
             }
         }
 
@@ -104,6 +121,17 @@ struct ListContext {
     counter: usize,
     /// Indent string for continuation lines in this list item
     continuation_indent: String,
+    /// Whether this is a tight list (no blank lines between items).
+    is_tight: bool,
+}
+
+/// Accumulated footnote for end-of-document rendering.
+#[derive(Debug, Clone)]
+struct AccumulatedNote {
+    /// Footnote number (1-based)
+    number: usize,
+    /// The collected text content
+    content: String,
 }
 
 /// Context for the export walk.
@@ -118,9 +146,60 @@ struct ExportContext<'a, W: Write> {
     at_line_start: bool,
     /// True if we need a blank line before the next block
     pending_newline: bool,
+    /// The role of the last block element (for adjacent list detection)
+    last_block_role: Option<Role>,
+    /// Accumulated footnotes for end-of-document rendering
+    footnotes: Vec<AccumulatedNote>,
 }
 
 impl<W: Write> ExportContext<'_, W> {
+    /// Check if a list is "tight" (items are single paragraphs, no blank lines between).
+    ///
+    /// Following Pandoc's pattern: a list is tight if all items contain only
+    /// simple inline content, not multiple block-level children.
+    fn is_tight_list(&self, list_id: NodeId) -> bool {
+        for item_id in self.ir.children(list_id) {
+            let Some(item) = self.ir.node(item_id) else {
+                continue;
+            };
+            if item.role != Role::ListItem {
+                continue;
+            }
+
+            // Count block-level children
+            let mut block_count = 0;
+            for child_id in self.ir.children(item_id) {
+                let Some(child) = self.ir.node(child_id) else {
+                    continue;
+                };
+                // Check if this is a block-level element
+                match child.role {
+                    Role::Text if child.text.is_empty() => {
+                        // Container paragraph
+                        block_count += 1;
+                    }
+                    Role::BlockQuote
+                    | Role::OrderedList
+                    | Role::UnorderedList
+                    | Role::DefinitionList
+                    | Role::CodeBlock
+                    | Role::Table
+                    | Role::Figure => {
+                        // Nested block elements make it loose
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+
+            // More than one block-level child means loose
+            if block_count > 1 {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Ensure we're ready to write content (write prefix if at line start)
     fn ensure_line_started(&mut self) -> io::Result<()> {
         if self.at_line_start {
@@ -158,8 +237,37 @@ impl<W: Write> ExportContext<'_, W> {
     }
 
     /// End a block element
-    fn end_block(&mut self) {
+    fn end_block(&mut self, role: Role) {
         self.pending_newline = true;
+        self.last_block_role = Some(role);
+    }
+
+    /// Check if we need a separator between adjacent lists.
+    ///
+    /// Following Pandoc's pattern: insert `<!-- -->` between adjacent lists
+    /// of the same type to prevent Markdown parsers from merging them.
+    fn needs_list_separator(&self, current_role: Role) -> bool {
+        if self.format != TextFormat::Markdown {
+            return false;
+        }
+        match (self.last_block_role, current_role) {
+            (Some(Role::OrderedList), Role::OrderedList) => true,
+            (Some(Role::UnorderedList), Role::UnorderedList) => true,
+            (Some(Role::DefinitionList), Role::DefinitionList) => true,
+            _ => false,
+        }
+    }
+
+    /// Write a list separator comment (for adjacent lists).
+    fn write_list_separator(&mut self) -> io::Result<()> {
+        if !self.at_line_start {
+            self.write_newline()?;
+        }
+        self.write_newline()?;
+        self.ensure_line_started()?;
+        writeln!(self.writer, "<!-- -->")?;
+        self.at_line_start = true;
+        Ok(())
     }
 
     fn walk_node(&mut self, id: NodeId) -> io::Result<()> {
@@ -174,12 +282,12 @@ impl<W: Write> ExportContext<'_, W> {
                 // Leaf text node
                 if !node.text.is_empty() {
                     let text = self.ir.text(node.text);
-                    self.write_text(text)?;
+                    self.write_text(text, true)?;
                 } else {
                     // Container text (paragraph)
                     self.start_block()?;
                     self.walk_children(id)?;
-                    self.end_block();
+                    self.end_block(role);
                 }
             }
 
@@ -192,40 +300,65 @@ impl<W: Write> ExportContext<'_, W> {
                     write!(self.writer, " ")?;
                 }
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::OrderedList => {
+                // Insert separator between adjacent lists of same type
+                if self.needs_list_separator(role) {
+                    self.write_list_separator()?;
+                }
                 self.start_block()?;
                 // Get start number from semantics (defaults to 1)
                 let start = self.ir.semantics.list_start(id).unwrap_or(1) as usize;
+                let is_tight = self.is_tight_list(id);
                 self.list_stack.push(ListContext {
                     is_ordered: true,
                     counter: start.saturating_sub(1), // Will be incremented before use
                     continuation_indent: String::new(),
+                    is_tight,
                 });
                 self.walk_children(id)?;
                 self.list_stack.pop();
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::UnorderedList => {
+                // Insert separator between adjacent lists of same type
+                if self.needs_list_separator(role) {
+                    self.write_list_separator()?;
+                }
                 self.start_block()?;
+                let is_tight = self.is_tight_list(id);
                 self.list_stack.push(ListContext {
                     is_ordered: false,
                     counter: 0,
                     continuation_indent: String::new(),
+                    is_tight,
                 });
                 self.walk_children(id)?;
                 self.list_stack.pop();
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::ListItem => {
-                // Ensure we're on a new line
-                if !self.at_line_start {
+                // Check if we need blank line before this item (loose list, not first item)
+                let (is_tight, counter) = self
+                    .list_stack
+                    .last()
+                    .map(|ctx| (ctx.is_tight, ctx.counter))
+                    .unwrap_or((true, 0));
+
+                // For loose lists, add blank line before items (except the first)
+                if !is_tight && counter > 0 {
+                    if !self.at_line_start {
+                        self.write_newline()?;
+                    }
+                    self.write_newline()?;
+                } else if !self.at_line_start {
                     self.write_newline()?;
                 }
+
                 self.ensure_line_started()?;
 
                 // Get bullet/number from parent list
@@ -291,7 +424,7 @@ impl<W: Write> ExportContext<'_, W> {
                 self.walk_children(id)?;
 
                 self.line_prefix = old_prefix;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Link => {
@@ -331,13 +464,13 @@ impl<W: Write> ExportContext<'_, W> {
                 } else {
                     write!(self.writer, "────────────────────")?;
                 }
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Table => {
                 self.start_block()?;
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::TableRow => {
@@ -362,7 +495,7 @@ impl<W: Write> ExportContext<'_, W> {
             Role::Figure => {
                 self.start_block()?;
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Caption => {
@@ -374,14 +507,25 @@ impl<W: Write> ExportContext<'_, W> {
                 if self.format == TextFormat::Markdown {
                     write!(self.writer, "*")?;
                 }
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Footnote => {
-                // Render inline as [note: ...]
                 self.ensure_line_started()?;
                 let text = self.collect_text(id);
-                write!(self.writer, "[note: {}]", text)?;
+
+                if self.format == TextFormat::Markdown {
+                    // Accumulate footnote and render inline reference
+                    let note_num = self.footnotes.len() + 1;
+                    self.footnotes.push(AccumulatedNote {
+                        number: note_num,
+                        content: text,
+                    });
+                    write!(self.writer, "[^{}]", note_num)?;
+                } else {
+                    // Plain text: render inline
+                    write!(self.writer, "[note: {}]", text)?;
+                }
             }
 
             Role::Sidebar => {
@@ -392,7 +536,7 @@ impl<W: Write> ExportContext<'_, W> {
                     self.ensure_line_started()?;
                 }
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Inline => {
@@ -413,38 +557,60 @@ impl<W: Write> ExportContext<'_, W> {
                     self.write_hard_break()?;
                 }
 
-                if self.format == TextFormat::Markdown {
+                if self.format == TextFormat::Markdown && is_code {
+                    // For inline code, collect content first to determine backtick count
                     self.ensure_line_started()?;
-                    if is_code {
-                        write!(self.writer, "`")?;
-                    }
-                    if is_bold {
-                        write!(self.writer, "**")?;
-                    }
-                    if is_italic {
-                        write!(self.writer, "*")?;
-                    }
-                }
+                    let content = self.collect_text(id);
+                    let tick_count = calculate_inline_code_ticks(&content);
+                    let ticks: String = std::iter::repeat('`').take(tick_count).collect();
 
-                self.walk_children(id)?;
+                    // Add space if content starts/ends with backtick
+                    let spacer = if content.starts_with('`') || content.ends_with('`') {
+                        " "
+                    } else {
+                        ""
+                    };
 
-                if self.format == TextFormat::Markdown {
-                    if is_italic {
-                        write!(self.writer, "*")?;
+                    write!(self.writer, "{}{}{}{}{}", ticks, spacer, content, spacer, ticks)?;
+                } else {
+                    if self.format == TextFormat::Markdown {
+                        self.ensure_line_started()?;
+                        if is_bold {
+                            write!(self.writer, "**")?;
+                        }
+                        if is_italic {
+                            write!(self.writer, "*")?;
+                        }
                     }
-                    if is_bold {
-                        write!(self.writer, "**")?;
+
+                    // SmallCaps: uppercase in plain text
+                    if is_small_caps && self.format == TextFormat::Plain {
+                        let content = self.collect_text(id);
+                        self.ensure_line_started()?;
+                        write!(self.writer, "{}", content.to_uppercase())?;
+                    } else {
+                        self.walk_children(id)?;
                     }
-                    if is_code {
-                        write!(self.writer, "`")?;
+
+                    if self.format == TextFormat::Markdown {
+                        if is_italic {
+                            write!(self.writer, "*")?;
+                        }
+                        if is_bold {
+                            write!(self.writer, "**")?;
+                        }
                     }
                 }
             }
 
             Role::DefinitionList => {
+                // Insert separator between adjacent definition lists
+                if self.needs_list_separator(role) {
+                    self.write_list_separator()?;
+                }
                 self.start_block()?;
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::DefinitionTerm => {
@@ -467,28 +633,39 @@ impl<W: Write> ExportContext<'_, W> {
                 self.ensure_line_started()?;
                 write!(self.writer, ": ")?;
                 self.walk_children(id)?;
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::CodeBlock => {
                 self.start_block()?;
+                // Collect text first to determine fence length
+                let text = self.collect_text(id);
+
                 if self.format == TextFormat::Markdown {
                     let lang = self.ir.semantics.language(id).unwrap_or("");
-                    writeln!(self.writer, "```{}", lang)?;
+                    // Calculate fence length based on content
+                    let fence_len = calculate_fence_length(&text, '`');
+                    let fence: String = std::iter::repeat('`').take(fence_len).collect();
+                    writeln!(self.writer, "{}{}", fence, lang)?;
                     self.at_line_start = true;
-                }
-                // Collect text preserving whitespace for code blocks
-                let text = self.collect_text(id);
-                for line in text.lines() {
+
+                    for line in text.lines() {
+                        self.ensure_line_started()?;
+                        writeln!(self.writer, "{}", line)?;
+                        self.at_line_start = true;
+                    }
+
                     self.ensure_line_started()?;
-                    writeln!(self.writer, "{}", line)?;
-                    self.at_line_start = true;
+                    write!(self.writer, "{}", fence)?;
+                } else {
+                    // Plain text: just output the code
+                    for line in text.lines() {
+                        self.ensure_line_started()?;
+                        writeln!(self.writer, "{}", line)?;
+                        self.at_line_start = true;
+                    }
                 }
-                if self.format == TextFormat::Markdown {
-                    self.ensure_line_started()?;
-                    write!(self.writer, "```")?;
-                }
-                self.end_block();
+                self.end_block(role);
             }
 
             Role::Container | Role::Root => {
@@ -506,7 +683,7 @@ impl<W: Write> ExportContext<'_, W> {
         Ok(())
     }
 
-    fn write_text(&mut self, text: &str) -> io::Result<()> {
+    fn write_text(&mut self, text: &str, escape: bool) -> io::Result<()> {
         self.ensure_line_started()?;
 
         // Normalize internal whitespace while preserving leading/trailing
@@ -525,7 +702,15 @@ impl<W: Write> ExportContext<'_, W> {
         if has_leading {
             write!(self.writer, " ")?;
         }
-        write!(self.writer, "{}", words.join(" "))?;
+
+        let joined = words.join(" ");
+        let output = if escape && self.format == TextFormat::Markdown {
+            escape_markdown(&joined)
+        } else {
+            joined
+        };
+        write!(self.writer, "{}", output)?;
+
         if has_trailing {
             write!(self.writer, " ")?;
         }
@@ -572,6 +757,106 @@ impl<W: Write> ExportContext<'_, W> {
     }
 }
 
+/// Calculate the minimum fence length needed for a code block.
+///
+/// Following Pandoc's pattern: find the longest run of backticks or tildes
+/// in the content, then use one more than that.
+fn calculate_fence_length(content: &str, fence_char: char) -> usize {
+    let mut max_run = 0;
+    let mut current_run = 0;
+
+    for c in content.chars() {
+        if c == fence_char {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    // Minimum fence is 3, or one more than the longest run
+    max_run.max(2) + 1
+}
+
+/// Calculate the minimum backtick count needed for inline code.
+fn calculate_inline_code_ticks(content: &str) -> usize {
+    let mut max_run = 0;
+    let mut current_run = 0;
+
+    for c in content.chars() {
+        if c == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    // Use one more than the longest run, minimum 1
+    max_run + 1
+}
+
+/// Escape special Markdown characters in text.
+///
+/// Following Pandoc's escapeText pattern, this escapes:
+/// - Backslash (must be first)
+/// - Asterisks and underscores (emphasis)
+/// - Brackets (links/images)
+/// - Backticks (code)
+/// - Hash at line start (headers)
+/// - Pipes (tables)
+fn escape_markdown(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() + text.len() / 10);
+    let mut chars = text.chars().peekable();
+    let mut at_line_start = true;
+
+    while let Some(c) = chars.next() {
+        match c {
+            // Backslash must be escaped first
+            '\\' => result.push_str("\\\\"),
+            // Emphasis markers
+            '*' | '_' => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Link/image brackets
+            '[' | ']' => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Code backticks
+            '`' => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Headers at line start
+            '#' if at_line_start => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Table pipes
+            '|' => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Angle brackets (autolinks)
+            '<' | '>' => {
+                result.push('\\');
+                result.push(c);
+            }
+            // Image marker
+            '!' if chars.peek() == Some(&'[') => {
+                result.push('\\');
+                result.push(c);
+            }
+            _ => result.push(c),
+        }
+        at_line_start = c == '\n';
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,10 +875,20 @@ mod tests {
             list_stack: Vec::new(),
             at_line_start: true,
             pending_newline: false,
+            last_block_role: None,
+            footnotes: Vec::new(),
         };
 
         for child_id in chapter.children(NodeId::ROOT) {
             ctx.walk_node(child_id).unwrap();
+        }
+
+        // Render accumulated footnotes
+        if !ctx.footnotes.is_empty() && format == TextFormat::Markdown {
+            writeln!(ctx.writer).unwrap();
+            for note in &ctx.footnotes {
+                writeln!(ctx.writer, "[^{}]: {}", note.number, note.content).unwrap();
+            }
         }
 
         String::from_utf8(output).unwrap()
@@ -804,6 +1099,279 @@ mod tests {
         assert!(
             result.contains("word1 word2 word3"),
             "Spaces should be preserved: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_markdown_escaping() {
+        let mut chapter = IRChapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+
+        let text_range = chapter.append_text("*bold* and _italic_ and [link] and `code`");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(p, text_node);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+        // Special chars should be escaped
+        assert!(result.contains("\\*bold\\*"), "Asterisks should be escaped: {}", result);
+        assert!(result.contains("\\_italic\\_"), "Underscores should be escaped: {}", result);
+        assert!(result.contains("\\[link\\]"), "Brackets should be escaped: {}", result);
+        assert!(result.contains("\\`code\\`"), "Backticks should be escaped: {}", result);
+    }
+
+    #[test]
+    fn test_plain_no_escaping() {
+        let mut chapter = IRChapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+
+        let text_range = chapter.append_text("*bold* and _italic_");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(p, text_node);
+
+        let result = export_to_string(&chapter, TextFormat::Plain);
+        // Plain text should NOT escape
+        assert!(result.contains("*bold*"), "Plain should not escape: {}", result);
+        assert!(result.contains("_italic_"), "Plain should not escape: {}", result);
+    }
+
+    #[test]
+    fn test_tight_list() {
+        let mut chapter = IRChapter::new();
+
+        // Create a tight list (items with simple text)
+        let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
+        chapter.append_child(NodeId::ROOT, ul);
+
+        for text in ["First", "Second", "Third"] {
+            let li = chapter.alloc_node(Node::new(Role::ListItem));
+            chapter.append_child(ul, li);
+            let t = chapter.append_text(text);
+            let tn = chapter.alloc_node(Node::text(t));
+            chapter.append_child(li, tn);
+        }
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Tight list should NOT have blank lines between items
+        let lines: Vec<&str> = result.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), 3, "Tight list should have 3 lines: {:?}", lines);
+    }
+
+    #[test]
+    fn test_loose_list() {
+        let mut chapter = IRChapter::new();
+
+        // Create a loose list (items with multiple paragraphs)
+        let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
+        chapter.append_child(NodeId::ROOT, ul);
+
+        for _ in 0..2 {
+            let li = chapter.alloc_node(Node::new(Role::ListItem));
+            chapter.append_child(ul, li);
+
+            // First paragraph
+            let p1 = chapter.alloc_node(Node::new(Role::Text));
+            chapter.append_child(li, p1);
+            let t1 = chapter.append_text("First para");
+            let tn1 = chapter.alloc_node(Node::text(t1));
+            chapter.append_child(p1, tn1);
+
+            // Second paragraph (makes it loose)
+            let p2 = chapter.alloc_node(Node::new(Role::Text));
+            chapter.append_child(li, p2);
+            let t2 = chapter.append_text("Second para");
+            let tn2 = chapter.alloc_node(Node::text(t2));
+            chapter.append_child(p2, tn2);
+        }
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Loose list SHOULD have blank lines between items
+        // There should be a blank line somewhere in the output
+        let has_blank_line = result.contains("\n\n");
+        assert!(
+            has_blank_line,
+            "Loose list should have blank lines: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_adjacent_lists_separator() {
+        let mut chapter = IRChapter::new();
+
+        // Create two adjacent unordered lists
+        for _ in 0..2 {
+            let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
+            chapter.append_child(NodeId::ROOT, ul);
+
+            let li = chapter.alloc_node(Node::new(Role::ListItem));
+            chapter.append_child(ul, li);
+            let t = chapter.append_text("Item");
+            let tn = chapter.alloc_node(Node::text(t));
+            chapter.append_child(li, tn);
+        }
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Should have HTML comment separator between the lists
+        assert!(
+            result.contains("<!-- -->"),
+            "Adjacent lists should have separator: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_different_list_types_no_separator() {
+        let mut chapter = IRChapter::new();
+
+        // Create an unordered list followed by an ordered list
+        let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
+        chapter.append_child(NodeId::ROOT, ul);
+        let li1 = chapter.alloc_node(Node::new(Role::ListItem));
+        chapter.append_child(ul, li1);
+        let t1 = chapter.append_text("Bullet item");
+        let tn1 = chapter.alloc_node(Node::text(t1));
+        chapter.append_child(li1, tn1);
+
+        let ol = chapter.alloc_node(Node::new(Role::OrderedList));
+        chapter.append_child(NodeId::ROOT, ol);
+        let li2 = chapter.alloc_node(Node::new(Role::ListItem));
+        chapter.append_child(ol, li2);
+        let t2 = chapter.append_text("Numbered item");
+        let tn2 = chapter.alloc_node(Node::text(t2));
+        chapter.append_child(li2, tn2);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Different list types should NOT have separator
+        assert!(
+            !result.contains("<!-- -->"),
+            "Different list types should not need separator: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_code_block_with_backticks() {
+        let mut chapter = IRChapter::new();
+
+        let code = chapter.alloc_node(Node::new(Role::CodeBlock));
+        chapter.append_child(NodeId::ROOT, code);
+
+        // Content with backticks
+        let t = chapter.append_text("```rust\nlet x = 1;\n```");
+        let tn = chapter.alloc_node(Node::text(t));
+        chapter.append_child(code, tn);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Should use 4 backticks since content has 3
+        assert!(
+            result.contains("````"),
+            "Should use 4 backticks when content has 3: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_code_with_backtick() {
+        use crate::ir::ComputedStyle;
+
+        let mut chapter = IRChapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+
+        // Create inline code span with monospace font
+        let mut code_style = ComputedStyle::default();
+        code_style.font_family = Some("monospace".to_string());
+        let style_id = chapter.styles.intern(code_style);
+
+        let mut code_node = Node::new(Role::Inline);
+        code_node.style = style_id;
+        let code = chapter.alloc_node(code_node);
+        chapter.append_child(p, code);
+
+        // Content with a backtick
+        let t = chapter.append_text("`var`");
+        let tn = chapter.alloc_node(Node::text(t));
+        chapter.append_child(code, tn);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Should use 2 backticks since content has 1
+        assert!(
+            result.contains("`` `var` ``"),
+            "Should use double backticks with spacing: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_footnote_accumulation() {
+        let mut chapter = IRChapter::new();
+
+        // Paragraph with footnote
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+
+        let t1 = chapter.append_text("Main text");
+        let tn1 = chapter.alloc_node(Node::text(t1));
+        chapter.append_child(p, tn1);
+
+        let note = chapter.alloc_node(Node::new(Role::Footnote));
+        chapter.append_child(p, note);
+        let t2 = chapter.append_text("This is a footnote");
+        let tn2 = chapter.alloc_node(Node::text(t2));
+        chapter.append_child(note, tn2);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Should have inline reference
+        assert!(
+            result.contains("[^1]"),
+            "Should have inline footnote reference: {:?}",
+            result
+        );
+
+        // Should have footnote definition at end
+        assert!(
+            result.contains("[^1]: This is a footnote"),
+            "Should have footnote definition: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_footnote_plain_text() {
+        let mut chapter = IRChapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+
+        let t1 = chapter.append_text("Main text");
+        let tn1 = chapter.alloc_node(Node::text(t1));
+        chapter.append_child(p, tn1);
+
+        let note = chapter.alloc_node(Node::new(Role::Footnote));
+        chapter.append_child(p, note);
+        let t2 = chapter.append_text("This is a footnote");
+        let tn2 = chapter.alloc_node(Node::text(t2));
+        chapter.append_child(note, tn2);
+
+        let result = export_to_string(&chapter, TextFormat::Plain);
+
+        // Plain text should render inline
+        assert!(
+            result.contains("[note: This is a footnote]"),
+            "Plain text should render footnote inline: {:?}",
             result
         );
     }
