@@ -56,4 +56,7 @@ pub use compiler::{compile_html, Origin, Stylesheet};
 pub use export::{Azw3Exporter, EpubExporter, Exporter};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};
-pub use ir::{IRChapter, Node, NodeId, Role, StyleId};
+pub use ir::{
+    ComputedStyle, IRChapter, Node, NodeId, Role, SemanticMap, StyleId, StylePool, TextRange,
+    ToCss,
+};

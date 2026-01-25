@@ -267,7 +267,7 @@ fn collect_text_recursive(ir: &IRChapter, node_id: NodeId, buf: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{FontWeight, Node};
+    use crate::ir::{ComputedStyle, FontWeight, Node};
 
     #[test]
     fn test_global_style_pool_new() {

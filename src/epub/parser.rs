@@ -425,7 +425,8 @@ mod tests {
         assert_eq!(strip_bom(without_bom), b"hello");
 
         // Empty
-        assert_eq!(strip_bom(&[]), &[]);
+        let empty: &[u8] = &[];
+        assert_eq!(strip_bom(empty), empty);
 
         // Partial BOM (not stripped)
         let partial = &[0xEF, 0xBB, b'x'];

@@ -529,7 +529,8 @@ mod tests {
 
     #[test]
     fn test_strip_trailing_data_empty() {
-        assert_eq!(strip_trailing_data(&[], 0xFF), &[]);
+        let empty: &[u8] = &[];
+        assert_eq!(strip_trailing_data(empty, 0xFF), empty);
     }
 
     #[test]
