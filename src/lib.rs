@@ -57,6 +57,6 @@ pub use export::{Azw3Exporter, EpubExporter, Exporter};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};
 pub use ir::{
-    ComputedStyle, IRChapter, Node, NodeId, Role, SemanticMap, StyleId, StylePool, TextRange,
-    ToCss,
+    ComputedStyle, IRChapter, ListKind, Node, NodeId, Role, SemanticMap, StyleId, StylePool,
+    TextRange, ToCss,
 };

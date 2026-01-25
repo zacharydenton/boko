@@ -25,6 +25,12 @@ pub struct SemanticMap {
     title: HashMap<NodeId, String>,
     /// lang attribute (for language).
     lang: HashMap<NodeId, String>,
+    /// epub:type attribute (for EPUB semantics).
+    epub_type: HashMap<NodeId, String>,
+    /// WAI-ARIA role attribute.
+    aria_role: HashMap<NodeId, String>,
+    /// datetime attribute (for <time> elements).
+    datetime: HashMap<NodeId, String>,
 }
 
 impl SemanticMap {
@@ -117,6 +123,48 @@ impl SemanticMap {
         self.lang.get(&node).map(|s| s.as_str())
     }
 
+    // --- epub:type ---
+
+    /// Set the epub:type for a node.
+    pub fn set_epub_type(&mut self, node: NodeId, epub_type: String) {
+        if !epub_type.is_empty() {
+            self.epub_type.insert(node, epub_type);
+        }
+    }
+
+    /// Get the epub:type for a node.
+    pub fn epub_type(&self, node: NodeId) -> Option<&str> {
+        self.epub_type.get(&node).map(|s| s.as_str())
+    }
+
+    // --- aria role ---
+
+    /// Set the WAI-ARIA role for a node.
+    pub fn set_aria_role(&mut self, node: NodeId, role: String) {
+        if !role.is_empty() {
+            self.aria_role.insert(node, role);
+        }
+    }
+
+    /// Get the WAI-ARIA role for a node.
+    pub fn aria_role(&self, node: NodeId) -> Option<&str> {
+        self.aria_role.get(&node).map(|s| s.as_str())
+    }
+
+    // --- datetime ---
+
+    /// Set the datetime for a node (from `<time>` elements).
+    pub fn set_datetime(&mut self, node: NodeId, datetime: String) {
+        if !datetime.is_empty() {
+            self.datetime.insert(node, datetime);
+        }
+    }
+
+    /// Get the datetime for a node.
+    pub fn datetime(&self, node: NodeId) -> Option<&str> {
+        self.datetime.get(&node).map(|s| s.as_str())
+    }
+
     /// Get the total number of stored attributes.
     pub fn len(&self) -> usize {
         self.href.len()
@@ -125,6 +173,9 @@ impl SemanticMap {
             + self.id.len()
             + self.title.len()
             + self.lang.len()
+            + self.epub_type.len()
+            + self.aria_role.len()
+            + self.datetime.len()
     }
 
     /// Check if the map is empty.

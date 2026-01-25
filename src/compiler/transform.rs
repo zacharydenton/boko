@@ -5,7 +5,7 @@ use html5ever::LocalName;
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::css::{compute_styles, Origin, Stylesheet};
 use super::element_ref::ElementRef;
-use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role};
+use crate::ir::{ComputedStyle, Display, IRChapter, ListKind, Node, NodeId, Role};
 
 /// User-agent default stylesheet.
 pub fn user_agent_stylesheet() -> Stylesheet {
@@ -142,7 +142,13 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
     match local_name.as_ref() {
         // Block containers
         "div" | "section" | "article" | "nav" | "header" | "footer" | "main" | "address"
-        | "details" | "summary" | "br" | "hr" => Role::Container,
+        | "details" | "summary" | "hgroup" => Role::Container,
+
+        // Line break (leaf node, not a container)
+        "br" => Role::Break,
+
+        // Horizontal rule (thematic break)
+        "hr" => Role::Rule,
 
         // Aside/sidebar
         "aside" => Role::Sidebar,
@@ -150,10 +156,13 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         // Figure
         "figure" | "figcaption" => Role::Figure,
 
-        // Text content (paragraphs, code, pre, spans, emphasis, etc.)
-        "p" | "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd"
-        | "samp" | "tt" | "sup" | "sub" | "pre" | "u" | "ins" | "s" | "strike" | "del"
-        | "small" | "mark" | "abbr" | "time" | "q" => Role::Text,
+        // Block-level text containers (paragraphs, preformatted)
+        "p" | "pre" => Role::Text,
+
+        // Inline elements with styling (rendered via ComputedStyle)
+        "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd"
+        | "samp" | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small"
+        | "mark" | "abbr" | "time" | "q" => Role::Inline,
 
         // Headings with level
         "h1" => Role::Heading(1),
@@ -169,8 +178,9 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         // Images
         "img" => Role::Image,
 
-        // Lists
-        "ul" | "ol" => Role::List,
+        // Lists (distinguish ordered vs unordered)
+        "ul" => Role::List(ListKind::Unordered),
+        "ol" => Role::List(ListKind::Ordered),
         "li" => Role::ListItem,
 
         // Block quote
@@ -181,7 +191,7 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         "tr" => Role::TableRow,
         "td" | "th" => Role::TableCell,
 
-        // Inline containers
+        // Other inline containers
         "label" | "legend" | "output" | "data" | "ruby" | "rt" | "rp" | "bdi" | "bdo"
         | "wbr" => Role::Inline,
 
@@ -288,13 +298,33 @@ impl<'a> TransformContext<'a> {
                 // Store semantic attributes
                 for attr in attrs {
                     let attr_name = attr.name.local.as_ref();
+                    let attr_ns = attr.name.ns.as_ref();
                     match attr_name {
+                        // Core layout attributes
                         "href" => self.chapter.semantics.set_href(ir_id, attr.value.clone()),
                         "src" => self.chapter.semantics.set_src(ir_id, attr.value.clone()),
                         "alt" => self.chapter.semantics.set_alt(ir_id, attr.value.clone()),
                         "id" => self.chapter.semantics.set_id(ir_id, attr.value.clone()),
                         "title" => self.chapter.semantics.set_title(ir_id, attr.value.clone()),
+                        // Language (both lang and xml:lang)
                         "lang" => self.chapter.semantics.set_lang(ir_id, attr.value.clone()),
+                        // Semantic fidelity attributes
+                        "type" if attr_ns == "http://www.idpf.org/2007/ops" => {
+                            // epub:type attribute
+                            self.chapter
+                                .semantics
+                                .set_epub_type(ir_id, attr.value.clone());
+                        }
+                        "role" => {
+                            self.chapter
+                                .semantics
+                                .set_aria_role(ir_id, attr.value.clone());
+                        }
+                        "datetime" => {
+                            self.chapter
+                                .semantics
+                                .set_datetime(ir_id, attr.value.clone());
+                        }
                         _ => {}
                     }
                 }

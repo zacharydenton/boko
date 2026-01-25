@@ -22,7 +22,7 @@ mod node;
 mod semantic;
 mod style;
 
-pub use node::{Node, NodeId, Role, TextRange};
+pub use node::{ListKind, Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 pub use style::{
     Color, ComputedStyle, Display, FontStyle, FontWeight, Length, StyleId, StylePool, TextAlign,

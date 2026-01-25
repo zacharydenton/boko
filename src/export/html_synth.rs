@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use crate::ir::{IRChapter, NodeId, Role, StyleId};
+use crate::ir::{IRChapter, ListKind, NodeId, Role, StyleId};
 
 /// Result of HTML synthesis.
 #[derive(Debug, Clone)]
@@ -232,7 +232,7 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
         Role::Root => ("div", false, true),
         Role::Container => ("div", false, true),
 
-        // Text (paragraphs, spans, etc.)
+        // Text (paragraphs)
         Role::Text => ("p", false, true),
 
         // Headings with level
@@ -246,7 +246,8 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
 
         // Block elements
         Role::BlockQuote => ("blockquote", false, true),
-        Role::List => ("ul", false, true), // Default to unordered
+        Role::List(ListKind::Unordered) => ("ul", false, true),
+        Role::List(ListKind::Ordered) => ("ol", false, true),
         Role::ListItem => ("li", false, true),
         Role::Table => ("table", false, true),
         Role::TableRow => ("tr", false, true),
@@ -257,6 +258,8 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
 
         // Void elements (self-closing in XHTML)
         Role::Image => ("img", true, false),
+        Role::Break => ("br", true, false),
+        Role::Rule => ("hr", true, true),
 
         // Inline elements
         Role::Inline => ("span", false, false),
@@ -382,7 +385,7 @@ mod tests {
         let mut chapter = IRChapter::new();
 
         // Create: <ul><li>Item 1</li><li>Item 2</li></ul>
-        let ul = chapter.alloc_node(Node::new(Role::List));
+        let ul = chapter.alloc_node(Node::new(Role::List(ListKind::Unordered)));
         chapter.append_child(NodeId::ROOT, ul);
 
         let li1 = chapter.alloc_node(Node::new(Role::ListItem));

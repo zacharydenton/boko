@@ -13,31 +13,31 @@ impl NodeId {
 ///
 /// This is a simplified role system focused on structural semantics.
 /// Visual styling (bold, italic, font-size) is handled by `ComputedStyle`.
-/// Semantic attributes (href, src, alt) are in `SemanticMap`.
+/// Semantic attributes (href, src, alt, epub:type) are in `SemanticMap`.
 ///
 /// Design principle: Roles map to markdown concepts:
-/// - Text (paragraphs, spans, code)
+/// - Text (leaf text content)
 /// - Heading(level) (h1-h6)
 /// - Link, Image
-/// - List, ListItem
+/// - List(kind), ListItem
 /// - BlockQuote
 /// - Table, TableRow, TableCell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Role {
-    /// Text content - paragraphs, spans, code, preformatted, etc.
-    /// Styling (bold, italic, monospace) is in ComputedStyle.
+    /// Leaf text content node containing actual string data.
+    /// References a range in the chapter's text buffer.
     #[default]
     Text,
     /// Headings with level 1-6.
     Heading(u8),
-    /// Generic layout/box container (div, section, br, hr, etc.)
+    /// Generic layout/box container (div, section, article, etc.)
     Container,
     /// Raster images. src/alt in SemanticMap.
     Image,
     /// Hyperlinks. href in SemanticMap.
     Link,
-    /// List structure container (ol/ul - decoration is in style).
-    List,
+    /// List structure container with ordered/unordered distinction.
+    List(ListKind),
     /// Individual list items.
     ListItem,
     /// Table structure.
@@ -52,12 +52,29 @@ pub enum Role {
     Footnote,
     /// Figure/illustration wrappers.
     Figure,
-    /// Inline element containers.
+    /// Generic inline container (e.g., `<span>`).
+    /// Distinct from Text which contains actual string data.
     Inline,
     /// Block quotes.
     BlockQuote,
     /// Root document node.
     Root,
+    /// Semantic line break (`<br>`).
+    /// A leaf node that signifies a layout break, not a container.
+    Break,
+    /// Horizontal rule (`<hr>`).
+    /// A leaf node representing a thematic break.
+    Rule,
+}
+
+/// Kind of list (ordered vs unordered).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ListKind {
+    /// Unordered list (`<ul>`).
+    #[default]
+    Unordered,
+    /// Ordered list (`<ol>`).
+    Ordered,
 }
 
 /// Range into the global text buffer.

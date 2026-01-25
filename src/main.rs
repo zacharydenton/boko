@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use boko::{Book, ChapterId, Format, IRChapter, NodeId, Role, ToCss, TocEntry};
+use boko::{Book, ChapterId, Format, IRChapter, ListKind, NodeId, Role, ToCss, TocEntry};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -595,7 +595,8 @@ fn role_to_string(role: Role) -> String {
         Role::Container => "Container".to_string(),
         Role::Image => "Image".to_string(),
         Role::Link => "Link".to_string(),
-        Role::List => "List".to_string(),
+        Role::List(ListKind::Unordered) => "List(ul)".to_string(),
+        Role::List(ListKind::Ordered) => "List(ol)".to_string(),
         Role::ListItem => "ListItem".to_string(),
         Role::Table => "Table".to_string(),
         Role::TableRow => "TableRow".to_string(),
@@ -606,6 +607,8 @@ fn role_to_string(role: Role) -> String {
         Role::Inline => "Inline".to_string(),
         Role::BlockQuote => "BlockQuote".to_string(),
         Role::Root => "Root".to_string(),
+        Role::Break => "Break".to_string(),
+        Role::Rule => "Rule".to_string(),
     }
 }
 
