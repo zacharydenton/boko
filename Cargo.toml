@@ -37,6 +37,9 @@ kuchiki = "0.8"
 # Base64 encoding for KFX raw media
 base64 = "0.22"
 
+# Ion binary format parsing for KFX dump tool
+ion-rs = { version = "1.0.0-rc.11", features = ["experimental-reader-writer"] }
+
 # SHA1 hashing for KFX content hashes (minimal, WASM-compatible)
 sha1_smol = { version = "1.0", features = ["std"] }
 
@@ -60,6 +63,10 @@ criterion = "0.8"
 [[bin]]
 name = "boko"
 required-features = ["cli"]
+
+[[bin]]
+name = "kfx-dump"
+path = "src/bin/kfx-dump.rs"
 
 [[bench]]
 name = "conversion"

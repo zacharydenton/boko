@@ -6,6 +6,7 @@
 pub mod ion;
 mod reader;
 pub mod style;
+pub mod symbols;
 #[doc(hidden)]
 pub mod test_helpers;
 pub mod writer;
