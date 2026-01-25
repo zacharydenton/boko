@@ -252,10 +252,8 @@ impl<'a> TransformContext<'a> {
                 }
 
                 let range = self.chapter.append_text(text);
-                let mut text_node = Node::text(range);
-                if let Some(ps) = parent_style {
-                    text_node.style = self.chapter.styles.intern(ps.clone());
-                }
+                // Text nodes don't have styles - they inherit from parent element
+                let text_node = Node::text(range);
                 let ir_id = self.chapter.alloc_node(text_node);
                 self.chapter.append_child(ir_parent, ir_id);
                 self.node_map.insert(dom_id, ir_id);
