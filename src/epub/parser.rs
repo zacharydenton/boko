@@ -409,3 +409,215 @@ fn resolve_entity(entity: &str) -> Option<String> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_bom() {
+        // With BOM
+        let with_bom = &[0xEF, 0xBB, 0xBF, b'h', b'i'];
+        assert_eq!(strip_bom(with_bom), b"hi");
+
+        // Without BOM
+        let without_bom = b"hello";
+        assert_eq!(strip_bom(without_bom), b"hello");
+
+        // Empty
+        assert_eq!(strip_bom(&[]), &[]);
+
+        // Partial BOM (not stripped)
+        let partial = &[0xEF, 0xBB, b'x'];
+        assert_eq!(strip_bom(partial), partial);
+    }
+
+    #[test]
+    fn test_local_name() {
+        assert_eq!(local_name(b"title"), b"title");
+        assert_eq!(local_name(b"dc:title"), b"title");
+        assert_eq!(local_name(b"opf:meta"), b"meta");
+        assert_eq!(local_name(b""), b"");
+    }
+
+    #[test]
+    fn test_resolve_entity() {
+        // Named entities
+        assert_eq!(resolve_entity("apos"), Some("'".to_string()));
+        assert_eq!(resolve_entity("quot"), Some("\"".to_string()));
+        assert_eq!(resolve_entity("lt"), Some("<".to_string()));
+        assert_eq!(resolve_entity("gt"), Some(">".to_string()));
+        assert_eq!(resolve_entity("amp"), Some("&".to_string()));
+
+        // Decimal numeric
+        assert_eq!(resolve_entity("#65"), Some("A".to_string()));
+        assert_eq!(resolve_entity("#8217"), Some("\u{2019}".to_string())); // right single quote
+
+        // Hex numeric
+        assert_eq!(resolve_entity("#x41"), Some("A".to_string()));
+        assert_eq!(resolve_entity("#x2019"), Some("\u{2019}".to_string()));
+
+        // Unknown
+        assert_eq!(resolve_entity("nbsp"), None);
+        assert_eq!(resolve_entity("invalid"), None);
+    }
+
+    #[test]
+    fn test_parse_container_xml() {
+        let container = br#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#;
+
+        let result = parse_container_xml(container).unwrap();
+        assert_eq!(result, "OEBPS/content.opf");
+    }
+
+    #[test]
+    fn test_parse_container_xml_with_bom() {
+        let mut container = vec![0xEF, 0xBB, 0xBF]; // BOM
+        container.extend_from_slice(br#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#);
+
+        let result = parse_container_xml(&container).unwrap();
+        assert_eq!(result, "content.opf");
+    }
+
+    #[test]
+    fn test_parse_opf_metadata() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test Book</dc:title>
+    <dc:creator>Author One</dc:creator>
+    <dc:creator>Author Two</dc:creator>
+    <dc:language>en</dc:language>
+    <dc:identifier>urn:isbn:1234567890</dc:identifier>
+    <dc:publisher>Test Publisher</dc:publisher>
+    <dc:description>A test book description.</dc:description>
+    <dc:subject>Fiction</dc:subject>
+    <dc:subject>Adventure</dc:subject>
+    <dc:date>2024-01-15</dc:date>
+    <dc:rights>Public Domain</dc:rights>
+  </metadata>
+  <manifest>
+    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="chapter1"/>
+  </spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+
+        assert_eq!(result.metadata.title, "Test Book");
+        assert_eq!(result.metadata.authors, vec!["Author One", "Author Two"]);
+        assert_eq!(result.metadata.language, "en");
+        assert_eq!(result.metadata.identifier, "urn:isbn:1234567890");
+        assert_eq!(result.metadata.publisher, Some("Test Publisher".to_string()));
+        assert_eq!(result.metadata.description, Some("A test book description.".to_string()));
+        assert_eq!(result.metadata.subjects, vec!["Fiction", "Adventure"]);
+        assert_eq!(result.metadata.date, Some("2024-01-15".to_string()));
+        assert_eq!(result.metadata.rights, Some("Public Domain".to_string()));
+
+        assert_eq!(result.spine_ids, vec!["chapter1"]);
+        assert_eq!(result.ncx_href, Some("toc.ncx".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_cover_epub3() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Book</dc:title></metadata>
+  <manifest>
+    <item id="cover-img" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.cover_image, Some("images/cover.jpg".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_cover_epub2() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata>
+    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Book</dc:title>
+    <meta name="cover" content="cover-id"/>
+  </metadata>
+  <manifest>
+    <item id="cover-id" href="cover.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.cover_image, Some("cover.png".to_string()));
+    }
+
+    #[test]
+    fn test_parse_ncx_flat() {
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>Chapter 1</text></navLabel>
+      <content src="ch1.xhtml"/>
+    </navPoint>
+    <navPoint id="np2" playOrder="2">
+      <navLabel><text>Chapter 2</text></navLabel>
+      <content src="ch2.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>"#;
+
+        let result = parse_ncx(ncx).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].title, "Chapter 1");
+        assert_eq!(result[0].href, "ch1.xhtml");
+        assert_eq!(result[0].play_order, Some(1));
+        assert_eq!(result[1].title, "Chapter 2");
+        assert_eq!(result[1].href, "ch2.xhtml");
+        assert_eq!(result[1].play_order, Some(2));
+    }
+
+    #[test]
+    fn test_parse_ncx_nested() {
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="part1" playOrder="1">
+      <navLabel><text>Part I</text></navLabel>
+      <content src="part1.xhtml"/>
+      <navPoint id="ch1" playOrder="2">
+        <navLabel><text>Chapter 1</text></navLabel>
+        <content src="ch1.xhtml"/>
+      </navPoint>
+      <navPoint id="ch2" playOrder="3">
+        <navLabel><text>Chapter 2</text></navLabel>
+        <content src="ch2.xhtml"/>
+      </navPoint>
+    </navPoint>
+  </navMap>
+</ncx>"#;
+
+        let result = parse_ncx(ncx).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "Part I");
+        assert_eq!(result[0].children.len(), 2);
+        assert_eq!(result[0].children[0].title, "Chapter 1");
+        assert_eq!(result[0].children[1].title, "Chapter 2");
+    }
+}
