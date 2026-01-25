@@ -3,5 +3,5 @@
 mod byte_source;
 mod adapter;
 
-pub use byte_source::{ByteSource, FileSource};
+pub use byte_source::{ByteSource, FileSource, MemorySource};
 pub use adapter::ByteSourceCursor;

@@ -29,11 +29,19 @@ enum Command {
 
     /// Convert between ebook formats
     Convert {
-        /// Input file
+        /// Input file (use - for stdin)
         input: String,
 
-        /// Output file
-        output: String,
+        /// Output file (default: stdout for text formats)
+        output: Option<String>,
+
+        /// Input format (epub, azw3, mobi, txt). Required when reading from stdin.
+        #[arg(short = 'f', long = "from")]
+        from_format: Option<String>,
+
+        /// Output format (md, txt, epub, azw3). Inferred from output extension if not specified.
+        #[arg(short = 't', long = "to")]
+        to_format: Option<String>,
 
         /// Suppress output messages
         #[arg(short, long)]
@@ -76,7 +84,19 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Info { file, json } => show_info(&file, json),
-        Command::Convert { input, output, quiet } => convert(&input, &output, quiet),
+        Command::Convert {
+            input,
+            output,
+            from_format,
+            to_format,
+            quiet,
+        } => convert(
+            &input,
+            output.as_deref(),
+            from_format.as_deref(),
+            to_format.as_deref(),
+            quiet,
+        ),
         Command::Dump {
             file,
             json,
@@ -277,31 +297,120 @@ fn print_toc_human(entries: &[TocEntry], depth: usize) {
     }
 }
 
-fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
-    let output_format = Format::from_path(output).ok_or_else(|| {
-        format!(
-            "Unknown output format: {}. Supported: .epub, .azw3",
-            output
-        )
-    })?;
+fn parse_format(fmt: &str) -> Result<Format, String> {
+    match fmt.to_lowercase().as_str() {
+        "md" | "markdown" => Ok(Format::Markdown),
+        "txt" | "text" => Ok(Format::Text),
+        "epub" => Ok(Format::Epub),
+        "azw3" => Ok(Format::Azw3),
+        "mobi" => Ok(Format::Mobi),
+        _ => Err(format!(
+            "Unknown format: {}. Supported: md, txt, epub, azw3, mobi",
+            fmt
+        )),
+    }
+}
+
+fn convert(
+    input: &str,
+    output: Option<&str>,
+    from_format: Option<&str>,
+    to_format: Option<&str>,
+    quiet: bool,
+) -> Result<(), String> {
+    // Check if reading from stdin
+    let from_stdin = input == "-";
+
+    // Determine input format
+    let input_format = if let Some(fmt) = from_format {
+        Some(parse_format(fmt)?)
+    } else if from_stdin {
+        // Default to EPUB for stdin since that's most common
+        return Err("Input format required when reading from stdin. Use -f (epub|azw3|mobi)".to_string());
+    } else {
+        Format::from_path(input)
+    };
+
+    // Validate input format
+    if let Some(fmt) = input_format {
+        if !fmt.can_import() {
+            return Err(format!("{:?} cannot be used as input format", fmt));
+        }
+    }
+
+    // Determine output format
+    let output_format = if let Some(fmt) = to_format {
+        parse_format(fmt)?
+    } else if let Some(out) = output {
+        if out == "-" {
+            // Explicit stdout, default to markdown
+            Format::Markdown
+        } else {
+            Format::from_path(out).ok_or_else(|| {
+                format!(
+                    "Unknown output format: {}. Supported: .epub, .azw3, .txt, .md",
+                    out
+                )
+            })?
+        }
+    } else {
+        // No output specified, default to markdown on stdout
+        Format::Markdown
+    };
 
     if output_format == Format::Mobi {
         return Err("MOBI output is not supported; use .azw3 instead".to_string());
     }
 
-    if !quiet {
-        eprintln!("Converting {} -> {}", input, output);
+    // Check if writing to stdout
+    let to_stdout = output.is_none() || output == Some("-");
+
+    if !quiet && !to_stdout {
+        let input_name = if from_stdin { "stdin" } else { input };
+        eprintln!(
+            "Converting {} -> {}",
+            input_name,
+            output.unwrap_or("stdout")
+        );
     }
 
-    let mut book = Book::open(input).map_err(|e| format!("Failed to open input: {e}"))?;
+    // Open the book (from file or stdin)
+    let mut book = if from_stdin {
+        use std::io::Read;
+        let mut data = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut data)
+            .map_err(|e| format!("Failed to read stdin: {e}"))?;
+        Book::from_bytes(&data, input_format.unwrap())
+            .map_err(|e| format!("Failed to parse input: {e}"))?
+    } else {
+        let fmt = input_format.or_else(|| Format::from_path(input));
+        if let Some(fmt) = fmt {
+            Book::open_format(input, fmt).map_err(|e| format!("Failed to open input: {e}"))?
+        } else {
+            Book::open(input).map_err(|e| format!("Failed to open input: {e}"))?
+        }
+    };
 
-    let mut file =
-        std::fs::File::create(output).map_err(|e| format!("Failed to create output: {e}"))?;
+    if to_stdout {
+        // Write to stdout
+        let mut stdout = std::io::stdout();
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        book.export(output_format, &mut cursor)
+            .map_err(|e| format!("Conversion failed: {e}"))?;
+        use std::io::Write;
+        stdout
+            .write_all(cursor.get_ref())
+            .map_err(|e| format!("Write failed: {e}"))?;
+    } else {
+        let output_path = output.unwrap();
+        let mut file = std::fs::File::create(output_path)
+            .map_err(|e| format!("Failed to create output: {e}"))?;
+        book.export(output_format, &mut file)
+            .map_err(|e| format!("Conversion failed: {e}"))?;
+    }
 
-    book.export(output_format, &mut file)
-        .map_err(|e| format!("Conversion failed: {e}"))?;
-
-    if !quiet {
+    if !quiet && !to_stdout {
         eprintln!("Done.");
     }
 

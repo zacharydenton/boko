@@ -47,6 +47,13 @@ pub fn user_agent_stylesheet() -> Stylesheet {
             display: list-item;
         }
 
+        /* Inline elements */
+        span, a, em, i, strong, b, cite, var, dfn, abbr, acronym,
+        code, kbd, samp, tt, sub, sup, small, big, q,
+        u, ins, s, strike, del, mark, time, label {
+            display: inline;
+        }
+
         /* Inline styles */
         em, i, cite, var, dfn {
             font-style: italic;
@@ -256,8 +263,37 @@ impl<'a> TransformContext<'a> {
 
         match &node.data {
             ArenaNodeData::Text(text) => {
-                // Skip whitespace-only text in block contexts
+                // Handle whitespace-only text nodes
                 if text.trim().is_empty() {
+                    // Whitespace between inline elements should be preserved as a single space.
+                    // We preserve whitespace unless:
+                    // 1. We're at the root level (no parent style)
+                    // 2. The whitespace contains newlines and we're in a block context
+                    //
+                    // This handles cases like: <cite><abbr>A</abbr> <abbr>B</abbr></cite>
+                    // where the space between abbrs must be preserved even though cite is block.
+                    let has_newlines = text.contains('\n');
+                    let is_block_parent = parent_style
+                        .map(|s| s.display != Display::Inline)
+                        .unwrap_or(true);
+
+                    // Skip pure-whitespace with newlines in block contexts (inter-element whitespace)
+                    // But preserve spaces without newlines (intra-line whitespace between inline elements)
+                    if has_newlines && is_block_parent {
+                        return;
+                    }
+
+                    // No parent means we're at root level - skip whitespace
+                    if parent_style.is_none() {
+                        return;
+                    }
+
+                    // Preserve as a single space
+                    let range = self.chapter.append_text(" ");
+                    let text_node = Node::text(range);
+                    let ir_id = self.chapter.alloc_node(text_node);
+                    self.chapter.append_child(ir_parent, ir_id);
+                    self.node_map.insert(dom_id, ir_id);
                     return;
                 }
 
@@ -466,5 +502,79 @@ mod tests {
                 assert!(!text.contains("Test"));
             }
         }
+    }
+
+    #[test]
+    fn test_br_element() {
+        let dom = parse_html(r#"<html><body><p>Line one<br/>Line two</p></body></html>"#);
+        let ua = user_agent_stylesheet();
+        let stylesheets = vec![(ua, Origin::UserAgent)];
+
+        let chapter = transform(&dom, &stylesheets);
+
+        // Should have a Break node
+        let mut found_break = false;
+        for id in chapter.iter_dfs() {
+            if chapter.node(id).unwrap().role == Role::Break {
+                found_break = true;
+                break;
+            }
+        }
+        assert!(found_break, "Break node not found");
+    }
+
+    #[test]
+    fn test_br_element_xhtml_style() {
+        // Test with XHTML-style self-closing br with namespace
+        let dom = parse_html(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+            <html xmlns="http://www.w3.org/1999/xhtml">
+            <body><p><span>Line one</span><br/><span>Line two</span></p></body></html>"#,
+        );
+        let ua = user_agent_stylesheet();
+        let stylesheets = vec![(ua, Origin::UserAgent)];
+
+        let chapter = transform(&dom, &stylesheets);
+
+        // Should have a Break node
+        let mut found_break = false;
+        for id in chapter.iter_dfs() {
+            if chapter.node(id).unwrap().role == Role::Break {
+                found_break = true;
+                break;
+            }
+        }
+        assert!(found_break, "Break node not found in XHTML-style input");
+    }
+
+    #[test]
+    fn test_br_in_blockquote_verse() {
+        // Exact structure from epictetus.epub endnote 30
+        let dom = parse_html(
+            r#"<html xmlns="http://www.w3.org/1999/xhtml">
+            <body>
+                <blockquote>
+                    <p lang="la">
+                        <span>Cui non conveniet sua res, ut calceus olim,</span>
+                        <br/>
+                        <span>Si pede major erit, subvertet; si minor, uret.</span>
+                    </p>
+                </blockquote>
+            </body></html>"#,
+        );
+        let ua = user_agent_stylesheet();
+        let stylesheets = vec![(ua, Origin::UserAgent)];
+
+        let chapter = transform(&dom, &stylesheets);
+
+        // Should have a Break node
+        let mut found_break = false;
+        for id in chapter.iter_dfs() {
+            if chapter.node(id).unwrap().role == Role::Break {
+                found_break = true;
+                break;
+            }
+        }
+        assert!(found_break, "Break node not found in blockquote verse");
     }
 }

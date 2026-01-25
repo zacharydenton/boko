@@ -9,8 +9,9 @@ use std::io::{self, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use crate::export::{Azw3Exporter, EpubExporter, Exporter};
+use crate::export::{Azw3Exporter, EpubExporter, Exporter, TextExporter, TextFormat};
 use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, MobiImporter, SpineEntry};
+use crate::io::MemorySource;
 use crate::ir::IRChapter;
 
 // ============================================================================
@@ -26,6 +27,10 @@ pub enum Format {
     Azw3,
     /// MOBI format (legacy Kindle)
     Mobi,
+    /// Plain text (export only)
+    Text,
+    /// Markdown (export only)
+    Markdown,
 }
 
 /// A resource (image, font, CSS, etc.) with its data and media type.
@@ -114,8 +119,20 @@ impl Format {
                 "epub" => Some(Format::Epub),
                 "azw3" => Some(Format::Azw3),
                 "mobi" => Some(Format::Mobi),
+                "txt" => Some(Format::Text),
+                "md" => Some(Format::Markdown),
                 _ => None,
             })
+    }
+
+    /// Whether this format can be used for input/import.
+    pub fn can_import(&self) -> bool {
+        matches!(self, Format::Epub | Format::Azw3 | Format::Mobi)
+    }
+
+    /// Whether this format can be used for output/export.
+    pub fn can_export(&self) -> bool {
+        !matches!(self, Format::Mobi)
     }
 }
 
@@ -138,6 +155,34 @@ impl Book {
             Format::Epub => Box::new(EpubImporter::open(path.as_ref())?),
             Format::Azw3 => Box::new(Azw3Importer::open(path.as_ref())?),
             Format::Mobi => Box::new(MobiImporter::open(path.as_ref())?),
+            Format::Text | Format::Markdown => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Text and Markdown formats are export-only",
+                ))
+            }
+        };
+        Ok(Self {
+            backend,
+            ir_cache: Arc::new(RwLock::new(BTreeMap::new())),
+        })
+    }
+
+    /// Create a Book from in-memory bytes with an explicit format.
+    ///
+    /// This is useful for reading from stdin or other non-file sources.
+    pub fn from_bytes(data: &[u8], format: Format) -> io::Result<Self> {
+        let source = Arc::new(MemorySource::new(data.to_vec()));
+        let backend: Box<dyn Importer> = match format {
+            Format::Epub => Box::new(EpubImporter::from_source(source)?),
+            Format::Azw3 => Box::new(Azw3Importer::from_source(source)?),
+            Format::Mobi => Box::new(MobiImporter::from_source(source)?),
+            Format::Text | Format::Markdown => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Text and Markdown formats are export-only",
+                ))
+            }
         };
         Ok(Self {
             backend,
@@ -268,11 +313,13 @@ impl Book {
     ///
     /// # Supported Export Formats
     ///
-    /// | Format | Support |
-    /// |--------|---------|
-    /// | EPUB   | ✓       |
-    /// | AZW3   | ✓       |
-    /// | MOBI   | ✗       |
+    /// | Format   | Support |
+    /// |----------|---------|
+    /// | EPUB     | ✓       |
+    /// | AZW3     | ✓       |
+    /// | MOBI     | ✗       |
+    /// | Text     | ✓       |
+    /// | Markdown | ✓       |
     ///
     /// # Example
     ///
@@ -289,6 +336,8 @@ impl Book {
         match format {
             Format::Epub => EpubExporter::new().export(self, writer),
             Format::Azw3 => Azw3Exporter::new().export(self, writer),
+            Format::Text => TextExporter::new().format(TextFormat::Plain).export(self, writer),
+            Format::Markdown => TextExporter::new().format(TextFormat::Markdown).export(self, writer),
             Format::Mobi => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "MOBI export is not supported; use AZW3 instead",
