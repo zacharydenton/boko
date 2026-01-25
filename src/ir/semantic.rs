@@ -31,6 +31,16 @@ pub struct SemanticMap {
     aria_role: HashMap<NodeId, String>,
     /// datetime attribute (for <time> elements).
     datetime: HashMap<NodeId, String>,
+    /// start attribute (for ordered lists, ol@start).
+    list_start: HashMap<NodeId, u32>,
+    /// rowspan attribute (for table cells).
+    row_span: HashMap<NodeId, u32>,
+    /// colspan attribute (for table cells).
+    col_span: HashMap<NodeId, u32>,
+    /// Whether a table cell is a header cell (th vs td).
+    is_header_cell: HashMap<NodeId, bool>,
+    /// Programming language for code blocks.
+    language: HashMap<NodeId, String>,
 }
 
 impl SemanticMap {
@@ -165,6 +175,79 @@ impl SemanticMap {
         self.datetime.get(&node).map(|s| s.as_str())
     }
 
+    // --- list_start ---
+
+    /// Set the start number for an ordered list (from `<ol start="N">`).
+    pub fn set_list_start(&mut self, node: NodeId, start: u32) {
+        if start != 1 {
+            self.list_start.insert(node, start);
+        }
+    }
+
+    /// Get the start number for an ordered list.
+    /// Returns None if not set (defaults to 1).
+    pub fn list_start(&self, node: NodeId) -> Option<u32> {
+        self.list_start.get(&node).copied()
+    }
+
+    // --- row_span ---
+
+    /// Set the rowspan for a table cell.
+    pub fn set_row_span(&mut self, node: NodeId, span: u32) {
+        if span > 1 {
+            self.row_span.insert(node, span);
+        }
+    }
+
+    /// Get the rowspan for a table cell.
+    /// Returns None if not set (defaults to 1).
+    pub fn row_span(&self, node: NodeId) -> Option<u32> {
+        self.row_span.get(&node).copied()
+    }
+
+    // --- col_span ---
+
+    /// Set the colspan for a table cell.
+    pub fn set_col_span(&mut self, node: NodeId, span: u32) {
+        if span > 1 {
+            self.col_span.insert(node, span);
+        }
+    }
+
+    /// Get the colspan for a table cell.
+    /// Returns None if not set (defaults to 1).
+    pub fn col_span(&self, node: NodeId) -> Option<u32> {
+        self.col_span.get(&node).copied()
+    }
+
+    // --- is_header_cell ---
+
+    /// Set whether a table cell is a header cell (th vs td).
+    pub fn set_header_cell(&mut self, node: NodeId, is_header: bool) {
+        if is_header {
+            self.is_header_cell.insert(node, true);
+        }
+    }
+
+    /// Check if a table cell is a header cell.
+    pub fn is_header_cell(&self, node: NodeId) -> bool {
+        self.is_header_cell.get(&node).copied().unwrap_or(false)
+    }
+
+    // --- language ---
+
+    /// Set the programming language for a code block.
+    pub fn set_language(&mut self, node: NodeId, language: String) {
+        if !language.is_empty() {
+            self.language.insert(node, language);
+        }
+    }
+
+    /// Get the programming language for a code block.
+    pub fn language(&self, node: NodeId) -> Option<&str> {
+        self.language.get(&node).map(|s| s.as_str())
+    }
+
     // --- Generic access ---
 
     /// Get an attribute by name.
@@ -279,6 +362,11 @@ impl SemanticMap {
             + self.epub_type.len()
             + self.aria_role.len()
             + self.datetime.len()
+            + self.list_start.len()
+            + self.row_span.len()
+            + self.col_span.len()
+            + self.is_header_cell.len()
+            + self.language.len()
     }
 
     /// Check if the map is empty.

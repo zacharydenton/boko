@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use crate::ir::{IRChapter, ListKind, NodeId, Role, StyleId};
+use crate::ir::{IRChapter, NodeId, Role, StyleId};
 
 /// Result of HTML synthesis.
 #[derive(Debug, Clone)]
@@ -150,7 +150,12 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
     }
 
     // Map role to tag
-    let (tag, is_void, is_block) = role_to_tag(role);
+    let (mut tag, is_void, is_block) = role_to_tag(role);
+
+    // For table cells, use th for header cells
+    if role == Role::TableCell && ctx.ir.semantics.is_header_cell(id) {
+        tag = "th";
+    }
 
     // Build attributes
     let mut attrs = String::new();
@@ -180,6 +185,21 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
     }
     if let Some(lang) = ctx.ir.semantics.lang(id) {
         write!(attrs, " xml:lang=\"{}\"", escape_xml(lang)).unwrap();
+    }
+    // Emit start attribute for ordered lists
+    if role == Role::OrderedList {
+        if let Some(start) = ctx.ir.semantics.list_start(id) {
+            write!(attrs, " start=\"{}\"", start).unwrap();
+        }
+    }
+    // Emit rowspan/colspan for table cells
+    if role == Role::TableCell {
+        if let Some(rowspan) = ctx.ir.semantics.row_span(id) {
+            write!(attrs, " rowspan=\"{}\"", rowspan).unwrap();
+        }
+        if let Some(colspan) = ctx.ir.semantics.col_span(id) {
+            write!(attrs, " colspan=\"{}\"", colspan).unwrap();
+        }
     }
 
     // Emit opening tag
@@ -246,9 +266,15 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
 
         // Block elements
         Role::BlockQuote => ("blockquote", false, true),
-        Role::List(ListKind::Unordered) => ("ul", false, true),
-        Role::List(ListKind::Ordered) => ("ol", false, true),
+        Role::OrderedList => ("ol", false, true),
+        Role::UnorderedList => ("ul", false, true),
         Role::ListItem => ("li", false, true),
+        Role::DefinitionList => ("dl", false, true),
+        Role::DefinitionTerm => ("dt", false, true),
+        Role::DefinitionDescription => ("dd", false, true),
+        Role::CodeBlock => ("pre", false, true),
+        // Default to figcaption; context-aware logic could choose caption for tables
+        Role::Caption => ("figcaption", false, true),
         Role::Table => ("table", false, true),
         Role::TableRow => ("tr", false, true),
         Role::TableCell => ("td", false, true),
@@ -385,7 +411,7 @@ mod tests {
         let mut chapter = IRChapter::new();
 
         // Create: <ul><li>Item 1</li><li>Item 2</li></ul>
-        let ul = chapter.alloc_node(Node::new(Role::List(ListKind::Unordered)));
+        let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
         chapter.append_child(NodeId::ROOT, ul);
 
         let li1 = chapter.alloc_node(Node::new(Role::ListItem));

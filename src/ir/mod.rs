@@ -22,11 +22,11 @@ mod node;
 mod semantic;
 mod style;
 
-pub use node::{ListKind, Node, NodeId, Role, TextRange};
+pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 pub use style::{
-    Color, ComputedStyle, Display, FontStyle, FontWeight, Length, StyleId, StylePool, TextAlign,
-    ToCss,
+    Color, ComputedStyle, Display, FontStyle, FontWeight, Length, ListStyleType, StyleId,
+    StylePool, TextAlign, ToCss,
 };
 
 /// A chapter's content in normalized IR form.

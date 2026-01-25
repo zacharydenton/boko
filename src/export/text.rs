@@ -6,7 +6,7 @@
 use std::io::{self, Seek, Write};
 
 use crate::book::Book;
-use crate::ir::{Display, ListKind, NodeId, Role};
+use crate::ir::{Display, NodeId, Role};
 
 use super::Exporter;
 
@@ -99,7 +99,8 @@ impl Exporter for TextExporter {
 /// Tracks list context for numbering.
 #[derive(Debug, Clone)]
 struct ListContext {
-    kind: ListKind,
+    /// Whether this is an ordered list.
+    is_ordered: bool,
     counter: usize,
     /// Indent string for continuation lines in this list item
     continuation_indent: String,
@@ -194,10 +195,24 @@ impl<W: Write> ExportContext<'_, W> {
                 self.end_block();
             }
 
-            Role::List(kind) => {
+            Role::OrderedList => {
+                self.start_block()?;
+                // Get start number from semantics (defaults to 1)
+                let start = self.ir.semantics.list_start(id).unwrap_or(1) as usize;
+                self.list_stack.push(ListContext {
+                    is_ordered: true,
+                    counter: start.saturating_sub(1), // Will be incremented before use
+                    continuation_indent: String::new(),
+                });
+                self.walk_children(id)?;
+                self.list_stack.pop();
+                self.end_block();
+            }
+
+            Role::UnorderedList => {
                 self.start_block()?;
                 self.list_stack.push(ListContext {
-                    kind,
+                    is_ordered: false,
                     counter: 0,
                     continuation_indent: String::new(),
                 });
@@ -216,17 +231,12 @@ impl<W: Write> ExportContext<'_, W> {
                 // Get bullet/number from parent list
                 let bullet = if let Some(list_ctx) = self.list_stack.last_mut() {
                     list_ctx.counter += 1;
-                    match list_ctx.kind {
-                        ListKind::Unordered => {
-                            if self.format == TextFormat::Markdown {
-                                "- ".to_string()
-                            } else {
-                                "• ".to_string()
-                            }
-                        }
-                        ListKind::Ordered => {
-                            format!("{}. ", list_ctx.counter)
-                        }
+                    if list_ctx.is_ordered {
+                        format!("{}. ", list_ctx.counter)
+                    } else if self.format == TextFormat::Markdown {
+                        "- ".to_string()
+                    } else {
+                        "• ".to_string()
                     }
                 } else {
                     "".to_string()
@@ -355,6 +365,18 @@ impl<W: Write> ExportContext<'_, W> {
                 self.end_block();
             }
 
+            Role::Caption => {
+                self.start_block()?;
+                if self.format == TextFormat::Markdown {
+                    write!(self.writer, "*")?;
+                }
+                self.walk_children(id)?;
+                if self.format == TextFormat::Markdown {
+                    write!(self.writer, "*")?;
+                }
+                self.end_block();
+            }
+
             Role::Footnote => {
                 // Render inline as [note: ...]
                 self.ensure_line_started()?;
@@ -379,6 +401,7 @@ impl<W: Write> ExportContext<'_, W> {
                 let is_bold = style.map(|s| s.is_bold()).unwrap_or(false);
                 let is_italic = style.map(|s| s.is_italic()).unwrap_or(false);
                 let is_code = style.map(|s| s.is_monospace()).unwrap_or(false);
+                let is_small_caps = style.map(|s| s.is_small_caps()).unwrap_or(false);
                 // Only treat as block if style explicitly sets display: block
                 // (not just default style, since default ComputedStyle has display: Block)
                 let is_block = node.style.0 != 0
@@ -416,6 +439,56 @@ impl<W: Write> ExportContext<'_, W> {
                         write!(self.writer, "`")?;
                     }
                 }
+            }
+
+            Role::DefinitionList => {
+                self.start_block()?;
+                self.walk_children(id)?;
+                self.end_block();
+            }
+
+            Role::DefinitionTerm => {
+                self.start_block()?;
+                if self.format == TextFormat::Markdown {
+                    write!(self.writer, "**")?;
+                }
+                self.walk_children(id)?;
+                if self.format == TextFormat::Markdown {
+                    write!(self.writer, "**")?;
+                }
+                self.pending_newline = false; // Don't add blank line before dd
+            }
+
+            Role::DefinitionDescription => {
+                // Ensure we're on a new line but don't add blank line
+                if !self.at_line_start {
+                    self.write_newline()?;
+                }
+                self.ensure_line_started()?;
+                write!(self.writer, ": ")?;
+                self.walk_children(id)?;
+                self.end_block();
+            }
+
+            Role::CodeBlock => {
+                self.start_block()?;
+                if self.format == TextFormat::Markdown {
+                    let lang = self.ir.semantics.language(id).unwrap_or("");
+                    writeln!(self.writer, "```{}", lang)?;
+                    self.at_line_start = true;
+                }
+                // Collect text preserving whitespace for code blocks
+                let text = self.collect_text(id);
+                for line in text.lines() {
+                    self.ensure_line_started()?;
+                    writeln!(self.writer, "{}", line)?;
+                    self.at_line_start = true;
+                }
+                if self.format == TextFormat::Markdown {
+                    self.ensure_line_started()?;
+                    write!(self.writer, "```")?;
+                }
+                self.end_block();
             }
 
             Role::Container | Role::Root => {
@@ -560,7 +633,7 @@ mod tests {
     fn test_unordered_list_markdown() {
         let mut chapter = IRChapter::new();
 
-        let ul = chapter.alloc_node(Node::new(Role::List(ListKind::Unordered)));
+        let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
         chapter.append_child(NodeId::ROOT, ul);
 
         let li = chapter.alloc_node(Node::new(Role::ListItem));
@@ -578,7 +651,7 @@ mod tests {
     fn test_ordered_list() {
         let mut chapter = IRChapter::new();
 
-        let ol = chapter.alloc_node(Node::new(Role::List(ListKind::Ordered)));
+        let ol = chapter.alloc_node(Node::new(Role::OrderedList));
         chapter.append_child(NodeId::ROOT, ol);
 
         for i in 1..=3 {
@@ -677,7 +750,7 @@ mod tests {
     fn test_list_with_blockquote() {
         let mut chapter = IRChapter::new();
 
-        let ol = chapter.alloc_node(Node::new(Role::List(ListKind::Ordered)));
+        let ol = chapter.alloc_node(Node::new(Role::OrderedList));
         chapter.append_child(NodeId::ROOT, ol);
 
         let li = chapter.alloc_node(Node::new(Role::ListItem));

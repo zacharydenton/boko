@@ -101,6 +101,46 @@ pub enum Display {
     TableRow,
 }
 
+/// CSS list-style-type values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ListStyleType {
+    /// No marker
+    #[default]
+    None,
+    /// • (default for ul)
+    Disc,
+    /// ○
+    Circle,
+    /// ▪
+    Square,
+    /// 1, 2, 3 (default for ol)
+    Decimal,
+    /// a, b, c
+    LowerAlpha,
+    /// A, B, C
+    UpperAlpha,
+    /// i, ii, iii
+    LowerRoman,
+    /// I, II, III
+    UpperRoman,
+}
+
+impl ToCss for ListStyleType {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            ListStyleType::None => "none",
+            ListStyleType::Disc => "disc",
+            ListStyleType::Circle => "circle",
+            ListStyleType::Square => "square",
+            ListStyleType::Decimal => "decimal",
+            ListStyleType::LowerAlpha => "lower-alpha",
+            ListStyleType::UpperAlpha => "upper-alpha",
+            ListStyleType::LowerRoman => "lower-roman",
+            ListStyleType::UpperRoman => "upper-roman",
+        });
+    }
+}
+
 impl ToCss for Display {
     fn to_css(&self, buf: &mut String) {
         buf.push_str(match self {
@@ -243,6 +283,12 @@ pub struct ComputedStyle {
     // Vertical alignment for inline elements
     pub vertical_align_super: bool,
     pub vertical_align_sub: bool,
+
+    // List properties
+    pub list_style_type: ListStyleType,
+
+    // Font variant
+    pub font_variant_small_caps: bool,
 }
 
 impl ComputedStyle {
@@ -301,6 +347,24 @@ impl ComputedStyle {
                     || lower.contains("menlo")
             })
             .unwrap_or(false)
+    }
+
+    /// Check if the list style is ordered (numbered).
+    pub fn is_ordered_list(&self) -> bool {
+        matches!(
+            self.list_style_type,
+            ListStyleType::Decimal
+                | ListStyleType::LowerAlpha
+                | ListStyleType::UpperAlpha
+                | ListStyleType::LowerRoman
+                | ListStyleType::UpperRoman
+        )
+    }
+
+    /// Check if the style uses small-caps font variant.
+    #[inline]
+    pub fn is_small_caps(&self) -> bool {
+        self.font_variant_small_caps
     }
 }
 
@@ -425,6 +489,18 @@ impl ToCss for ComputedStyle {
             buf.push_str("vertical-align: super; ");
         } else if self.vertical_align_sub {
             buf.push_str("vertical-align: sub; ");
+        }
+
+        // List style
+        if self.list_style_type != default.list_style_type {
+            buf.push_str("list-style-type: ");
+            self.list_style_type.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Font variant
+        if self.font_variant_small_caps {
+            buf.push_str("font-variant: small-caps; ");
         }
     }
 }

@@ -11,7 +11,8 @@ use selectors::parser::Selector;
 
 use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
-    Color, ComputedStyle, Display, FontStyle, FontWeight, Length, StylePool, TextAlign,
+    Color, ComputedStyle, Display, FontStyle, FontWeight, Length, ListStyleType, StylePool,
+    TextAlign,
 };
 
 /// A parsed CSS stylesheet.
@@ -45,6 +46,7 @@ pub enum PropertyValue {
     FontStyle(FontStyle),
     TextAlign(TextAlign),
     Display(Display),
+    ListStyleType(ListStyleType),
     String(String),
     Keyword(String),
     None,
@@ -321,6 +323,12 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
 
         "vertical-align" => parse_vertical_align(input).unwrap_or(PropertyValue::None),
 
+        "list-style-type" => parse_list_style_type(input).unwrap_or(PropertyValue::None),
+
+        "font-variant" | "font-variant-caps" => {
+            parse_font_variant(input).unwrap_or(PropertyValue::None)
+        }
+
         _ => {
             // Consume remaining tokens for unknown properties
             while input.next().is_ok() {}
@@ -561,6 +569,34 @@ fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     None
 }
 
+fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let style = match token.as_ref() {
+        "none" => ListStyleType::None,
+        "disc" => ListStyleType::Disc,
+        "circle" => ListStyleType::Circle,
+        "square" => ListStyleType::Square,
+        "decimal" => ListStyleType::Decimal,
+        "lower-alpha" | "lower-latin" => ListStyleType::LowerAlpha,
+        "upper-alpha" | "upper-latin" => ListStyleType::UpperAlpha,
+        "lower-roman" => ListStyleType::LowerRoman,
+        "upper-roman" => ListStyleType::UpperRoman,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::ListStyleType(style))
+}
+
+fn parse_font_variant(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "small-caps" => Some(PropertyValue::Keyword("small-caps".to_string())),
+        "normal" | "none" => Some(PropertyValue::Keyword("normal".to_string())),
+        "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(token.to_string())),
+        _ => None,
+    }
+}
+
 /// Compute styles for an element by applying the cascade.
 pub fn compute_styles(
     elem: ElementRef<'_>,
@@ -744,6 +780,16 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
             if let PropertyValue::Keyword(k) = &decl.value {
                 style.vertical_align_super = k == "super";
                 style.vertical_align_sub = k == "sub";
+            }
+        }
+        "list-style-type" => {
+            if let PropertyValue::ListStyleType(lst) = &decl.value {
+                style.list_style_type = *lst;
+            }
+        }
+        "font-variant" | "font-variant-caps" => {
+            if let PropertyValue::Keyword(k) = &decl.value {
+                style.font_variant_small_caps = k == "small-caps";
             }
         }
         _ => {}

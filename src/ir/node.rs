@@ -36,8 +36,10 @@ pub enum Role {
     Image,
     /// Hyperlinks. href in SemanticMap.
     Link,
-    /// List structure container with ordered/unordered distinction.
-    List(ListKind),
+    /// Ordered list (`<ol>`).
+    OrderedList,
+    /// Unordered list (`<ul>`).
+    UnorderedList,
     /// Individual list items.
     ListItem,
     /// Table structure.
@@ -65,16 +67,17 @@ pub enum Role {
     /// Horizontal rule (`<hr>`).
     /// A leaf node representing a thematic break.
     Rule,
-}
-
-/// Kind of list (ordered vs unordered).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ListKind {
-    /// Unordered list (`<ul>`).
-    #[default]
-    Unordered,
-    /// Ordered list (`<ol>`).
-    Ordered,
+    /// Definition list container (`<dl>`).
+    DefinitionList,
+    /// Definition term (`<dt>`).
+    DefinitionTerm,
+    /// Definition description (`<dd>`).
+    DefinitionDescription,
+    /// Code block (`<pre><code>`).
+    /// Language is stored in SemanticMap.language.
+    CodeBlock,
+    /// Caption for figures or tables (`<figcaption>`, `<caption>`).
+    Caption,
 }
 
 /// Range into the global text buffer.

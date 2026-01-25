@@ -5,7 +5,7 @@ use html5ever::LocalName;
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::css::{compute_styles, Origin, Stylesheet};
 use super::element_ref::ElementRef;
-use crate::ir::{ComputedStyle, Display, IRChapter, ListKind, Node, NodeId, Role};
+use crate::ir::{ComputedStyle, Display, IRChapter, ListStyleType, Node, NodeId, Role};
 
 /// User-agent default stylesheet.
 pub fn user_agent_stylesheet() -> Stylesheet {
@@ -42,6 +42,12 @@ pub fn user_agent_stylesheet() -> Stylesheet {
             margin-top: 1em;
             margin-bottom: 1em;
             padding-left: 40px;
+        }
+        ul {
+            list-style-type: disc;
+        }
+        ol {
+            list-style-type: decimal;
         }
         li {
             display: list-item;
@@ -160,11 +166,15 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         // Aside/sidebar
         "aside" => Role::Sidebar,
 
-        // Figure
-        "figure" | "figcaption" => Role::Figure,
+        // Figure and caption
+        "figure" => Role::Figure,
+        "figcaption" | "caption" => Role::Caption,
 
-        // Block-level text containers (paragraphs, preformatted)
-        "p" | "pre" => Role::Text,
+        // Block-level text containers (paragraphs)
+        "p" => Role::Text,
+
+        // Preformatted code blocks
+        "pre" => Role::CodeBlock,
 
         // Inline elements with styling (rendered via ComputedStyle)
         "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd"
@@ -185,13 +195,18 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         // Images
         "img" => Role::Image,
 
-        // Lists (distinguish ordered vs unordered)
-        "ul" => Role::List(ListKind::Unordered),
-        "ol" => Role::List(ListKind::Ordered),
+        // Lists
+        "ul" => Role::UnorderedList,
+        "ol" => Role::OrderedList,
         "li" => Role::ListItem,
 
         // Block quote
         "blockquote" => Role::BlockQuote,
+
+        // Definition lists
+        "dl" => Role::DefinitionList,
+        "dt" => Role::DefinitionTerm,
+        "dd" => Role::DefinitionDescription,
 
         // Tables
         "table" => Role::Table,
@@ -344,6 +359,12 @@ impl<'a> TransformContext<'a> {
                         "title" => self.chapter.semantics.set_title(ir_id, attr.value.clone()),
                         // Language (both lang and xml:lang)
                         "lang" => self.chapter.semantics.set_lang(ir_id, attr.value.clone()),
+                        // List start attribute (ol@start)
+                        "start" if name.local.as_ref() == "ol" => {
+                            if let Ok(start) = attr.value.parse::<u32>() {
+                                self.chapter.semantics.set_list_start(ir_id, start);
+                            }
+                        }
                         // Semantic fidelity attributes
                         "type" if attr_ns == "http://www.idpf.org/2007/ops" => {
                             // epub:type attribute
@@ -361,8 +382,37 @@ impl<'a> TransformContext<'a> {
                                 .semantics
                                 .set_datetime(ir_id, attr.value.clone());
                         }
+                        // Table cell attributes
+                        "rowspan" if matches!(name.local.as_ref(), "td" | "th") => {
+                            if let Ok(span) = attr.value.parse::<u32>() {
+                                self.chapter.semantics.set_row_span(ir_id, span);
+                            }
+                        }
+                        "colspan" if matches!(name.local.as_ref(), "td" | "th") => {
+                            if let Ok(span) = attr.value.parse::<u32>() {
+                                self.chapter.semantics.set_col_span(ir_id, span);
+                            }
+                        }
+                        // Extract language from class for code elements
+                        "class" if matches!(name.local.as_ref(), "code" | "pre") => {
+                            for class in attr.value.split_whitespace() {
+                                if let Some(lang) = class.strip_prefix("language-") {
+                                    self.chapter.semantics.set_language(ir_id, lang.to_string());
+                                    break;
+                                }
+                                if let Some(lang) = class.strip_prefix("lang-") {
+                                    self.chapter.semantics.set_language(ir_id, lang.to_string());
+                                    break;
+                                }
+                            }
+                        }
                         _ => {}
                     }
+                }
+
+                // Mark th elements as header cells
+                if name.local.as_ref() == "th" {
+                    self.chapter.semantics.set_header_cell(ir_id, true);
                 }
 
                 // Process children
