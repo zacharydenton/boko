@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["cli"]
-cli = ["dep:clap"]
+cli = ["dep:clap", "dep:serde", "dep:serde_json"]
 wasm = ["wasm-bindgen", "console_error_panic_hook"]
 
 [dependencies]
@@ -45,6 +45,8 @@ sha1_smol = { version = "1.0", features = ["std"] }
 
 # CLI argument parsing (only for binary)
 clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 # Native: use fast zlib-rs
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

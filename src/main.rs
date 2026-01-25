@@ -2,61 +2,165 @@
 
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use serde::Serialize;
 
-use boko::Book;
+use boko::{Book, TocEntry};
 
 #[derive(Parser)]
 #[command(name = "boko")]
 #[command(version, about = "Fast ebook converter", long_about = None)]
-#[command(after_help = "EXAMPLES:
-    boko book.epub book.azw3    Convert EPUB to AZW3
-    boko book.azw3 book.epub    Convert AZW3 to EPUB
-    boko -i book.epub           Show book metadata")]
 struct Cli {
-    /// Input file (EPUB, AZW3, or MOBI)
-    #[arg(value_name = "INPUT")]
-    input: String,
+    #[command(subcommand)]
+    command: Command,
+}
 
-    /// Output file (EPUB, AZW3)
-    #[arg(value_name = "OUTPUT", required_unless_present = "info")]
-    output: Option<String>,
+#[derive(Subcommand)]
+enum Command {
+    /// Show book metadata and structure
+    Info {
+        /// Input file (EPUB, AZW3, or MOBI)
+        file: String,
 
-    /// Show book metadata without converting
-    #[arg(short, long)]
-    info: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 
-    /// Suppress output messages
-    #[arg(short, long)]
-    quiet: bool,
+    /// Convert between formats (not yet implemented)
+    Convert {
+        /// Input file
+        input: String,
+
+        /// Output file
+        output: String,
+
+        /// Suppress output messages
+        #[arg(short, long)]
+        quiet: bool,
+    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if cli.info {
-        match show_info(&cli.input) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::FAILURE
-            }
-        }
-    } else {
-        let output = cli.output.expect("output required");
-        match convert(&cli.input, &output, cli.quiet) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("error: {e}");
-                ExitCode::FAILURE
-            }
+    let result = match cli.command {
+        Command::Info { file, json } => show_info(&file, json),
+        Command::Convert { input, output, quiet } => convert(&input, &output, quiet),
+    };
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
         }
     }
 }
 
-fn show_info(path: &str) -> Result<(), String> {
+// JSON output structures
+#[derive(Serialize)]
+struct BookInfo {
+    file: String,
+    metadata: MetadataInfo,
+    spine: Vec<SpineInfo>,
+    toc: Vec<TocInfo>,
+    assets: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct MetadataInfo {
+    title: String,
+    authors: Vec<String>,
+    language: String,
+    identifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    publisher: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    subjects: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rights: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SpineInfo {
+    id: u32,
+    path: String,
+    size: usize,
+}
+
+#[derive(Serialize)]
+struct TocInfo {
+    title: String,
+    href: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<TocInfo>,
+}
+
+fn show_info(path: &str, json: bool) -> Result<(), String> {
     let book = Book::open(path).map_err(|e| e.to_string())?;
 
+    if json {
+        print_json(&book, path)
+    } else {
+        print_human(&book, path)
+    }
+}
+
+fn print_json(book: &Book, path: &str) -> Result<(), String> {
+    let meta = book.metadata();
+
+    let info = BookInfo {
+        file: path.to_string(),
+        metadata: MetadataInfo {
+            title: meta.title.clone(),
+            authors: meta.authors.clone(),
+            language: meta.language.clone(),
+            identifier: meta.identifier.clone(),
+            publisher: meta.publisher.clone(),
+            date: meta.date.clone(),
+            subjects: meta.subjects.clone(),
+            rights: meta.rights.clone(),
+            cover_image: meta.cover_image.clone(),
+            description: meta.description.clone(),
+        },
+        spine: book
+            .spine()
+            .iter()
+            .map(|e| SpineInfo {
+                id: e.id.0,
+                path: book.source_id(e.id).unwrap_or("").to_string(),
+                size: e.size_estimate,
+            })
+            .collect(),
+        toc: book.toc().iter().map(toc_to_info).collect(),
+        assets: book
+            .list_assets()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect(),
+    };
+
+    let json = serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?;
+    println!("{json}");
+    Ok(())
+}
+
+fn toc_to_info(entry: &TocEntry) -> TocInfo {
+    TocInfo {
+        title: entry.title.clone(),
+        href: entry.href.clone(),
+        children: entry.children.iter().map(toc_to_info).collect(),
+    }
+}
+
+fn print_human(book: &Book, path: &str) -> Result<(), String> {
     let meta = book.metadata();
     println!("File: {path}");
     println!("Title: {}", meta.title);
@@ -102,7 +206,7 @@ fn show_info(path: &str) -> Result<(), String> {
 
     // Table of contents
     println!("\nTable of Contents ({} entries):", book.toc().len());
-    print_toc(book.toc(), 1);
+    print_toc_human(book.toc(), 1);
 
     // Assets
     let assets = book.list_assets();
@@ -114,17 +218,16 @@ fn show_info(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn print_toc(entries: &[boko::TocEntry], depth: usize) {
+fn print_toc_human(entries: &[TocEntry], depth: usize) {
     for entry in entries {
         let indent = "  ".repeat(depth);
         println!("{}{} -> {}", indent, entry.title, entry.href);
         if !entry.children.is_empty() {
-            print_toc(&entry.children, depth + 1);
+            print_toc_human(&entry.children, depth + 1);
         }
     }
 }
 
 fn convert(_input: &str, _output: &str, _quiet: bool) -> Result<(), String> {
-    // TODO: Implement writers for new architecture
     Err("Conversion not yet implemented in new architecture".to_string())
 }

@@ -155,6 +155,8 @@ dependencies = [
  "proptest",
  "quick-xml",
  "selectors",
+ "serde",
+ "serde_json",
  "sha1_smol",
  "tempfile",
  "wasm-bindgen",
