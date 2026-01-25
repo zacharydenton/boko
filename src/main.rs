@@ -1,11 +1,10 @@
 //! boko - Fast ebook converter
 
-use std::path::Path;
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use boko::{read_epub, read_mobi, write_epub, write_mobi};
+use boko::Book;
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -15,11 +14,11 @@ use boko::{read_epub, read_mobi, write_epub, write_mobi};
     boko book.azw3 book.epub    Convert AZW3 to EPUB
     boko -i book.epub           Show book metadata")]
 struct Cli {
-    /// Input file (EPUB, AZW3, MOBI, or KFX)
+    /// Input file (EPUB, AZW3, or MOBI)
     #[arg(value_name = "INPUT")]
     input: String,
 
-    /// Output file (EPUB, AZW3, or KFX)
+    /// Output file (EPUB, AZW3)
     #[arg(value_name = "OUTPUT", required_unless_present = "info")]
     output: Option<String>,
 
@@ -55,39 +54,22 @@ fn main() -> ExitCode {
     }
 }
 
-fn get_format(path: &str) -> Option<&'static str> {
-    Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .and_then(|ext| match ext.as_str() {
-            "epub" => Some("epub"),
-            "azw3" | "mobi" => Some("mobi"),
-            _ => None,
-        })
-}
-
 fn show_info(path: &str) -> Result<(), String> {
-    let format = get_format(path).ok_or_else(|| format!("unsupported format: {path}"))?;
+    let book = Book::open(path).map_err(|e| e.to_string())?;
 
-    let book = match format {
-        "epub" => read_epub(path).map_err(|e| e.to_string())?,
-        "mobi" => read_mobi(path).map_err(|e| e.to_string())?,
-        _ => unreachable!(),
-    };
-
+    let meta = book.metadata();
     println!("File: {path}");
-    println!("Title: {}", book.metadata.title);
-    if !book.metadata.authors.is_empty() {
-        println!("Authors: {}", book.metadata.authors.join(", "));
+    println!("Title: {}", meta.title);
+    if !meta.authors.is_empty() {
+        println!("Authors: {}", meta.authors.join(", "));
     }
-    if !book.metadata.language.is_empty() {
-        println!("Language: {}", book.metadata.language);
+    if !meta.language.is_empty() {
+        println!("Language: {}", meta.language);
     }
-    if let Some(ref publisher) = book.metadata.publisher {
+    if let Some(ref publisher) = meta.publisher {
         println!("Publisher: {publisher}");
     }
-    if let Some(ref desc) = book.metadata.description {
+    if let Some(ref desc) = meta.description {
         let desc = desc.trim();
         if desc.len() > 200 {
             println!("Description: {}...", &desc[..200]);
@@ -95,42 +77,14 @@ fn show_info(path: &str) -> Result<(), String> {
             println!("Description: {desc}");
         }
     }
-    println!("Chapters: {}", book.spine.len());
-    println!("TOC entries: {}", book.toc.len());
-    println!("Resources: {}", book.resources.len());
+    println!("Chapters: {}", book.spine().len());
+    println!("TOC entries: {}", book.toc().len());
+    println!("Assets: {}", book.list_assets().len());
 
     Ok(())
 }
 
-fn convert(input: &str, output: &str, quiet: bool) -> Result<(), String> {
-    let input_format =
-        get_format(input).ok_or_else(|| format!("unsupported input format: {input}"))?;
-    let output_format =
-        get_format(output).ok_or_else(|| format!("unsupported output format: {output}"))?;
-
-    if !quiet {
-        eprintln!("Reading {input}...");
-    }
-
-    let book = match input_format {
-        "epub" => read_epub(input).map_err(|e| e.to_string())?,
-        "mobi" => read_mobi(input).map_err(|e| e.to_string())?,
-        _ => unreachable!(),
-    };
-
-    if !quiet {
-        eprintln!("Writing {output}...");
-    }
-
-    match output_format {
-        "epub" => write_epub(&book, output).map_err(|e| e.to_string())?,
-        "mobi" => write_mobi(&book, output).map_err(|e| e.to_string())?,
-        _ => unreachable!(),
-    }
-
-    if !quiet {
-        eprintln!("Done.");
-    }
-
-    Ok(())
+fn convert(_input: &str, _output: &str, _quiet: bool) -> Result<(), String> {
+    // TODO: Implement writers for new architecture
+    Err("Conversion not yet implemented in new architecture".to_string())
 }

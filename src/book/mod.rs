@@ -1,11 +1,18 @@
-//! Core data types for representing ebooks.
+//! Core data types and runtime handle for ebooks.
 //!
-//! This module provides format-agnostic types that serve as the intermediate
-//! representation between different ebook formats (EPUB, MOBI, AZW3).
+//! This module provides:
+//! - Format-agnostic types (`Metadata`, `TocEntry`, `Resource`, `SpineItem`)
+//! - The `Book` runtime handle for reading ebooks via importers
 
-use std::collections::HashMap;
 use std::io;
 use std::path::Path;
+
+use crate::import::{ChapterId, Importer, SpineEntry};
+use crate::import::epub::EpubImporter;
+
+// ============================================================================
+// Data Types
+// ============================================================================
 
 /// Ebook file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,18 +21,8 @@ pub enum Format {
     Epub,
     /// AZW3/KF8 format (modern Kindle)
     Azw3,
-    /// MOBI format (legacy Kindle). Writes as KF8/AZW3.
+    /// MOBI format (legacy Kindle)
     Mobi,
-}
-
-/// Intermediate representation of an ebook.
-/// Format-agnostic structure that EPUB, MOBI, and AZW3 can convert to/from.
-#[derive(Debug, Clone, Default)]
-pub struct Book {
-    pub metadata: Metadata,
-    pub spine: Vec<SpineItem>,
-    pub toc: Vec<TocEntry>,
-    pub resources: HashMap<String, Resource>,
 }
 
 /// Book metadata (Dublin Core + extensions)
@@ -41,15 +38,6 @@ pub struct Metadata {
     pub date: Option<String>,
     pub rights: Option<String>,
     pub cover_image: Option<String>,
-}
-
-/// An item in the reading order (spine)
-#[derive(Debug, Clone)]
-pub struct SpineItem {
-    pub id: String,
-    pub href: String,
-    pub media_type: String,
-    pub linear: bool,
 }
 
 /// A table of contents entry (hierarchical)
@@ -74,17 +62,36 @@ impl PartialOrd for TocEntry {
     }
 }
 
-/// A resource (content document, image, CSS, font, etc.)
-#[derive(Debug, Clone)]
-pub struct Resource {
-    pub data: Vec<u8>,
-    pub media_type: String,
+// ============================================================================
+// Book Runtime Handle
+// ============================================================================
+
+/// Runtime handle for an ebook.
+///
+/// `Book` wraps a format-specific `Importer` backend and provides
+/// unified access to metadata, table of contents, and content.
+///
+/// # Example
+///
+/// ```no_run
+/// use boko::Book;
+///
+/// let mut book = Book::open("input.epub")?;
+/// println!("Title: {}", book.metadata().title);
+///
+/// // Load chapter content
+/// for entry in book.spine() {
+///     let raw = book.load_raw(entry.id)?;
+///     println!("Chapter {}: {} bytes", entry.id.0, raw.len());
+/// }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub struct Book {
+    backend: Box<dyn Importer>,
 }
 
 impl Format {
     /// Detect format from file extension.
-    ///
-    /// Returns `None` if the extension is not recognized.
     pub fn from_path(path: impl AsRef<Path>) -> Option<Self> {
         path.as_ref()
             .extension()
@@ -99,21 +106,7 @@ impl Format {
 }
 
 impl Book {
-    /// Create a new empty book.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Open an ebook file, auto-detecting the format from the file extension.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use boko::Book;
-    ///
-    /// let book = Book::open("input.epub")?;
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
+    /// Open an ebook file, auto-detecting the format.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
         let format = Format::from_path(path).ok_or_else(|| {
@@ -126,98 +119,59 @@ impl Book {
     }
 
     /// Open an ebook file with an explicit format.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use boko::{Book, Format};
-    ///
-    /// let book = Book::open_format("input.bin", Format::Epub)?;
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
     pub fn open_format(path: impl AsRef<Path>, format: Format) -> io::Result<Self> {
-        match format {
-            Format::Epub => crate::epub::read_epub(path),
-            Format::Azw3 | Format::Mobi => crate::mobi::read_mobi(path),
-        }
+        let backend: Box<dyn Importer> = match format {
+            Format::Epub => Box::new(EpubImporter::open(path.as_ref())?),
+            Format::Azw3 | Format::Mobi => {
+                // TODO: MobiImporter
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "MOBI importer not yet implemented",
+                ));
+            }
+        };
+        Ok(Self { backend })
     }
 
-    /// Save the book to a file, auto-detecting the format from the file extension.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use boko::Book;
-    ///
-    /// let book = Book::open("input.epub")?;
-    /// book.save("output.azw3")?;
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
-        let path = path.as_ref();
-        let format = Format::from_path(path).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("unknown file format: {}", path.display()),
-            )
-        })?;
-        self.save_format(path, format)
+    /// Book metadata.
+    pub fn metadata(&self) -> &Metadata {
+        self.backend.metadata()
     }
 
-    /// Save the book to a file with an explicit format.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use boko::{Book, Format};
-    ///
-    /// let book = Book::open("input.epub")?;
-    /// book.save_format("output.bin", Format::Azw3)?;
-    /// # Ok::<(), std::io::Error>(())
-    /// ```
-    pub fn save_format(&self, path: impl AsRef<Path>, format: Format) -> io::Result<()> {
-        match format {
-            Format::Epub => crate::epub::write_epub(self, path),
-            Format::Azw3 | Format::Mobi => crate::mobi::write_mobi(self, path),
-        }
+    /// Table of contents.
+    pub fn toc(&self) -> &[TocEntry] {
+        self.backend.toc()
     }
 
-    /// Add a resource to the book
-    pub fn add_resource(
-        &mut self,
-        href: impl Into<String>,
-        data: Vec<u8>,
-        media_type: impl Into<String>,
-    ) {
-        self.resources.insert(
-            href.into(),
-            Resource {
-                data,
-                media_type: media_type.into(),
-            },
-        );
+    /// Reading order (spine).
+    pub fn spine(&self) -> &[SpineEntry] {
+        self.backend.spine()
     }
 
-    /// Get a resource by href
-    pub fn get_resource(&self, href: &str) -> Option<&Resource> {
-        self.resources.get(href)
+    /// Get the internal source path for a chapter.
+    pub fn source_id(&self, id: ChapterId) -> Option<&str> {
+        self.backend.source_id(id)
     }
 
-    /// Add a spine item
-    pub fn add_spine_item(
-        &mut self,
-        id: impl Into<String>,
-        href: impl Into<String>,
-        media_type: impl Into<String>,
-    ) {
-        self.spine.push(SpineItem {
-            id: id.into(),
-            href: href.into(),
-            media_type: media_type.into(),
-            linear: true,
-        });
+    /// Load raw chapter bytes.
+    pub fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
+        self.backend.load_raw(id)
+    }
+
+    /// Load an asset by path.
+    pub fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
+        self.backend.load_asset(path)
+    }
+
+    /// List all assets.
+    pub fn list_assets(&self) -> Vec<std::path::PathBuf> {
+        self.backend.list_assets()
     }
 }
+
+// ============================================================================
+// Builder Methods
+// ============================================================================
 
 impl Metadata {
     pub fn new(title: impl Into<String>) -> Self {

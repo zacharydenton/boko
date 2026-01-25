@@ -30,9 +30,9 @@ percent-encoding = "2.3"
 memchr = "2.7"
 bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 
-# CSS parsing and DOM-based selector matching
-cssparser = "0.27"
-kuchiki = "0.8"
+html5ever = "0.38"
+cssparser = "0.36"
+selectors = "0.35"
 
 # Base64 encoding for KFX raw media
 base64 = "0.22"
