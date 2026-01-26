@@ -795,6 +795,9 @@ fn build_chapter_entities_grouped(
 ) -> (KfxFragment, KfxFragment, Option<KfxFragment>) {
     use crate::kfx::storyline::{ir_to_tokens, tokens_to_ion};
 
+    // Check if this is a cover chapter (image-only)
+    let is_cover = is_image_only_chapter(chapter);
+
     // =========================================================================
     // 1. SETUP: Naming for this chapter's entity triad
     // =========================================================================
@@ -816,11 +819,18 @@ fn build_chapter_entities_grouped(
     // =========================================================================
     // 2. GENERATE: Schema-driven token generation + text/structure split
     // =========================================================================
-    let tokens = ir_to_tokens(chapter, ctx);
-    let storyline_content_list = tokens_to_ion(&tokens, ctx);
-
-    // Drain the accumulated text strings
-    let content_strings = ctx.drain_text();
+    let (storyline_content_list, content_strings) = if is_cover {
+        // For cover chapters, generate flat storyline with direct image
+        let content_list = build_cover_storyline(chapter, ctx);
+        let text = ctx.drain_text();
+        (content_list, text)
+    } else {
+        // Normal chapter: full token-based generation
+        let tokens = ir_to_tokens(chapter, ctx);
+        let content_list = tokens_to_ion(&tokens, ctx);
+        let text = ctx.drain_text();
+        (content_list, text)
+    };
 
     // =========================================================================
     // 3. ASSEMBLE: Package into three KFX Entities
@@ -855,17 +865,43 @@ fn build_chapter_entities_grouped(
     let storyline_fragment = KfxFragment::new(KfxSymbol::Storyline, &story_name, storyline_ion);
 
     // Entity C: SECTION ($260) - Entry point, references Storyline by story_name
-    let page_template = IonValue::Struct(vec![
-        (KfxSymbol::Id as u64, IonValue::Int(section_id as i64)),
-        (
-            KfxSymbol::StoryName as u64,
-            IonValue::Symbol(story_name_symbol),
-        ),
-        (
-            KfxSymbol::Type as u64,
-            IonValue::Symbol(KfxSymbol::Text as u64),
-        ),
-    ]);
+    let page_template = if is_cover {
+        // Cover page: container type with fixed dimensions and scale_fit layout
+        IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Int(section_id as i64)),
+            (
+                KfxSymbol::StoryName as u64,
+                IonValue::Symbol(story_name_symbol),
+            ),
+            (
+                KfxSymbol::Type as u64,
+                IonValue::Symbol(KfxSymbol::Container as u64),
+            ),
+            (KfxSymbol::FixedWidth as u64, IonValue::Int(1400)),
+            (KfxSymbol::FixedHeight as u64, IonValue::Int(2100)),
+            (
+                KfxSymbol::Layout as u64,
+                IonValue::Symbol(KfxSymbol::ScaleFit as u64),
+            ),
+            (
+                KfxSymbol::Float as u64,
+                IonValue::Symbol(KfxSymbol::Center as u64),
+            ),
+        ])
+    } else {
+        // Normal text page
+        IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Int(section_id as i64)),
+            (
+                KfxSymbol::StoryName as u64,
+                IonValue::Symbol(story_name_symbol),
+            ),
+            (
+                KfxSymbol::Type as u64,
+                IonValue::Symbol(KfxSymbol::Text as u64),
+            ),
+        ])
+    };
 
     let section_ion = IonValue::Struct(vec![
         (
@@ -885,6 +921,56 @@ fn build_chapter_entities_grouped(
     );
 
     (section_fragment, storyline_fragment, content_fragment)
+}
+
+/// Build a simplified storyline for cover chapters.
+///
+/// Cover pages have a flat structure with just the image directly in content_list,
+/// no container wrapper. Structure: [{ type: image, resource_name, style }]
+fn build_cover_storyline(chapter: &IRChapter, ctx: &mut ExportContext) -> IonValue {
+    use crate::ir::Role;
+
+    // Find the image node
+    for node_id in chapter.iter_dfs() {
+        let node = match chapter.node(node_id) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        if node.role == Role::Image {
+            // Get the image source
+            if let Some(src) = chapter.semantics.src(node_id) {
+                // Look up the resource name (e.g., "e0")
+                let resource_name = ctx.resource_registry.get_or_create_name(src);
+                let resource_name_symbol = ctx.symbols.get_or_intern(&resource_name);
+
+                // Register style and get symbol
+                let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
+
+                // Generate unique container ID
+                let container_id = ctx.fragment_ids.next();
+
+                // Build the image struct directly (no container wrapper)
+                let image_struct = IonValue::Struct(vec![
+                    (KfxSymbol::Id as u64, IonValue::Int(container_id as i64)),
+                    (KfxSymbol::Style as u64, IonValue::Symbol(style_symbol)),
+                    (
+                        KfxSymbol::Type as u64,
+                        IonValue::Symbol(KfxSymbol::Image as u64),
+                    ),
+                    (
+                        KfxSymbol::ResourceName as u64,
+                        IonValue::Symbol(resource_name_symbol),
+                    ),
+                ]);
+
+                return IonValue::List(vec![image_struct]);
+            }
+        }
+    }
+
+    // Fallback: empty list if no image found
+    IonValue::List(vec![])
 }
 
 /// Build the three KFX entities for a chapter: Content, Storyline, Section.
@@ -984,27 +1070,54 @@ fn build_chapter_entities(
 
 /// Build the document symbols section.
 ///
-/// This writes local symbols in a format compatible with `extract_doc_symbols`:
-/// - Ion BVM header
-/// - $ion_symbol_table annotation with imports and symbols
+/// This writes the local symbol table in the format expected by KFX readers:
+/// ```ion
+/// $ion_symbol_table::{
+///   imports: [{ name: "YJ_symbols", version: 10, max_id: 851 }],
+///   symbols: ["local_sym1", "local_sym2", ...]
+/// }
+/// ```
 ///
-/// The symbols list is written as consecutive Ion strings which
-/// `extract_doc_symbols` can find by scanning for type-8 (string) values.
+/// Ion system symbol IDs:
+/// - $3 = $ion_symbol_table
+/// - $4 = name
+/// - $5 = version
+/// - $6 = imports
+/// - $7 = symbols
+/// - $8 = max_id
 ///
 /// IMPORTANT: The symbols in the list must appear in the exact same order
 /// they were interned, so that symbol ID = KFX_SYMBOL_TABLE_SIZE + index.
 fn build_symbol_table_ion(local_symbols: &[String]) -> Vec<u8> {
     use crate::kfx::ion::IonWriter;
+    use crate::kfx::symbols::KFX_MAX_SYMBOL_ID;
 
     let mut writer = IonWriter::new();
     writer.write_bvm();
 
-    // Write each local symbol as a bare string.
-    // This is the format that extract_doc_symbols expects:
-    // just consecutive Ion strings that it can find by type scanning.
-    for sym in local_symbols {
-        writer.write_string(sym);
-    }
+    // Build the import entry for YJ_symbols (Amazon's KFX symbol table)
+    // { name: "YJ_symbols", version: 10, max_id: 851 }
+    let import_entry = IonValue::Struct(vec![
+        (4, IonValue::String("YJ_symbols".to_string())), // $4 = name
+        (5, IonValue::Int(10)),                          // $5 = version
+        (8, IonValue::Int(KFX_MAX_SYMBOL_ID as i64)),    // $8 = max_id
+    ]);
+
+    // Build the symbols list with local symbols
+    let symbols_list: Vec<IonValue> = local_symbols
+        .iter()
+        .map(|s| IonValue::String(s.clone()))
+        .collect();
+
+    // Build the $ion_symbol_table struct
+    // { imports: [...], symbols: [...] }
+    let symbol_table = IonValue::Struct(vec![
+        (6, IonValue::List(vec![import_entry])), // $6 = imports
+        (7, IonValue::List(symbols_list)),       // $7 = symbols
+    ]);
+
+    // Write with $ion_symbol_table annotation ($3)
+    writer.write_annotated(&[3], &symbol_table);
 
     writer.into_bytes()
 }
@@ -1254,6 +1367,45 @@ fn is_media_asset(path: &std::path::Path) -> bool {
         ext.to_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "svg" | "webp" | "ttf" | "otf" | "woff" | "woff2"
     )
+}
+
+/// Check if a chapter contains only an image and no text content.
+///
+/// Returns true if the chapter has:
+/// - Exactly one Image node
+/// - No text content (or whitespace-only text)
+///
+/// This is used to detect cover pages that need special KFX formatting.
+fn is_image_only_chapter(chapter: &IRChapter) -> bool {
+    use crate::ir::Role;
+
+    let mut image_count = 0;
+    let mut has_text = false;
+
+    for node_id in chapter.iter_dfs() {
+        let node = match chapter.node(node_id) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        match node.role {
+            Role::Image => {
+                image_count += 1;
+            }
+            Role::Text => {
+                // Check if there's actual text content (not just whitespace)
+                if !node.text.is_empty() {
+                    let text = chapter.text(node.text);
+                    if !text.trim().is_empty() {
+                        has_text = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    image_count == 1 && !has_text
 }
 
 /// Serialize fragments to entities.
