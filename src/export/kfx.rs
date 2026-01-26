@@ -214,7 +214,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // 2g. Anchor fragments (for internal link targets)
-    fragments.extend(build_anchor_fragments(&ctx));
+    fragments.extend(build_anchor_fragments(&mut ctx));
 
     // 2h. Navigation maps for reader functionality
     fragments.push(build_position_map_fragment(&ctx));
@@ -285,9 +285,18 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     // Record position for this node (for link targets)
     ctx.record_position(node_id);
 
-    // If node has an anchor ID, record it
+    // If node has an anchor ID, record it for link resolution
     if let Some(anchor_id) = chapter.semantics.id(node_id) {
         ctx.record_anchor(anchor_id, node_id);
+
+        // Also resolve in AnchorRegistry if this anchor is a link target
+        if ctx.anchor_registry.is_anchor_needed(anchor_id) {
+            ctx.anchor_registry.resolve_anchor(
+                anchor_id,
+                ctx.current_fragment_id(),
+                ctx.current_text_offset(),
+            );
+        }
     }
 
     // Intern semantic attributes
@@ -329,6 +338,9 @@ fn register_toc_symbols(entries: &[crate::book::TocEntry], ctx: &mut ExportConte
 
 /// Collect needed anchors from a chapter's href attributes.
 /// Anchors are only needed if they are targets of links.
+///
+/// Also registers link targets with the AnchorRegistry to generate
+/// anchor symbols for use in style_events.
 fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     if chapter.node(node_id).is_none() {
         return;
@@ -336,6 +348,10 @@ fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx
 
     // Check for href with fragment (internal link target)
     if let Some(href) = chapter.semantics.href(node_id) {
+        // Register with AnchorRegistry to generate a symbol for this link target
+        ctx.anchor_registry.register_link_target(href);
+
+        // Also register with the old system for backwards compatibility
         if let Some(hash_pos) = href.find('#') {
             let anchor = &href[hash_pos + 1..];
             if !anchor.is_empty() {
@@ -1196,29 +1212,29 @@ fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> 
 }
 
 /// Build anchor fragments ($266) for all recorded anchors.
-fn build_anchor_fragments(ctx: &ExportContext) -> Vec<KfxFragment> {
+fn build_anchor_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
     let mut fragments = Vec::new();
 
-    // Create anchor for each entry in the anchor_map
-    for (anchor_id, (chapter_id, node_id)) in &ctx.anchor_map {
-        // Look up the position for this anchor
-        if let Some(position) = ctx.position_map.get(&(*chapter_id, *node_id)) {
-            // Get the interned symbol for the anchor name
-            if let Some(anchor_symbol) = ctx.symbols.get(anchor_id) {
-                let mut pos_fields = Vec::new();
-                pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(position.fragment_id as i64)));
-                if position.offset > 0 {
-                    pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(position.offset as i64)));
-                }
+    // Get resolved anchors from the AnchorRegistry
+    let resolved_anchors = ctx.anchor_registry.drain_anchors();
 
-                let ion = IonValue::Struct(vec![
-                    (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol)),
-                    (KfxSymbol::Position as u64, IonValue::Struct(pos_fields)),
-                ]);
+    for anchor in resolved_anchors {
+        // Intern the anchor symbol to get its ID
+        let anchor_symbol_id = ctx.symbols.get_or_intern(&anchor.symbol);
 
-                fragments.push(KfxFragment::new(KfxSymbol::Anchor, anchor_id, ion));
-            }
+        // Build position struct
+        let mut pos_fields = Vec::new();
+        pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(anchor.fragment_id as i64)));
+        if anchor.offset > 0 {
+            pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
         }
+
+        let ion = IonValue::Struct(vec![
+            (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
+            (KfxSymbol::Position as u64, IonValue::Struct(pos_fields)),
+        ]);
+
+        fragments.push(KfxFragment::new(KfxSymbol::Anchor, &anchor.symbol, ion));
     }
 
     fragments

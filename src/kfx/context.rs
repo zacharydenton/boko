@@ -270,6 +270,139 @@ pub struct Position {
     pub offset: usize,
 }
 
+/// Resolved anchor with position information.
+#[derive(Debug, Clone)]
+pub struct AnchorPosition {
+    /// The anchor symbol name (e.g., "a0", "a1")
+    pub symbol: String,
+    /// The original anchor name from href fragment (e.g., "note-1")
+    pub anchor_name: String,
+    /// Fragment/section ID where this anchor lives
+    pub fragment_id: u64,
+    /// Byte offset within the fragment (0 if at start)
+    pub offset: usize,
+}
+
+/// Anchor registry for link resolution in KFX export.
+///
+/// KFX uses indirect anchor references: links point to anchor symbols,
+/// and anchor entities ($266) define where those symbols resolve to.
+///
+/// ## Example Flow
+///
+/// 1. Link `href="chapter2.xhtml#note-1"` → `register_link_target("chapter2.xhtml#note-1")`
+/// 2. Registry returns symbol "a0" for use in `link_to: a0`
+/// 3. Later, call `resolve_anchor("note-1", fragment_id, offset)` when position is known
+/// 4. At end, `drain_anchors()` returns entities to emit:
+///    `{ anchor_name: a0, position: { id: 204, offset: 123 } }`
+#[derive(Debug, Default)]
+pub struct AnchorRegistry {
+    /// href → anchor symbol name (e.g., "chapter2.xhtml#note-1" → "a0")
+    link_to_symbol: HashMap<String, String>,
+
+    /// anchor_name (fragment ID) → symbol (e.g., "note-1" → "a0")
+    /// Used for resolving when we encounter the target element
+    anchor_to_symbol: HashMap<String, String>,
+
+    /// Resolved anchors ready for entity emission
+    resolved: Vec<AnchorPosition>,
+
+    /// Counter for generating unique anchor symbols
+    next_anchor_id: usize,
+}
+
+impl AnchorRegistry {
+    /// Create a new empty anchor registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a link target and return its anchor symbol.
+    ///
+    /// Call this when encountering a link with href. Returns the symbol
+    /// to use in the `link_to` field of style_events.
+    ///
+    /// The href can be:
+    /// - Full path: "chapter2.xhtml#note-1"
+    /// - Fragment only: "#note-1"
+    /// - Path without fragment: "chapter2.xhtml"
+    pub fn register_link_target(&mut self, href: &str) -> String {
+        // Check if already registered
+        if let Some(symbol) = self.link_to_symbol.get(href) {
+            return symbol.clone();
+        }
+
+        // Generate new anchor symbol
+        let symbol = format!("a{:X}", self.next_anchor_id);
+        self.next_anchor_id += 1;
+
+        // Store href → symbol mapping
+        self.link_to_symbol.insert(href.to_string(), symbol.clone());
+
+        // Extract anchor name (fragment) if present and store reverse mapping
+        if let Some(fragment) = extract_fragment(href) {
+            self.anchor_to_symbol.insert(fragment.to_string(), symbol.clone());
+        }
+
+        symbol
+    }
+
+    /// Get the anchor symbol for a link target (if already registered).
+    pub fn get_symbol(&self, href: &str) -> Option<&str> {
+        self.link_to_symbol.get(href).map(|s| s.as_str())
+    }
+
+    /// Get the anchor symbol for an anchor name/fragment (if registered).
+    pub fn get_symbol_for_anchor(&self, anchor_name: &str) -> Option<&str> {
+        self.anchor_to_symbol.get(anchor_name).map(|s| s.as_str())
+    }
+
+    /// Resolve an anchor's position.
+    ///
+    /// Call this when we know where an anchor target lives (e.g., when
+    /// processing an element with `id="note-1"`).
+    pub fn resolve_anchor(&mut self, anchor_name: &str, fragment_id: u64, offset: usize) {
+        if let Some(symbol) = self.anchor_to_symbol.get(anchor_name).cloned() {
+            self.resolved.push(AnchorPosition {
+                symbol,
+                anchor_name: anchor_name.to_string(),
+                fragment_id,
+                offset,
+            });
+        }
+    }
+
+    /// Check if an anchor name is needed (has a link pointing to it).
+    pub fn is_anchor_needed(&self, anchor_name: &str) -> bool {
+        self.anchor_to_symbol.contains_key(anchor_name)
+    }
+
+    /// Drain all resolved anchors for entity emission.
+    pub fn drain_anchors(&mut self) -> Vec<AnchorPosition> {
+        std::mem::take(&mut self.resolved)
+    }
+
+    /// Get the number of registered link targets.
+    pub fn len(&self) -> usize {
+        self.link_to_symbol.len()
+    }
+
+    /// Check if the registry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.link_to_symbol.is_empty()
+    }
+}
+
+/// Extract the fragment (anchor) part from an href.
+///
+/// Examples:
+/// - "chapter2.xhtml#note-1" → Some("note-1")
+/// - "#note-1" → Some("note-1")
+/// - "chapter2.xhtml" → None
+fn extract_fragment(href: &str) -> Option<&str> {
+    href.find('#').map(|i| &href[i + 1..])
+}
+
 /// Central context for KFX export.
 ///
 /// All shared state flows through this context:
@@ -339,6 +472,10 @@ pub struct ExportContext {
 
     /// Style registry for deduplicating and tracking KFX styles.
     pub style_registry: StyleRegistry,
+
+    /// Anchor registry for link target resolution.
+    /// Maps link hrefs to anchor symbols and tracks positions for entity emission.
+    pub anchor_registry: AnchorRegistry,
 }
 
 impl ExportContext {
@@ -365,6 +502,7 @@ impl ExportContext {
             needed_anchors: HashSet::new(),
             default_style_symbol,
             style_registry: StyleRegistry::new(default_style_symbol),
+            anchor_registry: AnchorRegistry::new(),
         }
     }
 
@@ -526,6 +664,16 @@ impl ExportContext {
     /// Advance the text offset during survey (Pass 1).
     pub fn advance_text_offset(&mut self, text_len: usize) {
         self.current_text_offset += text_len;
+    }
+
+    /// Get the current fragment ID being surveyed.
+    pub fn current_fragment_id(&self) -> u64 {
+        self.current_fragment_id
+    }
+
+    /// Get the current text offset during survey.
+    pub fn current_text_offset(&self) -> usize {
+        self.current_text_offset
     }
 
     // =========================================================================

@@ -666,7 +666,7 @@ fn emit_span_for_export(
         spine_map: None,
         resource_registry: Some(&ctx.resource_registry),
     };
-    let kfx_attrs = sch.export_span_attributes(
+    let mut kfx_attrs = sch.export_span_attributes(
         node.role,
         |target| match target {
             SemanticTarget::Href => chapter.semantics.href(node_id).map(|s| s.to_string()),
@@ -676,6 +676,18 @@ fn emit_span_for_export(
         },
         &export_ctx,
     );
+
+    // Convert href values to anchor symbols via the AnchorRegistry.
+    // KFX uses indirect anchor references: link_to points to an anchor symbol,
+    // and anchor entities define where those symbols resolve to.
+    for (field_id, value) in &mut kfx_attrs {
+        if *field_id == sym!(LinkTo) {
+            // Register the link target and get an anchor symbol
+            let anchor_symbol = ctx.anchor_registry.register_link_target(value);
+            *value = anchor_symbol;
+        }
+    }
+
     span.kfx_attrs = kfx_attrs;
 
     // Populate semantics map
