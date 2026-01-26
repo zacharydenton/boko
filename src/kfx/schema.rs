@@ -268,18 +268,21 @@ impl KfxSchema {
             vec![],
         );
 
-        // Image with src attribute (using ResourceTransform)
+        // Image with src and alt attributes
         self.register_element(
             KfxSymbol::Image,
             Strategy::Structure {
                 role: Role::Image,
                 kfx_type: KfxSymbol::Image,
             },
-            vec![AttrRule::with_transform(
-                KfxSymbol::ResourceName,
-                SemanticTarget::Src,
-                Box::new(ResourceTransform),
-            )],
+            vec![
+                AttrRule::with_transform(
+                    KfxSymbol::ResourceName,
+                    SemanticTarget::Src,
+                    Box::new(ResourceTransform),
+                ),
+                AttrRule::new(KfxSymbol::AltText, SemanticTarget::Alt),
+            ],
         );
 
         // List (unordered by default)
@@ -614,9 +617,11 @@ mod tests {
         assert_eq!(role, Role::Image);
 
         let attrs = schema.element_attr_rules(KfxSymbol::Image as u32);
-        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs.len(), 2);
         assert_eq!(attrs[0].kfx_field, KfxSymbol::ResourceName);
         assert_eq!(attrs[0].target, SemanticTarget::Src);
+        assert_eq!(attrs[1].kfx_field, KfxSymbol::AltText);
+        assert_eq!(attrs[1].target, SemanticTarget::Alt);
     }
 
     #[test]
