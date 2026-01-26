@@ -16,6 +16,7 @@ use crate::kfx::serialization::{
     create_entity_data, generate_container_id, serialize_annotated_ion, serialize_container,
     SerializedEntity,
 };
+use crate::kfx::metadata::{build_category_entries, MetadataCategory};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
 use crate::util::detect_media_format;
@@ -304,53 +305,43 @@ fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
 }
 
 /// Build the book metadata fragment ($490) - contains categorised_metadata.
+///
+/// Uses the metadata schema to map IR metadata to KFX categories.
+/// To add new metadata fields, update the schema in `kfx/metadata.rs`.
 fn build_book_metadata_fragment(book: &Book) -> KfxFragment {
     let meta = book.metadata();
+    let version = env!("CARGO_PKG_VERSION");
 
-    // kindle_ebook_metadata category
-    let ebook_metadata = IonValue::Struct(vec![
-        (KfxSymbol::Category as u64, IonValue::String("kindle_ebook_metadata".to_string())),
-        (KfxSymbol::Metadata as u64, IonValue::List(vec![
-            metadata_kv("selection", "enabled"),
-            metadata_kv("nested_span", "enabled"),
-        ])),
-    ]);
-
-    // kindle_title_metadata category
-    let mut title_entries = vec![
-        metadata_kv("title", &meta.title),
-        metadata_kv("language", &meta.language),
+    // Build each category using the schema
+    let categories = [
+        MetadataCategory::KindleEbook,
+        MetadataCategory::KindleTitle,
+        MetadataCategory::KindleAudit,
     ];
 
-    if let Some(author) = meta.authors.first() {
-        title_entries.push(metadata_kv("author", author));
-    }
-    if let Some(description) = &meta.description {
-        title_entries.push(metadata_kv("description", description));
-    }
-    if let Some(publisher) = &meta.publisher {
-        title_entries.push(metadata_kv("publisher", publisher));
-    }
+    let categorised: Vec<IonValue> = categories
+        .iter()
+        .map(|&cat| {
+            let entries = build_category_entries(cat, meta, Some(version));
+            let ion_entries: Vec<IonValue> = entries
+                .into_iter()
+                .map(|(k, v)| metadata_kv(k, &v))
+                .collect();
 
-    let title_metadata = IonValue::Struct(vec![
-        (KfxSymbol::Category as u64, IonValue::String("kindle_title_metadata".to_string())),
-        (KfxSymbol::Metadata as u64, IonValue::List(title_entries)),
-    ]);
+            IonValue::Struct(vec![
+                (
+                    KfxSymbol::Category as u64,
+                    IonValue::String(cat.as_str().to_string()),
+                ),
+                (KfxSymbol::Metadata as u64, IonValue::List(ion_entries)),
+            ])
+        })
+        .collect();
 
-    // kindle_audit_metadata category (creator info)
-    let audit_metadata = IonValue::Struct(vec![
-        (KfxSymbol::Category as u64, IonValue::String("kindle_audit_metadata".to_string())),
-        (KfxSymbol::Metadata as u64, IonValue::List(vec![
-            metadata_kv("file_creator", "boko"),
-            metadata_kv("creator_version", env!("CARGO_PKG_VERSION")),
-        ])),
-    ]);
-
-    let categorised = IonValue::List(vec![ebook_metadata, title_metadata, audit_metadata]);
-
-    let book_metadata = IonValue::Struct(vec![
-        (KfxSymbol::CategorisedMetadata as u64, categorised),
-    ]);
+    let book_metadata = IonValue::Struct(vec![(
+        KfxSymbol::CategorisedMetadata as u64,
+        IonValue::List(categorised),
+    )]);
 
     KfxFragment::singleton(KfxSymbol::BookMetadata, book_metadata)
 }

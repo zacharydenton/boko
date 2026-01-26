@@ -12,6 +12,7 @@
 //! - `tokens` - Token stream for import/export
 //! - `storyline` - Storyline tokenization and IR building
 //! - `transforms` - Attribute value transformers for bidirectional conversion
+//! - `metadata` - Metadata schema for book metadata mapping
 //! - `fragment` - KFX fragment representation
 //! - `serialization` - Binary container format serialization
 //! - `context` - Export context for central state management
@@ -20,6 +21,7 @@ pub mod container;
 pub mod context;
 pub mod fragment;
 pub mod ion;
+pub mod metadata;
 pub mod schema;
 pub mod serialization;
 pub mod storyline;
