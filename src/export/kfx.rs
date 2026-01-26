@@ -16,7 +16,7 @@ use crate::kfx::serialization::{
     create_entity_data, generate_container_id, serialize_annotated_ion, serialize_container,
     SerializedEntity,
 };
-use crate::kfx::metadata::{build_category_entries, MetadataCategory};
+use crate::kfx::metadata::{build_category_entries, MetadataCategory, MetadataContext};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
 use crate::util::detect_media_format;
@@ -131,7 +131,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.push(build_metadata_fragment(&ctx));
 
     // 2b. Book metadata fragment ($490) - contains categorised_metadata
-    fragments.push(build_book_metadata_fragment(book));
+    fragments.push(build_book_metadata_fragment(book, &ctx));
 
     // 2c. Format capabilities fragment
     fragments.push(build_format_capabilities_fragment());
@@ -308,9 +308,19 @@ fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
 ///
 /// Uses the metadata schema to map IR metadata to KFX categories.
 /// To add new metadata fields, update the schema in `kfx/metadata.rs`.
-fn build_book_metadata_fragment(book: &Book) -> KfxFragment {
+fn build_book_metadata_fragment(book: &Book, ctx: &ExportContext) -> KfxFragment {
     let meta = book.metadata();
-    let version = env!("CARGO_PKG_VERSION");
+
+    // Build metadata context with transformed values
+    let cover_resource_name = meta
+        .cover_image
+        .as_ref()
+        .and_then(|path| ctx.resource_registry.get_name(path));
+
+    let meta_ctx = MetadataContext {
+        version: Some(env!("CARGO_PKG_VERSION")),
+        cover_resource_name,
+    };
 
     // Build each category using the schema
     let categories = [
@@ -322,7 +332,7 @@ fn build_book_metadata_fragment(book: &Book) -> KfxFragment {
     let categorised: Vec<IonValue> = categories
         .iter()
         .map(|&cat| {
-            let entries = build_category_entries(cat, meta, Some(version));
+            let entries = build_category_entries(cat, meta, &meta_ctx);
             let ion_entries: Vec<IonValue> = entries
                 .into_iter()
                 .map(|(k, v)| metadata_kv(k, &v))
@@ -854,8 +864,9 @@ mod tests {
     fn test_book_metadata_fragment_has_categorised_metadata() {
         // Load a real book from fixtures
         let book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let ctx = ExportContext::new();
 
-        let frag = build_book_metadata_fragment(&book);
+        let frag = build_book_metadata_fragment(&book, &ctx);
 
         // Should be $490 (book_metadata) type
         assert_eq!(frag.ftype, KfxSymbol::BookMetadata as u64);

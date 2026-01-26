@@ -58,6 +58,7 @@ pub enum MetadataField {
     Publisher,
     Identifier,
     Date,
+    CoverImage,
 }
 
 impl MetadataField {
@@ -90,6 +91,7 @@ impl MetadataField {
                 }
             }
             MetadataField::Date => meta.date.as_deref(),
+            MetadataField::CoverImage => meta.cover_image.as_deref(),
         }
     }
 }
@@ -126,6 +128,16 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
             category: MetadataCategory::KindleTitle,
             source: MetadataSource::Dynamic(MetadataField::Publisher),
         },
+        MetadataRule {
+            key: "issue_date",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::Date),
+        },
+        MetadataRule {
+            key: "cover_image",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::CoverImage),
+        },
         // kindle_ebook_metadata category
         MetadataRule {
             key: "selection",
@@ -146,6 +158,18 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
     ]
 }
 
+/// Context for metadata entry building.
+///
+/// This provides values that need transformation during export,
+/// such as resource names that are generated during the export process.
+#[derive(Debug, Default)]
+pub struct MetadataContext<'a> {
+    /// Version string for audit metadata.
+    pub version: Option<&'a str>,
+    /// Cover image resource name (e.g., "e6"), not the path.
+    pub cover_resource_name: Option<&'a str>,
+}
+
 /// Build metadata entries for a category from the schema.
 ///
 /// This is a pure function that applies the schema rules to extract
@@ -155,7 +179,7 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
 ///
 /// * `category` - The category to build entries for
 /// * `meta` - The book's metadata
-/// * `version` - Optional version string for audit metadata
+/// * `ctx` - Export context with transformed values (version, cover resource name)
 ///
 /// # Returns
 ///
@@ -163,7 +187,7 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
 pub fn build_category_entries(
     category: MetadataCategory,
     meta: &Metadata,
-    version: Option<&str>,
+    ctx: &MetadataContext,
 ) -> Vec<(&'static str, String)> {
     let schema = metadata_schema();
     let mut entries = Vec::new();
@@ -171,7 +195,16 @@ pub fn build_category_entries(
     for rule in schema.iter().filter(|r| r.category == category) {
         let value = match &rule.source {
             MetadataSource::Static(s) => Some(s.to_string()),
-            MetadataSource::Dynamic(field) => field.extract(meta).map(|s| s.to_string()),
+            MetadataSource::Dynamic(field) => {
+                // Special handling for fields that need transformation
+                match field {
+                    MetadataField::CoverImage => {
+                        // Use the resource name from context, not the path from metadata
+                        ctx.cover_resource_name.map(|s| s.to_string())
+                    }
+                    _ => field.extract(meta).map(|s| s.to_string()),
+                }
+            }
         };
 
         if let Some(v) = value {
@@ -181,7 +214,7 @@ pub fn build_category_entries(
 
     // Special case: add version to audit metadata
     if category == MetadataCategory::KindleAudit {
-        if let Some(v) = version {
+        if let Some(v) = ctx.version {
             entries.push(("creator_version", v.to_string()));
         }
     }
@@ -223,7 +256,8 @@ mod tests {
             ..Default::default()
         };
 
-        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, None);
+        let ctx = MetadataContext::default();
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
 
         // Should have title, language, author (but not description/publisher since they're None)
         assert!(entries.iter().any(|(k, v)| *k == "title" && v == "Test Book"));
@@ -235,7 +269,8 @@ mod tests {
     #[test]
     fn test_build_ebook_entries() {
         let meta = Metadata::default();
-        let entries = build_category_entries(MetadataCategory::KindleEbook, &meta, None);
+        let ctx = MetadataContext::default();
+        let entries = build_category_entries(MetadataCategory::KindleEbook, &meta, &ctx);
 
         assert!(entries
             .iter()
@@ -248,7 +283,11 @@ mod tests {
     #[test]
     fn test_build_audit_entries_with_version() {
         let meta = Metadata::default();
-        let entries = build_category_entries(MetadataCategory::KindleAudit, &meta, Some("1.0.0"));
+        let ctx = MetadataContext {
+            version: Some("1.0.0"),
+            ..Default::default()
+        };
+        let entries = build_category_entries(MetadataCategory::KindleAudit, &meta, &ctx);
 
         assert!(entries
             .iter()
@@ -256,6 +295,47 @@ mod tests {
         assert!(entries
             .iter()
             .any(|(k, v)| *k == "creator_version" && v == "1.0.0"));
+    }
+
+    #[test]
+    fn test_build_entries_with_cover_image() {
+        let meta = Metadata {
+            title: "Test".to_string(),
+            language: "en".to_string(),
+            cover_image: Some("images/cover.jpg".to_string()),
+            ..Default::default()
+        };
+
+        // Without resource name in context, cover_image should not appear
+        let ctx = MetadataContext::default();
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
+        assert!(!entries.iter().any(|(k, _)| *k == "cover_image"));
+
+        // With resource name in context, cover_image should use the resource name
+        let ctx = MetadataContext {
+            cover_resource_name: Some("e6"),
+            ..Default::default()
+        };
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
+        assert!(entries
+            .iter()
+            .any(|(k, v)| *k == "cover_image" && v == "e6"));
+    }
+
+    #[test]
+    fn test_build_entries_with_issue_date() {
+        let meta = Metadata {
+            title: "Test".to_string(),
+            language: "en".to_string(),
+            date: Some("2022-05-26".to_string()),
+            ..Default::default()
+        };
+
+        let ctx = MetadataContext::default();
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
+        assert!(entries
+            .iter()
+            .any(|(k, v)| *k == "issue_date" && v == "2022-05-26"));
     }
 
     #[test]
