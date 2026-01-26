@@ -121,14 +121,14 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
     let mut fragments = Vec::new();
 
-    // 2a. Metadata fragment
-    fragments.push(build_metadata_fragment(book));
+    // 2a. Metadata fragment ($258) - contains reading_orders
+    fragments.push(build_metadata_fragment(&ctx));
 
-    // 2b. Format capabilities fragment
+    // 2b. Book metadata fragment ($490) - contains categorised_metadata
+    fragments.push(build_book_metadata_fragment(book));
+
+    // 2c. Format capabilities fragment
     fragments.push(build_format_capabilities_fragment());
-
-    // 2c. Reading order fragment (uses ctx.section_ids)
-    fragments.push(build_reading_orders_fragment(book, &ctx));
 
     // 2d. Book navigation fragment (uses ctx.position_map for TOC links)
     fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
@@ -271,46 +271,91 @@ fn register_toc_symbols(entries: &[crate::book::TocEntry], ctx: &mut ExportConte
     }
 }
 
-/// Build the metadata fragment.
-fn build_metadata_fragment(book: &Book) -> KfxFragment {
-    let mut fields = Vec::new();
-    let meta = book.metadata();
+/// Build the metadata fragment ($258) - contains reading_orders.
+fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
+    // Build section list from context's registered sections
+    let sections: Vec<IonValue> = ctx.section_ids
+        .iter()
+        .map(|&id| IonValue::Symbol(id))
+        .collect();
 
-    // Add title
-    fields.push((
-        KfxSymbol::Title as u64,
-        IonValue::String(meta.title.clone()),
-    ));
+    // reading_order_name should be a STRING (not a symbol) per KFX spec
+    let reading_order = IonValue::Struct(vec![
+        (
+            KfxSymbol::ReadingOrderName as u64,
+            IonValue::Symbol(KfxSymbol::Default as u64),
+        ),
+        (KfxSymbol::Sections as u64, IonValue::List(sections)),
+    ]);
 
-    // Add author if present (first author only for simplicity)
-    if let Some(author) = meta.authors.first() {
-        fields.push((
-            KfxSymbol::Author as u64,
-            IonValue::String(author.clone()),
-        ));
-    }
+    let reading_orders = IonValue::List(vec![reading_order]);
 
-    // Add language
-    fields.push((
-        KfxSymbol::Language as u64,
-        IonValue::String(meta.language.clone()),
-    ));
-
-    // Add publisher if present
-    if let Some(publisher) = &meta.publisher {
-        fields.push((
-            KfxSymbol::Publisher as u64,
-            IonValue::String(publisher.to_string()),
-        ));
-    }
-
-    // Create book_metadata wrapper
-    let book_metadata = IonValue::Struct(fields);
-
-    // Wrap in metadata struct
-    let metadata = IonValue::Struct(vec![(KfxSymbol::BookMetadata as u64, book_metadata)]);
+    // $258 (metadata) contains reading_orders directly
+    let metadata = IonValue::Struct(vec![
+        (KfxSymbol::ReadingOrders as u64, reading_orders),
+    ]);
 
     KfxFragment::singleton(KfxSymbol::Metadata, metadata)
+}
+
+/// Build the book metadata fragment ($490) - contains categorised_metadata.
+fn build_book_metadata_fragment(book: &Book) -> KfxFragment {
+    let meta = book.metadata();
+
+    // kindle_ebook_metadata category
+    let ebook_metadata = IonValue::Struct(vec![
+        (KfxSymbol::Category as u64, IonValue::String("kindle_ebook_metadata".to_string())),
+        (KfxSymbol::Metadata as u64, IonValue::List(vec![
+            metadata_kv("selection", "enabled"),
+            metadata_kv("nested_span", "enabled"),
+        ])),
+    ]);
+
+    // kindle_title_metadata category
+    let mut title_entries = vec![
+        metadata_kv("title", &meta.title),
+        metadata_kv("language", &meta.language),
+    ];
+
+    if let Some(author) = meta.authors.first() {
+        title_entries.push(metadata_kv("author", author));
+    }
+    if let Some(description) = &meta.description {
+        title_entries.push(metadata_kv("description", description));
+    }
+    if let Some(publisher) = &meta.publisher {
+        title_entries.push(metadata_kv("publisher", publisher));
+    }
+
+    let title_metadata = IonValue::Struct(vec![
+        (KfxSymbol::Category as u64, IonValue::String("kindle_title_metadata".to_string())),
+        (KfxSymbol::Metadata as u64, IonValue::List(title_entries)),
+    ]);
+
+    // kindle_audit_metadata category (creator info)
+    let audit_metadata = IonValue::Struct(vec![
+        (KfxSymbol::Category as u64, IonValue::String("kindle_audit_metadata".to_string())),
+        (KfxSymbol::Metadata as u64, IonValue::List(vec![
+            metadata_kv("file_creator", "boko"),
+            metadata_kv("creator_version", env!("CARGO_PKG_VERSION")),
+        ])),
+    ]);
+
+    let categorised = IonValue::List(vec![ebook_metadata, title_metadata, audit_metadata]);
+
+    let book_metadata = IonValue::Struct(vec![
+        (KfxSymbol::CategorisedMetadata as u64, categorised),
+    ]);
+
+    KfxFragment::singleton(KfxSymbol::BookMetadata, book_metadata)
+}
+
+/// Helper to create a metadata key-value struct.
+fn metadata_kv(key: &str, value: &str) -> IonValue {
+    IonValue::Struct(vec![
+        (KfxSymbol::Key as u64, IonValue::String(key.to_string())),
+        (KfxSymbol::Value as u64, IonValue::String(value.to_string())),
+    ])
 }
 
 /// Build the format capabilities fragment.
@@ -325,40 +370,6 @@ fn build_format_capabilities_fragment() -> KfxFragment {
     ]);
 
     KfxFragment::singleton(KfxSymbol::FormatCapabilities, format_caps)
-}
-
-/// Build the reading orders fragment.
-fn build_reading_orders_fragment(book: &Book, ctx: &ExportContext) -> KfxFragment {
-    // Build section list from context's registered sections
-    let sections: Vec<IonValue> = if ctx.section_ids.is_empty() {
-        // Fallback: use spine indices if no sections registered
-        book.spine()
-            .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                IonValue::Symbol(crate::kfx::symbols::KFX_SYMBOL_TABLE_SIZE as u64 + i as u64)
-            })
-            .collect()
-    } else {
-        ctx.section_ids
-            .iter()
-            .map(|&id| IonValue::Symbol(id))
-            .collect()
-    };
-
-    // reading_order_name should be a STRING (not a symbol) per KFX spec
-    // Only the section REFERENCES need to be symbols
-    let reading_order = IonValue::Struct(vec![
-        (
-            KfxSymbol::ReadingOrderName as u64,
-            IonValue::String("default".to_string()),
-        ),
-        (KfxSymbol::Sections as u64, IonValue::List(sections)),
-    ]);
-
-    let reading_orders = IonValue::List(vec![reading_order]);
-
-    KfxFragment::singleton(KfxSymbol::ReadingOrders, reading_orders)
 }
 
 /// Build the book navigation fragment with resolved positions.
@@ -833,5 +844,98 @@ mod tests {
 
         // Should start with Ion BVM
         assert_eq!(&ion[..4], &[0xe0, 0x01, 0x00, 0xea]);
+    }
+
+    #[test]
+    fn test_metadata_fragment_contains_reading_orders() {
+        let mut ctx = ExportContext::new();
+        // Register some sections
+        ctx.register_section("c0");
+        ctx.register_section("c1");
+
+        let frag = build_metadata_fragment(&ctx);
+
+        // Should be $258 (metadata) type
+        assert_eq!(frag.ftype, KfxSymbol::Metadata as u64);
+        assert!(frag.is_singleton());
+
+        // Extract Ion and verify structure
+        if let crate::kfx::fragment::FragmentData::Ion(ion) = &frag.data {
+            if let IonValue::Struct(fields) = ion {
+                // Should have reading_orders field
+                let has_reading_orders = fields
+                    .iter()
+                    .any(|(id, _)| *id == KfxSymbol::ReadingOrders as u64);
+                assert!(has_reading_orders, "metadata should contain reading_orders");
+            } else {
+                panic!("expected Struct");
+            }
+        } else {
+            panic!("expected Ion data");
+        }
+    }
+
+    #[test]
+    fn test_book_metadata_fragment_has_categorised_metadata() {
+        // Load a real book from fixtures
+        let book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+
+        let frag = build_book_metadata_fragment(&book);
+
+        // Should be $490 (book_metadata) type
+        assert_eq!(frag.ftype, KfxSymbol::BookMetadata as u64);
+        assert!(frag.is_singleton());
+
+        // Extract Ion and verify structure
+        if let crate::kfx::fragment::FragmentData::Ion(ion) = &frag.data {
+            if let IonValue::Struct(fields) = ion {
+                // Should have categorised_metadata field
+                let has_categorised = fields
+                    .iter()
+                    .any(|(id, _)| *id == KfxSymbol::CategorisedMetadata as u64);
+                assert!(has_categorised, "book_metadata should contain categorised_metadata");
+
+                // Get the categorised_metadata list
+                let categorised = fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::CategorisedMetadata as u64)
+                    .map(|(_, v)| v);
+
+                if let Some(IonValue::List(categories)) = categorised {
+                    // Should have 3 categories
+                    assert_eq!(categories.len(), 3, "should have 3 metadata categories");
+                } else {
+                    panic!("categorised_metadata should be a list");
+                }
+            } else {
+                panic!("expected Struct");
+            }
+        } else {
+            panic!("expected Ion data");
+        }
+    }
+
+    #[test]
+    fn test_metadata_kv_helper() {
+        let kv = metadata_kv("test_key", "test_value");
+
+        if let IonValue::Struct(fields) = kv {
+            assert_eq!(fields.len(), 2);
+
+            let key_field = fields.iter().find(|(id, _)| *id == KfxSymbol::Key as u64);
+            let value_field = fields.iter().find(|(id, _)| *id == KfxSymbol::Value as u64);
+
+            assert!(key_field.is_some(), "should have key field");
+            assert!(value_field.is_some(), "should have value field");
+
+            if let Some((_, IonValue::String(k))) = key_field {
+                assert_eq!(k, "test_key");
+            }
+            if let Some((_, IonValue::String(v))) = value_field {
+                assert_eq!(v, "test_value");
+            }
+        } else {
+            panic!("expected Struct");
+        }
     }
 }
