@@ -110,13 +110,16 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     register_toc_symbols(book.toc(), &mut ctx);
 
     // 1c. Register resource paths and create short names
+    // IMPORTANT: Short names must be interned during Pass 1 to ensure
+    // consistent symbol IDs when they're referenced later in storylines
     let asset_paths: Vec<_> = book.list_assets();
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
             let href = asset_path.to_string_lossy().to_string();
             ctx.resource_registry.register(&href, &mut ctx.symbols);
-            // Pre-create the short name so it's available for metadata lookup
-            ctx.resource_registry.get_or_create_name(&href);
+            // Create and intern the short name (e.g., "e0")
+            let short_name = ctx.resource_registry.get_or_create_name(&href);
+            ctx.symbols.get_or_intern(&short_name);
         }
     }
 

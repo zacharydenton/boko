@@ -68,33 +68,28 @@ fn main() -> IonResult<()> {
     Ok(())
 }
 
-/// Read a little-endian u16 from a slice
-fn read_u16_le(data: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([data[offset], data[offset + 1]])
+/// Read a little-endian u16 from a slice with bounds checking
+fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset + 2)?
+        .try_into()
+        .ok()
+        .map(u16::from_le_bytes)
 }
 
-/// Read a little-endian u32 from a slice
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ])
+/// Read a little-endian u32 from a slice with bounds checking
+fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
+    data.get(offset..offset + 4)?
+        .try_into()
+        .ok()
+        .map(u32::from_le_bytes)
 }
 
-/// Read a little-endian u64 from a slice
-fn read_u64_le(data: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-        data[offset + 4],
-        data[offset + 5],
-        data[offset + 6],
-        data[offset + 7],
-    ])
+/// Read a little-endian u64 from a slice with bounds checking
+fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
+    data.get(offset..offset + 8)?
+        .try_into()
+        .ok()
+        .map(u64::from_le_bytes)
 }
 
 /// Parse and dump a KFX container file
@@ -104,11 +99,23 @@ fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
         return Ok(());
     }
 
-    // Parse container header
-    let version = read_u16_le(data, 4);
-    let header_len = read_u32_le(data, 6) as usize;
-    let container_info_offset = read_u32_le(data, 10) as usize;
-    let container_info_length = read_u32_le(data, 14) as usize;
+    // Parse container header with bounds checking
+    let Some(version) = read_u16_le(data, 4) else {
+        eprintln!("Failed to read container version");
+        return Ok(());
+    };
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
 
     eprintln!("Container version: {}", version);
     eprintln!("Header length: {}", header_len);
@@ -156,12 +163,15 @@ fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
                     break;
                 }
 
-                let id_idnum = read_u32_le(data, entry_offset);
-                let type_idnum = read_u32_le(data, entry_offset + 4);
-                let entity_offset = read_u64_le(data, entry_offset + 8) as usize;
-                let entity_len = read_u64_le(data, entry_offset + 16) as usize;
+                // Read entity index entry with bounds checking
+                let Some(id_idnum) = read_u32_le(data, entry_offset) else { continue };
+                let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+                let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+                let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
 
                 // Get symbol names if available
+                // Note: These are raw symbol IDs from the container. The display
+                // is for debugging purposes only.
                 let id_name = if (id_idnum as usize) < KFX_SYMBOL_TABLE.len() {
                     KFX_SYMBOL_TABLE[id_idnum as usize]
                 } else {
@@ -217,7 +227,7 @@ fn parse_container_info_for_index(data: &[u8]) -> Option<(usize, usize)> {
     let mut reader = reader.unwrap();
 
     // Read the struct and extract key fields
-    // $412 = bcIndexTabOffset, $413 = bcIndexTabLength
+    // $413 = bcIndexTabOffset, $414 = bcIndexTabLength
     let mut index_offset: Option<usize> = None;
     let mut index_length: Option<usize> = None;
 
@@ -359,8 +369,14 @@ fn dump_entity(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
         return Ok(());
     }
 
-    let version = read_u16_le(data, 4);
-    let entity_header_len = read_u32_le(data, 6) as usize;
+    let Some(version) = read_u16_le(data, 4) else {
+        eprintln!("  Failed to read ENTY version");
+        return Ok(());
+    };
+    let Some(entity_header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("  Failed to read ENTY header length");
+        return Ok(());
+    };
 
     eprintln!("  ENTY version: {}", version);
     eprintln!("  ENTY header length: {}", entity_header_len);

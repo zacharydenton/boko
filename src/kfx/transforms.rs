@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use crate::kfx::context::ResourceRegistry;
+
 /// Context provided during import transformation.
 #[derive(Debug, Default)]
 pub struct ImportContext<'a> {
@@ -25,10 +27,21 @@ pub struct ImportContext<'a> {
 }
 
 /// Context provided during export transformation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ExportContext<'a> {
     /// Spine map for resolving chapter references to positions.
     pub spine_map: Option<&'a std::collections::HashMap<String, u32>>,
+    /// Resource registry for looking up short resource names.
+    pub resource_registry: Option<&'a ResourceRegistry>,
+}
+
+impl<'a> Default for ExportContext<'a> {
+    fn default() -> Self {
+        Self {
+            spine_map: None,
+            resource_registry: None,
+        }
+    }
 }
 
 /// Result of parsing an attribute value.
@@ -277,6 +290,9 @@ fn encode_kfx_link(link: &LinkData) -> String {
 }
 
 /// Transformer for image resource references.
+///
+/// On import: passes through the short resource name (e.g., "e6")
+/// On export: looks up the short name in ResourceRegistry (e.g., "epub/images/cover.jpg" → "e0")
 #[derive(Debug, Clone)]
 pub struct ResourceTransform;
 
@@ -286,9 +302,18 @@ impl AttributeTransform for ResourceTransform {
         ParsedAttribute::String(raw_value.to_string())
     }
 
-    fn export(&self, data: &ParsedAttribute, _context: &ExportContext) -> String {
+    fn export(&self, data: &ParsedAttribute, context: &ExportContext) -> String {
         match data {
-            ParsedAttribute::String(s) => s.clone(),
+            ParsedAttribute::String(s) => {
+                // Look up the short resource name if we have a registry
+                if let Some(registry) = context.resource_registry {
+                    if let Some(short_name) = registry.get_name(s) {
+                        return short_name.to_string();
+                    }
+                }
+                // Fallback: return as-is (shouldn't happen in normal export)
+                s.clone()
+            }
             _ => String::new(),
         }
     }

@@ -134,6 +134,7 @@ impl Default for IdGenerator {
 }
 
 /// Resource registry for tracking resources (images, fonts, etc.).
+#[derive(Debug)]
 pub struct ResourceRegistry {
     /// href → resource symbol ID
     resources: HashMap<String, u64>,

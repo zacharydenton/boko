@@ -516,7 +516,10 @@ fn walk_node_for_export(
 
     // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
     // Create a closure to get semantic values by target
-    let export_ctx = crate::kfx::transforms::ExportContext::default();
+    let export_ctx = crate::kfx::transforms::ExportContext {
+        spine_map: None,
+        resource_registry: Some(&ctx.resource_registry),
+    };
     let kfx_attrs = sch.export_attributes(
         node.role,
         |target| match target {
@@ -600,8 +603,17 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Add schema-driven attributes from kfx_attrs
                 // The schema handles Image src→resource_name, Link href→link_to, etc.
                 for (field_id, value_str) in &elem.kfx_attrs {
-                    // Intern the value as a symbol if it looks like a reference
-                    if value_str.starts_with('#') || value_str.contains('/') {
+                    // Determine if this field should be a symbol or string
+                    // - ResourceName: always symbol (e.g., e0, e1)
+                    // - LinkTo: always symbol (anchor references)
+                    // - References with # or /: symbol
+                    // - Alt text, other strings: string
+                    let is_symbol_field = *field_id == sym!(ResourceName)
+                        || *field_id == sym!(LinkTo)
+                        || value_str.starts_with('#')
+                        || value_str.contains('/');
+
+                    if is_symbol_field {
                         let sym_id = ctx.symbols.get_or_intern(value_str);
                         fields.push((*field_id, IonValue::Symbol(sym_id)));
                     } else {
