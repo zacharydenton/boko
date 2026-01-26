@@ -745,14 +745,16 @@ fn build_external_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportCon
 
 /// Build a resource fragment (bcRawMedia $417) - the actual bytes.
 fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> KfxFragment {
-    // Use the same resource name as external_resource
+    // Use resource/ prefix to distinguish from external_resource fragment
+    // This ensures bcRawMedia gets a different entity ID
     let resource_name = generate_resource_name(href, ctx);
+    let raw_name = format!("resource/{}", resource_name);
 
-    // Register the resource
-    ctx.resource_registry.register(href, &mut ctx.symbols);
+    // Register the prefixed name as a symbol
+    ctx.symbols.get_or_intern(&raw_name);
 
     // Create raw fragment for binary resources
-    KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &resource_name, data.to_vec())
+    KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &raw_name, data.to_vec())
 }
 
 /// Build anchor fragments ($266) for all recorded anchors.
@@ -1014,5 +1016,47 @@ mod tests {
         } else {
             panic!("expected Ion data");
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_export_tests {
+    use super::*;
+    use crate::book::Book;
+
+    #[test]
+    fn test_kfx_export_includes_images() {
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let data = build_kfx_container(&mut book).unwrap();
+        
+        // KFX should be > 400KB (images alone are ~401KB)
+        assert!(data.len() > 400000, 
+            "KFX should include image data, got {} bytes", data.len());
+    }
+
+    #[test]
+    fn test_kfx_asset_roundtrip() {
+        // Export EPUB to KFX
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let kfx_data = build_kfx_container(&mut book).unwrap();
+        
+        // Write to temp file and re-open
+        let temp_path = std::env::temp_dir().join("test_roundtrip.kfx");
+        std::fs::write(&temp_path, &kfx_data).unwrap();
+        
+        let mut reimported = Book::open(&temp_path).unwrap();
+        let assets = reimported.list_assets();
+        
+        // Load all assets and verify total size
+        let total_size: usize = assets.iter()
+            .filter_map(|a| reimported.load_asset(a).ok())
+            .map(|d| d.len())
+            .sum();
+        
+        std::fs::remove_file(&temp_path).ok();
+        
+        // Should have ~401KB of image data
+        assert!(total_size > 100000, 
+            "Expected > 100KB of assets from KFX, got {} bytes", total_size);
     }
 }
