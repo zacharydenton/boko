@@ -163,43 +163,148 @@ fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+// ============================================================================
+// Resource Format Detection
+// ============================================================================
+
+/// Detected resource format.
+///
+/// This enum represents media formats commonly found in ebooks.
+/// Detection is done via file extension or magic bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaFormat {
+    /// JPEG image
+    Jpeg,
+    /// PNG image
+    Png,
+    /// GIF image
+    Gif,
+    /// SVG image (vector)
+    Svg,
+    /// WebP image
+    WebP,
+    /// TrueType font
+    Ttf,
+    /// OpenType font
+    Otf,
+    /// Unknown/binary format
+    Binary,
+}
+
+impl MediaFormat {
+    /// Get the MIME type string for this format.
+    pub fn mime_type(self) -> &'static str {
+        match self {
+            MediaFormat::Jpeg => "image/jpeg",
+            MediaFormat::Png => "image/png",
+            MediaFormat::Gif => "image/gif",
+            MediaFormat::Svg => "image/svg+xml",
+            MediaFormat::WebP => "image/webp",
+            MediaFormat::Ttf => "font/ttf",
+            MediaFormat::Otf => "font/otf",
+            MediaFormat::Binary => "application/octet-stream",
+        }
+    }
+
+    /// Check if this format represents an image.
+    pub fn is_image(self) -> bool {
+        matches!(
+            self,
+            MediaFormat::Jpeg
+                | MediaFormat::Png
+                | MediaFormat::Gif
+                | MediaFormat::Svg
+                | MediaFormat::WebP
+        )
+    }
+
+    /// Check if this format represents a font.
+    pub fn is_font(self) -> bool {
+        matches!(self, MediaFormat::Ttf | MediaFormat::Otf)
+    }
+}
+
+/// Detect resource format from file path and/or raw bytes.
+///
+/// This is a pure function that encapsulates all format detection logic.
+/// It tries extension-based detection first, then falls back to magic bytes.
+///
+/// # Arguments
+///
+/// * `path` - The resource path/href (used for extension detection)
+/// * `data` - The raw resource bytes (used for magic byte detection)
+///
+/// # Returns
+///
+/// The detected `MediaFormat`, or `Binary` if unknown.
+pub fn detect_media_format(path: &str, data: &[u8]) -> MediaFormat {
+    // Try extension-based detection first (faster, most common case)
+    let path_lower = path.to_lowercase();
+
+    if path_lower.ends_with(".jpg") || path_lower.ends_with(".jpeg") {
+        return MediaFormat::Jpeg;
+    }
+    if path_lower.ends_with(".png") {
+        return MediaFormat::Png;
+    }
+    if path_lower.ends_with(".gif") {
+        return MediaFormat::Gif;
+    }
+    if path_lower.ends_with(".svg") {
+        return MediaFormat::Svg;
+    }
+    if path_lower.ends_with(".webp") {
+        return MediaFormat::WebP;
+    }
+    if path_lower.ends_with(".ttf") {
+        return MediaFormat::Ttf;
+    }
+    if path_lower.ends_with(".otf") {
+        return MediaFormat::Otf;
+    }
+
+    // Fallback to magic byte detection
+    if data.len() >= 4 {
+        // JPEG: FF D8 FF
+        if data[0] == 0xFF && data[1] == 0xD8 {
+            return MediaFormat::Jpeg;
+        }
+        // PNG: 89 50 4E 47 (.PNG)
+        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+            return MediaFormat::Png;
+        }
+        // GIF: 47 49 46 (GIF)
+        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+            return MediaFormat::Gif;
+        }
+        // WebP: 52 49 46 46 ... 57 45 42 50 (RIFF...WEBP)
+        if data.len() >= 12
+            && data[0] == 0x52
+            && data[1] == 0x49
+            && data[2] == 0x46
+            && data[3] == 0x46
+            && data[8] == 0x57
+            && data[9] == 0x45
+            && data[10] == 0x42
+            && data[11] == 0x50
+        {
+            return MediaFormat::WebP;
+        }
+    }
+
+    MediaFormat::Binary
+}
+
 /// Detect MIME type from file extension or magic bytes.
 ///
 /// Returns a static string like "image/jpeg", "image/png", etc.
+/// Returns `None` if the format is unknown.
 pub fn detect_mime_type(filename: &str, data: &[u8]) -> Option<&'static str> {
-    let filename_lower = filename.to_lowercase();
-
-    // Check by extension first
-    if filename_lower.ends_with(".jpg") || filename_lower.ends_with(".jpeg") {
-        return Some("image/jpeg");
+    let format = detect_media_format(filename, data);
+    match format {
+        MediaFormat::Binary => None,
+        other => Some(other.mime_type()),
     }
-    if filename_lower.ends_with(".png") {
-        return Some("image/png");
-    }
-    if filename_lower.ends_with(".gif") {
-        return Some("image/gif");
-    }
-    if filename_lower.ends_with(".svg") {
-        return Some("image/svg+xml");
-    }
-    if filename_lower.ends_with(".webp") {
-        return Some("image/webp");
-    }
-
-    // Check magic bytes
-    if data.len() >= 4 {
-        if data[0] == 0xFF && data[1] == 0xD8 {
-            return Some("image/jpeg");
-        }
-        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-            return Some("image/png");
-        }
-        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-            return Some("image/gif");
-        }
-    }
-
-    None
 }
 
 // ============================================================================
@@ -248,4 +353,70 @@ pub fn extract_xml_encoding(bytes: &[u8]) -> Option<&str> {
         + value_start;
 
     std::str::from_utf8(&after_enc[value_start..value_end]).ok()
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_media_format_by_extension() {
+        assert_eq!(detect_media_format("image.jpg", &[]), MediaFormat::Jpeg);
+        assert_eq!(detect_media_format("image.JPEG", &[]), MediaFormat::Jpeg);
+        assert_eq!(detect_media_format("image.png", &[]), MediaFormat::Png);
+        assert_eq!(detect_media_format("image.gif", &[]), MediaFormat::Gif);
+        assert_eq!(detect_media_format("image.svg", &[]), MediaFormat::Svg);
+        assert_eq!(detect_media_format("image.webp", &[]), MediaFormat::WebP);
+        assert_eq!(detect_media_format("font.ttf", &[]), MediaFormat::Ttf);
+        assert_eq!(detect_media_format("font.otf", &[]), MediaFormat::Otf);
+        assert_eq!(detect_media_format("unknown", &[]), MediaFormat::Binary);
+    }
+
+    #[test]
+    fn test_detect_media_format_by_magic_bytes() {
+        // JPEG magic bytes
+        let jpeg_data = [0xFF, 0xD8, 0xFF, 0xE0];
+        assert_eq!(detect_media_format("unknown", &jpeg_data), MediaFormat::Jpeg);
+
+        // PNG magic bytes
+        let png_data = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(detect_media_format("unknown", &png_data), MediaFormat::Png);
+
+        // GIF magic bytes
+        let gif_data = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
+        assert_eq!(detect_media_format("unknown", &gif_data), MediaFormat::Gif);
+    }
+
+    #[test]
+    fn test_media_format_mime_type() {
+        assert_eq!(MediaFormat::Jpeg.mime_type(), "image/jpeg");
+        assert_eq!(MediaFormat::Png.mime_type(), "image/png");
+        assert_eq!(MediaFormat::Gif.mime_type(), "image/gif");
+        assert_eq!(MediaFormat::Svg.mime_type(), "image/svg+xml");
+        assert_eq!(MediaFormat::Ttf.mime_type(), "font/ttf");
+        assert_eq!(MediaFormat::Binary.mime_type(), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_media_format_classification() {
+        assert!(MediaFormat::Jpeg.is_image());
+        assert!(MediaFormat::Png.is_image());
+        assert!(!MediaFormat::Ttf.is_image());
+        assert!(!MediaFormat::Binary.is_image());
+
+        assert!(MediaFormat::Ttf.is_font());
+        assert!(MediaFormat::Otf.is_font());
+        assert!(!MediaFormat::Jpeg.is_font());
+    }
+
+    #[test]
+    fn test_detect_mime_type() {
+        assert_eq!(detect_mime_type("image.jpg", &[]), Some("image/jpeg"));
+        assert_eq!(detect_mime_type("image.png", &[]), Some("image/png"));
+        assert_eq!(detect_mime_type("unknown", &[]), None);
+    }
 }

@@ -299,6 +299,34 @@ impl AttributeTransform for ResourceTransform {
 }
 
 // ============================================================================
+// KFX-Specific Format Mapping
+// ============================================================================
+
+use crate::kfx::symbols::KfxSymbol;
+use crate::util::MediaFormat;
+
+/// Convert a MediaFormat to the corresponding KFX symbol ID.
+///
+/// This is the KFX-specific mapping layer. The generic `MediaFormat`
+/// detection lives in `util.rs`; this function maps it to KFX symbols.
+///
+/// Note: KFX has limited format support. Unsupported formats (SVG, WebP, fonts)
+/// fall back to `Jpg` symbol as a binary placeholder.
+pub fn format_to_kfx_symbol(format: MediaFormat) -> u64 {
+    match format {
+        MediaFormat::Jpeg => KfxSymbol::Jpg as u64,
+        MediaFormat::Png => KfxSymbol::Png as u64,
+        MediaFormat::Gif => KfxSymbol::Gif as u64,
+        // SVG, WebP, and fonts use Jpg as fallback (KFX limitation)
+        MediaFormat::Svg => KfxSymbol::Jpg as u64,
+        MediaFormat::WebP => KfxSymbol::Jpg as u64,
+        MediaFormat::Ttf => KfxSymbol::Jpg as u64,
+        MediaFormat::Otf => KfxSymbol::Jpg as u64,
+        MediaFormat::Binary => KfxSymbol::Jpg as u64,
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -410,4 +438,44 @@ mod tests {
         assert_eq!(exported, "kindle:pos:fid:0001:off:0000012A");
     }
 
+    // ========================================================================
+    // KFX Format Symbol Mapping Tests
+    // ========================================================================
+
+    #[test]
+    fn test_format_to_kfx_symbol() {
+        use super::format_to_kfx_symbol;
+        use crate::kfx::symbols::KfxSymbol;
+        use crate::util::MediaFormat;
+
+        assert_eq!(
+            format_to_kfx_symbol(MediaFormat::Jpeg),
+            KfxSymbol::Jpg as u64
+        );
+        assert_eq!(
+            format_to_kfx_symbol(MediaFormat::Png),
+            KfxSymbol::Png as u64
+        );
+        assert_eq!(
+            format_to_kfx_symbol(MediaFormat::Gif),
+            KfxSymbol::Gif as u64
+        );
+    }
+
+    #[test]
+    fn test_format_classification() {
+        use crate::util::MediaFormat;
+
+        assert!(MediaFormat::Jpeg.is_image());
+        assert!(MediaFormat::Png.is_image());
+        assert!(MediaFormat::Gif.is_image());
+        assert!(MediaFormat::Svg.is_image());
+        assert!(MediaFormat::WebP.is_image());
+        assert!(!MediaFormat::Ttf.is_image());
+        assert!(!MediaFormat::Binary.is_image());
+
+        assert!(MediaFormat::Ttf.is_font());
+        assert!(MediaFormat::Otf.is_font());
+        assert!(!MediaFormat::Jpeg.is_font());
+    }
 }

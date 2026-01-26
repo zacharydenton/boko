@@ -17,6 +17,8 @@ use crate::kfx::serialization::{
     SerializedEntity,
 };
 use crate::kfx::symbols::KfxSymbol;
+use crate::kfx::transforms::format_to_kfx_symbol;
+use crate::util::detect_media_format;
 
 /// KFX export configuration.
 #[derive(Debug, Clone, Default)]
@@ -756,52 +758,11 @@ fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
 }
 
 /// Detect format symbol from file extension/magic bytes.
+///
+/// Delegates to the pure `detect_media_format()` utility and maps to KFX symbol.
 fn detect_format_symbol(href: &str, data: &[u8]) -> u64 {
-    let href_lower = href.to_lowercase();
-
-    if href_lower.ends_with(".jpg") || href_lower.ends_with(".jpeg") {
-        return ctx_intern_static("jpg");
-    }
-    if href_lower.ends_with(".png") {
-        return ctx_intern_static("png");
-    }
-    if href_lower.ends_with(".gif") {
-        return ctx_intern_static("gif");
-    }
-    if href_lower.ends_with(".svg") {
-        return ctx_intern_static("svg");
-    }
-    if href_lower.ends_with(".webp") {
-        return ctx_intern_static("webp");
-    }
-
-    // Check magic bytes
-    if data.len() >= 4 {
-        if data[0] == 0xFF && data[1] == 0xD8 {
-            return ctx_intern_static("jpg");
-        }
-        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-            return ctx_intern_static("png");
-        }
-        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-            return ctx_intern_static("gif");
-        }
-    }
-
-    ctx_intern_static("bin")
-}
-
-/// Get symbol ID for static format strings.
-/// These are common symbols that should be in the shared table.
-fn ctx_intern_static(s: &str) -> u64 {
-    // Look up in shared symbol table
-    match s {
-        "jpg" => KfxSymbol::Jpg as u64,
-        "png" => KfxSymbol::Png as u64,
-        "gif" => KfxSymbol::Gif as u64,
-        // svg and other formats not in shared table, use jpg as fallback
-        _ => KfxSymbol::Jpg as u64,
-    }
+    let format = detect_media_format(href, data);
+    format_to_kfx_symbol(format)
 }
 
 /// Check if a path is a media asset (image, font, etc.)
