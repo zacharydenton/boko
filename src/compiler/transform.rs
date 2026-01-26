@@ -353,10 +353,7 @@ impl<'a> TransformContext<'a> {
                     match attr_name {
                         // Core layout attributes
                         "href" => {
-                            // Store raw href for backward compatibility
                             self.chapter.semantics.set_href(ir_id, attr.value.clone());
-                            // Also parse into structured Link
-                            self.chapter.links.set(ir_id, &attr.value);
                         }
                         "src" => self.chapter.semantics.set_src(ir_id, attr.value.clone()),
                         "alt" => self.chapter.semantics.set_alt(ir_id, attr.value.clone()),

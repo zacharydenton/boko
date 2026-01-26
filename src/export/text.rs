@@ -460,15 +460,16 @@ impl<W: Write> ExportContext<'_, W> {
                 self.ensure_line_started()?;
                 let text = self.collect_text(id);
 
-                // Use parsed Link to determine display behavior
-                let link = self.ir.links.get(id);
+                // Parse link from semantics.href (single source of truth)
+                let href = self.ir.semantics.href(id);
+                let link = href.map(crate::ir::Link::parse);
 
                 match link {
                     Some(crate::ir::Link::External(url)) => {
                         // External links: show URL
                         if self.format == TextFormat::Markdown {
                             write!(self.writer, "[{}]({})", text, url)?;
-                        } else if url != &text {
+                        } else if url != text {
                             write!(self.writer, "{} ({})", text, url)?;
                         } else {
                             write!(self.writer, "{}", text)?;
@@ -484,7 +485,7 @@ impl<W: Write> ExportContext<'_, W> {
                         if raw.contains("://") || raw.starts_with("mailto:") {
                             if self.format == TextFormat::Markdown {
                                 write!(self.writer, "[{}]({})", text, raw)?;
-                            } else if raw != &text {
+                            } else if raw != text {
                                 write!(self.writer, "{} ({})", text, raw)?;
                             } else {
                                 write!(self.writer, "{}", text)?;
@@ -1123,8 +1124,7 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        // Use the new LinkMap to set parsed link
-        chapter.links.set(link, "https://example.com");
+        chapter.semantics.set_href(link, "https://example.com".to_string());
 
         let text_range = chapter.append_text("Click here");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1593,7 +1593,7 @@ mod tests {
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
         // Set an internal link to another file
-        chapter.links.set(link, "chapter2.xhtml#section-3");
+        chapter.semantics.set_href(link, "chapter2.xhtml#section-3".to_string());
 
         let text_range = chapter.append_text("See section 3");
         let text_node = chapter.alloc_node(Node::text(text_range));

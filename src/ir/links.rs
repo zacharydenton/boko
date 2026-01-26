@@ -5,8 +5,9 @@
 //! - **AZW3/KFX**: Physical offsets (`kindle:pos:fid:000B:off:00000002SO`)
 //!
 //! This module provides a format-agnostic representation that captures both.
-
-use super::NodeId;
+//!
+//! Links are stored as raw href strings in `SemanticMap.href` and parsed
+//! on-demand using `Link::parse()` when needed (e.g., for export).
 
 /// Location within a chapter/spine item.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,53 +173,6 @@ fn kindle_base32_decode(s: &str) -> Option<u32> {
     }
 
     Some(result as u32)
-}
-
-/// Map from NodeId to parsed Link.
-///
-/// This replaces storing raw href strings with structured link data.
-#[derive(Debug, Default, Clone)]
-pub struct LinkMap {
-    links: std::collections::HashMap<NodeId, Link>,
-}
-
-impl LinkMap {
-    /// Create a new empty link map.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set a link for a node, parsing the raw href.
-    pub fn set(&mut self, node: NodeId, href: &str) {
-        if !href.is_empty() {
-            self.links.insert(node, Link::parse(href));
-        }
-    }
-
-    /// Set an already-parsed link for a node.
-    pub fn set_parsed(&mut self, node: NodeId, link: Link) {
-        self.links.insert(node, link);
-    }
-
-    /// Get the link for a node.
-    pub fn get(&self, node: NodeId) -> Option<&Link> {
-        self.links.get(&node)
-    }
-
-    /// Check if a node has a link.
-    pub fn contains(&self, node: NodeId) -> bool {
-        self.links.contains_key(&node)
-    }
-
-    /// Get the number of links.
-    pub fn len(&self) -> usize {
-        self.links.len()
-    }
-
-    /// Check if empty.
-    pub fn is_empty(&self) -> bool {
-        self.links.is_empty()
-    }
 }
 
 #[cfg(test)]

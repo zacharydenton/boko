@@ -26,6 +26,12 @@ use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, SpanStart, TokenStr
 use crate::kfx::transforms::ImportContext;
 use std::collections::HashMap;
 
+/// Context for tokenization including anchor resolution.
+struct TokenizeContext<'a> {
+    doc_symbols: &'a [String],
+    anchors: Option<&'a HashMap<String, String>>,
+}
+
 /// Shorthand for getting a KfxSymbol as u32.
 macro_rules! sym {
     ($variant:ident) => {
@@ -41,7 +47,13 @@ macro_rules! sym {
 ///
 /// This is the first stage of import: converting the nested Ion structure
 /// into a flat stream of tokens that can be processed by the stack builder.
-pub fn tokenize_storyline(storyline: &IonValue, doc_symbols: &[String]) -> TokenStream {
+///
+/// The `anchors` map is used to resolve external links (anchor_name → uri).
+pub fn tokenize_storyline(
+    storyline: &IonValue,
+    doc_symbols: &[String],
+    anchors: Option<&HashMap<String, String>>,
+) -> TokenStream {
     let mut stream = TokenStream::new();
 
     let fields = match storyline.as_struct() {
@@ -54,19 +66,20 @@ pub fn tokenize_storyline(storyline: &IonValue, doc_symbols: &[String]) -> Token
         None => return stream,
     };
 
-    tokenize_content_list(content_list, doc_symbols, &mut stream);
+    let ctx = TokenizeContext { doc_symbols, anchors };
+    tokenize_content_list(content_list, &ctx, &mut stream);
     stream
 }
 
 /// Tokenize a content_list array.
-fn tokenize_content_list(list: &IonValue, doc_symbols: &[String], stream: &mut TokenStream) {
+fn tokenize_content_list(list: &IonValue, ctx: &TokenizeContext, stream: &mut TokenStream) {
     let items = match list.as_list() {
         Some(l) => l,
         None => return,
     };
 
     for item in items {
-        tokenize_content_item(item, doc_symbols, stream);
+        tokenize_content_item(item, ctx, stream);
     }
 }
 
@@ -78,7 +91,7 @@ fn tokenize_content_list(list: &IonValue, doc_symbols: &[String], stream: &mut T
 /// 3. Executes the strategy to determine role
 /// 4. Extracts ALL attributes using schema rules (no hardcoded targets)
 /// 5. Applies transformers to values
-fn tokenize_content_item(item: &IonValue, doc_symbols: &[String], stream: &mut TokenStream) {
+fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut TokenStream) {
     // Unwrap annotation if present
     let inner = item.unwrap_annotated();
     let fields = match inner.as_struct() {
@@ -100,14 +113,14 @@ fn tokenize_content_item(item: &IonValue, doc_symbols: &[String], stream: &mut T
     let id = get_field(fields, sym!(Id)).and_then(|v| v.as_int());
 
     // Extract ALL semantic attributes using schema rules (GENERIC!)
-    let semantics = extract_all_element_attrs(fields, kfx_type_id, doc_symbols);
+    let semantics = extract_all_element_attrs(fields, kfx_type_id, ctx);
 
     // Get content reference (for text)
     let content_ref = get_field(fields, sym!(Content))
         .and_then(|v| v.as_struct())
         .and_then(|content_fields| {
             let name = get_field(content_fields, sym!(Name))
-                .and_then(|v| resolve_symbol_or_string(v, doc_symbols))?;
+                .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))?;
             let index = get_field(content_fields, sym!(Index))
                 .and_then(|v| v.as_int())
                 .map(|n| n as usize)?;
@@ -117,7 +130,7 @@ fn tokenize_content_item(item: &IonValue, doc_symbols: &[String], stream: &mut T
     // Get style events (inline spans) - fully schema-driven
     let style_events = get_field(fields, sym!(StyleEvents))
         .and_then(|v| v.as_list())
-        .map(|events| parse_style_events(events, doc_symbols))
+        .map(|events| parse_style_events(events, ctx))
         .unwrap_or_default();
 
     // Get nested children
@@ -135,7 +148,7 @@ fn tokenize_content_item(item: &IonValue, doc_symbols: &[String], stream: &mut T
     // Recurse into children
     if has_children {
         if let Some(children) = get_field(fields, sym!(ContentList)) {
-            tokenize_content_list(children, doc_symbols, stream);
+            tokenize_content_list(children, ctx, stream);
         }
     }
 
@@ -150,20 +163,21 @@ fn tokenize_content_item(item: &IonValue, doc_symbols: &[String], stream: &mut T
 fn extract_all_element_attrs(
     fields: &[(u32, IonValue)],
     kfx_type_id: u32,
-    doc_symbols: &[String],
+    ctx: &TokenizeContext,
 ) -> HashMap<SemanticTarget, String> {
     let mut result = HashMap::new();
-    let ctx = ImportContext {
-        doc_symbols,
+    let import_ctx = ImportContext {
+        doc_symbols: ctx.doc_symbols,
         chapter_id: None,
+        anchors: ctx.anchors,
     };
 
     for rule in schema().element_attr_rules(kfx_type_id) {
         if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, doc_symbols))
+            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
-            let parsed = rule.transform.import(&raw_value, &ctx);
+            let parsed = rule.transform.import(&raw_value, &import_ctx);
 
             // Convert ParsedAttribute to string for storage
             let final_value = match parsed {
@@ -180,7 +194,7 @@ fn extract_all_element_attrs(
 }
 
 /// Parse style events from Ion using schema-driven interpretation.
-fn parse_style_events(events: &[IonValue], doc_symbols: &[String]) -> Vec<SpanStart> {
+fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanStart> {
     events
         .iter()
         .filter_map(|event| {
@@ -199,7 +213,7 @@ fn parse_style_events(events: &[IonValue], doc_symbols: &[String]) -> Vec<SpanSt
             let role = schema().resolve_span_role(&has_field);
 
             // Extract ALL semantic attributes using schema rules (GENERIC!)
-            let semantics = extract_all_span_attrs(fields, &has_field, doc_symbols);
+            let semantics = extract_all_span_attrs(fields, &has_field, ctx);
 
             Some(SpanStart {
                 role,
@@ -217,23 +231,24 @@ fn parse_style_events(events: &[IonValue], doc_symbols: &[String]) -> Vec<SpanSt
 fn extract_all_span_attrs<F>(
     fields: &[(u32, IonValue)],
     has_field: F,
-    doc_symbols: &[String],
+    ctx: &TokenizeContext,
 ) -> HashMap<SemanticTarget, String>
 where
     F: Fn(KfxSymbol) -> bool,
 {
     let mut result = HashMap::new();
-    let ctx = ImportContext {
-        doc_symbols,
+    let import_ctx = ImportContext {
+        doc_symbols: ctx.doc_symbols,
         chapter_id: None,
+        anchors: ctx.anchors,
     };
 
     for rule in schema().span_attr_rules(&has_field) {
         if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, doc_symbols))
+            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
-            let parsed = rule.transform.import(&raw_value, &ctx);
+            let parsed = rule.transform.import(&raw_value, &import_ctx);
 
             // Convert ParsedAttribute to string for storage
             let final_value = match parsed {
@@ -327,7 +342,9 @@ fn apply_semantics_to_node(
     for (target, value) in semantics {
         match target {
             SemanticTarget::Src => chapter.semantics.set_src(node_id, value.clone()),
-            SemanticTarget::Href => chapter.semantics.set_href(node_id, value.clone()),
+            SemanticTarget::Href => {
+                chapter.semantics.set_href(node_id, value.clone());
+            }
             SemanticTarget::Alt => chapter.semantics.set_alt(node_id, value.clone()),
             SemanticTarget::Id => chapter.semantics.set_id(node_id, value.clone()),
         }
@@ -434,15 +451,18 @@ fn resolve_symbol_or_string(value: &IonValue, doc_symbols: &[String]) -> Option<
 /// Parse a storyline and build IR in one step.
 ///
 /// This is the main entry point for KFX import.
+///
+/// The `anchors` map is used to resolve external links (anchor_name → uri).
 pub fn parse_storyline_to_ir<F>(
     storyline: &IonValue,
     doc_symbols: &[String],
+    anchors: Option<&HashMap<String, String>>,
     content_lookup: F,
 ) -> IRChapter
 where
     F: FnMut(&str, usize) -> Option<String>,
 {
-    let tokens = tokenize_storyline(storyline, doc_symbols);
+    let tokens = tokenize_storyline(storyline, doc_symbols, anchors);
     build_ir_from_tokens(&tokens, content_lookup)
 }
 

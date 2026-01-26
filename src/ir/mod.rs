@@ -24,7 +24,7 @@ mod node;
 mod semantic;
 mod style;
 
-pub use links::{InternalLocation, Link, LinkMap, LinkTarget};
+pub use links::{InternalLocation, Link, LinkTarget};
 pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 pub use style::{
@@ -42,10 +42,8 @@ pub struct IRChapter {
     nodes: Vec<Node>,
     /// Style pool with deduplication.
     pub styles: StylePool,
-    /// Sparse semantic attributes.
+    /// Sparse semantic attributes (href, src, alt, id).
     pub semantics: SemanticMap,
-    /// Parsed links (replaces raw href strings with structured data).
-    pub links: LinkMap,
     /// Global text buffer (nodes reference ranges into this).
     text: String,
 }
@@ -66,7 +64,6 @@ impl IRChapter {
             nodes,
             styles: StylePool::new(),
             semantics: SemanticMap::new(),
-            links: LinkMap::new(),
             text: String::new(),
         }
     }

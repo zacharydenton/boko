@@ -68,6 +68,11 @@ pub struct KfxImporter {
 
     /// Content cache: name -> list of strings (lazily populated)
     content_cache: HashMap<String, Vec<String>>,
+
+    /// Anchor map: anchor_name -> uri (for external link resolution)
+    anchors: HashMap<String, String>,
+    /// Whether anchors have been indexed
+    anchors_indexed: bool,
 }
 
 impl From<ContainerError> for io::Error {
@@ -100,6 +105,9 @@ impl Importer for KfxImporter {
     }
 
     fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
+        // Ensure anchors are indexed (for external link resolution)
+        self.index_anchors()?;
+
         let section_name = self
             .section_names
             .get(id.0 as usize)
@@ -112,11 +120,12 @@ impl Importer for KfxImporter {
         // Parse storyline entity
         let storyline_ion = self.parse_entity_ion(storyline_loc)?;
 
-        // Clone doc_symbols to avoid borrow conflict with content lookup closure
+        // Clone doc_symbols and anchors to avoid borrow conflict with content lookup closure
         let doc_symbols = self.doc_symbols.clone();
+        let anchors = self.anchors.clone();
 
         // Parse storyline and build IR using schema-driven tokenization
-        let chapter = parse_storyline_to_ir(&storyline_ion, &doc_symbols, |name, index| {
+        let chapter = parse_storyline_to_ir(&storyline_ion, &doc_symbols, Some(&anchors), |name, index| {
             self.lookup_content_text(name, index)
         });
 
@@ -207,6 +216,8 @@ impl KfxImporter {
             resources: HashMap::new(),
             resources_indexed: false,
             content_cache: HashMap::new(),
+            anchors: HashMap::new(),
+            anchors_indexed: false,
         };
 
         // Parse metadata (only reads needed entities)
@@ -696,6 +707,48 @@ impl KfxImporter {
         }
 
         self.resources_indexed = true;
+        Ok(())
+    }
+
+    /// Index anchor entities to build anchor_name → uri map.
+    ///
+    /// This enables resolution of external links where `link_to` contains
+    /// an anchor name that maps to an external URI.
+    fn index_anchors(&mut self) -> io::Result<()> {
+        if self.anchors_indexed {
+            return Ok(());
+        }
+
+        // Find all anchor entities (type $266)
+        let locs: Vec<_> = self
+            .entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::Anchor as u32)
+            .copied()
+            .collect();
+
+        for loc in locs {
+            if let Ok(elem) = self.parse_entity_ion(loc) {
+                if let Some(fields) = elem.as_struct() {
+                    // Get anchor_name
+                    let anchor_name = get_field(fields, sym!(AnchorName))
+                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                        .map(|s| s.to_string());
+
+                    // Get uri (only present for external links)
+                    let uri = get_field(fields, sym!(Uri))
+                        .and_then(|v| v.as_string())
+                        .map(|s| s.to_string());
+
+                    // If we have both anchor_name and uri, add to map
+                    if let (Some(name), Some(uri)) = (anchor_name, uri) {
+                        self.anchors.insert(name, uri);
+                    }
+                }
+            }
+        }
+
+        self.anchors_indexed = true;
         Ok(())
     }
 }

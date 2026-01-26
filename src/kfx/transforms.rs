@@ -10,6 +10,7 @@
 //! - **Import**: Parsed into `LinkTarget::KindlePosition { fid, offset }`
 //! - **Export**: Encoded back to the `kindle:pos:...` string format
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 /// Context provided during import transformation.
@@ -19,6 +20,8 @@ pub struct ImportContext<'a> {
     pub doc_symbols: &'a [String],
     /// Current chapter/section ID if known.
     pub chapter_id: Option<&'a str>,
+    /// Anchor map: anchor_name → uri (for resolving external links).
+    pub anchors: Option<&'a HashMap<String, String>>,
 }
 
 /// Context provided during export transformation.
@@ -134,13 +137,16 @@ impl AttributeTransform for IdentityTransform {
 ///
 /// Handles conversion between:
 /// - Raw: `kindle:pos:fid:0001:off:0000012A` or internal anchor IDs
-/// - IR: `LinkData::KindlePosition` or `LinkData::Internal`
+/// - IR: `LinkData::KindlePosition` or `LinkData::Internal` or `LinkData::External`
+///
+/// When an anchor map is provided in context, anchor names are resolved to
+/// external URIs if the anchor has a `uri` field.
 #[derive(Debug, Clone)]
 pub struct KfxLinkTransform;
 
 impl AttributeTransform for KfxLinkTransform {
-    fn import(&self, raw_value: &str, _context: &ImportContext) -> ParsedAttribute {
-        let link = parse_kfx_link(raw_value);
+    fn import(&self, raw_value: &str, context: &ImportContext) -> ParsedAttribute {
+        let link = parse_kfx_link(raw_value, context.anchors);
         ParsedAttribute::Link(link)
     }
 
@@ -158,7 +164,9 @@ impl AttributeTransform for KfxLinkTransform {
 }
 
 /// Parse a KFX link value into structured data.
-fn parse_kfx_link(raw: &str) -> LinkData {
+///
+/// If an anchor map is provided, anchor names are resolved to external URIs.
+fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkData {
     // Check for Kindle position format: kindle:pos:fid:XXXX:off:YYYYYYYY
     if raw.starts_with("kindle:pos:fid:") {
         if let Some(link) = parse_kindle_position(raw) {
@@ -166,13 +174,20 @@ fn parse_kfx_link(raw: &str) -> LinkData {
         }
     }
 
-    // Check for external URLs
+    // Check for external URLs (already resolved)
     if raw.starts_with("http://")
         || raw.starts_with("https://")
         || raw.starts_with("mailto:")
         || raw.starts_with("tel:")
     {
         return LinkData::External(raw.to_string());
+    }
+
+    // Check anchor map for external URI resolution
+    if let Some(anchor_map) = anchors {
+        if let Some(uri) = anchor_map.get(raw) {
+            return LinkData::External(uri.clone());
+        }
     }
 
     // Default: treat as internal anchor reference
@@ -312,7 +327,7 @@ mod tests {
     #[test]
     fn test_parse_kindle_position() {
         let raw = "kindle:pos:fid:0001:off:0000012A";
-        let link = parse_kfx_link(raw);
+        let link = parse_kfx_link(raw, None);
 
         assert_eq!(
             link,
@@ -336,7 +351,7 @@ mod tests {
     #[test]
     fn test_roundtrip_kindle_position() {
         let original = "kindle:pos:fid:0001:off:0000012A";
-        let parsed = parse_kfx_link(original);
+        let parsed = parse_kfx_link(original, None);
         let encoded = encode_kfx_link(&parsed);
         assert_eq!(original, encoded);
     }
@@ -344,11 +359,11 @@ mod tests {
     #[test]
     fn test_parse_external_url() {
         assert_eq!(
-            parse_kfx_link("https://example.com"),
+            parse_kfx_link("https://example.com", None),
             LinkData::External("https://example.com".to_string())
         );
         assert_eq!(
-            parse_kfx_link("mailto:test@example.com"),
+            parse_kfx_link("mailto:test@example.com", None),
             LinkData::External("mailto:test@example.com".to_string())
         );
     }
@@ -356,8 +371,26 @@ mod tests {
     #[test]
     fn test_parse_internal_anchor() {
         assert_eq!(
-            parse_kfx_link("chapter2"),
+            parse_kfx_link("chapter2", None),
             LinkData::Internal("chapter2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_anchor_with_uri() {
+        let mut anchors = HashMap::new();
+        anchors.insert("a17H".to_string(), "https://example.com".to_string());
+
+        // With anchor map, anchor name resolves to external URL
+        assert_eq!(
+            parse_kfx_link("a17H", Some(&anchors)),
+            LinkData::External("https://example.com".to_string())
+        );
+
+        // Without anchor map, same anchor name is internal
+        assert_eq!(
+            parse_kfx_link("a17H", None),
+            LinkData::Internal("a17H".to_string())
         );
     }
 
