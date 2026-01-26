@@ -12,6 +12,7 @@ use boko::{Book, Format, compile_html, Origin, Stylesheet};
 
 const EPUB_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.epub");
 const AZW3_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.azw3");
+const KFX_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.kfx");
 
 /// Load sample HTML and CSS from the epub fixture for IR benchmarks.
 fn load_sample_content() -> (String, Stylesheet) {
@@ -53,6 +54,12 @@ fn bench_read_epub(c: &mut Criterion) {
 fn bench_read_azw3(c: &mut Criterion) {
     c.bench_function("read_azw3", |b| {
         b.iter(|| Book::from_bytes(AZW3_BYTES, Format::Azw3).unwrap());
+    });
+}
+
+fn bench_read_kfx(c: &mut Criterion) {
+    c.bench_function("read_kfx", |b| {
+        b.iter(|| Book::from_bytes(KFX_BYTES, Format::Kfx).unwrap());
     });
 }
 
@@ -120,6 +127,7 @@ criterion_group!(
     // Book I/O
     bench_read_epub,
     bench_read_azw3,
+    bench_read_kfx,
     bench_write_epub,
     bench_write_azw3,
     // IR pipeline
