@@ -154,12 +154,24 @@ impl Importer for KfxImporter {
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
-        // Ensure resources are indexed
+        let name = path.to_string_lossy();
+
+        // Handle direct entity ID lookup (e.g., "#1102" from list_assets)
+        if let Some(id_str) = name.strip_prefix('#') {
+            if let Ok(id) = id_str.parse::<u32>() {
+                // Find entity by ID
+                if let Some(loc) = self.entities.iter().find(|e| e.id == id) {
+                    return self.read_entity(*loc);
+                }
+            }
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Entity not found"));
+        }
+
+        // Ensure resources are indexed for name-based lookup
         if !self.resources_indexed {
             self.index_resources()?;
         }
 
-        let name = path.to_string_lossy();
         let loc = self
             .resources
             .get(name.as_ref())

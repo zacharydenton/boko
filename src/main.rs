@@ -134,7 +134,13 @@ struct BookInfo {
     metadata: MetadataInfo,
     spine: Vec<SpineInfo>,
     toc: Vec<TocInfo>,
-    assets: Vec<String>,
+    assets: Vec<AssetInfo>,
+}
+
+#[derive(Serialize)]
+struct AssetInfo {
+    path: String,
+    size: usize,
 }
 
 #[derive(Serialize)]
@@ -173,17 +179,29 @@ struct TocInfo {
 }
 
 fn show_info(path: &str, json: bool) -> Result<(), String> {
-    let book = Book::open(path).map_err(|e| e.to_string())?;
+    let mut book = Book::open(path).map_err(|e| e.to_string())?;
 
     if json {
-        print_json(&book, path)
+        print_json(&mut book, path)
     } else {
-        print_human(&book, path)
+        print_human(&mut book, path)
     }
 }
 
-fn print_json(book: &Book, path: &str) -> Result<(), String> {
-    let meta = book.metadata();
+fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
+    let meta = book.metadata().clone();
+    let asset_paths: Vec<_> = book.list_assets();
+
+    let assets: Vec<AssetInfo> = asset_paths
+        .iter()
+        .map(|p| {
+            let size = book.load_asset(p).map(|d| d.len()).unwrap_or(0);
+            AssetInfo {
+                path: p.to_string_lossy().to_string(),
+                size,
+            }
+        })
+        .collect();
 
     let info = BookInfo {
         file: path.to_string(),
@@ -209,11 +227,7 @@ fn print_json(book: &Book, path: &str) -> Result<(), String> {
             })
             .collect(),
         toc: book.toc().iter().map(toc_to_info).collect(),
-        assets: book
-            .list_assets()
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect(),
+        assets,
     };
 
     let json = serde_json::to_string_pretty(&info).map_err(|e| e.to_string())?;
@@ -229,7 +243,7 @@ fn toc_to_info(entry: &TocEntry) -> TocInfo {
     }
 }
 
-fn print_human(book: &Book, path: &str) -> Result<(), String> {
+fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     let meta = book.metadata();
     println!("File: {path}");
     println!("Title: {}", meta.title);
@@ -281,10 +295,19 @@ fn print_human(book: &Book, path: &str) -> Result<(), String> {
     let assets = book.list_assets();
     println!("\nAssets ({}):", assets.len());
     for asset in &assets {
-        println!("  {}", asset.display());
+        let size = book
+            .load_asset(asset)
+            .map(|data| format_bytes(data.len()))
+            .unwrap_or_else(|_| "?".to_string());
+        println!("  {} ({})", asset.display(), size);
     }
 
     Ok(())
+}
+
+/// Format byte size.
+fn format_bytes(bytes: usize) -> String {
+    format!("{} bytes", bytes)
 }
 
 fn print_toc_human(entries: &[TocEntry], depth: usize) {
