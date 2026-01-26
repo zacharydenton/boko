@@ -258,6 +258,34 @@ impl KfxSchema {
             vec![],
         );
 
+        // Also register Role::Text directly for export (IR text nodes)
+        // This ensures text leaf nodes get type: text in the output
+        self.export_strategy_table.insert(
+            Role::Text,
+            Strategy::Structure {
+                role: Role::Text,
+                kfx_type: KfxSymbol::Text,
+            },
+        );
+
+        // Register Role::Inline for inline spans (default inline wrapper)
+        self.export_strategy_table.insert(
+            Role::Inline,
+            Strategy::Structure {
+                role: Role::Inline,
+                kfx_type: KfxSymbol::Text, // Inline content uses text type
+            },
+        );
+
+        // Register Role::Link for hyperlinks
+        self.export_strategy_table.insert(
+            Role::Link,
+            Strategy::Structure {
+                role: Role::Link,
+                kfx_type: KfxSymbol::Text, // Links are text type with link_to attr
+            },
+        );
+
         // Container
         self.register_element(
             KfxSymbol::Container,
