@@ -97,10 +97,20 @@ pub struct SpanStart {
     pub role: Role,
     /// Semantic attributes (generic map).
     pub semantics: HashMap<SemanticTarget, String>,
-    /// Byte offset in parent text (for reconstruction)
+    /// Byte offset in parent text (for reconstruction).
+    /// For import: populated from KFX style_event.
+    /// For export: calculated during tokens_to_ion.
     pub offset: usize,
-    /// Length in bytes
+    /// Length in bytes.
+    /// For import: populated from KFX style_event.
+    /// For export: calculated during tokens_to_ion.
     pub length: usize,
+    /// KFX style symbol ID (for export).
+    /// Populated during ir_to_tokens from the node's registered style.
+    pub style_symbol: Option<u64>,
+    /// Pre-transformed KFX attributes (field_id, value_string).
+    /// Populated during export by schema.export_attributes().
+    pub kfx_attrs: Vec<(u64, String)>,
 }
 
 impl SpanStart {
@@ -111,6 +121,8 @@ impl SpanStart {
             semantics: HashMap::new(),
             offset,
             length,
+            style_symbol: None,
+            kfx_attrs: Vec::new(),
         }
     }
 
@@ -179,6 +191,8 @@ impl TokenStream {
             semantics,
             offset: 0,
             length: 0,
+            style_symbol: None,
+            kfx_attrs: Vec::new(),
         }));
     }
 

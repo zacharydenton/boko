@@ -229,6 +229,8 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
                 semantics,
                 offset,
                 length,
+                style_symbol: None, // Populated by import/style lookup
+                kfx_attrs: Vec::new(),
             })
         })
         .collect()
@@ -527,6 +529,8 @@ pub fn ir_to_tokens(chapter: &IRChapter, ctx: &mut ExportContext) -> TokenStream
 /// Walk a node and emit tokens for export.
 ///
 /// Uses schema-driven attribute export (FIX for Issue #2: Attribute Hardcoding).
+/// Inline roles (Link, Inline) are emitted as StartSpan/EndSpan instead of
+/// StartElement/EndElement, enabling proper style_events generation.
 fn walk_node_for_export(
     chapter: &IRChapter,
     node_id: NodeId,
@@ -544,6 +548,24 @@ fn walk_node_for_export(
         for child in chapter.children(node_id) {
             walk_node_for_export(chapter, child, sch, ctx, stream);
         }
+        return;
+    }
+
+    // Text nodes: emit just the text, not a container
+    // Text nodes are leaf nodes that contain the actual string data
+    if node.role == Role::Text {
+        if !node.text.is_empty() {
+            let text = chapter.text(node.text);
+            if !text.is_empty() {
+                stream.push(KfxToken::Text(text.to_string()));
+            }
+        }
+        return;
+    }
+
+    // Check if this is an inline role that should become a span (style_event)
+    if sch.is_inline_role(node.role) {
+        emit_span_for_export(chapter, node_id, node, sch, ctx, stream);
         return;
     }
 
@@ -613,6 +635,68 @@ fn walk_node_for_export(
     stream.push(KfxToken::EndElement);
 }
 
+/// Emit a span (inline) node as StartSpan/EndSpan tokens.
+///
+/// Inline roles like Link and Inline (bold/italic) should be emitted as spans,
+/// not nested containers, so they can be converted to KFX style_events.
+fn emit_span_for_export(
+    chapter: &IRChapter,
+    node_id: NodeId,
+    node: &crate::ir::Node,
+    sch: &crate::kfx::schema::KfxSchema,
+    ctx: &mut ExportContext,
+    stream: &mut TokenStream,
+) {
+    // Build span with semantics
+    let mut span = SpanStart::new(node.role, 0, 0); // offset/length calculated in tokens_to_ion
+
+    // Register the node's style and get a KFX style symbol
+    let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
+    span.style_symbol = Some(style_symbol);
+
+    // SCHEMA-DRIVEN attribute export for spans
+    let export_ctx = crate::kfx::transforms::ExportContext {
+        spine_map: None,
+        resource_registry: Some(&ctx.resource_registry),
+    };
+    let kfx_attrs = sch.export_span_attributes(
+        node.role,
+        |target| match target {
+            SemanticTarget::Href => chapter.semantics.href(node_id).map(|s| s.to_string()),
+            SemanticTarget::Src => chapter.semantics.src(node_id).map(|s| s.to_string()),
+            SemanticTarget::Alt => chapter.semantics.alt(node_id).map(|s| s.to_string()),
+            SemanticTarget::Id => chapter.semantics.id(node_id).map(|s| s.to_string()),
+        },
+        &export_ctx,
+    );
+    span.kfx_attrs = kfx_attrs;
+
+    // Populate semantics map
+    if let Some(href) = chapter.semantics.href(node_id) {
+        span.set_semantic(SemanticTarget::Href, href.to_string());
+    }
+    if let Some(id) = chapter.semantics.id(node_id) {
+        span.set_semantic(SemanticTarget::Id, id.to_string());
+    }
+
+    stream.push(KfxToken::StartSpan(span));
+
+    // Emit text content and children
+    if !node.text.is_empty() {
+        let text = chapter.text(node.text);
+        if !text.is_empty() {
+            stream.push(KfxToken::Text(text.to_string()));
+        }
+    }
+
+    // Walk children (may contain more text or nested spans)
+    for child in chapter.children(node_id) {
+        walk_node_for_export(chapter, child, sch, ctx, stream);
+    }
+
+    stream.push(KfxToken::EndSpan);
+}
+
 /// Convert a TokenStream to KFX Ion structure (Storyline content_list).
 ///
 /// This is the second stage of export: building the Ion tree from tokens.
@@ -622,8 +706,16 @@ fn walk_node_for_export(
 /// - **Text strings** → pushed to `ctx.text_accumulator` (for Content Entity)
 ///
 /// Text containers get a `content: {name, index}` reference instead of inline text.
+/// **All text within an element is concatenated into ONE content entry.**
+///
+/// **Inline Spans**: StartSpan/EndSpan tokens are converted to style_events arrays.
+/// The span stack tracks (start_offset, span_info) and calculates length on EndSpan.
 pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue {
     let mut stack: Vec<IonBuilder> = vec![IonBuilder::new()];
+
+    // Span stack: (start_byte_offset, SpanStart info)
+    // Used to calculate offset/length for style_events
+    let mut span_stack: Vec<(usize, SpanStart)> = Vec::new();
 
     for token in tokens {
         match token {
@@ -675,40 +767,46 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
             KfxToken::EndElement => {
                 if let Some(completed) = stack.pop() {
                     if let Some(parent) = stack.last_mut() {
-                        parent.add_child(completed.build());
+                        parent.add_child(completed.build(ctx));
                     }
                 }
             }
             KfxToken::Text(text) => {
-                // CRITICAL: Split text from structure!
-                // 1. Store raw string in accumulator (for Content Entity)
-                // append_text returns (index, offset)
-                let (content_idx, _offset) = ctx.append_text(text);
-
-                // 2. Create content reference (for Storyline Entity)
-                // { name: content_name, index: N }
-                let content_ref = IonValue::Struct(vec![
-                    (sym!(Name), IonValue::Symbol(ctx.current_content_name)),
-                    (sym!(Index), IonValue::Int(content_idx as i64)),
-                ]);
-
-                // 3. Add to current container
+                // Append text to the current element's accumulated content
+                // This ensures all text within an element is concatenated
                 if let Some(current) = stack.last_mut() {
-                    current.set_content_ref(content_ref);
+                    current.append_text(text);
                 }
             }
-            KfxToken::StartSpan(_) => {
-                // Spans are handled through style_events, not nested elements
+            KfxToken::StartSpan(span) => {
+                // Push the span onto the stack with current text offset
+                // The offset is relative to the current element's accumulated text
+                let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
+                span_stack.push((current_offset, span.clone()));
             }
             KfxToken::EndSpan => {
-                // Spans are handled through style_events
+                // Pop the span and calculate its length
+                if let Some((start_offset, mut span_info)) = span_stack.pop() {
+                    // Calculate length based on accumulated text in the current element
+                    let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
+                    let length = current_offset.saturating_sub(start_offset);
+
+                    // Update the span with calculated offset and length
+                    span_info.offset = start_offset;
+                    span_info.length = length;
+
+                    // Add to the current element's style_events
+                    if let Some(current) = stack.last_mut() {
+                        current.add_style_event(span_info, ctx);
+                    }
+                }
             }
         }
     }
 
     // Return the root children as a list (the storyline content_list)
     if let Some(root) = stack.pop() {
-        root.build()
+        root.build(ctx)
     } else {
         IonValue::List(vec![])
     }
@@ -718,7 +816,10 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 struct IonBuilder {
     fields: Vec<(u64, IonValue)>,
     children: Vec<IonValue>,
-    content_ref: Option<IonValue>,
+    /// Accumulated text content for this element (concatenated during build)
+    accumulated_text: String,
+    /// Collected style events for this element (inline spans)
+    style_events: Vec<IonValue>,
 }
 
 impl IonBuilder {
@@ -726,7 +827,8 @@ impl IonBuilder {
         Self {
             fields: Vec::new(),
             children: Vec::new(),
-            content_ref: None,
+            accumulated_text: String::new(),
+            style_events: Vec::new(),
         }
     }
 
@@ -734,7 +836,8 @@ impl IonBuilder {
         Self {
             fields,
             children: Vec::new(),
-            content_ref: None,
+            accumulated_text: String::new(),
+            style_events: Vec::new(),
         }
     }
 
@@ -742,19 +845,71 @@ impl IonBuilder {
         self.children.push(child);
     }
 
-    /// Set the content reference for this container.
-    /// This is used instead of inline text - points to Content Entity.
-    fn set_content_ref(&mut self, content_ref: IonValue) {
-        self.content_ref = Some(content_ref);
+    /// Append text to this element's accumulated content.
+    /// Returns the byte offset where this text starts (for span tracking).
+    fn append_text(&mut self, text: &str) -> usize {
+        let offset = self.accumulated_text.len();
+        self.accumulated_text.push_str(text);
+        offset
     }
 
-    fn build(mut self) -> IonValue {
+    /// Get the current accumulated text length.
+    fn text_len(&self) -> usize {
+        self.accumulated_text.len()
+    }
+
+    /// Add a style event (inline span) to this element.
+    ///
+    /// Converts SpanStart into KFX style_event Ion struct:
+    /// { offset: N, length: N, style: $symbol [, link_to: $anchor] }
+    fn add_style_event(&mut self, span: SpanStart, ctx: &mut ExportContext) {
+        let mut event_fields = Vec::new();
+
+        // Offset and length (required)
+        event_fields.push((sym!(Offset), IonValue::Int(span.offset as i64)));
+        event_fields.push((sym!(Length), IonValue::Int(span.length as i64)));
+
+        // Style reference (required for rendering)
+        if let Some(style_sym) = span.style_symbol {
+            event_fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+        } else {
+            // Use default style if no specific style
+            event_fields.push((sym!(Style), IonValue::Symbol(ctx.default_style_symbol)));
+        }
+
+        // Add span-specific attributes (e.g., link_to for links)
+        for (field_id, value_str) in &span.kfx_attrs {
+            // LinkTo is always a symbol reference
+            if *field_id == sym!(LinkTo) {
+                let sym_id = ctx.symbols.get_or_intern(value_str);
+                event_fields.push((*field_id, IonValue::Symbol(sym_id)));
+            } else {
+                event_fields.push((*field_id, IonValue::String(value_str.clone())));
+            }
+        }
+
+        self.style_events.push(IonValue::Struct(event_fields));
+    }
+
+    /// Finalize and build the Ion struct, creating content reference if text was accumulated.
+    fn build(mut self, ctx: &mut ExportContext) -> IonValue {
         // KFX storylines are flat lists of elements, not nested structs
         // Each element is a struct with type, content reference, and possibly nested content_list
         if !self.fields.is_empty() {
-            // Add content reference if present
-            if let Some(content_ref) = self.content_ref {
+            // If this element has accumulated text, create ONE content reference
+            if !self.accumulated_text.is_empty() {
+                let (content_idx, _offset) = ctx.append_text(&self.accumulated_text);
+                let content_ref = IonValue::Struct(vec![
+                    (sym!(Name), IonValue::Symbol(ctx.current_content_name)),
+                    (sym!(Index), IonValue::Int(content_idx as i64)),
+                ]);
                 self.fields.push((sym!(Content), content_ref));
+            }
+
+            // Add style_events if any inline spans were collected
+            if !self.style_events.is_empty() {
+                self.fields
+                    .push((sym!(StyleEvents), IonValue::List(self.style_events)));
             }
 
             // Add nested children as content_list if present
@@ -904,6 +1059,8 @@ mod tests {
                 semantics: span_semantics,
                 offset: 7,
                 length: 5,
+                style_symbol: None,
+                kfx_attrs: Vec::new(),
             }],
             kfx_attrs: Vec::new(),
             style_symbol: None,

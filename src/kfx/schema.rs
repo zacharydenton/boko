@@ -627,6 +627,56 @@ impl KfxSchema {
 
         attrs
     }
+
+    /// Check if a role should be treated as an inline span during export.
+    ///
+    /// Inline spans are rendered as style_events in KFX, not as nested containers.
+    /// This includes: Link, Inline (for bold/italic spans).
+    pub fn is_inline_role(&self, role: Role) -> bool {
+        matches!(role, Role::Link | Role::Inline)
+    }
+
+    /// Export span attributes for an inline role.
+    ///
+    /// Similar to export_attributes but uses span rules instead of element rules.
+    /// Used when generating style_events for inline spans.
+    pub fn export_span_attributes<F>(
+        &self,
+        role: Role,
+        get_semantic: F,
+        export_ctx: &crate::kfx::transforms::ExportContext,
+    ) -> Vec<(u64, String)>
+    where
+        F: Fn(SemanticTarget) -> Option<String>,
+    {
+        let mut attrs = Vec::new();
+
+        // Find the matching span rule for this role
+        // For export, we match by examining the strategy's trigger_role or role
+        for span_rule in &self.span_rules {
+            let rule_matches = match &span_rule.strategy {
+                Strategy::Dynamic { trigger_role, .. } => *trigger_role == role,
+                Strategy::Structure { role: r, .. } => *r == role,
+                Strategy::StructureWithModifier { default_role, .. } => *default_role == role,
+                Strategy::Style { .. } => role == Role::Inline,
+                Strategy::Transparent { .. } => false,
+            };
+
+            if rule_matches {
+                // Apply attribute rules for this span type
+                for attr_rule in &span_rule.attr_rules {
+                    if let Some(value) = get_semantic(attr_rule.target) {
+                        let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
+                        let kfx_value = attr_rule.transform.export(&parsed, export_ctx);
+                        attrs.push((attr_rule.kfx_field as u64, kfx_value));
+                    }
+                }
+                break;
+            }
+        }
+
+        attrs
+    }
 }
 
 impl Default for KfxSchema {
