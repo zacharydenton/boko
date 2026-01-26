@@ -321,6 +321,11 @@ pub struct ExportContext {
     /// Anchor map: anchor_id → (ChapterId, NodeId).
     /// Populated during Pass 1 survey when nodes have IDs.
     pub anchor_map: HashMap<String, (ChapterId, NodeId)>,
+
+    /// Path to fragment ID mapping.
+    /// Maps source file paths (e.g., "chapter1.xhtml") to fragment IDs.
+    /// Used for resolving TOC hrefs to positions.
+    pub path_to_fragment: HashMap<String, u64>,
 }
 
 impl ExportContext {
@@ -339,6 +344,7 @@ impl ExportContext {
             current_fragment_id: 0,
             current_text_offset: 0,
             anchor_map: HashMap::new(),
+            path_to_fragment: HashMap::new(),
         }
     }
 
@@ -391,9 +397,13 @@ impl ExportContext {
     // =========================================================================
 
     /// Begin surveying a chapter. Call this at the start of Pass 1 for each chapter.
-    pub fn begin_chapter_survey(&mut self, chapter_id: ChapterId) -> u64 {
+    ///
+    /// The `path` is the source file path (e.g., "chapter1.xhtml") used to resolve
+    /// TOC hrefs to positions.
+    pub fn begin_chapter_survey(&mut self, chapter_id: ChapterId, path: &str) -> u64 {
         let fragment_id = self.fragment_ids.next();
         self.chapter_fragments.insert(chapter_id, fragment_id);
+        self.path_to_fragment.insert(path.to_string(), fragment_id);
         self.current_chapter = Some(chapter_id);
         self.current_fragment_id = fragment_id;
         self.current_text_offset = 0;
@@ -403,6 +413,11 @@ impl ExportContext {
     /// End surveying a chapter.
     pub fn end_chapter_survey(&mut self) {
         self.current_chapter = None;
+    }
+
+    /// Get the fragment ID for a given source path.
+    pub fn get_fragment_for_path(&self, path: &str) -> Option<u64> {
+        self.path_to_fragment.get(path).copied()
     }
 
     /// Record position for a node during Pass 1.

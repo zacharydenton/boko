@@ -94,9 +94,12 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         // Register section name as symbol
         let _section_id = ctx.register_section(section_name);
 
+        // Get the source path for this chapter (for TOC resolution)
+        let source_path = book.source_id(*chapter_id).unwrap_or("").to_string();
+
         // Load and survey chapter
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
-            survey_chapter(&chapter, *chapter_id, &mut ctx);
+            survey_chapter(&chapter, *chapter_id, &source_path, &mut ctx);
         }
     }
 
@@ -200,9 +203,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 /// - Track text offsets for link resolution
 ///
 /// NO ION GENERATION happens here.
-fn survey_chapter(chapter: &IRChapter, chapter_id: ChapterId, ctx: &mut ExportContext) {
-    // Begin surveying this chapter
-    let _fragment_id = ctx.begin_chapter_survey(chapter_id);
+fn survey_chapter(chapter: &IRChapter, chapter_id: ChapterId, source_path: &str, ctx: &mut ExportContext) {
+    // Begin surveying this chapter (with source path for TOC resolution)
+    let _fragment_id = ctx.begin_chapter_survey(chapter_id, source_path);
 
     // Walk the IR tree
     survey_node(chapter, chapter.root(), ctx);
@@ -375,6 +378,7 @@ fn build_format_capabilities_fragment() -> KfxFragment {
 /// Build the book navigation fragment with resolved positions.
 ///
 /// Uses ctx.position_map to generate correct fid:off positions for TOC entries.
+/// Structure: [{reading_order_name: default, nav_containers: [nav_container::{...}, ...]}]
 fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContext) -> KfxFragment {
     let mut nav_containers = Vec::new();
 
@@ -392,10 +396,16 @@ fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContex
             ),
             (KfxSymbol::Entries as u64, IonValue::List(toc_entries)),
         ]);
-        nav_containers.push(toc_container);
+        // Annotate with nav_container::
+        let annotated = IonValue::Annotated(
+            vec![KfxSymbol::NavContainer as u64],
+            Box::new(toc_container),
+        );
+        nav_containers.push(annotated);
     }
 
-    // Add headings nav container (empty for now)
+    // Add headings nav container
+    let headings_entries = build_headings_entries(ctx);
     let headings_container = IonValue::Struct(vec![
         (
             KfxSymbol::NavType as u64,
@@ -405,16 +415,39 @@ fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContex
             KfxSymbol::NavContainerName as u64,
             IonValue::String("headings".to_string()),
         ),
-        (KfxSymbol::Entries as u64, IonValue::List(vec![])),
+        (KfxSymbol::Entries as u64, IonValue::List(headings_entries)),
     ]);
-    nav_containers.push(headings_container);
+    // Annotate with nav_container::
+    let annotated = IonValue::Annotated(
+        vec![KfxSymbol::NavContainer as u64],
+        Box::new(headings_container),
+    );
+    nav_containers.push(annotated);
 
-    let book_nav = IonValue::Struct(vec![(
-        KfxSymbol::NavContainers as u64,
-        IonValue::List(nav_containers),
-    )]);
+    // Wrap in reading order structure: [{reading_order_name, nav_containers}]
+    let reading_order = IonValue::Struct(vec![
+        (
+            KfxSymbol::ReadingOrderName as u64,
+            IonValue::Symbol(KfxSymbol::Default as u64),
+        ),
+        (
+            KfxSymbol::NavContainers as u64,
+            IonValue::List(nav_containers),
+        ),
+    ]);
+
+    let book_nav = IonValue::List(vec![reading_order]);
 
     KfxFragment::singleton(KfxSymbol::BookNavigation, book_nav)
+}
+
+/// Build headings navigation entries from position_map.
+fn build_headings_entries(ctx: &ExportContext) -> Vec<IonValue> {
+    // For now, return empty - headings would require tracking heading text
+    // during the survey pass, which we don't currently do
+    // TODO: Track heading positions and labels during Pass 1
+    let _ = ctx;
+    Vec::new()
 }
 
 /// Build TOC entries recursively with resolved positions.
@@ -450,7 +483,9 @@ fn build_toc_entries_with_positions(
                 fields.push((KfxSymbol::Entries as u64, IonValue::List(child_entries)));
             }
 
-            IonValue::Struct(fields)
+            let nav_unit = IonValue::Struct(fields);
+            // Annotate with nav_unit::
+            IonValue::Annotated(vec![KfxSymbol::NavUnit as u64], Box::new(nav_unit))
         })
         .collect()
 }
@@ -458,33 +493,29 @@ fn build_toc_entries_with_positions(
 /// Resolve a TOC href to (fragment_id, offset).
 fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
     // Extract base path and anchor from href
-    let (base_path, _anchor) = if let Some(hash_pos) = href.find('#') {
+    let (base_path, anchor) = if let Some(hash_pos) = href.find('#') {
         (&href[..hash_pos], Some(&href[hash_pos + 1..]))
     } else {
         (href, None)
     };
 
-    // Try to find the chapter fragment ID by matching section name
-    // The section IDs in ctx correspond to source paths
-    if let Some(symbol_id) = ctx.symbols.get(base_path) {
-        // Find which chapter this corresponds to
-        for (&chapter_id, &frag_id) in &ctx.chapter_fragments {
-            // Check if this chapter's section_id matches
-            if ctx.section_ids.iter().any(|&sid| sid == symbol_id) {
-                // For now, return offset 0 for the chapter start
-                // TODO: If we have an anchor, look it up in position_map
-                return (frag_id, 0);
-            }
-            // Suppress unused warning
-            let _ = chapter_id;
-        }
+    // Look up the fragment ID for this path
+    if let Some(fragment_id) = ctx.get_fragment_for_path(base_path) {
+        // If there's an anchor, try to get its offset
+        let offset = anchor
+            .and_then(|anchor_id| ctx.anchor_map.get(anchor_id))
+            .and_then(|(chapter_id, node_id)| ctx.position_map.get(&(*chapter_id, *node_id)))
+            .map(|pos| pos.offset)
+            .unwrap_or(0);
+
+        return (fragment_id, offset);
     }
 
-    // Fallback: first fragment or 0
+    // Fallback: try first chapter fragment
     if let Some(&frag_id) = ctx.chapter_fragments.values().next() {
         (frag_id, 0)
     } else {
-        (0, 0)
+        (200, 0) // Default to start if no chapters
     }
 }
 
@@ -928,6 +959,65 @@ mod tests {
             }
         } else {
             panic!("expected Struct");
+        }
+    }
+
+    #[test]
+    fn test_book_navigation_structure() {
+        // Test that navigation has correct wrapper structure:
+        // [{reading_order_name: default, nav_containers: [nav_container::{}...]}]
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let mut ctx = ExportContext::new();
+
+        // Collect spine info first to avoid borrow issues
+        let spine_info: Vec<_> = book
+            .spine()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let section_name = format!("c{}", idx);
+                let source_path = book.source_id(entry.id).unwrap_or("").to_string();
+                (entry.id, section_name, source_path)
+            })
+            .collect();
+
+        // Survey chapters to populate path_to_fragment
+        for (chapter_id, section_name, source_path) in &spine_info {
+            ctx.register_section(section_name);
+            if let Ok(chapter) = book.load_chapter(*chapter_id) {
+                survey_chapter(&chapter, *chapter_id, source_path, &mut ctx);
+            }
+        }
+
+        let frag = build_book_navigation_fragment_with_positions(&book, &ctx);
+
+        // Should be $389 (book_navigation) type
+        assert_eq!(frag.ftype, KfxSymbol::BookNavigation as u64);
+
+        if let crate::kfx::fragment::FragmentData::Ion(ion) = &frag.data {
+            // Should be a list with one reading order entry
+            if let IonValue::List(reading_orders) = ion {
+                assert_eq!(reading_orders.len(), 1, "should have one reading order");
+
+                // The reading order should have reading_order_name and nav_containers
+                if let IonValue::Struct(fields) = &reading_orders[0] {
+                    let has_reading_order_name = fields
+                        .iter()
+                        .any(|(id, _)| *id == KfxSymbol::ReadingOrderName as u64);
+                    let has_nav_containers = fields
+                        .iter()
+                        .any(|(id, _)| *id == KfxSymbol::NavContainers as u64);
+
+                    assert!(has_reading_order_name, "should have reading_order_name");
+                    assert!(has_nav_containers, "should have nav_containers");
+                } else {
+                    panic!("reading order should be a struct");
+                }
+            } else {
+                panic!("book_navigation should be a list");
+            }
+        } else {
+            panic!("expected Ion data");
         }
     }
 }
