@@ -553,6 +553,52 @@ impl KfxSchema {
     pub fn kfx_type_for_role(&self, role: Role) -> Option<KfxSymbol> {
         self.export_strategy(role).map(|s| s.kfx_type())
     }
+
+    /// Export attributes for a role using registered transforms.
+    ///
+    /// This is the schema-driven way to export attributes. Instead of hardcoding
+    /// attribute extraction, call this method to get properly transformed KFX
+    /// attribute values.
+    ///
+    /// # Arguments
+    /// * `role` - The IR role being exported
+    /// * `get_semantic` - Closure to get semantic values by target
+    /// * `export_ctx` - Export context for transformations (spine map, etc.)
+    ///
+    /// # Returns
+    /// Vector of (KFX field ID, transformed string value) pairs
+    pub fn export_attributes<F>(
+        &self,
+        role: Role,
+        get_semantic: F,
+        export_ctx: &crate::kfx::transforms::ExportContext,
+    ) -> Vec<(u64, String)>
+    where
+        F: Fn(SemanticTarget) -> Option<String>,
+    {
+        let mut attrs = Vec::new();
+
+        // Find the KFX type ID for this role
+        let kfx_type_id = match self.kfx_symbol_for_role(role) {
+            Some(id) => id,
+            None => return attrs,
+        };
+
+        // Apply attribute rules in reverse (IR → KFX)
+        for rule in self.element_attr_rules(kfx_type_id) {
+            if let Some(value) = get_semantic(rule.target) {
+                // Wrap as ParsedAttribute::String for transformation
+                let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
+
+                // Apply transformer's export direction
+                let kfx_value = rule.transform.export(&parsed, export_ctx);
+
+                attrs.push((rule.kfx_field as u64, kfx_value));
+            }
+        }
+
+        attrs
+    }
 }
 
 impl Default for KfxSchema {

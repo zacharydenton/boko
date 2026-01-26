@@ -25,7 +25,7 @@ use crate::kfx::symbols::KfxSymbol;
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
 macro_rules! sym {
     ($variant:ident) => {
-        KfxSymbol::$variant as u32
+        KfxSymbol::$variant as u64
     };
 }
 
@@ -388,7 +388,7 @@ impl KfxImporter {
     }
 
     /// Recursively parse nav entries into a tree structure.
-    fn parse_nav_entries(&self, container: &[(u32, IonValue)]) -> Vec<TocEntry> {
+    fn parse_nav_entries(&self, container: &[(u64, IonValue)]) -> Vec<TocEntry> {
         let mut entries = Vec::new();
 
         if let Some(entry_list) = get_field(container, sym!(Entries)).and_then(|v| v.as_list()) {
@@ -579,7 +579,7 @@ impl KfxImporter {
     }
 
     /// Extract section names from a reading order struct.
-    fn extract_sections(&self, order_fields: &[(u32, IonValue)]) -> Option<Vec<String>> {
+    fn extract_sections(&self, order_fields: &[(u64, IonValue)]) -> Option<Vec<String>> {
         let sections = get_field(order_fields, sym!(Sections))?.as_list()?;
         let mut section_names = Vec::new();
         for section in sections {

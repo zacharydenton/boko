@@ -35,6 +35,7 @@ mod azw3;
 mod css_gen;
 mod epub;
 mod html_synth;
+mod kfx;
 mod normalize;
 mod text;
 
@@ -42,6 +43,7 @@ pub use azw3::{Azw3Config, Azw3Exporter};
 pub use css_gen::{generate_css, generate_css_all, CssArtifact};
 pub use epub::{EpubConfig, EpubExporter};
 pub use html_synth::{escape_xml, synthesize_html, synthesize_xhtml_document, SynthesisResult};
+pub use kfx::{KfxConfig, KfxExporter};
 pub use normalize::{normalize_book, ChapterContent, GlobalStylePool, NormalizedContent};
 pub use text::{TextConfig, TextExporter, TextFormat};
 

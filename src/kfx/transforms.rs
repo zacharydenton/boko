@@ -239,7 +239,7 @@ fn decode_base32(s: &str) -> Option<u32> {
 }
 
 /// Encode a u32 to base32 string (Kindle's variant).
-fn encode_base32(mut value: u32, min_digits: usize) -> String {
+pub fn encode_base32(mut value: u32, min_digits: usize) -> String {
     const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
     let mut result = Vec::new();
 

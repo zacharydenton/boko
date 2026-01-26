@@ -155,7 +155,7 @@ pub fn parse_container_info(data: &[u8]) -> Result<ContainerInfo, ContainerError
 }
 
 /// Get an integer field from a struct by field name.
-fn get_field_int(fields: &[(u32, IonValue)], name: &str) -> Option<i64> {
+fn get_field_int(fields: &[(u64, IonValue)], name: &str) -> Option<i64> {
     let sym_id = symbol_id_for_name(name)?;
     fields
         .iter()
@@ -164,11 +164,11 @@ fn get_field_int(fields: &[(u32, IonValue)], name: &str) -> Option<i64> {
 }
 
 /// Look up a symbol ID by name from the static symbol table.
-pub fn symbol_id_for_name(name: &str) -> Option<u32> {
+pub fn symbol_id_for_name(name: &str) -> Option<u64> {
     KFX_SYMBOL_TABLE
         .iter()
         .position(|&s| s == name)
-        .map(|i| i as u32)
+        .map(|i| i as u64)
 }
 
 // --- Index table parsing ---
@@ -286,7 +286,7 @@ pub fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
 /// Resolve a symbol ID to its text representation.
 ///
 /// Checks the base KFX symbol table first, then document-local symbols.
-pub fn resolve_symbol(id: u32, doc_symbols: &[String]) -> Option<&str> {
+pub fn resolve_symbol(id: u64, doc_symbols: &[String]) -> Option<&str> {
     let id = id as usize;
     if id < KFX_SYMBOL_TABLE.len() {
         Some(KFX_SYMBOL_TABLE[id])
@@ -307,7 +307,7 @@ pub fn get_symbol_text<'a>(value: &'a IonValue, doc_symbols: &'a [String]) -> Op
 
 /// Get a field from a struct by symbol ID.
 #[inline]
-pub fn get_field(fields: &[(u32, IonValue)], symbol_id: u32) -> Option<&IonValue> {
+pub fn get_field(fields: &[(u64, IonValue)], symbol_id: u64) -> Option<&IonValue> {
     fields
         .iter()
         .find(|(k, _)| *k == symbol_id)
@@ -426,7 +426,7 @@ mod tests {
     fn test_resolve_symbol_doc_local() {
         let doc_symbols = vec!["custom_symbol".to_string()];
         // Document-local symbols start after the base table
-        let doc_symbol_id = KFX_SYMBOL_TABLE.len() as u32;
+        let doc_symbol_id = KFX_SYMBOL_TABLE.len() as u64;
         assert_eq!(resolve_symbol(doc_symbol_id, &doc_symbols), Some("custom_symbol"));
     }
 

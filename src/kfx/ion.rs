@@ -56,9 +56,9 @@ impl IonType {
 
 /// Parsed Ion value.
 ///
-/// Symbols are stored as raw u32 IDs - use the KFX symbol table to resolve them.
+/// Symbols are stored as raw u64 IDs - use the KFX symbol table to resolve them.
 /// Structs use a Vec for fields (O(n) lookup) which is optimal for small structs
-/// typical in KFX data.
+/// typical in KFX data. Field order is preserved for serialization.
 #[derive(Debug, Clone)]
 pub enum IonValue {
     Null,
@@ -66,14 +66,15 @@ pub enum IonValue {
     Int(i64),
     Float(f64),
     /// Symbol ID (resolve via KFX_SYMBOL_TABLE or doc_symbols)
-    Symbol(u32),
+    Symbol(u64),
     String(String),
     Blob(Vec<u8>),
     List(Vec<IonValue>),
-    /// Struct fields as (symbol_id, value) pairs in parse order
-    Struct(Vec<(u32, IonValue)>),
+    /// Struct fields as (symbol_id, value) pairs in parse order.
+    /// Order is preserved for both parsing and serialization.
+    Struct(Vec<(u64, IonValue)>),
     /// Annotated value: (annotation symbol IDs, inner value)
-    Annotated(Vec<u32>, Box<IonValue>),
+    Annotated(Vec<u64>, Box<IonValue>),
 }
 
 impl IonValue {
@@ -97,9 +98,18 @@ impl IonValue {
 
     /// Get as symbol ID if this is a Symbol value.
     #[inline]
-    pub fn as_symbol(&self) -> Option<u32> {
+    pub fn as_symbol(&self) -> Option<u64> {
         match self {
             IonValue::Symbol(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Get as bool if this is a Bool value.
+    #[inline]
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            IonValue::Bool(b) => Some(*b),
             _ => None,
         }
     }
@@ -115,7 +125,7 @@ impl IonValue {
 
     /// Get struct fields if this is a Struct value.
     #[inline]
-    pub fn as_struct(&self) -> Option<&[(u32, IonValue)]> {
+    pub fn as_struct(&self) -> Option<&[(u64, IonValue)]> {
         match self {
             IonValue::Struct(fields) => Some(fields),
             _ => None,
@@ -124,7 +134,7 @@ impl IonValue {
 
     /// Get field from struct by symbol ID. O(n) scan - optimal for small structs.
     #[inline]
-    pub fn get(&self, symbol_id: u32) -> Option<&IonValue> {
+    pub fn get(&self, symbol_id: u64) -> Option<&IonValue> {
         self.as_struct()?
             .iter()
             .find(|(k, _)| *k == symbol_id)
@@ -261,13 +271,7 @@ impl<'a> IonParser<'a> {
 
             IonType::Symbol => {
                 let symbol_id = self.read_uint(length)?;
-                if symbol_id > u32::MAX as u64 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "symbol ID too large",
-                    ));
-                }
-                Ok(IonValue::Symbol(symbol_id as u32))
+                Ok(IonValue::Symbol(symbol_id))
             }
 
             IonType::String => {
@@ -294,7 +298,7 @@ impl<'a> IonParser<'a> {
                 let end = self.pos + length;
                 let mut fields = Vec::new();
                 while self.pos < end {
-                    let field_name = self.read_varuint()?;
+                    let field_name = self.read_varuint()? as u64;
                     let value = self.parse_value()?;
                     fields.push((field_name, value));
                 }
@@ -311,7 +315,7 @@ impl<'a> IonParser<'a> {
                 // Read annotation symbol IDs
                 let mut annotations = Vec::new();
                 while self.pos < ann_end {
-                    annotations.push(self.read_varuint()?);
+                    annotations.push(self.read_varuint()? as u64);
                 }
 
                 // Parse the annotated value
@@ -378,6 +382,220 @@ impl<'a> IonParser<'a> {
             result = (result << 8) | b as u64;
         }
         Ok(result)
+    }
+}
+
+// ============================================================================
+// Ion Binary Writer
+// ============================================================================
+
+/// Ion binary format writer.
+///
+/// Writes Ion values in binary format for KFX export.
+pub struct IonWriter {
+    buffer: Vec<u8>,
+}
+
+impl IonWriter {
+    /// Create a new empty writer.
+    pub fn new() -> Self {
+        Self { buffer: Vec::new() }
+    }
+
+    /// Get the written data, consuming the writer.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.buffer
+    }
+
+    /// Write the Ion BVM (Binary Version Marker).
+    pub fn write_bvm(&mut self) {
+        self.buffer.extend_from_slice(&ION_MAGIC);
+    }
+
+    /// Write an IonValue.
+    pub fn write_value(&mut self, value: &IonValue) {
+        match value {
+            IonValue::Null => self.write_null(),
+            IonValue::Bool(b) => self.write_bool(*b),
+            IonValue::Int(n) => self.write_int(*n),
+            IonValue::Float(f) => self.write_float(*f),
+            IonValue::Symbol(id) => self.write_symbol(*id),
+            IonValue::String(s) => self.write_string(s),
+            IonValue::Blob(data) => self.write_blob(data),
+            IonValue::List(items) => self.write_list(items),
+            IonValue::Struct(fields) => self.write_struct(fields),
+            IonValue::Annotated(annotations, inner) => self.write_annotated(annotations, inner),
+        }
+    }
+
+    /// Write null value.
+    pub fn write_null(&mut self) {
+        self.buffer.push(0x0f); // type 0, length 15 = null
+    }
+
+    /// Write boolean value.
+    pub fn write_bool(&mut self, value: bool) {
+        self.buffer.push(if value { 0x11 } else { 0x10 });
+    }
+
+    /// Write integer value.
+    pub fn write_int(&mut self, value: i64) {
+        if value == 0 {
+            self.buffer.push(0x20); // type 2, length 0
+            return;
+        }
+
+        let (type_code, magnitude) = if value >= 0 {
+            (2u8, value as u64)
+        } else if value == i64::MIN {
+            // Special case: i64::MIN magnitude is 2^63 which needs 8 bytes
+            (3u8, 0x8000_0000_0000_0000u64)
+        } else {
+            (3u8, (-value) as u64)
+        };
+
+        let bytes = uint_bytes(magnitude);
+        self.write_type_descriptor(type_code, bytes.len());
+        self.buffer.extend_from_slice(&bytes);
+    }
+
+    /// Write float value (always as 64-bit).
+    pub fn write_float(&mut self, value: f64) {
+        if value == 0.0 && value.is_sign_positive() {
+            self.buffer.push(0x40); // type 4, length 0 = positive zero
+        } else {
+            self.buffer.push(0x48); // type 4, length 8
+            self.buffer.extend_from_slice(&value.to_be_bytes());
+        }
+    }
+
+    /// Write symbol (by ID).
+    pub fn write_symbol(&mut self, id: u64) {
+        if id == 0 {
+            self.buffer.push(0x70); // type 7, length 0
+            return;
+        }
+        let bytes = uint_bytes(id);
+        self.write_type_descriptor(7, bytes.len());
+        self.buffer.extend_from_slice(&bytes);
+    }
+
+    /// Write string value.
+    pub fn write_string(&mut self, s: &str) {
+        let bytes = s.as_bytes();
+        self.write_type_descriptor(8, bytes.len());
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    /// Write blob value.
+    pub fn write_blob(&mut self, data: &[u8]) {
+        self.write_type_descriptor(10, data.len());
+        self.buffer.extend_from_slice(data);
+    }
+
+    /// Write list value.
+    pub fn write_list(&mut self, items: &[IonValue]) {
+        let mut inner = IonWriter::new();
+        for item in items {
+            inner.write_value(item);
+        }
+        let inner_bytes = inner.into_bytes();
+
+        self.write_type_descriptor(11, inner_bytes.len());
+        self.buffer.extend_from_slice(&inner_bytes);
+    }
+
+    /// Write struct value (preserves field order).
+    pub fn write_struct(&mut self, fields: &[(u64, IonValue)]) {
+        let mut inner = IonWriter::new();
+
+        for (key, value) in fields {
+            inner.write_varuint(*key);
+            inner.write_value(value);
+        }
+        let inner_bytes = inner.into_bytes();
+
+        self.write_type_descriptor(13, inner_bytes.len());
+        self.buffer.extend_from_slice(&inner_bytes);
+    }
+
+    /// Write annotated value.
+    pub fn write_annotated(&mut self, annotations: &[u64], inner: &IonValue) {
+        // Serialize annotation IDs
+        let mut ann_buf = Vec::new();
+        for &ann in annotations {
+            write_varuint_to(&mut ann_buf, ann);
+        }
+
+        // Serialize inner value
+        let mut inner_writer = IonWriter::new();
+        inner_writer.write_value(inner);
+        let inner_bytes = inner_writer.into_bytes();
+
+        // Total content = annot_length varuint + annotations + inner value
+        let mut content = Vec::new();
+        write_varuint_to(&mut content, ann_buf.len() as u64);
+        content.extend_from_slice(&ann_buf);
+        content.extend_from_slice(&inner_bytes);
+
+        self.write_type_descriptor(14, content.len());
+        self.buffer.extend_from_slice(&content);
+    }
+
+    /// Write type descriptor byte(s).
+    fn write_type_descriptor(&mut self, type_code: u8, length: usize) {
+        if length < 14 {
+            self.buffer.push((type_code << 4) | (length as u8));
+        } else {
+            self.buffer.push((type_code << 4) | 14);
+            self.write_varuint(length as u64);
+        }
+    }
+
+    /// Write VarUInt to buffer.
+    fn write_varuint(&mut self, value: u64) {
+        write_varuint_to(&mut self.buffer, value);
+    }
+}
+
+impl Default for IonWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Encode unsigned int as big-endian bytes (minimal length).
+fn uint_bytes(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return vec![];
+    }
+    let bytes = value.to_be_bytes();
+    let skip = bytes.iter().take_while(|&&b| b == 0).count();
+    bytes[skip..].to_vec()
+}
+
+/// Write VarUInt to a buffer (7 bits per byte, MSB set on last byte).
+fn write_varuint_to(buf: &mut Vec<u8>, value: u64) {
+    if value == 0 {
+        buf.push(0x80);
+        return;
+    }
+
+    // Count how many 7-bit groups we need
+    let mut temp = value;
+    let mut groups = Vec::new();
+    while temp > 0 {
+        groups.push((temp & 0x7f) as u8);
+        temp >>= 7;
+    }
+
+    // Write in reverse order, setting MSB on last byte
+    for (i, &group) in groups.iter().rev().enumerate() {
+        if i == groups.len() - 1 {
+            buf.push(group | 0x80); // Last byte has MSB set
+        } else {
+            buf.push(group);
+        }
     }
 }
 
@@ -504,5 +722,128 @@ mod tests {
         let data = [0xe0, 0x01, 0x00, 0xea, 0x43, 0x00, 0x00, 0x00];
         let mut parser = IonParser::new(&data);
         assert!(parser.parse().is_err());
+    }
+
+    // ========================================================================
+    // IonWriter tests
+    // ========================================================================
+
+    #[test]
+    fn test_writer_roundtrip_int() {
+        // Write an integer and verify we can parse it back
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_int(42);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_writer_roundtrip_negative_int() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_int(-42);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_int(), Some(-42));
+    }
+
+    #[test]
+    fn test_writer_roundtrip_string() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_string("hello");
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_string(), Some("hello"));
+    }
+
+    #[test]
+    fn test_writer_roundtrip_struct() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_struct(&[
+            (10, IonValue::String("test".to_string())),
+            (20, IonValue::Int(42)),
+        ]);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        let value = parser.parse().unwrap();
+        assert_eq!(value.get(10).and_then(|v| v.as_string()), Some("test"));
+        assert_eq!(value.get(20).and_then(|v| v.as_int()), Some(42));
+    }
+
+    #[test]
+    fn test_writer_roundtrip_list() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_list(&[IonValue::Int(1), IonValue::Int(2), IonValue::Int(3)]);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        let value = parser.parse().unwrap();
+        let list = value.as_list().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].as_int(), Some(1));
+        assert_eq!(list[1].as_int(), Some(2));
+        assert_eq!(list[2].as_int(), Some(3));
+    }
+
+    #[test]
+    fn test_writer_roundtrip_float() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_float(3.14159);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        if let IonValue::Float(f) = parser.parse().unwrap() {
+            assert!((f - 3.14159).abs() < 1e-10);
+        } else {
+            panic!("expected float");
+        }
+    }
+
+    #[test]
+    fn test_writer_roundtrip_symbol() {
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_symbol(42);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_symbol(), Some(42));
+    }
+
+    #[test]
+    fn test_writer_complex_value() {
+        // Test write_value with a complex nested structure
+        let value = IonValue::Struct(vec![
+            (1, IonValue::String("title".to_string())),
+            (
+                2,
+                IonValue::List(vec![
+                    IonValue::Int(1),
+                    IonValue::Int(2),
+                ]),
+            ),
+            (3, IonValue::Bool(true)),
+        ]);
+
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_value(&value);
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        let parsed = parser.parse().unwrap();
+
+        assert_eq!(parsed.get(1).and_then(|v| v.as_string()), Some("title"));
+        assert_eq!(parsed.get(3).and_then(|v| v.as_bool()), Some(true));
     }
 }

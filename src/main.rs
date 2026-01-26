@@ -304,8 +304,9 @@ fn parse_format(fmt: &str) -> Result<Format, String> {
         "epub" => Ok(Format::Epub),
         "azw3" => Ok(Format::Azw3),
         "mobi" => Ok(Format::Mobi),
+        "kfx" => Ok(Format::Kfx),
         _ => Err(format!(
-            "Unknown format: {}. Supported: md, txt, epub, azw3, mobi",
+            "Unknown format: {}. Supported: md, txt, epub, azw3, mobi, kfx",
             fmt
         )),
     }

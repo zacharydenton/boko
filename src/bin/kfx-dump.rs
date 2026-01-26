@@ -8,7 +8,8 @@ const ION_BVM: [u8; 4] = [0xE0, 0x01, 0x00, 0xEA];
 /// Build an Ion binary preamble that imports our KFX symbol table.
 /// This allows parsing Ion data that uses KFX symbols without an embedded import.
 fn build_symbol_table_preamble() -> Vec<u8> {
-    build_symbol_table_preamble_with_max_id(848)
+    use boko::kfx::symbols::KFX_MAX_SYMBOL_ID;
+    build_symbol_table_preamble_with_max_id(KFX_MAX_SYMBOL_ID as i64)
 }
 
 /// Build an Ion binary preamble with a custom max_id for extended symbols.
@@ -295,71 +296,49 @@ fn parse_container_info_for_doc_symbols(data: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
-/// Extract document-specific symbols from the doc symbols section
-/// The doc symbols section is Ion binary containing a symbol table declaration.
-/// We extract the "symbols" list which contains the new document-specific symbol names.
+/// Extract document-specific symbols from the doc symbols section.
+/// The doc symbols section is Ion binary containing a $ion_symbol_table struct.
+/// We extract the "symbols" list which contains the local symbol names.
 fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
+    use boko::kfx::ion::{IonParser, IonValue};
 
-    // Simple approach: search for string sequences in the binary data
-    // The symbols are stored as Ion strings in the "symbols" list
-    let mut symbols = Vec::new();
+    // Use our own IonParser which doesn't do special symbol table handling
+    let mut parser = IonParser::new(data);
+    let value = match parser.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("DEBUG: Failed to parse Ion: {}", e);
+            return Vec::new();
+        }
+    };
 
-    // Skip the Ion BVM if present
-    let start = if data.len() >= 4 && data[0..4] == ION_BVM { 4 } else { 0 };
+    // The value should be an annotated struct: $3::{ imports: [...], symbols: [...] }
+    // We need to find the "symbols" field (symbol ID 7)
+    let inner = match &value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => &value,
+    };
 
-    // Look for strings in the data - Ion strings are prefixed with their type/length
-    let mut i = start;
-    while i < data.len() {
-        let type_byte = data[i];
-        let type_code = (type_byte >> 4) & 0x0F;
-
-        // Type 8 = string
-        if type_code == 8 {
-            let len_nibble = type_byte & 0x0F;
-            let (str_len, header_len) = if len_nibble == 14 {
-                // VarUInt length follows
-                if i + 1 < data.len() {
-                    let len = data[i + 1] as usize;
-                    if len & 0x80 == 0 {
-                        // Single byte VarUInt
-                        (len, 2)
-                    } else {
-                        // Multi-byte VarUInt - simplified handling
-                        ((len & 0x7F), 2)
-                    }
-                } else {
-                    break;
+    if let IonValue::Struct(fields) = inner {
+        for (field_id, field_value) in fields {
+            // Symbol ID 7 = "symbols"
+            if *field_id == 7 {
+                if let IonValue::List(items) = field_value {
+                    return items.iter()
+                        .filter_map(|item| {
+                            if let IonValue::String(s) = item {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                 }
-            } else if len_nibble == 15 {
-                // null.string
-                i += 1;
-                continue;
-            } else {
-                (len_nibble as usize, 1)
-            };
-
-            if i + header_len + str_len <= data.len() {
-                let str_bytes = &data[i + header_len..i + header_len + str_len];
-                if let Ok(s) = std::str::from_utf8(str_bytes) {
-                    // Filter out non-symbol strings (imports, version info, etc.)
-                    if !s.starts_with("YJ_symbols") && !s.is_empty() && !s.contains("version") {
-                        symbols.push(s.to_string());
-                    }
-                }
-                i += header_len + str_len;
-            } else {
-                break;
             }
-        } else {
-            i += 1;
         }
     }
 
-    // Remove duplicates while preserving order
-    let mut seen = std::collections::HashSet::new();
-    symbols.retain(|s| seen.insert(s.clone()));
-
-    symbols
+    Vec::new()
 }
 
 /// Parse and dump an entity (ENTY format)
@@ -419,8 +398,9 @@ fn dump_ion_data_extended(data: &[u8], extended_symbols: &[String]) -> IonResult
         all_symbols.push(sym.as_str());
     }
 
-    // max_id for import: we have 839 base symbols mapping to $10-$848, plus extended
-    let max_id = (848 + extended_symbols.len()) as i64;
+    // max_id for import: base symbols (0-851) plus extended document symbols
+    use boko::kfx::symbols::KFX_MAX_SYMBOL_ID;
+    let max_id = (KFX_MAX_SYMBOL_ID + extended_symbols.len()) as i64;
 
     // Create catalog with extended symbol table
     let mut catalog = MapCatalog::new();

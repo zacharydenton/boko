@@ -44,6 +44,9 @@ pub struct ElementStart {
     pub content_ref: Option<ContentRef>,
     /// Inline style events (spans within text content).
     pub style_events: Vec<SpanStart>,
+    /// Pre-transformed KFX attributes (field_id, value_string).
+    /// Populated during export by schema.export_attributes().
+    pub kfx_attrs: Vec<(u64, String)>,
 }
 
 impl ElementStart {
@@ -55,6 +58,7 @@ impl ElementStart {
             semantics: HashMap::new(),
             content_ref: None,
             style_events: Vec::new(),
+            kfx_attrs: Vec::new(),
         }
     }
 
@@ -147,6 +151,7 @@ impl TokenStream {
             semantics,
             content_ref,
             style_events,
+            kfx_attrs: Vec::new(),
         }));
     }
 

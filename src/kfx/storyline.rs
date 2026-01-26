@@ -32,10 +32,10 @@ struct TokenizeContext<'a> {
     anchors: Option<&'a HashMap<String, String>>,
 }
 
-/// Shorthand for getting a KfxSymbol as u32.
+/// Shorthand for getting a KfxSymbol as u64.
 macro_rules! sym {
     ($variant:ident) => {
-        KfxSymbol::$variant as u32
+        KfxSymbol::$variant as u64
     };
 }
 
@@ -99,14 +99,14 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         None => return,
     };
 
-    // Get element type symbol ID
+    // Get element type symbol ID (u64 from IonValue, cast to u32 for schema)
     let kfx_type_id = get_field(fields, sym!(Type))
         .and_then(|v| v.as_symbol())
-        .unwrap_or(sym!(Container));
+        .unwrap_or(sym!(Container)) as u32;
 
     // Use schema to resolve role with attribute lookup closure
     let role = schema().resolve_element_role(kfx_type_id, |symbol| {
-        get_field(fields, symbol as u32).and_then(|v| v.as_int())
+        get_field(fields, symbol as u64).and_then(|v| v.as_int())
     });
 
     // Get element ID
@@ -143,6 +143,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         semantics,
         content_ref,
         style_events,
+        kfx_attrs: Vec::new(),
     }));
 
     // Recurse into children
@@ -161,7 +162,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
 /// This is **fully generic** - it iterates all AttrRules from the schema
 /// and applies their transformers. No hardcoded SemanticTarget checks.
 fn extract_all_element_attrs(
-    fields: &[(u32, IonValue)],
+    fields: &[(u64, IonValue)],
     kfx_type_id: u32,
     ctx: &TokenizeContext,
 ) -> HashMap<SemanticTarget, String> {
@@ -174,7 +175,7 @@ fn extract_all_element_attrs(
 
     for rule in schema().element_attr_rules(kfx_type_id) {
         if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
+            get_field(fields, rule.kfx_field as u64).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
             let parsed = rule.transform.import(&raw_value, &import_ctx);
@@ -207,7 +208,7 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
                 .map(|n| n as usize)?;
 
             // Create closure to check which fields are present
-            let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u32).is_some();
+            let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u64).is_some();
 
             // Use schema to determine role
             let role = schema().resolve_span_role(&has_field);
@@ -229,7 +230,7 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
 ///
 /// This is **fully generic** - no hardcoded SemanticTarget checks.
 fn extract_all_span_attrs<F>(
-    fields: &[(u32, IonValue)],
+    fields: &[(u64, IonValue)],
     has_field: F,
     ctx: &TokenizeContext,
 ) -> HashMap<SemanticTarget, String>
@@ -245,7 +246,7 @@ where
 
     for rule in schema().span_attr_rules(&has_field) {
         if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u32).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
+            get_field(fields, rule.kfx_field as u64).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
             let parsed = rule.transform.import(&raw_value, &import_ctx);
@@ -431,7 +432,7 @@ fn snap_to_char_boundary(text: &str, byte_offset: usize) -> usize {
 // ============================================================================
 
 /// Resolve a symbol ID to its string representation.
-fn resolve_symbol(id: u32, doc_symbols: &[String]) -> Option<&str> {
+fn resolve_symbol(id: u64, doc_symbols: &[String]) -> Option<&str> {
     crate::kfx::container::resolve_symbol(id, doc_symbols)
 }
 
@@ -466,6 +467,260 @@ where
     build_ir_from_tokens(&tokens, content_lookup)
 }
 
+// ============================================================================
+// EXPORT: IR → TokenStream → Ion
+// ============================================================================
+
+use crate::ir::Role;
+use crate::kfx::context::ExportContext;
+
+/// Convert an IR chapter to a TokenStream.
+///
+/// This is the first stage of export: walking the IR tree and emitting tokens.
+pub fn ir_to_tokens(chapter: &IRChapter, ctx: &mut ExportContext) -> TokenStream {
+    let sch = schema();
+    let mut stream = TokenStream::new();
+
+    walk_node_for_export(chapter, chapter.root(), &sch, ctx, &mut stream);
+    stream
+}
+
+/// Walk a node and emit tokens for export.
+///
+/// Uses schema-driven attribute export (FIX for Issue #2: Attribute Hardcoding).
+fn walk_node_for_export(
+    chapter: &IRChapter,
+    node_id: NodeId,
+    sch: &crate::kfx::schema::KfxSchema,
+    ctx: &mut ExportContext,
+    stream: &mut TokenStream,
+) {
+    let node = match chapter.node(node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    // Root node: just walk children
+    if node.role == Role::Root {
+        for child in chapter.children(node_id) {
+            walk_node_for_export(chapter, child, sch, ctx, stream);
+        }
+        return;
+    }
+
+    // Get KFX type from schema (will be used in tokens_to_ion)
+    let _kfx_type = sch.kfx_type_for_role(node.role);
+
+    // Build element start with semantics
+    let mut elem = ElementStart::new(node.role);
+
+    // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
+    // Create a closure to get semantic values by target
+    let export_ctx = crate::kfx::transforms::ExportContext::default();
+    let kfx_attrs = sch.export_attributes(
+        node.role,
+        |target| match target {
+            SemanticTarget::Href => chapter.semantics.href(node_id).map(|s| s.to_string()),
+            SemanticTarget::Src => chapter.semantics.src(node_id).map(|s| s.to_string()),
+            SemanticTarget::Alt => chapter.semantics.alt(node_id).map(|s| s.to_string()),
+            SemanticTarget::Id => chapter.semantics.id(node_id).map(|s| s.to_string()),
+        },
+        &export_ctx,
+    );
+
+    // Store the transformed KFX attributes for tokens_to_ion
+    elem.kfx_attrs = kfx_attrs;
+
+    // Also populate the semantic map for backward compatibility with IR operations
+    // (This is redundant but ensures the element has all info needed)
+    if let Some(href) = chapter.semantics.href(node_id) {
+        elem.set_semantic(SemanticTarget::Href, href.to_string());
+    }
+    if let Some(src) = chapter.semantics.src(node_id) {
+        elem.set_semantic(SemanticTarget::Src, src.to_string());
+        // Intern any referenced resources (already done in Pass 1, but safe to repeat)
+        ctx.resource_registry.register(src, &mut ctx.symbols);
+    }
+    if let Some(alt) = chapter.semantics.alt(node_id) {
+        elem.set_semantic(SemanticTarget::Alt, alt.to_string());
+    }
+    if let Some(id) = chapter.semantics.id(node_id) {
+        elem.set_semantic(SemanticTarget::Id, id.to_string());
+    }
+
+    stream.push(KfxToken::StartElement(elem));
+
+    // Emit text content if present
+    if !node.text.is_empty() {
+        let text = chapter.text(node.text);
+        if !text.is_empty() {
+            stream.push(KfxToken::Text(text.to_string()));
+        }
+    }
+
+    // Walk children
+    for child in chapter.children(node_id) {
+        walk_node_for_export(chapter, child, sch, ctx, stream);
+    }
+
+    stream.push(KfxToken::EndElement);
+}
+
+/// Convert a TokenStream to KFX Ion structure (Storyline content_list).
+///
+/// This is the second stage of export: building the Ion tree from tokens.
+///
+/// **Critical**: This function SPLITS data between Structure and Text:
+/// - **Structure** (containers) → returned as Ion (for Storyline Entity)
+/// - **Text strings** → pushed to `ctx.text_accumulator` (for Content Entity)
+///
+/// Text containers get a `content: {name, index}` reference instead of inline text.
+pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue {
+    let mut stack: Vec<IonBuilder> = vec![IonBuilder::new()];
+
+    for token in tokens {
+        match token {
+            KfxToken::StartElement(elem) => {
+                let mut fields = Vec::new();
+
+                // Unique container ID - use the global generator to avoid collisions
+                let container_id = ctx.fragment_ids.next();
+                fields.push((sym!(Id), IonValue::Int(container_id as i64)));
+
+                // Type field (as symbol ID)
+                if let Some(kfx_type) = schema().kfx_type_for_role(elem.role) {
+                    fields.push((sym!(Type), IonValue::Symbol(kfx_type as u64)));
+                }
+
+                // Add heading level if this is a heading
+                if let Role::Heading(level) = elem.role {
+                    fields.push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
+                }
+
+                // Add schema-driven attributes from kfx_attrs
+                // The schema handles Image src→resource_name, Link href→link_to, etc.
+                for (field_id, value_str) in &elem.kfx_attrs {
+                    // Intern the value as a symbol if it looks like a reference
+                    if value_str.starts_with('#') || value_str.contains('/') {
+                        let sym_id = ctx.symbols.get_or_intern(value_str);
+                        fields.push((*field_id, IonValue::Symbol(sym_id)));
+                    } else {
+                        fields.push((*field_id, IonValue::String(value_str.clone())));
+                    }
+                }
+
+                stack.push(IonBuilder::with_fields(fields));
+            }
+            KfxToken::EndElement => {
+                if let Some(completed) = stack.pop() {
+                    if let Some(parent) = stack.last_mut() {
+                        parent.add_child(completed.build());
+                    }
+                }
+            }
+            KfxToken::Text(text) => {
+                // CRITICAL: Split text from structure!
+                // 1. Store raw string in accumulator (for Content Entity)
+                // append_text returns (index, offset)
+                let (content_idx, _offset) = ctx.append_text(text);
+
+                // 2. Create content reference (for Storyline Entity)
+                // { name: content_name, index: N }
+                let content_ref = IonValue::Struct(vec![
+                    (sym!(Name), IonValue::Symbol(ctx.current_content_name)),
+                    (sym!(Index), IonValue::Int(content_idx as i64)),
+                ]);
+
+                // 3. Add to current container
+                if let Some(current) = stack.last_mut() {
+                    current.set_content_ref(content_ref);
+                }
+            }
+            KfxToken::StartSpan(_) => {
+                // Spans are handled through style_events, not nested elements
+            }
+            KfxToken::EndSpan => {
+                // Spans are handled through style_events
+            }
+        }
+    }
+
+    // Return the root children as a list (the storyline content_list)
+    if let Some(root) = stack.pop() {
+        root.build()
+    } else {
+        IonValue::List(vec![])
+    }
+}
+
+/// Builder for constructing Ion structures from tokens.
+struct IonBuilder {
+    fields: Vec<(u64, IonValue)>,
+    children: Vec<IonValue>,
+    content_ref: Option<IonValue>,
+}
+
+impl IonBuilder {
+    fn new() -> Self {
+        Self {
+            fields: Vec::new(),
+            children: Vec::new(),
+            content_ref: None,
+        }
+    }
+
+    fn with_fields(fields: Vec<(u64, IonValue)>) -> Self {
+        Self {
+            fields,
+            children: Vec::new(),
+            content_ref: None,
+        }
+    }
+
+    fn add_child(&mut self, child: IonValue) {
+        self.children.push(child);
+    }
+
+    /// Set the content reference for this container.
+    /// This is used instead of inline text - points to Content Entity.
+    fn set_content_ref(&mut self, content_ref: IonValue) {
+        self.content_ref = Some(content_ref);
+    }
+
+    fn build(mut self) -> IonValue {
+        // KFX storylines are flat lists of elements, not nested structs
+        // Each element is a struct with type, content reference, and possibly nested content_list
+        if !self.fields.is_empty() {
+            // Add content reference if present
+            if let Some(content_ref) = self.content_ref {
+                self.fields.push((sym!(Content), content_ref));
+            }
+
+            // Add nested children as content_list if present
+            if !self.children.is_empty() {
+                self.fields
+                    .push((sym!(ContentList), IonValue::List(self.children)));
+            }
+
+            IonValue::Struct(self.fields)
+        } else if !self.children.is_empty() {
+            // Root level: return list of children
+            IonValue::List(self.children)
+        } else {
+            IonValue::Null
+        }
+    }
+}
+
+/// Build a storyline Ion structure from an IR chapter.
+///
+/// **Note**: This is now internal - use `build_chapter_entities` for the full
+/// three-entity architecture (Content, Storyline, Section).
+pub fn build_storyline_ion(chapter: &IRChapter, ctx: &mut ExportContext) -> IonValue {
+    let tokens = ir_to_tokens(chapter, ctx);
+    tokens_to_ion(&tokens, ctx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,6 +750,7 @@ mod tests {
             semantics,
             content_ref: None,
             style_events: Vec::new(),
+            kfx_attrs: Vec::new(),
         }));
         stream.end_element();
 
@@ -520,6 +776,7 @@ mod tests {
                 index: 0,
             }),
             style_events: Vec::new(),
+            kfx_attrs: Vec::new(),
         }));
         stream.end_element();
 
@@ -550,6 +807,7 @@ mod tests {
                 index: 0,
             }),
             style_events: Vec::new(),
+            kfx_attrs: Vec::new(),
         }));
         stream.end_element();
 
@@ -580,6 +838,7 @@ mod tests {
                 offset: 7,
                 length: 5,
             }],
+            kfx_attrs: Vec::new(),
         }));
         stream.end_element();
 
@@ -637,5 +896,63 @@ mod tests {
 
         assert_eq!(chapter.semantics.src(node_id), Some("image.jpg"));
         assert_eq!(chapter.semantics.alt(node_id), Some("An image"));
+    }
+
+    // ========================================================================
+    // Export tests
+    // ========================================================================
+
+    #[test]
+    fn test_ir_to_tokens_basic() {
+        let mut chapter = IRChapter::new();
+
+        // Create a text node with content
+        let text_range = chapter.append_text("Hello");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(chapter.root(), text_id);
+
+        let mut ctx = ExportContext::new();
+        let tokens = ir_to_tokens(&chapter, &mut ctx);
+
+        // Should have tokens for the text node
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_build_storyline_ion() {
+        let mut chapter = IRChapter::new();
+
+        // Create a paragraph with a text child
+        let para = Node::new(Role::Paragraph);
+        let para_id = chapter.alloc_node(para);
+        chapter.append_child(chapter.root(), para_id);
+
+        let text_range = chapter.append_text("Test content");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(para_id, text_id);
+
+        let mut ctx = ExportContext::new();
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Should produce some Ion structure
+        assert!(!matches!(ion, IonValue::Null));
+    }
+
+    #[test]
+    fn test_tokens_to_ion_empty() {
+        let tokens = TokenStream::new();
+        let mut ctx = ExportContext::new();
+        let ion = tokens_to_ion(&tokens, &mut ctx);
+
+        // Empty tokens should produce an empty list or null
+        assert!(
+            matches!(ion, IonValue::List(_)) || matches!(ion, IonValue::Null),
+            "expected List or Null, got {:?}",
+            ion
+        );
     }
 }
