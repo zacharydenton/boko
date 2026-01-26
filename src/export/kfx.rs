@@ -982,37 +982,31 @@ fn build_chapter_entities(
 }
 
 
-/// Build the $ion_symbol_table ION.
+/// Build the document symbols section.
+///
+/// This writes local symbols in a format compatible with `extract_doc_symbols`:
+/// - Ion BVM header
+/// - $ion_symbol_table annotation with imports and symbols
+///
+/// The symbols list is written as consecutive Ion strings which
+/// `extract_doc_symbols` can find by scanning for type-8 (string) values.
+///
+/// IMPORTANT: The symbols in the list must appear in the exact same order
+/// they were interned, so that symbol ID = KFX_SYMBOL_TABLE_SIZE + index.
 fn build_symbol_table_ion(local_symbols: &[String]) -> Vec<u8> {
-    // Import statement for YJ_symbols
-    let imports = IonValue::List(vec![IonValue::Struct(vec![
-        (
-            KfxSymbol::Name as u64,
-            IonValue::String("YJ_symbols".to_string()),
-        ),
-        (KfxSymbol::Version as u64, IonValue::Int(10)),
-        (
-            KfxSymbol::MaxId as u64,
-            // max_id is the highest symbol ID, not the count
-            IonValue::Int(crate::kfx::symbols::KFX_MAX_SYMBOL_ID as i64),
-        ),
-    ])]);
+    use crate::kfx::ion::IonWriter;
 
-    // Local symbols list
-    let symbols = IonValue::List(
-        local_symbols
-            .iter()
-            .map(|s| IonValue::String(s.clone()))
-            .collect(),
-    );
+    let mut writer = IonWriter::new();
+    writer.write_bvm();
 
-    let symtab = IonValue::Struct(vec![
-        (KfxSymbol::Imports as u64, imports),
-        (KfxSymbol::Symbols as u64, symbols),
-    ]);
+    // Write each local symbol as a bare string.
+    // This is the format that extract_doc_symbols expects:
+    // just consecutive Ion strings that it can find by type scanning.
+    for sym in local_symbols {
+        writer.write_string(sym);
+    }
 
-    // Annotate with $ion_symbol_table (symbol 3)
-    serialize_annotated_ion(3, &symtab)
+    writer.into_bytes()
 }
 
 /// Build format capabilities ION.
