@@ -195,22 +195,46 @@ impl<'a> IonParser<'a> {
         };
 
         match ion_type {
-            IonType::Null => Ok(IonValue::Null),
+            IonType::Null => {
+                // Type 0 with length > 0 is a NOP pad, skip the bytes
+                self.pos += length;
+                Ok(IonValue::Null)
+            }
 
             IonType::Bool => Ok(IonValue::Bool(length_code != 0)),
 
             IonType::PosInt => {
                 let value = self.read_uint(length)?;
+                if value > i64::MAX as u64 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "positive integer too large for i64",
+                    ));
+                }
                 Ok(IonValue::Int(value as i64))
             }
 
             IonType::NegInt => {
                 let value = self.read_uint(length)?;
-                Ok(IonValue::Int(-(value as i64)))
+                // For negative integers, the magnitude is stored, and we negate it.
+                // i64::MIN has magnitude 2^63, which fits in u64 but not as positive i64.
+                if value > (i64::MAX as u64) + 1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "negative integer too large for i64",
+                    ));
+                }
+                // Handle i64::MIN specially (magnitude 2^63 can't be negated normally)
+                if value == (i64::MAX as u64) + 1 {
+                    Ok(IonValue::Int(i64::MIN))
+                } else {
+                    Ok(IonValue::Int(-(value as i64)))
+                }
             }
 
             IonType::Float => {
                 let value = match length {
+                    0 => 0.0, // Positive zero
                     4 => {
                         let bytes: [u8; 4] = self.read_bytes(4)?.try_into().unwrap();
                         f32::from_be_bytes(bytes) as f64
@@ -219,7 +243,12 @@ impl<'a> IonParser<'a> {
                         let bytes: [u8; 8] = self.read_bytes(8)?.try_into().unwrap();
                         f64::from_be_bytes(bytes)
                     }
-                    _ => 0.0,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "invalid float length",
+                        ));
+                    }
                 };
                 Ok(IonValue::Float(value))
             }
@@ -232,7 +261,13 @@ impl<'a> IonParser<'a> {
 
             IonType::Symbol => {
                 let symbol_id = self.read_uint(length)?;
-                Ok(IonValue::Symbol(symbol_id))
+                if symbol_id > u32::MAX as u64 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "symbol ID too large",
+                    ));
+                }
+                Ok(IonValue::Symbol(symbol_id as u32))
             }
 
             IonType::String => {
@@ -325,16 +360,22 @@ impl<'a> IonParser<'a> {
         }
     }
 
-    /// Read unsigned integer (big-endian).
+    /// Read unsigned integer (big-endian, up to 8 bytes).
     #[inline]
-    fn read_uint(&mut self, len: usize) -> io::Result<u32> {
+    fn read_uint(&mut self, len: usize) -> io::Result<u64> {
         if len == 0 {
             return Ok(0);
         }
+        if len > 8 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "integer too large (> 8 bytes)",
+            ));
+        }
         let bytes = self.read_bytes(len)?;
-        let mut result: u32 = 0;
+        let mut result: u64 = 0;
         for &b in bytes {
-            result = (result << 8) | b as u32;
+            result = (result << 8) | b as u64;
         }
         Ok(result)
     }
@@ -367,6 +408,38 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_negative_int() {
+        // -42: type 3 (NegInt), length 1, magnitude 42
+        let data = [0xe0, 0x01, 0x00, 0xea, 0x31, 0x2a];
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_int(), Some(-42));
+    }
+
+    #[test]
+    fn test_parse_large_positive_int() {
+        // 8-byte positive integer: 0x7FFFFFFFFFFFFFFF (i64::MAX)
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, // BVM
+            0x28, // PosInt, length 8
+            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        ];
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_int(), Some(i64::MAX));
+    }
+
+    #[test]
+    fn test_parse_large_negative_int() {
+        // -2^63 (i64::MIN): magnitude is 0x8000000000000000
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, // BVM
+            0x38, // NegInt, length 8
+            0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let mut parser = IonParser::new(&data);
+        assert_eq!(parser.parse().unwrap().as_int(), Some(i64::MIN));
+    }
+
+    #[test]
     fn test_parse_string() {
         let data = [0xe0, 0x01, 0x00, 0xea, 0x82, b'h', b'i'];
         let mut parser = IonParser::new(&data);
@@ -381,15 +454,55 @@ mod tests {
         // 20 = 0x14, with MSB = 0x94
         let data = [
             0xe0, 0x01, 0x00, 0xea, // BVM
-            0xd6,                   // struct, length 6
-            0x8a,                   // field 10 (VarUInt: 10 | 0x80)
-            0x81, b'a',             // string "a"
-            0x94,                   // field 20 (VarUInt: 20 | 0x80)
-            0x21, 0x01,             // int 1
+            0xd6,       // struct, length 6
+            0x8a,       // field 10 (VarUInt: 10 | 0x80)
+            0x81, b'a', // string "a"
+            0x94,       // field 20 (VarUInt: 20 | 0x80)
+            0x21, 0x01, // int 1
         ];
         let mut parser = IonParser::new(&data);
         let value = parser.parse().unwrap();
         assert_eq!(value.get(10).and_then(|v| v.as_string()), Some("a"));
         assert_eq!(value.get(20).and_then(|v| v.as_int()), Some(1));
+    }
+
+    #[test]
+    fn test_nop_pad_skipped() {
+        // NOP pad: type 0, length 3 (skip 3 bytes), followed by int 42
+        // Struct content: field1(1) + nop(4) + field2(1) + int(2) = 8 bytes
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, // BVM
+            0xd8,                   // struct, length 8
+            0x81,                   // field 1
+            0x03, 0xAA, 0xBB, 0xCC, // NOP pad (type 0, len 3, 3 garbage bytes)
+            0x82,                   // field 2
+            0x21, 0x2a,             // int 42
+        ];
+        let mut parser = IonParser::new(&data);
+        let value = parser.parse().unwrap();
+        // Field 1 gets Null (from NOP), field 2 should have value 42
+        assert!(matches!(value.get(1), Some(IonValue::Null)));
+        assert_eq!(value.get(2).and_then(|v| v.as_int()), Some(42));
+    }
+
+    #[test]
+    fn test_float_zero() {
+        // Float with length 0 is positive zero
+        let data = [0xe0, 0x01, 0x00, 0xea, 0x40]; // float, length 0
+        let mut parser = IonParser::new(&data);
+        if let IonValue::Float(f) = parser.parse().unwrap() {
+            assert_eq!(f, 0.0);
+            assert!(f.is_sign_positive());
+        } else {
+            panic!("expected float");
+        }
+    }
+
+    #[test]
+    fn test_float_invalid_length() {
+        // Float with invalid length (e.g., 3) should error
+        let data = [0xe0, 0x01, 0x00, 0xea, 0x43, 0x00, 0x00, 0x00];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
     }
 }
