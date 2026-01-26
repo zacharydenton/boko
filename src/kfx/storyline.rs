@@ -563,6 +563,13 @@ fn walk_node_for_export(
         return;
     }
 
+    // Break nodes: emit a newline character
+    // KFX represents <br> as \n within text content, not as separate elements
+    if node.role == Role::Break {
+        stream.push(KfxToken::Text("\n".to_string()));
+        return;
+    }
+
     // Check if this is an inline role that should become a span (style_event)
     if sch.is_inline_role(node.role) {
         emit_span_for_export(chapter, node_id, node, sch, ctx, stream);
