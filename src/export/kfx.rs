@@ -92,7 +92,17 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         })
         .collect();
 
-    // 1a. Survey each chapter: assign fragment IDs, build position map
+    // 1a. Collect needed anchors FIRST (before survey)
+    // Only IDs that are link targets or TOC destinations need anchor entities.
+    // This prevents creating anchors for every element ID in the source.
+    collect_needed_anchors_from_toc(book.toc(), &mut ctx);
+    for (chapter_id, _) in &spine_info {
+        if let Ok(chapter) = book.load_chapter(*chapter_id) {
+            collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
+        }
+    }
+
+    // 1b. Survey each chapter: assign fragment IDs, build position map
     for (chapter_id, section_name) in &spine_info {
         // Register section name as symbol
         let _section_id = ctx.register_section(section_name);
@@ -106,10 +116,10 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // 1b. Register TOC strings
+    // 1c. Register TOC strings
     register_toc_symbols(book.toc(), &mut ctx);
 
-    // 1c. Register resource paths and create short names
+    // 1d. Register resource paths and create short names
     // IMPORTANT: Short names must be interned during Pass 1 to ensure
     // consistent symbol IDs when they're referenced later in storylines
     let asset_paths: Vec<_> = book.list_assets();
@@ -302,6 +312,45 @@ fn register_toc_symbols(entries: &[crate::book::TocEntry], ctx: &mut ExportConte
         ctx.intern(&entry.href);
         if !entry.children.is_empty() {
             register_toc_symbols(&entry.children, ctx);
+        }
+    }
+}
+
+/// Collect needed anchors from a chapter's href attributes.
+/// Anchors are only needed if they are targets of links.
+fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
+    if chapter.node(node_id).is_none() {
+        return;
+    }
+
+    // Check for href with fragment (internal link target)
+    if let Some(href) = chapter.semantics.href(node_id) {
+        if let Some(hash_pos) = href.find('#') {
+            let anchor = &href[hash_pos + 1..];
+            if !anchor.is_empty() {
+                ctx.register_needed_anchor(anchor);
+            }
+        }
+    }
+
+    // Recurse into children
+    for child in chapter.children(node_id) {
+        collect_needed_anchors_from_chapter(chapter, child, ctx);
+    }
+}
+
+/// Collect needed anchors from TOC entries.
+fn collect_needed_anchors_from_toc(entries: &[crate::book::TocEntry], ctx: &mut ExportContext) {
+    for entry in entries {
+        // Extract anchor from href (e.g., "chapter1.xhtml#section2" -> "section2")
+        if let Some(hash_pos) = entry.href.find('#') {
+            let anchor = &entry.href[hash_pos + 1..];
+            if !anchor.is_empty() {
+                ctx.register_needed_anchor(anchor);
+            }
+        }
+        if !entry.children.is_empty() {
+            collect_needed_anchors_from_toc(&entry.children, ctx);
         }
     }
 }

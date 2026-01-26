@@ -4,7 +4,7 @@
 //! All shared state flows through this context, avoiding the pitfalls of
 //! scattered symbol tables, ID collision, and orphaned references.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::import::ChapterId;
 use crate::ir::NodeId;
@@ -320,13 +320,17 @@ pub struct ExportContext {
     current_text_offset: usize,
 
     /// Anchor map: anchor_id → (ChapterId, NodeId).
-    /// Populated during Pass 1 survey when nodes have IDs.
+    /// Populated during Pass 1 survey when nodes have IDs that are link targets.
     pub anchor_map: HashMap<String, (ChapterId, NodeId)>,
 
     /// Path to fragment ID mapping.
     /// Maps source file paths (e.g., "chapter1.xhtml") to fragment IDs.
     /// Used for resolving TOC hrefs to positions.
     pub path_to_fragment: HashMap<String, u64>,
+
+    /// Set of anchor IDs that are actually needed (targets of links or TOC).
+    /// Only anchors in this set will be emitted to avoid bloat.
+    needed_anchors: HashSet<String>,
 }
 
 impl ExportContext {
@@ -346,6 +350,7 @@ impl ExportContext {
             current_text_offset: 0,
             anchor_map: HashMap::new(),
             path_to_fragment: HashMap::new(),
+            needed_anchors: HashSet::new(),
         }
     }
 
@@ -435,9 +440,26 @@ impl ExportContext {
         }
     }
 
+    /// Register an anchor as needed (it's a link target or TOC destination).
+    ///
+    /// Call this during the initial survey when encountering href="#anchor".
+    pub fn register_needed_anchor(&mut self, anchor_id: &str) {
+        self.needed_anchors.insert(anchor_id.to_string());
+    }
+
+    /// Check if an anchor is needed (has a link pointing to it).
+    pub fn is_anchor_needed(&self, anchor_id: &str) -> bool {
+        self.needed_anchors.contains(anchor_id)
+    }
+
     /// Record position for a node with a specific anchor ID.
-    /// This allows looking up by anchor name later.
+    /// Only records if the anchor is actually needed (has incoming links).
     pub fn record_anchor(&mut self, anchor_id: &str, node_id: NodeId) {
+        // Only create anchors for IDs that are actually link targets
+        if !self.needed_anchors.contains(anchor_id) {
+            return;
+        }
+
         // Intern the anchor for later lookup
         self.intern(anchor_id);
         self.record_position(node_id);
