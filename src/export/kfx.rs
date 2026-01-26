@@ -149,14 +149,21 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // 2f. Resource fragments (images, fonts, etc.)
+    // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
             if let Ok(data) = book.load_asset(asset_path) {
                 let href = asset_path.to_string_lossy().to_string();
+                // external_resource ($164) - metadata about the resource
+                fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
+                // bcRawMedia ($417) - the actual bytes
                 fragments.push(build_resource_fragment(&href, &data, &mut ctx));
             }
         }
     }
+
+    // 2g. Anchor fragments (for internal link targets)
+    fragments.extend(build_anchor_fragments(&ctx));
 
     // Build symbol table ION using context
     let local_syms = ctx.symbols.local_symbols();
@@ -617,16 +624,150 @@ fn build_format_capabilities_ion() -> Vec<u8> {
     serialize_annotated_ion(KfxSymbol::FormatCapabilities as u64, &caps)
 }
 
-/// Build a resource fragment (for images, fonts, etc.).
+/// Build an external_resource fragment ($164) - metadata about a resource.
+fn build_external_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> KfxFragment {
+    // Generate a short resource name (e.g., "e0", "e1", etc.)
+    let resource_name = generate_resource_name(href, ctx);
+    let resource_name_symbol = ctx.symbols.get_or_intern(&resource_name);
+
+    let mut fields = Vec::new();
+
+    // resource_name - the symbolic name for this resource
+    fields.push((
+        KfxSymbol::ResourceName as u64,
+        IonValue::Symbol(resource_name_symbol),
+    ));
+
+    // location - path to the bcRawMedia entity
+    let location = format!("resource/{}", resource_name);
+    fields.push((
+        KfxSymbol::Location as u64,
+        IonValue::String(location),
+    ));
+
+    // format - file type symbol
+    let format_symbol = detect_format_symbol(href, data);
+    fields.push((KfxSymbol::Format as u64, IonValue::Symbol(format_symbol)));
+
+    // For images, try to extract dimensions
+    if let Some((width, height)) = crate::util::extract_image_dimensions(data) {
+        fields.push((KfxSymbol::ResourceWidth as u64, IonValue::Int(width as i64)));
+        fields.push((KfxSymbol::ResourceHeight as u64, IonValue::Int(height as i64)));
+    }
+
+    // mime type for images
+    if let Some(mime) = crate::util::detect_mime_type(href, data) {
+        fields.push((
+            KfxSymbol::Mime as u64,
+            IonValue::String(mime.to_string()),
+        ));
+    }
+
+    let ion = IonValue::Struct(fields);
+    KfxFragment::new(KfxSymbol::ExternalResource, &resource_name, ion)
+}
+
+/// Build a resource fragment (bcRawMedia $417) - the actual bytes.
 fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> KfxFragment {
+    // Use the same resource name as external_resource
+    let resource_name = generate_resource_name(href, ctx);
+
     // Register the resource
     ctx.resource_registry.register(href, &mut ctx.symbols);
 
-    // Determine fragment type based on content type
-    let ftype = detect_resource_type(href, data);
-
     // Create raw fragment for binary resources
-    KfxFragment::raw(ftype, href, data.to_vec())
+    KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &resource_name, data.to_vec())
+}
+
+/// Build anchor fragments ($266) for all recorded anchors.
+fn build_anchor_fragments(ctx: &ExportContext) -> Vec<KfxFragment> {
+    let mut fragments = Vec::new();
+
+    // Create anchor for each entry in the anchor_map
+    for (anchor_id, (chapter_id, node_id)) in &ctx.anchor_map {
+        // Look up the position for this anchor
+        if let Some(position) = ctx.position_map.get(&(*chapter_id, *node_id)) {
+            // Get the interned symbol for the anchor name
+            if let Some(anchor_symbol) = ctx.symbols.get(anchor_id) {
+                let mut pos_fields = Vec::new();
+                pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(position.fragment_id as i64)));
+                if position.offset > 0 {
+                    pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(position.offset as i64)));
+                }
+
+                let ion = IonValue::Struct(vec![
+                    (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol)),
+                    (KfxSymbol::Position as u64, IonValue::Struct(pos_fields)),
+                ]);
+
+                fragments.push(KfxFragment::new(KfxSymbol::Anchor, anchor_id, ion));
+            }
+        }
+    }
+
+    fragments
+}
+
+/// Generate a short resource name for a given href.
+fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
+    // Check if we already have a name for this resource
+    if let Some(_) = ctx.resource_registry.get(href) {
+        // Extract existing name from the resource:href symbol
+        // For simplicity, generate based on registry count
+    }
+
+    // Generate short name like "e0", "e1", etc.
+    let count = ctx.resource_registry.iter().count();
+    format!("e{}", count)
+}
+
+/// Detect format symbol from file extension/magic bytes.
+fn detect_format_symbol(href: &str, data: &[u8]) -> u64 {
+    let href_lower = href.to_lowercase();
+
+    if href_lower.ends_with(".jpg") || href_lower.ends_with(".jpeg") {
+        return ctx_intern_static("jpg");
+    }
+    if href_lower.ends_with(".png") {
+        return ctx_intern_static("png");
+    }
+    if href_lower.ends_with(".gif") {
+        return ctx_intern_static("gif");
+    }
+    if href_lower.ends_with(".svg") {
+        return ctx_intern_static("svg");
+    }
+    if href_lower.ends_with(".webp") {
+        return ctx_intern_static("webp");
+    }
+
+    // Check magic bytes
+    if data.len() >= 4 {
+        if data[0] == 0xFF && data[1] == 0xD8 {
+            return ctx_intern_static("jpg");
+        }
+        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+            return ctx_intern_static("png");
+        }
+        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+            return ctx_intern_static("gif");
+        }
+    }
+
+    ctx_intern_static("bin")
+}
+
+/// Get symbol ID for static format strings.
+/// These are common symbols that should be in the shared table.
+fn ctx_intern_static(s: &str) -> u64 {
+    // Look up in shared symbol table
+    match s {
+        "jpg" => KfxSymbol::Jpg as u64,
+        "png" => KfxSymbol::Png as u64,
+        "gif" => KfxSymbol::Gif as u64,
+        // svg and other formats not in shared table, use jpg as fallback
+        _ => KfxSymbol::Jpg as u64,
+    }
 }
 
 /// Check if a path is a media asset (image, font, etc.)
@@ -636,45 +777,6 @@ fn is_media_asset(path: &std::path::Path) -> bool {
         ext.to_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "svg" | "webp" | "ttf" | "otf" | "woff" | "woff2"
     )
-}
-
-/// Detect resource type from extension and magic bytes.
-fn detect_resource_type(href: &str, data: &[u8]) -> u64 {
-    // Check by extension first
-    if href.ends_with(".jpg") || href.ends_with(".jpeg") {
-        return KfxSymbol::Bcrawmedia as u64;
-    }
-    if href.ends_with(".png") {
-        return KfxSymbol::Bcrawmedia as u64;
-    }
-    if href.ends_with(".gif") {
-        return KfxSymbol::Bcrawmedia as u64;
-    }
-    if href.ends_with(".ttf") || href.ends_with(".otf") {
-        return KfxSymbol::Bcrawmedia as u64;
-    }
-    if href.ends_with(".css") {
-        return KfxSymbol::Bcrawmedia as u64;
-    }
-
-    // Check magic bytes
-    if data.len() >= 4 {
-        // JPEG
-        if data[0] == 0xFF && data[1] == 0xD8 {
-            return KfxSymbol::Bcrawmedia as u64;
-        }
-        // PNG
-        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-            return KfxSymbol::Bcrawmedia as u64;
-        }
-        // GIF
-        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-            return KfxSymbol::Bcrawmedia as u64;
-        }
-    }
-
-    // Default to raw media
-    KfxSymbol::Bcrawmedia as u64
 }
 
 /// Serialize fragments to entities.

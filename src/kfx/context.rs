@@ -282,6 +282,10 @@ pub struct ExportContext {
 
     /// Current text offset within the fragment.
     current_text_offset: usize,
+
+    /// Anchor map: anchor_id → (ChapterId, NodeId).
+    /// Populated during Pass 1 survey when nodes have IDs.
+    pub anchor_map: HashMap<String, (ChapterId, NodeId)>,
 }
 
 impl ExportContext {
@@ -299,6 +303,7 @@ impl ExportContext {
             current_chapter: None,
             current_fragment_id: 0,
             current_text_offset: 0,
+            anchor_map: HashMap::new(),
         }
     }
 
@@ -385,6 +390,12 @@ impl ExportContext {
         // Intern the anchor for later lookup
         self.intern(anchor_id);
         self.record_position(node_id);
+
+        // Store mapping from anchor_id to position key
+        if let Some(chapter_id) = self.current_chapter {
+            self.anchor_map
+                .insert(anchor_id.to_string(), (chapter_id, node_id));
+        }
     }
 
     /// Advance the text offset during survey (Pass 1).

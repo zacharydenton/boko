@@ -88,6 +88,124 @@ pub fn decode_text<'a>(bytes: &'a [u8], hint_encoding: Option<&str>) -> Cow<'a, 
     result
 }
 
+// ============================================================================
+// Image Dimension Extraction
+// ============================================================================
+
+/// Extract image dimensions from raw image data.
+///
+/// Supports PNG, JPEG, and GIF formats by parsing header bytes.
+/// Returns `(width, height)` or `None` if format is unrecognized.
+///
+/// # Examples
+///
+/// ```ignore
+/// let png_data = include_bytes!("../tests/fixtures/image.png");
+/// if let Some((w, h)) = extract_image_dimensions(png_data) {
+///     println!("Image is {}x{}", w, h);
+/// }
+/// ```
+pub fn extract_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 24 {
+        return None;
+    }
+
+    // PNG: width/height at bytes 16-23 in IHDR chunk
+    if data.len() >= 24 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+        let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some((width, height));
+    }
+
+    // JPEG: Need to parse SOF markers
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        return extract_jpeg_dimensions(data);
+    }
+
+    // GIF: width/height at bytes 6-9 (little-endian)
+    if data.len() >= 10 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+        let width = u16::from_le_bytes([data[6], data[7]]) as u32;
+        let height = u16::from_le_bytes([data[8], data[9]]) as u32;
+        return Some((width, height));
+    }
+
+    None
+}
+
+/// Extract dimensions from JPEG data by parsing SOF markers.
+fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2;
+    while i + 4 < data.len() {
+        if data[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+
+        let marker = data[i + 1];
+
+        // SOF markers (Start of Frame) - various encoding types
+        if matches!(marker, 0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF) {
+            if i + 9 < data.len() {
+                let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+                let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+                return Some((width, height));
+            }
+        }
+
+        // Skip to next marker
+        if i + 3 < data.len() {
+            let length = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+            i += 2 + length;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+/// Detect MIME type from file extension or magic bytes.
+///
+/// Returns a static string like "image/jpeg", "image/png", etc.
+pub fn detect_mime_type(filename: &str, data: &[u8]) -> Option<&'static str> {
+    let filename_lower = filename.to_lowercase();
+
+    // Check by extension first
+    if filename_lower.ends_with(".jpg") || filename_lower.ends_with(".jpeg") {
+        return Some("image/jpeg");
+    }
+    if filename_lower.ends_with(".png") {
+        return Some("image/png");
+    }
+    if filename_lower.ends_with(".gif") {
+        return Some("image/gif");
+    }
+    if filename_lower.ends_with(".svg") {
+        return Some("image/svg+xml");
+    }
+    if filename_lower.ends_with(".webp") {
+        return Some("image/webp");
+    }
+
+    // Check magic bytes
+    if data.len() >= 4 {
+        if data[0] == 0xFF && data[1] == 0xD8 {
+            return Some("image/jpeg");
+        }
+        if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+            return Some("image/png");
+        }
+        if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+            return Some("image/gif");
+        }
+    }
+
+    None
+}
+
+// ============================================================================
+// Encoding Detection
+// ============================================================================
+
 /// Extract encoding from XML declaration.
 ///
 /// Parses `<?xml ... encoding="..." ?>` to extract the encoding name.
