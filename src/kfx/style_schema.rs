@@ -18,6 +18,16 @@ use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/// Default base font size in pixels.
+///
+/// Used for converting CSS units (em, rem, %) to absolute values.
+/// 16px is the standard browser default.
+pub const DEFAULT_BASE_FONT_SIZE: f64 = 16.0;
+
+// ============================================================================
 // Value Transform System
 // ============================================================================
 
@@ -59,7 +69,23 @@ pub enum ValueTransform {
 
     /// Dimensioned value: wraps a number with a unit symbol.
     /// Example: 1.2 with unit=em -> { value: 1.2, unit: em }
+    /// NOTE: This does NOT convert units - use ConvertToDimensioned for that.
     Dimensioned { unit: KfxSymbol },
+
+    /// Convert CSS units and output as KFX dimensioned value.
+    ///
+    /// This is the proper transform for block layout properties:
+    /// 1. Parses CSS length (e.g., "20px", "1.5em", "10%")
+    /// 2. Converts to target unit using base_font_size
+    /// 3. Outputs as { value: N, unit: $symbol }
+    ///
+    /// Example: "20px" with base=16, target=Em → { value: 1.25, unit: em }
+    ConvertToDimensioned {
+        /// Base font size in pixels (for em/rem/% conversion)
+        base_pixels: f64,
+        /// Target KFX unit
+        target_unit: KfxSymbol,
+    },
 
     /// Symbol lookup: converts string to KFX symbol ID.
     ToSymbol,
@@ -303,7 +329,11 @@ impl StyleSchema {
             ir_key: "text-indent",
             ir_field: Some(IrField::TextIndent),
             kfx_symbol: KfxSymbol::TextIndent,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            // Convert CSS indent (px/em/%) to KFX em units
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -311,7 +341,11 @@ impl StyleSchema {
             ir_key: "line-height",
             ir_field: Some(IrField::LineHeight),
             kfx_symbol: KfxSymbol::LineHeight,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            // Convert CSS line-height (px/em/%) to KFX em units
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -346,12 +380,18 @@ impl StyleSchema {
         // ====================================================================
         // Spacing Properties (Margins)
         // ====================================================================
+        //
+        // Margins use ConvertToDimensioned for proper px→em conversion.
+        // KFX expects em-based dimensions for consistent scaling.
 
         schema.register(StylePropertyRule {
             ir_key: "margin-top",
             ir_field: Some(IrField::MarginTop),
             kfx_symbol: KfxSymbol::MarginTop,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -359,7 +399,10 @@ impl StyleSchema {
             ir_key: "margin-bottom",
             ir_field: Some(IrField::MarginBottom),
             kfx_symbol: KfxSymbol::MarginBottom,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -367,7 +410,10 @@ impl StyleSchema {
             ir_key: "margin-left",
             ir_field: Some(IrField::MarginLeft),
             kfx_symbol: KfxSymbol::MarginLeft,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -375,7 +421,58 @@ impl StyleSchema {
             ir_key: "margin-right",
             ir_field: Some(IrField::MarginRight),
             kfx_symbol: KfxSymbol::MarginRight,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Em },
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Spacing Properties (Padding)
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "padding-top",
+            ir_field: Some(IrField::PaddingTop),
+            kfx_symbol: KfxSymbol::PaddingTop,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "padding-bottom",
+            ir_field: Some(IrField::PaddingBottom),
+            kfx_symbol: KfxSymbol::PaddingBottom,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "padding-left",
+            ir_field: Some(IrField::PaddingLeft),
+            kfx_symbol: KfxSymbol::PaddingLeft,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "padding-right",
+            ir_field: Some(IrField::PaddingRight),
+            kfx_symbol: KfxSymbol::PaddingRight,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
             context: StyleContext::BlockOnly,
         });
 
@@ -543,6 +640,42 @@ impl ValueTransform {
             ValueTransform::Dimensioned { unit } => {
                 let (num, _css_unit) = parse_css_length(raw)?;
                 Some(KfxValue::Dimensioned { value: num, unit: *unit })
+            }
+
+            ValueTransform::ConvertToDimensioned {
+                base_pixels,
+                target_unit,
+            } => {
+                let (num, css_unit) = parse_css_length(raw)?;
+
+                // Guard against zero base
+                if *base_pixels == 0.0 {
+                    return None;
+                }
+
+                // Convert CSS value to pixels first
+                let pixels = convert_to_pixels(num, &css_unit, *base_pixels);
+
+                // Then convert pixels to target unit
+                // KFX uses Em for most relative dimensions
+                let result = match target_unit {
+                    // Em/Rem: relative to base font size (most common for KFX)
+                    KfxSymbol::Em | KfxSymbol::Rem => pixels / base_pixels,
+                    // Percentage: 100% = base_pixels
+                    KfxSymbol::YjPercentage => pixels / base_pixels * 100.0,
+                    // Default: convert to em (safest for KFX compatibility)
+                    _ => pixels / base_pixels,
+                };
+
+                // Guard against NaN/Infinity
+                if result.is_nan() || result.is_infinite() {
+                    return None;
+                }
+
+                Some(KfxValue::Dimensioned {
+                    value: result,
+                    unit: *target_unit,
+                })
             }
 
             ValueTransform::ToSymbol => Some(KfxValue::String(raw.to_string())),
@@ -949,7 +1082,8 @@ impl ValueTransform {
                 None
             }
 
-            ValueTransform::Dimensioned { unit } => {
+            ValueTransform::Dimensioned { unit }
+            | ValueTransform::ConvertToDimensioned { target_unit: unit, .. } => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers) or Float
                 let fields = value.as_struct()?;
@@ -1680,5 +1814,71 @@ mod tests {
         assert_eq!(ir_style.font_weight, FontWeight::BOLD);
         assert_eq!(ir_style.text_align, TextAlign::Center);
         assert_eq!(ir_style.margin_top, crate::ir::Length::Em(2.0));
+    }
+
+    #[test]
+    fn test_convert_to_dimensioned_transform() {
+        // Test: CSS "32px" with 16px base → 2em
+        let transform = ValueTransform::ConvertToDimensioned {
+            base_pixels: 16.0,
+            target_unit: KfxSymbol::Em,
+        };
+
+        let result = transform.apply("32px").unwrap();
+        match result {
+            KfxValue::Dimensioned { value, unit } => {
+                assert!((value - 2.0).abs() < 0.001, "32px / 16px should be 2em, got {}", value);
+                assert_eq!(unit, KfxSymbol::Em);
+            }
+            _ => panic!("Expected Dimensioned, got {:?}", result),
+        }
+
+        // Test: CSS "1.5em" → 1.5em (em to em is 1:1 when using base)
+        let result = transform.apply("1.5em").unwrap();
+        match result {
+            KfxValue::Dimensioned { value, unit } => {
+                // 1.5em * 16 = 24px, 24px / 16 = 1.5em
+                assert!((value - 1.5).abs() < 0.001, "1.5em should stay 1.5em, got {}", value);
+                assert_eq!(unit, KfxSymbol::Em);
+            }
+            _ => panic!("Expected Dimensioned, got {:?}", result),
+        }
+
+        // Test: CSS "50%" with 16px base → 0.5em (50% of base font = 8px = 0.5em)
+        let result = transform.apply("50%").unwrap();
+        match result {
+            KfxValue::Dimensioned { value, unit } => {
+                // 50% of 16px = 8px, 8px / 16 = 0.5em
+                assert!((value - 0.5).abs() < 0.001, "50% should be 0.5em, got {}", value);
+                assert_eq!(unit, KfxSymbol::Em);
+            }
+            _ => panic!("Expected Dimensioned, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_dimensioned_inverse() {
+        // Test inverse: {value: 2.0, unit: em} → "2em"
+        let transform = ValueTransform::ConvertToDimensioned {
+            base_pixels: 16.0,
+            target_unit: KfxSymbol::Em,
+        };
+
+        let kfx_value = IonValue::Struct(vec![
+            (KfxSymbol::Value as u64, IonValue::Float(2.0)),
+            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+        ]);
+
+        let css = transform.inverse(&kfx_value).unwrap();
+        assert_eq!(css, "2em");
+
+        // Test with Int value (Amazon sometimes stores whole numbers as Int)
+        let kfx_value = IonValue::Struct(vec![
+            (KfxSymbol::Value as u64, IonValue::Int(3)),
+            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+        ]);
+
+        let css = transform.inverse(&kfx_value).unwrap();
+        assert_eq!(css, "3em");
     }
 }
