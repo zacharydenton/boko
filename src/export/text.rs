@@ -66,6 +66,7 @@ impl Exporter for TextExporter {
         let mut first_chapter = true;
 
         for entry in spine {
+            let chapter_path = book.source_id(entry.id).map(|s| s.to_string());
             let chapter = book.load_chapter(entry.id)?;
 
             if !first_chapter {
@@ -85,9 +86,11 @@ impl Exporter for TextExporter {
                 line_prefix: String::new(),
                 list_stack: Vec::new(),
                 at_line_start: true,
+                has_line_content: false,
                 pending_newline: false,
                 last_block_role: None,
                 footnotes: Vec::new(),
+                chapter_path,
             };
 
             // Walk children of root
@@ -144,15 +147,30 @@ struct ExportContext<'a, W: Write> {
     list_stack: Vec<ListContext>,
     /// True if we're at the start of a line (need to write prefix before content)
     at_line_start: bool,
+    /// True if actual content has been written on this line (not just prefix)
+    has_line_content: bool,
     /// True if we need a blank line before the next block
     pending_newline: bool,
     /// The role of the last block element (for adjacent list detection)
     last_block_role: Option<Role>,
     /// Accumulated footnotes for end-of-document rendering
     footnotes: Vec<AccumulatedNote>,
+    /// Current chapter's source path (for flattening cross-file links)
+    /// TODO: Use this when internal link resolution is implemented.
+    #[allow(dead_code)]
+    chapter_path: Option<String>,
 }
 
 impl<W: Write> ExportContext<'_, W> {
+    /// Output an anchor for an element's ID if present.
+    /// TODO: Implement anchor output when internal link resolution is added.
+    fn write_anchor_if_present(&mut self, _node_id: NodeId) -> io::Result<()> {
+        // Currently a no-op since internal links aren't resolved yet.
+        // When implemented, this should output `<a id="..."></a>` for elements
+        // with IDs so that internal links can target them.
+        Ok(())
+    }
+
     /// Check if a list is "tight" (items are single paragraphs, no blank lines between).
     ///
     /// Following Pandoc's pattern: a list is tight if all items contain only
@@ -213,6 +231,7 @@ impl<W: Write> ExportContext<'_, W> {
     fn write_newline(&mut self) -> io::Result<()> {
         writeln!(self.writer)?;
         self.at_line_start = true;
+        self.has_line_content = false;
         Ok(())
     }
 
@@ -286,6 +305,7 @@ impl<W: Write> ExportContext<'_, W> {
                 } else {
                     // Container text (paragraph)
                     self.start_block()?;
+                    self.write_anchor_if_present(id)?;
                     self.walk_children(id)?;
                     self.end_block(role);
                 }
@@ -293,6 +313,7 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Heading(level) => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 if self.format == TextFormat::Markdown {
                     for _ in 0..level {
                         write!(self.writer, "#")?;
@@ -309,6 +330,7 @@ impl<W: Write> ExportContext<'_, W> {
                     self.write_list_separator()?;
                 }
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 // Get start number from semantics (defaults to 1)
                 let start = self.ir.semantics.list_start(id).unwrap_or(1) as usize;
                 let is_tight = self.is_tight_list(id);
@@ -329,6 +351,7 @@ impl<W: Write> ExportContext<'_, W> {
                     self.write_list_separator()?;
                 }
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 let is_tight = self.is_tight_list(id);
                 self.list_stack.push(ListContext {
                     is_ordered: false,
@@ -360,6 +383,7 @@ impl<W: Write> ExportContext<'_, W> {
                 }
 
                 self.ensure_line_started()?;
+                self.write_anchor_if_present(id)?;
 
                 // Get bullet/number from parent list
                 let bullet = if let Some(list_ctx) = self.list_stack.last_mut() {
@@ -406,6 +430,8 @@ impl<W: Write> ExportContext<'_, W> {
                     self.pending_newline = false;
                 }
 
+                self.write_anchor_if_present(id)?;
+
                 let prefix = if self.format == TextFormat::Markdown {
                     "> "
                 } else {
@@ -430,14 +456,46 @@ impl<W: Write> ExportContext<'_, W> {
             Role::Link => {
                 self.ensure_line_started()?;
                 let text = self.collect_text(id);
-                let href = self.ir.semantics.href(id).unwrap_or("");
 
-                if self.format == TextFormat::Markdown && !href.is_empty() {
-                    write!(self.writer, "[{}]({})", text, href)?;
-                } else if !href.is_empty() && href != text {
-                    write!(self.writer, "{} ({})", text, href)?;
-                } else {
-                    write!(self.writer, "{}", text)?;
+                // Use parsed Link to determine display behavior
+                let link = self.ir.links.get(id);
+
+                match link {
+                    Some(crate::ir::Link::External(url)) => {
+                        // External links: show URL
+                        if self.format == TextFormat::Markdown {
+                            write!(self.writer, "[{}]({})", text, url)?;
+                        } else if url != &text {
+                            write!(self.writer, "{} ({})", text, url)?;
+                        } else {
+                            write!(self.writer, "{}", text)?;
+                        }
+                    }
+                    Some(crate::ir::Link::Internal(_target)) => {
+                        // TODO: Resolve internal links to flattened anchors
+                        // For now, just output the link text
+                        write!(self.writer, "{}", text)?;
+                    }
+                    Some(crate::ir::Link::Unknown(raw)) => {
+                        // Unknown links: check if it looks like a URL
+                        if raw.contains("://") || raw.starts_with("mailto:") {
+                            if self.format == TextFormat::Markdown {
+                                write!(self.writer, "[{}]({})", text, raw)?;
+                            } else if raw != &text {
+                                write!(self.writer, "{} ({})", text, raw)?;
+                            } else {
+                                write!(self.writer, "{}", text)?;
+                            }
+                        } else {
+                            // TODO: Resolve internal paths to flattened anchors
+                            // For now, just output the link text
+                            write!(self.writer, "{}", text)?;
+                        }
+                    }
+                    None => {
+                        // No link data, just show text
+                        write!(self.writer, "{}", text)?;
+                    }
                 }
             }
 
@@ -459,6 +517,7 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Rule => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 if self.format == TextFormat::Markdown {
                     write!(self.writer, "---")?;
                 } else {
@@ -469,6 +528,7 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Table => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 self.walk_children(id)?;
                 self.end_block(role);
             }
@@ -494,12 +554,14 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Figure => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 self.walk_children(id)?;
                 self.end_block(role);
             }
 
             Role::Caption => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 if self.format == TextFormat::Markdown {
                     write!(self.writer, "*")?;
                 }
@@ -530,6 +592,7 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Sidebar => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 if self.format == TextFormat::Markdown {
                     write!(self.writer, "> **Sidebar**")?;
                     self.write_newline()?;
@@ -552,8 +615,8 @@ impl<W: Write> ExportContext<'_, W> {
                     && style.map(|s| s.display == Display::Block).unwrap_or(false);
 
                 // Handle block-display inlines (e.g., verse lines)
-                // Only break if we have content already on this line
-                if is_block && !self.at_line_start {
+                // Only break if we have actual content on this line (not just prefix)
+                if is_block && self.has_line_content {
                     self.write_hard_break()?;
                 }
 
@@ -609,12 +672,14 @@ impl<W: Write> ExportContext<'_, W> {
                     self.write_list_separator()?;
                 }
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 self.walk_children(id)?;
                 self.end_block(role);
             }
 
             Role::DefinitionTerm => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 if self.format == TextFormat::Markdown {
                     write!(self.writer, "**")?;
                 }
@@ -631,6 +696,7 @@ impl<W: Write> ExportContext<'_, W> {
                     self.write_newline()?;
                 }
                 self.ensure_line_started()?;
+                self.write_anchor_if_present(id)?;
                 write!(self.writer, ": ")?;
                 self.walk_children(id)?;
                 self.end_block(role);
@@ -638,6 +704,7 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::CodeBlock => {
                 self.start_block()?;
+                self.write_anchor_if_present(id)?;
                 // Collect text first to determine fence length
                 let text = self.collect_text(id);
 
@@ -713,6 +780,7 @@ impl<W: Write> ExportContext<'_, W> {
             joined
         };
         write!(self.writer, "{}", output)?;
+        self.has_line_content = true;
 
         if has_trailing {
             write!(self.writer, " ")?;
@@ -800,6 +868,73 @@ fn calculate_inline_code_ticks(content: &str) -> usize {
     max_run + 1
 }
 
+/// Flatten a path-like link to a single anchor.
+///
+/// Transforms paths like `chapter2.xhtml#section-3` into `chapter2-xhtml-section-3`.
+/// This creates valid markdown anchor targets from multi-file references.
+///
+/// TODO: Use this when internal link resolution is implemented.
+#[allow(dead_code)]
+fn flatten_to_anchor(path: &str) -> String {
+    // Remove leading # if present
+    let path = path.strip_prefix('#').unwrap_or(path);
+
+    // Replace problematic characters with hyphens
+    let result: String = path
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => c,
+            '#' | '/' | '.' => '-',
+            _ => '-',
+        })
+        .collect();
+
+    // Clean up: remove leading/trailing hyphens and collapse multiple hyphens
+    let result = result.to_lowercase();
+    let mut cleaned = String::new();
+    let mut last_was_hyphen = true; // Start true to skip leading hyphens
+    for c in result.chars() {
+        if c == '-' {
+            if !last_was_hyphen {
+                cleaned.push('-');
+            }
+            last_was_hyphen = true;
+        } else {
+            cleaned.push(c);
+            last_was_hyphen = false;
+        }
+    }
+    // Remove trailing hyphen
+    if cleaned.ends_with('-') {
+        cleaned.pop();
+    }
+    cleaned
+}
+
+/// Create a flattened ID by combining chapter path and element ID.
+///
+/// For example, if chapter_path is "OEBPS/text/chapter1.xhtml" and id is "section-3",
+/// the result is "oebps-text-chapter1-xhtml-section-3".
+///
+/// TODO: Use this when internal link resolution is implemented.
+#[allow(dead_code)]
+fn flatten_id(chapter_path: Option<&str>, id: &str) -> String {
+    match chapter_path {
+        Some(path) => {
+            let path_part = flatten_to_anchor(path);
+            let id_part = flatten_to_anchor(id);
+            if path_part.is_empty() {
+                id_part
+            } else if id_part.is_empty() {
+                path_part
+            } else {
+                format!("{}-{}", path_part, id_part)
+            }
+        }
+        None => flatten_to_anchor(id),
+    }
+}
+
 /// Escape special Markdown characters in text.
 ///
 /// Following Pandoc's escapeText pattern, this escapes:
@@ -868,6 +1003,14 @@ mod tests {
     use std::io::Cursor;
 
     fn export_to_string(chapter: &IRChapter, format: TextFormat) -> String {
+        export_to_string_with_path(chapter, format, None)
+    }
+
+    fn export_to_string_with_path(
+        chapter: &IRChapter,
+        format: TextFormat,
+        chapter_path: Option<&str>,
+    ) -> String {
         let mut output = Vec::new();
         let mut cursor = Cursor::new(&mut output);
 
@@ -878,9 +1021,11 @@ mod tests {
             line_prefix: String::new(),
             list_stack: Vec::new(),
             at_line_start: true,
+            has_line_content: false,
             pending_newline: false,
             last_block_role: None,
             footnotes: Vec::new(),
+            chapter_path: chapter_path.map(|s| s.to_string()),
         };
 
         for child_id in chapter.children(NodeId::ROOT) {
@@ -974,9 +1119,8 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        chapter
-            .semantics
-            .set_href(link, "https://example.com".to_string());
+        // Use the new LinkMap to set parsed link
+        chapter.links.set(link, "https://example.com");
 
         let text_range = chapter.append_text("Click here");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1379,4 +1523,57 @@ mod tests {
             result
         );
     }
+
+    #[test]
+    fn test_anchor_id_not_output_yet() {
+        // TODO: Update this test when internal link resolution is implemented
+        let mut chapter = IRChapter::new();
+
+        // Heading with ID
+        let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
+        chapter.append_child(NodeId::ROOT, h1);
+        chapter.semantics.set_id(h1, "chapter-one".to_string());
+
+        let text_range = chapter.append_text("Chapter One");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(h1, text_node);
+
+        let result = export_to_string_with_path(&chapter, TextFormat::Markdown, Some("text/ch1.xhtml"));
+
+        // Anchors are not output yet (internal links not implemented)
+        assert!(
+            !result.contains("<a id="),
+            "Should not have anchors yet: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_internal_link_outputs_text_only() {
+        let mut chapter = IRChapter::new();
+
+        let link = chapter.alloc_node(Node::new(Role::Link));
+        chapter.append_child(NodeId::ROOT, link);
+        // Set an internal link to another file
+        chapter.links.set(link, "chapter2.xhtml#section-3");
+
+        let text_range = chapter.append_text("See section 3");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(link, text_node);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Internal links currently just output text (TODO: resolve to anchors)
+        assert!(
+            result.contains("See section 3"),
+            "Should output link text: {:?}",
+            result
+        );
+        assert!(
+            !result.contains("[See section 3]"),
+            "Should not have markdown link syntax: {:?}",
+            result
+        );
+    }
+
 }

@@ -5,7 +5,7 @@ use html5ever::LocalName;
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::css::{compute_styles, Origin, Stylesheet};
 use super::element_ref::ElementRef;
-use crate::ir::{ComputedStyle, Display, IRChapter, ListStyleType, Node, NodeId, Role};
+use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role};
 
 /// User-agent default stylesheet.
 pub fn user_agent_stylesheet() -> Stylesheet {
@@ -352,7 +352,12 @@ impl<'a> TransformContext<'a> {
                     let attr_ns = attr.name.ns.as_ref();
                     match attr_name {
                         // Core layout attributes
-                        "href" => self.chapter.semantics.set_href(ir_id, attr.value.clone()),
+                        "href" => {
+                            // Store raw href for backward compatibility
+                            self.chapter.semantics.set_href(ir_id, attr.value.clone());
+                            // Also parse into structured Link
+                            self.chapter.links.set(ir_id, &attr.value);
+                        }
                         "src" => self.chapter.semantics.set_src(ir_id, attr.value.clone()),
                         "alt" => self.chapter.semantics.set_alt(ir_id, attr.value.clone()),
                         "id" => self.chapter.semantics.set_id(ir_id, attr.value.clone()),

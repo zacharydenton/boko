@@ -4,6 +4,7 @@
 //! - Nodes with semantic roles (paragraphs, headings, links, etc.)
 //! - Interned styles via StylePool
 //! - Sparse semantic attributes (href, src, alt)
+//! - Universal link representation (handles both EPUB IDs and Kindle offsets)
 //! - Global text buffer with range references
 //!
 //! # Example
@@ -18,10 +19,12 @@
 //! assert_eq!(chapter.node(root).unwrap().role, Role::Root);
 //! ```
 
+mod links;
 mod node;
 mod semantic;
 mod style;
 
+pub use links::{InternalLocation, Link, LinkMap, LinkTarget};
 pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 pub use style::{
@@ -41,6 +44,8 @@ pub struct IRChapter {
     pub styles: StylePool,
     /// Sparse semantic attributes.
     pub semantics: SemanticMap,
+    /// Parsed links (replaces raw href strings with structured data).
+    pub links: LinkMap,
     /// Global text buffer (nodes reference ranges into this).
     text: String,
 }
@@ -61,6 +66,7 @@ impl IRChapter {
             nodes,
             styles: StylePool::new(),
             semantics: SemanticMap::new(),
+            links: LinkMap::new(),
             text: String::new(),
         }
     }
