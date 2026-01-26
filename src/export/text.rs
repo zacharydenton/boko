@@ -500,7 +500,7 @@ impl<W: Write> ExportContext<'_, W> {
             }
 
             Role::Image => {
-                self.ensure_line_started()?;
+                self.start_block()?;
                 let alt = self.ir.semantics.alt(id).unwrap_or("image");
                 let src = self.ir.semantics.src(id).unwrap_or("");
 
@@ -509,6 +509,7 @@ impl<W: Write> ExportContext<'_, W> {
                 } else {
                     write!(self.writer, "[Image: {}]", alt)?;
                 }
+                self.end_block(role);
             }
 
             Role::Break => {
@@ -1155,6 +1156,40 @@ mod tests {
 
         let result = export_to_string(&chapter, TextFormat::Plain);
         assert!(result.contains("[Image: A sunset]"));
+    }
+
+    #[test]
+    fn test_image_has_blank_lines() {
+        let mut chapter = IRChapter::new();
+
+        // Heading before image
+        let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
+        chapter.append_child(NodeId::ROOT, h1);
+        let t1 = chapter.append_text("Title");
+        let tn1 = chapter.alloc_node(Node::text(t1));
+        chapter.append_child(h1, tn1);
+
+        // Image
+        let img = chapter.alloc_node(Node::new(Role::Image));
+        chapter.append_child(NodeId::ROOT, img);
+        chapter.semantics.set_src(img, "photo.jpg".to_string());
+        chapter.semantics.set_alt(img, "A photo".to_string());
+
+        // Paragraph after image
+        let p = chapter.alloc_node(Node::new(Role::Text));
+        chapter.append_child(NodeId::ROOT, p);
+        let t2 = chapter.append_text("Some text");
+        let tn2 = chapter.alloc_node(Node::text(t2));
+        chapter.append_child(p, tn2);
+
+        let result = export_to_string(&chapter, TextFormat::Markdown);
+
+        // Image should have blank lines around it (be a block element)
+        assert!(
+            result.contains("# Title\n\n![A photo](photo.jpg)\n\nSome text"),
+            "Image should have blank lines around it: {:?}",
+            result
+        );
     }
 
     #[test]
