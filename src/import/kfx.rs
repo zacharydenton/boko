@@ -44,11 +44,10 @@ pub struct KfxImporter {
     /// Section names for spine entries.
     section_names: Vec<String>,
 
-    /// Storyline entity locations for spine entries.
-    storyline_locs: Vec<EntityLoc>,
-
-    /// Resources: name -> EntityLoc
+    /// Resources: name -> EntityLoc (lazily populated)
     resources: HashMap<String, EntityLoc>,
+    /// Whether resources have been indexed
+    resources_indexed: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,25 +84,32 @@ impl Importer for KfxImporter {
     }
 
     fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
-        let loc = self
-            .storyline_locs
+        let section_name = self
+            .section_names
             .get(id.0 as usize)
-            .copied()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Chapter not found"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Chapter not found"))?
+            .clone();
 
-        self.read_entity(loc)
+        // Find section entity and resolve to storyline
+        let storyline_loc = self.resolve_section_to_storyline(&section_name)?;
+        self.read_entity(storyline_loc)
     }
 
     fn list_assets(&self) -> Vec<PathBuf> {
-        // Only return location paths, not resource name aliases
-        self.resources
-            .keys()
-            .filter(|k| k.starts_with("resource/"))
-            .map(PathBuf::from)
+        // Return entity IDs for bcRawMedia (actual asset data)
+        self.entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::Bcrawmedia as u32)
+            .map(|e| PathBuf::from(format!("#{}", e.id)))
             .collect()
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
+        // Ensure resources are indexed
+        if !self.resources_indexed {
+            self.index_resources()?;
+        }
+
         let name = path.to_string_lossy();
         let loc = self
             .resources
@@ -117,58 +123,49 @@ impl Importer for KfxImporter {
 impl KfxImporter {
     /// Create an importer from a ByteSource.
     pub fn from_source(source: Arc<dyn ByteSource>) -> io::Result<Self> {
-        // Read the entire file for now (KFX files are typically small)
-        // TODO: Implement lazy loading for large files
-        let data = source.read_at(0, source.len() as usize)?;
-
-        // Verify KFX container format
-        if data.len() < 18 || &data[0..4] != b"CONT" {
+        // Read container header (18 bytes)
+        let header = source.read_at(0, 18)?;
+        if &header[0..4] != b"CONT" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Not a valid KFX container",
             ));
         }
 
-        // Parse container header
-        let header_len = read_u32_le(&data, 6) as usize;
-        let container_info_offset = read_u32_le(&data, 10) as usize;
-        let container_info_length = read_u32_le(&data, 14) as usize;
+        let header_len = read_u32_le(&header, 6) as usize;
+        let container_info_offset = read_u32_le(&header, 10) as usize;
+        let container_info_length = read_u32_le(&header, 14) as usize;
 
-        if container_info_offset + container_info_length > data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid container info bounds",
-            ));
-        }
-
-        // Parse container info to get index table and doc symbols locations
-        let container_info = &data[container_info_offset..container_info_offset + container_info_length];
-        let (index_offset, index_length) = parse_container_info_field(container_info, "bcIndexTabOffset", "bcIndexTabLength")?;
-        let (doc_sym_offset, doc_sym_length) = parse_container_info_field(container_info, "bcDocSymbolOffset", "bcDocSymbolLength")
+        // Read container info
+        let container_info = source.read_at(container_info_offset as u64, container_info_length)?;
+        let (index_offset, index_length) = parse_container_info_field(&container_info, "bcIndexTabOffset", "bcIndexTabLength")?;
+        let (doc_sym_offset, doc_sym_length) = parse_container_info_field(&container_info, "bcDocSymbolOffset", "bcDocSymbolLength")
             .unwrap_or((0, 0));
 
-        // Extract document-specific symbols
-        let doc_symbols = if doc_sym_length > 0 && doc_sym_offset + doc_sym_length <= data.len() {
-            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        // Read and parse document symbols
+        let doc_symbols = if doc_sym_length > 0 {
+            let doc_sym_data = source.read_at(doc_sym_offset as u64, doc_sym_length)?;
+            extract_doc_symbols(&doc_sym_data)
         } else {
             Vec::new()
         };
 
-        // Parse entity index table
+        // Read and parse index table
+        let index_data = source.read_at(index_offset as u64, index_length)?;
         let entry_size = 24;
         let num_entries = index_length / entry_size;
         let mut entities = Vec::with_capacity(num_entries);
 
         for i in 0..num_entries {
-            let entry_offset = index_offset + i * entry_size;
-            if entry_offset + entry_size > data.len() {
+            let entry_offset = i * entry_size;
+            if entry_offset + entry_size > index_data.len() {
                 break;
             }
 
-            let id = read_u32_le(&data, entry_offset);
-            let type_id = read_u32_le(&data, entry_offset + 4);
-            let offset = read_u64_le(&data, entry_offset + 8) as usize;
-            let length = read_u64_le(&data, entry_offset + 16) as usize;
+            let id = read_u32_le(&index_data, entry_offset);
+            let type_id = read_u32_le(&index_data, entry_offset + 4);
+            let offset = read_u64_le(&index_data, entry_offset + 8) as usize;
+            let length = read_u64_le(&index_data, entry_offset + 16) as usize;
 
             entities.push(EntityLoc {
                 id,
@@ -187,76 +184,46 @@ impl KfxImporter {
             toc: Vec::new(),
             spine: Vec::new(),
             section_names: Vec::new(),
-            storyline_locs: Vec::new(),
             resources: HashMap::new(),
+            resources_indexed: false,
         };
 
-        // Parse metadata
-        importer.parse_metadata(&data)?;
+        // Parse metadata (only reads needed entities)
+        importer.parse_metadata()?;
 
         // Parse navigation (TOC)
-        importer.parse_navigation(&data)?;
+        importer.parse_navigation()?;
 
-        // Parse storylines (spine)
-        importer.parse_spine(&data)?;
-
-        // Index resources
-        importer.index_resources(&data)?;
-
-        // Resolve cover_image alias to resource path
-        importer.resolve_cover_image();
+        // Parse spine from reading order
+        importer.parse_spine()?;
 
         Ok(importer)
     }
 
-    /// Read an entity's data.
+    /// Read an entity's raw data (after ENTY header).
     fn read_entity(&self, loc: EntityLoc) -> io::Result<Vec<u8>> {
-        let data = self.source.read_at(0, self.source.len() as usize)?;
+        let entity_data = self.source.read_at(loc.offset as u64, loc.length)?;
 
-        if loc.offset + loc.length > data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Entity out of bounds",
-            ));
-        }
-
-        let entity_data = &data[loc.offset..loc.offset + loc.length];
-
-        // Check for ENTY header
+        // Skip ENTY header if present
         if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY" {
-            let enty_header_len = read_u32_le(entity_data, 6) as usize;
+            let enty_header_len = read_u32_le(&entity_data, 6) as usize;
             if enty_header_len < entity_data.len() {
                 return Ok(entity_data[enty_header_len..].to_vec());
             }
         }
 
-        Ok(entity_data.to_vec())
+        Ok(entity_data)
     }
 
     /// Parse an entity as Ion and return the first element.
-    fn parse_entity_ion(&self, data: &[u8], loc: EntityLoc) -> io::Result<Element> {
-        if loc.offset + loc.length > data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Entity out of bounds",
-            ));
-        }
-
-        let entity_data = &data[loc.offset..loc.offset + loc.length];
-
-        // Skip ENTY header if present
-        let ion_data = if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY" {
-            let enty_header_len = read_u32_le(entity_data, 6) as usize;
-            &entity_data[enty_header_len..]
-        } else {
-            entity_data
-        };
-
-        parse_ion_element(ion_data, &self.doc_symbols)
+    /// Parse an entity as Ion and return the first element.
+    fn parse_entity_ion(&self, loc: EntityLoc) -> io::Result<Element> {
+        let ion_data = self.read_entity(loc)?;
+        parse_ion_element(&ion_data, &self.doc_symbols)
     }
 
     /// Parse book metadata.
-    fn parse_metadata(&mut self, data: &[u8]) -> io::Result<()> {
+    fn parse_metadata(&mut self) -> io::Result<()> {
         // Find book_metadata entity
         let loc = self
             .entities
@@ -265,7 +232,7 @@ impl KfxImporter {
             .copied();
 
         if let Some(loc) = loc {
-            let elem = self.parse_entity_ion(data, loc)?;
+            let elem = self.parse_entity_ion(loc)?;
 
             if let Some(strukt) = elem.as_struct() {
                 // Look for categorised_metadata
@@ -325,7 +292,7 @@ impl KfxImporter {
     }
 
     /// Parse book navigation (TOC).
-    fn parse_navigation(&mut self, data: &[u8]) -> io::Result<()> {
+    fn parse_navigation(&mut self) -> io::Result<()> {
         // Find book_navigation entity
         let loc = self
             .entities
@@ -334,7 +301,7 @@ impl KfxImporter {
             .copied();
 
         if let Some(loc) = loc {
-            let elem = self.parse_entity_ion(data, loc)?;
+            let elem = self.parse_entity_ion(loc)?;
 
             // book_navigation is a list of reading orders
             if let Some(list) = elem.as_list() {
@@ -410,70 +377,61 @@ impl KfxImporter {
         entries
     }
 
-    /// Parse spine from reading_orders → sections → page_templates → storylines.
-    fn parse_spine(&mut self, data: &[u8]) -> io::Result<()> {
-        // Step 1: Get reading_orders from document_data ($538) or metadata ($258)
-        let section_names = self.get_reading_order_sections(data)?;
+    /// Parse spine from reading_orders.
+    ///
+    /// This is a lightweight parse that just extracts section names.
+    /// Full storyline resolution happens lazily in load_raw().
+    fn parse_spine(&mut self) -> io::Result<()> {
+        let section_names = self.get_reading_order_sections()?;
 
-        // Step 2: Build a map of section_name → section entity
-        let mut section_map: HashMap<String, EntityLoc> = HashMap::new();
+        // Just store section names - storyline lookup happens on demand
+        for (idx, name) in section_names.into_iter().enumerate() {
+            self.section_names.push(name);
+            self.spine.push(SpineEntry {
+                id: ChapterId(idx as u32),
+                size_estimate: 0, // Unknown until loaded
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a section name to its storyline entity location.
+    fn resolve_section_to_storyline(&self, section_name: &str) -> io::Result<EntityLoc> {
+        // Find section entity with matching name
         for loc in &self.entities {
             if loc.type_id == KfxSymbol::Section as u32 {
-                if let Ok(elem) = self.parse_entity_ion(data, *loc) {
+                if let Ok(elem) = self.parse_entity_ion(*loc) {
                     if let Some(strukt) = elem.as_struct() {
                         let name = strukt
                             .get("section_name")
                             .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
                             .unwrap_or("");
-                        if !name.is_empty() {
-                            section_map.insert(name.to_string(), *loc);
-                        }
-                    }
-                }
-            }
-        }
+                        if name == section_name {
+                            // Found section - get storyline from page_templates
+                            if let Some(templates) = strukt.get("page_templates").and_then(|v| v.as_list()) {
+                                if let Some(template) = templates.iter().next() {
+                                    if let Some(tmpl_struct) = template.as_struct() {
+                                        let story_name = tmpl_struct
+                                            .get("story_name")
+                                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
+                                            .unwrap_or("");
 
-        // Step 3: Build a map of story_name → storyline entity
-        let mut storyline_map: HashMap<String, EntityLoc> = HashMap::new();
-        for loc in &self.entities {
-            if loc.type_id == KfxSymbol::Storyline as u32 {
-                if let Ok(elem) = self.parse_entity_ion(data, *loc) {
-                    if let Some(strukt) = elem.as_struct() {
-                        let name = strukt
-                            .get("story_name")
-                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
-                            .unwrap_or("");
-                        if !name.is_empty() {
-                            storyline_map.insert(name.to_string(), *loc);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Step 4: For each section in reading order, get storylines from page_templates
-        let mut spine_idx = 0u32;
-        for section_name in section_names {
-            if let Some(section_loc) = section_map.get(&section_name) {
-                if let Ok(elem) = self.parse_entity_ion(data, *section_loc) {
-                    if let Some(strukt) = elem.as_struct() {
-                        if let Some(templates) = strukt.get("page_templates").and_then(|v| v.as_list()) {
-                            for template in templates.iter() {
-                                if let Some(tmpl_struct) = template.as_struct() {
-                                    let story_name = tmpl_struct
-                                        .get("story_name")
-                                        .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
-                                        .unwrap_or("");
-
-                                    if !story_name.is_empty() {
-                                        if let Some(storyline_loc) = storyline_map.get(story_name) {
-                                            self.section_names.push(format!("#{}", storyline_loc.id));
-                                            self.storyline_locs.push(*storyline_loc);
-                                            self.spine.push(SpineEntry {
-                                                id: ChapterId(spine_idx),
-                                                size_estimate: storyline_loc.length,
-                                            });
-                                            spine_idx += 1;
+                                        // Find storyline entity
+                                        for sloc in &self.entities {
+                                            if sloc.type_id == KfxSymbol::Storyline as u32 {
+                                                if let Ok(selem) = self.parse_entity_ion(*sloc) {
+                                                    if let Some(sstruct) = selem.as_struct() {
+                                                        let sname = sstruct
+                                                            .get("story_name")
+                                                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
+                                                            .unwrap_or("");
+                                                        if sname == story_name {
+                                                            return Ok(*sloc);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -484,11 +442,14 @@ impl KfxImporter {
             }
         }
 
-        Ok(())
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Could not resolve section: {}", section_name),
+        ))
     }
 
     /// Extract section names from reading_orders in document_data or metadata.
-    fn get_reading_order_sections(&self, data: &[u8]) -> io::Result<Vec<String>> {
+    fn get_reading_order_sections(&self) -> io::Result<Vec<String>> {
         // Try document_data ($538) first, then metadata ($258)
         let doc_data_loc = self.entities.iter()
             .find(|e| e.type_id == KfxSymbol::DocumentData as u32)
@@ -499,7 +460,7 @@ impl KfxImporter {
             .copied();
 
         for loc in [doc_data_loc, metadata_loc].into_iter().flatten() {
-            if let Ok(elem) = self.parse_entity_ion(data, loc) {
+            if let Ok(elem) = self.parse_entity_ion(loc) {
                 if let Some(strukt) = elem.as_struct() {
                     if let Some(orders) = strukt.get("reading_orders").and_then(|v| v.as_list()) {
                         for order in orders.iter() {
@@ -556,21 +517,15 @@ impl KfxImporter {
         None
     }
 
-    /// Resolve cover_image alias to entity ID.
-    fn resolve_cover_image(&mut self) {
-        if let Some(alias) = &self.metadata.cover_image {
-            // Look up resource by alias to get entity ID
-            if let Some(loc) = self.resources.get(alias) {
-                self.metadata.cover_image = Some(format!("#{}", loc.id));
-            }
-        }
-    }
-
     /// Index external resources.
-    fn index_resources(&mut self, data: &[u8]) -> io::Result<()> {
+    fn index_resources(&mut self) -> io::Result<()> {
+        if self.resources_indexed {
+            return Ok(());
+        }
+
         for loc in &self.entities {
             if loc.type_id == KfxSymbol::ExternalResource as u32 {
-                if let Ok(elem) = self.parse_entity_ion(data, *loc) {
+                if let Ok(elem) = self.parse_entity_ion(*loc) {
                     if let Some(strukt) = elem.as_struct() {
                         // Use location as key (e.g., "resource/rsrc7")
                         let location = strukt
@@ -596,6 +551,7 @@ impl KfxImporter {
             }
         }
 
+        self.resources_indexed = true;
         Ok(())
     }
 }
