@@ -16,6 +16,8 @@
 //! - `fragment` - KFX fragment representation
 //! - `serialization` - Binary container format serialization
 //! - `context` - Export context for central state management
+//! - `style_schema` - Declarative style property mapping
+//! - `style_registry` - Style deduplication and ID assignment
 
 pub mod container;
 pub mod context;
@@ -25,6 +27,8 @@ pub mod metadata;
 pub mod schema;
 pub mod serialization;
 pub mod storyline;
+pub mod style_registry;
+pub mod style_schema;
 pub mod symbols;
 pub mod tokens;
 pub mod transforms;

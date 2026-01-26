@@ -144,6 +144,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         content_ref,
         style_events,
         kfx_attrs: Vec::new(),
+        style_symbol: None, // Set during export, not import
     }));
 
     // Recurse into children
@@ -514,6 +515,11 @@ fn walk_node_for_export(
     // Build element start with semantics
     let mut elem = ElementStart::new(node.role);
 
+    // Register the node's style and get a KFX style symbol
+    // This converts IR ComputedStyle → KFX style and deduplicates
+    let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
+    elem.style_symbol = Some(style_symbol);
+
     // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
     // Create a closure to get semantic values by target
     let export_ctx = crate::kfx::transforms::ExportContext {
@@ -589,6 +595,11 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Unique container ID - use the global generator to avoid collisions
                 let container_id = ctx.fragment_ids.next();
                 fields.push((sym!(Id), IonValue::Int(container_id as i64)));
+
+                // Style reference - use per-element style if available, else default
+                // Required for text rendering on Kindle
+                let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
+                fields.push((sym!(Style), IonValue::Symbol(style_sym)));
 
                 // Type field (as symbol ID)
                 if let Some(kfx_type) = schema().kfx_type_for_role(elem.role) {
@@ -763,6 +774,7 @@ mod tests {
             content_ref: None,
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }));
         stream.end_element();
 
@@ -789,6 +801,7 @@ mod tests {
             }),
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }));
         stream.end_element();
 
@@ -820,6 +833,7 @@ mod tests {
             }),
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }));
         stream.end_element();
 
@@ -851,6 +865,7 @@ mod tests {
                 length: 5,
             }],
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }));
         stream.end_element();
 

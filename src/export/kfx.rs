@@ -168,6 +168,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
 
     // 2f. Chapter entities - collect separately for proper grouping
+    // Note: This also collects styles during token generation
     let mut section_fragments = Vec::new();
     let mut storyline_fragments = Vec::new();
     let mut content_fragments = Vec::new();
@@ -188,7 +189,12 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // Add in grouped order: sections, then storylines, then content
+    // 2g. Style entities ($157) - generated AFTER chapters since styles are collected during token generation
+    // This includes the default style plus any unique styles found in the content
+    let style_fragments = build_style_fragments(&mut ctx);
+    fragments.extend(style_fragments);
+
+    // Add chapter content in grouped order: sections, then storylines, then content
     fragments.extend(section_fragments);
     fragments.extend(storyline_fragments);
     fragments.extend(content_fragments);
@@ -358,6 +364,20 @@ fn collect_needed_anchors_from_toc(entries: &[crate::book::TocEntry], ctx: &mut 
             collect_needed_anchors_from_toc(&entry.children, ctx);
         }
     }
+}
+
+/// Build style fragments from the registry.
+///
+/// KFX requires every storyline element to have a style reference.
+/// This generates all collected styles from the registry, including the default.
+fn build_style_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
+    // Drain all styles from the registry to generate Ion fragments
+    let style_pairs = ctx.style_registry.drain_to_ion();
+
+    style_pairs
+        .into_iter()
+        .map(|(name, ion)| KfxFragment::new(KfxSymbol::Style, &name, ion))
+        .collect()
 }
 
 /// Build the metadata fragment ($258) - contains reading_orders.

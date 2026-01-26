@@ -7,8 +7,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::import::ChapterId;
-use crate::ir::NodeId;
+use crate::ir::{NodeId, StyleId};
 
+use super::style_registry::StyleRegistry;
 use super::symbols::KFX_SYMBOL_TABLE_SIZE;
 use super::transforms::encode_base32;
 
@@ -331,13 +332,24 @@ pub struct ExportContext {
     /// Set of anchor IDs that are actually needed (targets of links or TOC).
     /// Only anchors in this set will be emitted to avoid bloat.
     needed_anchors: HashSet<String>,
+
+    /// Default style symbol ID.
+    /// All storyline elements reference this style for Kindle rendering.
+    pub default_style_symbol: u64,
+
+    /// Style registry for deduplicating and tracking KFX styles.
+    pub style_registry: StyleRegistry,
 }
 
 impl ExportContext {
     /// Create a new export context.
     pub fn new() -> Self {
+        let mut symbols = SymbolTable::new();
+        // Register the default style name during initialization
+        let default_style_symbol = symbols.get_or_intern("s0");
+
         Self {
-            symbols: SymbolTable::new(),
+            symbols,
             fragment_ids: IdGenerator::new(),
             resource_registry: ResourceRegistry::new(),
             section_ids: Vec::new(),
@@ -351,6 +363,8 @@ impl ExportContext {
             anchor_map: HashMap::new(),
             path_to_fragment: HashMap::new(),
             needed_anchors: HashSet::new(),
+            default_style_symbol,
+            style_registry: StyleRegistry::new(default_style_symbol),
         }
     }
 
@@ -396,6 +410,44 @@ impl ExportContext {
         let id = self.intern(name);
         self.section_ids.push(id);
         id
+    }
+
+    /// Register an IR style and return its KFX style symbol.
+    ///
+    /// Converts the IR ComputedStyle to KFX format via the schema-driven
+    /// StyleBuilder pipeline, then deduplicates via the StyleRegistry.
+    /// Returns the symbol ID to use in storyline elements.
+    pub fn register_ir_style(
+        &mut self,
+        ir_style: &crate::ir::ComputedStyle,
+    ) -> u64 {
+        // Use the schema-driven pipeline (single source of truth)
+        let schema = crate::kfx::style_schema::StyleSchema::standard();
+        let mut builder = crate::kfx::style_registry::StyleBuilder::new(&schema);
+        builder.ingest_ir_style(ir_style);
+        let kfx_style = builder.build();
+
+        // Register and get symbol (handles deduplication)
+        self.style_registry.register(kfx_style, &mut self.symbols)
+    }
+
+    /// Register an IR style by StyleId, looking it up in the style pool.
+    ///
+    /// Returns the KFX style symbol. For DEFAULT style, returns the default symbol.
+    pub fn register_style_id(
+        &mut self,
+        style_id: StyleId,
+        style_pool: &crate::ir::StylePool,
+    ) -> u64 {
+        if style_id == StyleId::DEFAULT {
+            return self.default_style_symbol;
+        }
+
+        if let Some(ir_style) = style_pool.get(style_id) {
+            self.register_ir_style(ir_style)
+        } else {
+            self.default_style_symbol
+        }
     }
 
     // =========================================================================

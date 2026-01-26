@@ -47,6 +47,9 @@ pub struct ElementStart {
     /// Pre-transformed KFX attributes (field_id, value_string).
     /// Populated during export by schema.export_attributes().
     pub kfx_attrs: Vec<(u64, String)>,
+    /// KFX style symbol ID for this element.
+    /// Populated during export after registering the node's style.
+    pub style_symbol: Option<u64>,
 }
 
 impl ElementStart {
@@ -59,6 +62,7 @@ impl ElementStart {
             content_ref: None,
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }
     }
 
@@ -152,6 +156,7 @@ impl TokenStream {
             content_ref,
             style_events,
             kfx_attrs: Vec::new(),
+            style_symbol: None,
         }));
     }
 
