@@ -67,7 +67,9 @@ impl Default for EpubExporter {
 
 impl Exporter for EpubExporter {
     fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
-        if self.config.normalize {
+        // Use normalized mode if explicitly requested OR if the source format requires it
+        // (e.g., KFX raw content is binary Ion, not HTML)
+        if self.config.normalize || book.requires_normalized_export() {
             self.export_normalized(book, writer)
         } else {
             self.export_raw(book, writer)

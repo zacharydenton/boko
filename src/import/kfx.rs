@@ -190,6 +190,11 @@ impl Importer for KfxImporter {
 
         self.read_entity(*loc)
     }
+
+    fn requires_normalized_export(&self) -> bool {
+        // KFX load_raw returns binary Ion data, not HTML
+        true
+    }
 }
 
 impl KfxImporter {

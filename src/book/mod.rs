@@ -314,6 +314,14 @@ impl Book {
         self.backend.list_assets()
     }
 
+    /// Whether this book requires normalized export for HTML-based formats.
+    ///
+    /// Returns true for binary formats (KFX) where the raw content is not HTML.
+    /// Exporters should use IR-based output when this returns true.
+    pub fn requires_normalized_export(&self) -> bool {
+        self.backend.requires_normalized_export()
+    }
+
     /// Export the book to a different format.
     ///
     /// # Supported Export Formats

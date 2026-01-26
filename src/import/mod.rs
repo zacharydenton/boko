@@ -124,6 +124,14 @@ pub trait Importer: Send + Sync {
 
     /// Load an asset by path.
     fn load_asset(&mut self, path: &Path) -> std::io::Result<Vec<u8>>;
+
+    /// Whether this importer requires normalized export for HTML-based formats.
+    ///
+    /// Returns true for binary formats (KFX) where load_raw returns non-HTML data.
+    /// Exporters should use IR-based output when this returns true.
+    fn requires_normalized_export(&self) -> bool {
+        false
+    }
 }
 
 /// Resolve a relative path against a base path.
