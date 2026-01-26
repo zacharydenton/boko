@@ -132,32 +132,56 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
     let mut fragments = Vec::new();
 
-    // 2a. Metadata fragment ($258) - contains reading_orders
-    fragments.push(build_metadata_fragment(&ctx));
+    // Entity order matches reference KFX:
+    // 1. content_features ($585)
+    // 2. book_metadata ($490)
+    // 3. metadata ($258)
+    // 4. document_data ($538)
+    // 5. book_navigation ($389)
+    // 6+. sections ($260) - all together
+    // N+. storylines ($259) - all together
+    // M+. content ($145) - all together
+
+    // 2a. Content features fragment ($585)
+    fragments.push(build_content_features_fragment());
 
     // 2b. Book metadata fragment ($490) - contains categorised_metadata
     fragments.push(build_book_metadata_fragment(book, &container_id, &ctx));
 
-    // 2c. Format capabilities fragment
-    fragments.push(build_format_capabilities_fragment());
+    // 2c. Metadata fragment ($258) - contains reading_orders
+    fragments.push(build_metadata_fragment(&ctx));
 
-    // 2d. Book navigation fragment (uses ctx.position_map for TOC links)
+    // 2d. Document data fragment ($538) - contains document settings
+    fragments.push(build_document_data_fragment(&ctx));
+
+    // 2e. Book navigation fragment (uses ctx.position_map for TOC links)
     fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
 
-    // 2e. Chapter entities (Content + Storyline + Section for each chapter)
-    // Uses the Assembler pattern: Schema handles element semantics,
-    // Assembler handles entity topology.
+    // 2f. Chapter entities - collect separately for proper grouping
+    let mut section_fragments = Vec::new();
+    let mut storyline_fragments = Vec::new();
+    let mut content_fragments = Vec::new();
+
     for (chapter_id, section_name) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
-            let chapter_frags = build_chapter_entities(
+            let (section, storyline, content) = build_chapter_entities_grouped(
                 &chapter,
                 *chapter_id,
                 section_name,
                 &mut ctx,
             );
-            fragments.extend(chapter_frags);
+            section_fragments.push(section);
+            storyline_fragments.push(storyline);
+            if let Some(c) = content {
+                content_fragments.push(c);
+            }
         }
     }
+
+    // Add in grouped order: sections, then storylines, then content
+    fragments.extend(section_fragments);
+    fragments.extend(storyline_fragments);
+    fragments.extend(content_fragments);
 
     // 2f. Resource fragments (images, fonts, etc.)
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
@@ -398,18 +422,144 @@ fn metadata_kv(key: &str, value: &str) -> IonValue {
     ])
 }
 
-/// Build the format capabilities fragment.
-fn build_format_capabilities_fragment() -> KfxFragment {
-    // Minimal format capabilities
-    let features = IonValue::List(vec![]);
-
-    let format_caps = IonValue::Struct(vec![
-        (KfxSymbol::MajorVersion as u64, IonValue::Int(1)),
-        (KfxSymbol::MinorVersion as u64, IonValue::Int(0)),
-        (KfxSymbol::Features as u64, features),
+/// Build the content features fragment ($585).
+///
+/// This describes the content capabilities/features of the book.
+fn build_content_features_fragment() -> KfxFragment {
+    // Build feature entries matching reference KFX
+    let reflow_style = IonValue::Struct(vec![
+        (
+            KfxSymbol::Namespace as u64,
+            IonValue::String("com.amazon.yjconversion".to_string()),
+        ),
+        (
+            KfxSymbol::Key as u64,
+            IonValue::String("reflow-style".to_string()),
+        ),
+        (
+            KfxSymbol::VersionInfo as u64,
+            IonValue::Struct(vec![(
+                KfxSymbol::Version as u64,
+                IonValue::Struct(vec![
+                    (KfxSymbol::MajorVersion as u64, IonValue::Int(6)),
+                    (KfxSymbol::MinorVersion as u64, IonValue::Int(0)),
+                ]),
+            )]),
+        ),
     ]);
 
-    KfxFragment::singleton(KfxSymbol::FormatCapabilities, format_caps)
+    let canonical_format = IonValue::Struct(vec![
+        (
+            KfxSymbol::Namespace as u64,
+            IonValue::String("SDK.Marker".to_string()),
+        ),
+        (
+            KfxSymbol::Key as u64,
+            IonValue::String("CanonicalFormat".to_string()),
+        ),
+        (
+            KfxSymbol::VersionInfo as u64,
+            IonValue::Struct(vec![(
+                KfxSymbol::Version as u64,
+                IonValue::Struct(vec![
+                    (KfxSymbol::MajorVersion as u64, IonValue::Int(1)),
+                    (KfxSymbol::MinorVersion as u64, IonValue::Int(0)),
+                ]),
+            )]),
+        ),
+    ]);
+
+    let yj_hdv = IonValue::Struct(vec![
+        (
+            KfxSymbol::Namespace as u64,
+            IonValue::String("com.amazon.yjconversion".to_string()),
+        ),
+        (KfxSymbol::Key as u64, IonValue::String("yj_hdv".to_string())),
+        (
+            KfxSymbol::VersionInfo as u64,
+            IonValue::Struct(vec![(
+                KfxSymbol::Version as u64,
+                IonValue::Struct(vec![
+                    (KfxSymbol::MajorVersion as u64, IonValue::Int(1)),
+                    (KfxSymbol::MinorVersion as u64, IonValue::Int(0)),
+                ]),
+            )]),
+        ),
+    ]);
+
+    let content_features = IonValue::Struct(vec![(
+        KfxSymbol::Features as u64,
+        IonValue::List(vec![reflow_style, canonical_format, yj_hdv]),
+    )]);
+
+    KfxFragment::singleton(KfxSymbol::ContentFeatures, content_features)
+}
+
+/// Build the document data fragment ($538).
+///
+/// Contains document-level settings like direction, font size, line height, max_id.
+fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
+    // Build section list from context's registered sections
+    let sections: Vec<IonValue> = ctx
+        .section_ids
+        .iter()
+        .map(|&id| IonValue::Symbol(id))
+        .collect();
+
+    let reading_order = IonValue::Struct(vec![
+        (
+            KfxSymbol::ReadingOrderName as u64,
+            IonValue::Symbol(KfxSymbol::Default as u64),
+        ),
+        (KfxSymbol::Sections as u64, IonValue::List(sections)),
+    ]);
+
+    // Calculate max_id from context (highest EID used)
+    let max_id = ctx.max_eid();
+
+    let document_data = IonValue::Struct(vec![
+        (
+            KfxSymbol::Direction as u64,
+            IonValue::Symbol(KfxSymbol::Ltr as u64),
+        ),
+        (
+            KfxSymbol::ColumnCount as u64,
+            IonValue::Symbol(KfxSymbol::Auto as u64),
+        ),
+        (
+            KfxSymbol::FontSize as u64,
+            IonValue::Struct(vec![
+                (KfxSymbol::Value as u64, IonValue::Float(1.0)),
+                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            ]),
+        ),
+        (
+            KfxSymbol::WritingMode as u64,
+            IonValue::Symbol(KfxSymbol::HorizontalTb as u64),
+        ),
+        (
+            KfxSymbol::Selection as u64,
+            IonValue::Symbol(KfxSymbol::Enabled as u64),
+        ),
+        (KfxSymbol::MaxId as u64, IonValue::Int(max_id as i64)),
+        (
+            KfxSymbol::LineHeight as u64,
+            IonValue::Struct(vec![
+                (KfxSymbol::Value as u64, IonValue::Float(1.2)),
+                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            ]),
+        ),
+        (
+            KfxSymbol::SpacingPercentBase as u64,
+            IonValue::Symbol(KfxSymbol::Width as u64),
+        ),
+        (
+            KfxSymbol::ReadingOrders as u64,
+            IonValue::List(vec![reading_order]),
+        ),
+    ]);
+
+    KfxFragment::singleton(KfxSymbol::DocumentData, document_data)
 }
 
 /// Build the book navigation fragment with resolved positions.
@@ -560,6 +710,109 @@ fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
 // Entity Assembler: Packages Schema output into KFX Entity Hierarchy
 // ============================================================================
 
+/// Build chapter entities returning them separately for grouped emission.
+///
+/// Returns (section, storyline, Option<content>) so they can be grouped by type.
+fn build_chapter_entities_grouped(
+    chapter: &IRChapter,
+    chapter_id: ChapterId,
+    section_name: &str,
+    ctx: &mut ExportContext,
+) -> (KfxFragment, KfxFragment, Option<KfxFragment>) {
+    use crate::kfx::storyline::{ir_to_tokens, tokens_to_ion};
+
+    // =========================================================================
+    // 1. SETUP: Naming for this chapter's entity triad
+    // =========================================================================
+    let story_name = format!("story_{}", section_name);
+    let content_name = format!("content_{}", section_name);
+
+    let section_name_symbol = ctx.symbols.get_or_intern(section_name);
+    let story_name_symbol = ctx.symbols.get_or_intern(&story_name);
+    let content_name_symbol = ctx.symbols.get_or_intern(&content_name);
+
+    // Tell tokens_to_ion what content name to use for references
+    ctx.begin_chapter(&content_name);
+
+    // Get the section fragment ID assigned during Pass 1
+    let section_id = ctx
+        .get_chapter_fragment(chapter_id)
+        .unwrap_or_else(|| ctx.next_fragment_id());
+
+    // =========================================================================
+    // 2. GENERATE: Schema-driven token generation + text/structure split
+    // =========================================================================
+    let tokens = ir_to_tokens(chapter, ctx);
+    let storyline_content_list = tokens_to_ion(&tokens, ctx);
+
+    // Drain the accumulated text strings
+    let content_strings = ctx.drain_text();
+
+    // =========================================================================
+    // 3. ASSEMBLE: Package into three KFX Entities
+    // =========================================================================
+
+    // Entity A: CONTENT ($145) - Holds the raw text strings
+    let content_fragment = if !content_strings.is_empty() {
+        let content_ion = IonValue::Struct(vec![
+            (KfxSymbol::Name as u64, IonValue::Symbol(content_name_symbol)),
+            (
+                KfxSymbol::ContentList as u64,
+                IonValue::List(content_strings.into_iter().map(IonValue::String).collect()),
+            ),
+        ]);
+        Some(KfxFragment::new(
+            KfxSymbol::Content,
+            &content_name,
+            content_ion,
+        ))
+    } else {
+        None
+    };
+
+    // Entity B: STORYLINE ($259) - Holds the structure, references Content by name
+    let storyline_ion = IonValue::Struct(vec![
+        (
+            KfxSymbol::StoryName as u64,
+            IonValue::Symbol(story_name_symbol),
+        ),
+        (KfxSymbol::ContentList as u64, storyline_content_list),
+    ]);
+    let storyline_fragment = KfxFragment::new(KfxSymbol::Storyline, &story_name, storyline_ion);
+
+    // Entity C: SECTION ($260) - Entry point, references Storyline by story_name
+    let page_template = IonValue::Struct(vec![
+        (KfxSymbol::Id as u64, IonValue::Int(section_id as i64)),
+        (
+            KfxSymbol::StoryName as u64,
+            IonValue::Symbol(story_name_symbol),
+        ),
+        (
+            KfxSymbol::Type as u64,
+            IonValue::Symbol(KfxSymbol::Text as u64),
+        ),
+    ]);
+
+    let section_ion = IonValue::Struct(vec![
+        (
+            KfxSymbol::SectionName as u64,
+            IonValue::Symbol(section_name_symbol),
+        ),
+        (
+            KfxSymbol::PageTemplates as u64,
+            IonValue::List(vec![page_template]),
+        ),
+    ]);
+    let section_fragment = KfxFragment::new_with_id(
+        KfxSymbol::Section,
+        section_id,
+        section_name,
+        section_ion,
+    );
+
+    (section_fragment, storyline_fragment, content_fragment)
+}
+
 /// Build the three KFX entities for a chapter: Content, Storyline, Section.
 ///
 /// This is the "Assembler" (Macro layer) that:
@@ -572,6 +825,7 @@ fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
 ///
 /// The Assembler knows about KFX Entity topology but NOT about element semantics.
 /// Element semantics are handled by the Schema.
+#[allow(dead_code)]
 fn build_chapter_entities(
     chapter: &IRChapter,
     chapter_id: ChapterId,
@@ -820,7 +1074,7 @@ fn serialize_fragments(
         .iter()
         .map(|frag| {
             let id = if frag.is_singleton() {
-                0 // Singleton marker
+                KfxSymbol::Null as u32 // Singleton marker ($348 = null)
             } else {
                 // Look up local symbol ID
                 local_symbols
@@ -1018,6 +1272,293 @@ mod tests {
             }
         } else {
             panic!("expected Ion data");
+        }
+    }
+
+
+    #[test]
+    fn test_content_features_fragment() {
+        let frag = build_content_features_fragment();
+
+        // Should be $585 (content_features) type
+        assert_eq!(frag.ftype, KfxSymbol::ContentFeatures as u64);
+        assert!(frag.is_singleton());
+
+        // Extract Ion and verify structure
+        if let crate::kfx::fragment::FragmentData::Ion(ion) = &frag.data {
+            if let IonValue::Struct(fields) = ion {
+                // Should have features field
+                let features = fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::Features as u64);
+                assert!(features.is_some(), "content_features should contain features");
+
+                // Features should be a list with 3 items
+                if let Some((_, IonValue::List(items))) = features {
+                    assert_eq!(items.len(), 3, "should have 3 feature entries");
+                } else {
+                    panic!("features should be a list");
+                }
+            } else {
+                panic!("expected Struct");
+            }
+        } else {
+            panic!("expected Ion data");
+        }
+    }
+
+    #[test]
+    fn test_document_data_fragment() {
+        let mut ctx = ExportContext::new();
+        ctx.register_section("c0");
+        ctx.register_section("c1");
+        // Simulate some fragment IDs being used
+        ctx.next_fragment_id();
+        ctx.next_fragment_id();
+
+        let frag = build_document_data_fragment(&ctx);
+
+        // Should be $538 (document_data) type
+        assert_eq!(frag.ftype, KfxSymbol::DocumentData as u64);
+        assert!(frag.is_singleton());
+
+        // Extract Ion and verify structure
+        if let crate::kfx::fragment::FragmentData::Ion(ion) = &frag.data {
+            if let IonValue::Struct(fields) = ion {
+                // Check for required fields
+                let field_ids: Vec<u64> = fields.iter().map(|(id, _)| *id).collect();
+
+                assert!(
+                    field_ids.contains(&(KfxSymbol::Direction as u64)),
+                    "should have direction"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::ColumnCount as u64)),
+                    "should have column_count"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::FontSize as u64)),
+                    "should have font_size"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::WritingMode as u64)),
+                    "should have writing_mode"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::Selection as u64)),
+                    "should have selection"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::MaxId as u64)),
+                    "should have max_id"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::LineHeight as u64)),
+                    "should have line_height"
+                );
+                assert!(
+                    field_ids.contains(&(KfxSymbol::ReadingOrders as u64)),
+                    "should have reading_orders"
+                );
+            } else {
+                panic!("expected Struct");
+            }
+        } else {
+            panic!("expected Ion data");
+        }
+    }
+
+    #[test]
+    fn test_singleton_uses_null_symbol() {
+        // Build a singleton fragment and serialize it
+        let frag = build_content_features_fragment();
+        let local_symbols: Vec<String> = vec![];
+        let entities = serialize_fragments(&[frag], &local_symbols);
+
+        // Singleton should use $348 (null) as ID
+        assert_eq!(entities[0].id, KfxSymbol::Null as u32);
+    }
+}
+
+#[cfg(test)]
+mod entity_structure_tests {
+    use super::*;
+    use crate::book::Book;
+    use crate::kfx::fragment::FragmentData;
+
+    #[test]
+    fn test_entity_order_matches_reference() {
+        // Build KFX from EPUB and verify entity order matches Amazon reference
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let container_id = generate_container_id();
+        let mut ctx = ExportContext::new();
+
+        // Collect spine info
+        let spine_info: Vec<_> = book
+            .spine()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let section_name = format!("c{}", idx);
+                (entry.id, section_name)
+            })
+            .collect();
+
+        // Pass 1: Survey
+        for (chapter_id, section_name) in &spine_info {
+            ctx.register_section(section_name);
+            let source_path = book.source_id(*chapter_id).unwrap_or("").to_string();
+            if let Ok(chapter) = book.load_chapter(*chapter_id) {
+                survey_chapter(&chapter, *chapter_id, &source_path, &mut ctx);
+            }
+        }
+
+        // Pass 2: Build fragments in correct order
+        let mut fragments = Vec::new();
+
+        fragments.push(build_content_features_fragment());
+        fragments.push(build_book_metadata_fragment(&book, &container_id, &ctx));
+        fragments.push(build_metadata_fragment(&ctx));
+        fragments.push(build_document_data_fragment(&ctx));
+        fragments.push(build_book_navigation_fragment_with_positions(&book, &ctx));
+
+        let mut section_fragments = Vec::new();
+        let mut storyline_fragments = Vec::new();
+        let mut content_fragments = Vec::new();
+
+        for (chapter_id, section_name) in &spine_info {
+            if let Ok(chapter) = book.load_chapter(*chapter_id) {
+                let (section, storyline, content) =
+                    build_chapter_entities_grouped(&chapter, *chapter_id, section_name, &mut ctx);
+                section_fragments.push(section);
+                storyline_fragments.push(storyline);
+                if let Some(c) = content {
+                    content_fragments.push(c);
+                }
+            }
+        }
+
+        fragments.extend(section_fragments);
+        fragments.extend(storyline_fragments);
+        fragments.extend(content_fragments);
+
+        // Verify entity type order matches reference pattern:
+        // content_features, book_metadata, metadata, document_data, book_navigation,
+        // sections (grouped), storylines (grouped), content (grouped)
+
+        let types: Vec<u64> = fragments.iter().map(|f| f.ftype).collect();
+
+        // First 5 should be the header entities in order
+        assert_eq!(types[0], KfxSymbol::ContentFeatures as u64);
+        assert_eq!(types[1], KfxSymbol::BookMetadata as u64);
+        assert_eq!(types[2], KfxSymbol::Metadata as u64);
+        assert_eq!(types[3], KfxSymbol::DocumentData as u64);
+        assert_eq!(types[4], KfxSymbol::BookNavigation as u64);
+
+        // After header, all sections should come first, then storylines, then content
+        let after_header = &types[5..];
+        let section_count = after_header
+            .iter()
+            .take_while(|&&t| t == KfxSymbol::Section as u64)
+            .count();
+        assert!(section_count > 0, "should have sections after header");
+
+        let after_sections = &after_header[section_count..];
+        let storyline_count = after_sections
+            .iter()
+            .take_while(|&&t| t == KfxSymbol::Storyline as u64)
+            .count();
+        assert!(storyline_count > 0, "should have storylines after sections");
+
+        let after_storylines = &after_sections[storyline_count..];
+        let content_count = after_storylines
+            .iter()
+            .take_while(|&&t| t == KfxSymbol::Content as u64)
+            .count();
+        // Content is optional (image-only chapters may not have content)
+        // Just verify that after storylines, we only have content entities (if any)
+        for t in after_storylines.iter().take(content_count) {
+            assert_eq!(*t, KfxSymbol::Content as u64, "content should follow storylines");
+        }
+
+        // Verify grouping - no interleaving
+        for i in 1..section_count {
+            assert_eq!(
+                after_header[i],
+                KfxSymbol::Section as u64,
+                "sections should be grouped"
+            );
+        }
+        for i in 1..storyline_count {
+            assert_eq!(
+                after_sections[i],
+                KfxSymbol::Storyline as u64,
+                "storylines should be grouped"
+            );
+        }
+    }
+
+    #[test]
+    fn test_chapter_entities_grouped_returns_correct_types() {
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let mut ctx = ExportContext::new();
+
+        // Get first chapter
+        let spine_entry = book.spine().first().unwrap();
+        let chapter_id = spine_entry.id;
+        let section_name = "c0";
+        ctx.register_section(section_name);
+
+        // Survey chapter first
+        let source_path = book.source_id(chapter_id).unwrap_or("").to_string();
+        if let Ok(chapter) = book.load_chapter(chapter_id) {
+            survey_chapter(&chapter, chapter_id, &source_path, &mut ctx);
+        }
+
+        // Build entities
+        let chapter = book.load_chapter(chapter_id).unwrap();
+        let (section, storyline, content) =
+            build_chapter_entities_grouped(&chapter, chapter_id, section_name, &mut ctx);
+
+        // Verify types
+        assert_eq!(section.ftype, KfxSymbol::Section as u64);
+        assert_eq!(storyline.ftype, KfxSymbol::Storyline as u64);
+
+        // Verify section has section_name and page_templates
+        if let FragmentData::Ion(IonValue::Struct(fields)) = &section.data {
+            let has_section_name = fields
+                .iter()
+                .any(|(id, _)| *id == KfxSymbol::SectionName as u64);
+            let has_page_templates = fields
+                .iter()
+                .any(|(id, _)| *id == KfxSymbol::PageTemplates as u64);
+            assert!(has_section_name, "section should have section_name");
+            assert!(has_page_templates, "section should have page_templates");
+        }
+
+        // Verify storyline has story_name and content_list
+        if let FragmentData::Ion(IonValue::Struct(fields)) = &storyline.data {
+            let has_story_name = fields
+                .iter()
+                .any(|(id, _)| *id == KfxSymbol::StoryName as u64);
+            let has_content_list = fields
+                .iter()
+                .any(|(id, _)| *id == KfxSymbol::ContentList as u64);
+            assert!(has_story_name, "storyline should have story_name");
+            assert!(has_content_list, "storyline should have content_list");
+        }
+
+        // Content is optional but if present should have name and content_list
+        if let Some(content_frag) = content {
+            assert_eq!(content_frag.ftype, KfxSymbol::Content as u64);
+            if let FragmentData::Ion(IonValue::Struct(fields)) = &content_frag.data {
+                let has_name = fields.iter().any(|(id, _)| *id == KfxSymbol::Name as u64);
+                let has_content_list = fields
+                    .iter()
+                    .any(|(id, _)| *id == KfxSymbol::ContentList as u64);
+                assert!(has_name, "content should have name");
+                assert!(has_content_list, "content should have content_list");
+            }
         }
     }
 }

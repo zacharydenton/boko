@@ -468,6 +468,20 @@ impl ExportContext {
         self.chapter_fragments.get(&chapter_id).copied()
     }
 
+    /// Get the maximum EID used.
+    ///
+    /// This returns the highest element ID that has been assigned,
+    /// used for the `max_id` field in document_data.
+    pub fn max_eid(&self) -> u64 {
+        // The next ID minus 1 gives us the last used ID
+        // If no IDs have been used yet, return 0
+        if self.fragment_ids.peek() > IdGenerator::FRAGMENT_MIN_ID {
+            self.fragment_ids.peek() - 1
+        } else {
+            0
+        }
+    }
+
     /// Format a position as a Kindle position string: "kindle:pos:fid:XXXX:off:YYYY"
     pub fn format_kindle_pos(fragment_id: u64, offset: usize) -> String {
         // KFX uses base-32 encoding for positions (4 digits each)
