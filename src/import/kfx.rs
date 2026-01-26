@@ -7,15 +7,18 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ion_rs::{AnyEncoding, Decoder, Element, ElementReader, MapCatalog, Reader, SharedSymbolTable};
-
 use crate::book::{Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
+use crate::kfx::ion::{IonParser, IonValue, ION_MAGIC};
 use crate::kfx::symbols::{KfxSymbol, KFX_SYMBOL_TABLE};
 
-/// Ion 1.0 Binary Version Marker
-const ION_BVM: [u8; 4] = [0xE0, 0x01, 0x00, 0xEA];
+/// Shorthand for getting a KfxSymbol as u32 for field lookups.
+macro_rules! sym {
+    ($variant:ident) => {
+        KfxSymbol::$variant as u32
+    };
+}
 
 /// KFX format importer.
 pub struct KfxImporter {
@@ -44,6 +47,11 @@ pub struct KfxImporter {
     /// Section names for spine entries.
     section_names: Vec<String>,
 
+    /// Cache: section name -> storyline EntityLoc (lazily populated)
+    section_storylines: HashMap<String, EntityLoc>,
+    /// Whether section→storyline mapping has been built
+    section_storylines_indexed: bool,
+
     /// Resources: name -> EntityLoc (lazily populated)
     resources: HashMap<String, EntityLoc>,
     /// Whether resources have been indexed
@@ -58,7 +66,6 @@ struct EntityLoc {
     offset: usize,
     length: usize,
 }
-
 
 impl Importer for KfxImporter {
     fn open(path: &Path) -> io::Result<Self> {
@@ -138,9 +145,11 @@ impl KfxImporter {
 
         // Read container info
         let container_info = source.read_at(container_info_offset as u64, container_info_length)?;
-        let (index_offset, index_length) = parse_container_info_field(&container_info, "bcIndexTabOffset", "bcIndexTabLength")?;
-        let (doc_sym_offset, doc_sym_length) = parse_container_info_field(&container_info, "bcDocSymbolOffset", "bcDocSymbolLength")
-            .unwrap_or((0, 0));
+        let (index_offset, index_length) =
+            parse_container_info_field(&container_info, "bcIndexTabOffset", "bcIndexTabLength")?;
+        let (doc_sym_offset, doc_sym_length) =
+            parse_container_info_field(&container_info, "bcDocSymbolOffset", "bcDocSymbolLength")
+                .unwrap_or((0, 0));
 
         // Read and parse document symbols
         let doc_symbols = if doc_sym_length > 0 {
@@ -184,6 +193,8 @@ impl KfxImporter {
             toc: Vec::new(),
             spine: Vec::new(),
             section_names: Vec::new(),
+            section_storylines: HashMap::new(),
+            section_storylines_indexed: false,
             resources: HashMap::new(),
             resources_indexed: false,
         };
@@ -194,7 +205,10 @@ impl KfxImporter {
         // Parse navigation (TOC)
         importer.parse_navigation()?;
 
-        // Parse spine from reading order
+        // Build section→storyline map (needed for spine sizes and load_raw)
+        importer.index_section_storylines()?;
+
+        // Parse spine from reading order (uses section→storyline map for sizes)
         importer.parse_spine()?;
 
         Ok(importer)
@@ -215,11 +229,32 @@ impl KfxImporter {
         Ok(entity_data)
     }
 
-    /// Parse an entity as Ion and return the first element.
-    /// Parse an entity as Ion and return the first element.
-    fn parse_entity_ion(&self, loc: EntityLoc) -> io::Result<Element> {
+    /// Parse an entity as Ion and return the parsed value.
+    fn parse_entity_ion(&self, loc: EntityLoc) -> io::Result<IonValue> {
         let ion_data = self.read_entity(loc)?;
-        parse_ion_element(&ion_data, &self.doc_symbols)
+        let mut parser = IonParser::new(&ion_data);
+        parser.parse()
+    }
+
+    /// Resolve a symbol ID to its text representation.
+    fn resolve_symbol(&self, id: u32) -> Option<&str> {
+        let id = id as usize;
+        if id < KFX_SYMBOL_TABLE.len() {
+            Some(KFX_SYMBOL_TABLE[id])
+        } else {
+            // Document-local symbols start after the base symbol table
+            let doc_idx = id.saturating_sub(KFX_SYMBOL_TABLE.len());
+            self.doc_symbols.get(doc_idx).map(|s| s.as_str())
+        }
+    }
+
+    /// Get a symbol's text from an IonValue (handles both Symbol and String).
+    fn get_symbol_text<'a>(&'a self, value: &'a IonValue) -> Option<&'a str> {
+        match value {
+            IonValue::Symbol(id) => self.resolve_symbol(*id),
+            IonValue::String(s) => Some(s.as_str()),
+            _ => None,
+        }
     }
 
     /// Parse book metadata.
@@ -234,48 +269,63 @@ impl KfxImporter {
         if let Some(loc) = loc {
             let elem = self.parse_entity_ion(loc)?;
 
-            if let Some(strukt) = elem.as_struct() {
+            if let Some(fields) = elem.as_struct() {
                 // Look for categorised_metadata
-                for (name, value) in strukt.iter() {
-                    if name.text() == Some("categorised_metadata") {
-                        if let Some(list) = value.as_list() {
-                            for category_elem in list.iter() {
-                                if let Some(cat_struct) = category_elem.as_struct() {
-                                    let category = cat_struct
-                                        .get("category")
-                                        .and_then(|v| v.as_string())
-                                        .unwrap_or("");
+                if let Some(cat_meta) = get_field(fields, sym!(CategorisedMetadata)) {
+                    if let Some(list) = cat_meta.as_list() {
+                        for category_elem in list {
+                            if let Some(cat_fields) = category_elem.as_struct() {
+                                let category = get_field(cat_fields, sym!(Category))
+                                    .and_then(|v| self.get_symbol_text(v))
+                                    .unwrap_or("");
 
-                                    if category == "kindle_title_metadata" {
-                                        if let Some(metadata_list) = cat_struct.get("metadata").and_then(|v| v.as_list()) {
-                                            for meta in metadata_list.iter() {
-                                                if let Some(meta_struct) = meta.as_struct() {
-                                                    let key = meta_struct
-                                                        .get("key")
-                                                        .and_then(|v| v.as_string())
-                                                        .unwrap_or("");
-                                                    let value = meta_struct
-                                                        .get("value")
-                                                        .and_then(|v| v.as_string())
-                                                        .unwrap_or("");
+                                if category == "kindle_title_metadata" {
+                                    if let Some(metadata_list) =
+                                        get_field(cat_fields, sym!(Metadata)).and_then(|v| v.as_list())
+                                    {
+                                        for meta in metadata_list {
+                                            if let Some(meta_fields) = meta.as_struct() {
+                                                let key = get_field(meta_fields, sym!(Key))
+                                                    .and_then(|v| v.as_string())
+                                                    .unwrap_or("");
+                                                let value = get_field(meta_fields, sym!(Value))
+                                                    .and_then(|v| v.as_string())
+                                                    .unwrap_or("");
 
-                                                    match key {
-                                                        "title" => self.metadata.title = value.to_string(),
-                                                        "author" => self.metadata.authors.push(value.to_string()),
-                                                        "publisher" => self.metadata.publisher = Some(value.to_string()),
-                                                        "language" => self.metadata.language = value.to_string(),
-                                                        "description" => self.metadata.description = Some(value.to_string()),
-                                                        "book_id" => self.metadata.identifier = value.to_string(),
-                                                        "issue_date" => self.metadata.date = Some(value.to_string()),
-                                                        "cover_image" => {
-                                                            // cover_image can be a string or a list with a symbol reference
-                                                            let value_elem = meta_struct.get("value");
-                                                            if let Some(cover) = self.resolve_cover_value(value_elem) {
-                                                                self.metadata.cover_image = Some(cover);
-                                                            }
-                                                        }
-                                                        _ => {}
+                                                match key {
+                                                    "title" => {
+                                                        self.metadata.title = value.to_string()
                                                     }
+                                                    "author" => {
+                                                        self.metadata.authors.push(value.to_string())
+                                                    }
+                                                    "publisher" => {
+                                                        self.metadata.publisher =
+                                                            Some(value.to_string())
+                                                    }
+                                                    "language" => {
+                                                        self.metadata.language = value.to_string()
+                                                    }
+                                                    "description" => {
+                                                        self.metadata.description =
+                                                            Some(value.to_string())
+                                                    }
+                                                    "book_id" => {
+                                                        self.metadata.identifier = value.to_string()
+                                                    }
+                                                    "issue_date" => {
+                                                        self.metadata.date = Some(value.to_string())
+                                                    }
+                                                    "cover_image" => {
+                                                        let value_elem =
+                                                            get_field(meta_fields, sym!(Value));
+                                                        if let Some(cover) =
+                                                            self.resolve_cover_value(value_elem)
+                                                        {
+                                                            self.metadata.cover_image = Some(cover);
+                                                        }
+                                                    }
+                                                    _ => {}
                                                 }
                                             }
                                         }
@@ -305,20 +355,22 @@ impl KfxImporter {
 
             // book_navigation is a list of reading orders
             if let Some(list) = elem.as_list() {
-                for reading_order in list.iter() {
-                    if let Some(ro_struct) = reading_order.as_struct() {
+                for reading_order in list {
+                    if let Some(ro_fields) = reading_order.as_struct() {
                         // Look for nav_containers
-                        if let Some(containers) = ro_struct.get("nav_containers").and_then(|v| v.as_list()) {
-                            for container in containers.iter() {
-                                if let Some(container_struct) = container.as_struct() {
+                        if let Some(containers) =
+                            get_field(ro_fields, sym!(NavContainers)).and_then(|v| v.as_list())
+                        {
+                            for container in containers {
+                                // Unwrap annotation if present
+                                let inner = container.unwrap_annotated();
+                                if let Some(container_fields) = inner.as_struct() {
                                     // Check nav_type - we want "toc"
-                                    let nav_type = container_struct
-                                        .get("nav_type")
-                                        .and_then(|v| v.as_symbol())
-                                        .and_then(|s| s.text());
+                                    let nav_type = get_field(container_fields, sym!(NavType))
+                                        .and_then(|v| self.get_symbol_text(v));
 
                                     if nav_type == Some("toc") {
-                                        self.toc = Self::parse_nav_entries(container_struct);
+                                        self.toc = self.parse_nav_entries(container_fields);
                                         return Ok(());
                                     }
                                 }
@@ -333,18 +385,22 @@ impl KfxImporter {
     }
 
     /// Recursively parse nav entries into a tree structure.
-    fn parse_nav_entries(container: &ion_rs::Struct) -> Vec<TocEntry> {
+    fn parse_nav_entries(&self, container: &[(u32, IonValue)]) -> Vec<TocEntry> {
         let mut entries = Vec::new();
 
-        if let Some(entry_list) = container.get("entries").and_then(|v| v.as_list()) {
-            for entry in entry_list.iter() {
-                if let Some(entry_struct) = entry.as_struct() {
-                    // Get label
-                    let label = entry_struct
-                        .get("representation")
+        if let Some(entry_list) = get_field(container, sym!(Entries)).and_then(|v| v.as_list()) {
+            for entry in entry_list {
+                // Unwrap annotation if present (nav_unit::...)
+                let inner = entry.unwrap_annotated();
+                if let Some(entry_fields) = inner.as_struct() {
+                    // Get label (try representation.label first, then direct label)
+                    let label = get_field(entry_fields, sym!(Representation))
                         .and_then(|v| v.as_struct())
-                        .and_then(|s| s.get("label"))
+                        .and_then(|s| get_field(s, sym!(Label)))
                         .and_then(|v| v.as_string())
+                        .or_else(|| {
+                            get_field(entry_fields, sym!(Label)).and_then(|v| v.as_string())
+                        })
                         .unwrap_or("Untitled");
 
                     // Skip placeholder labels
@@ -352,17 +408,17 @@ impl KfxImporter {
                         continue;
                     }
 
-                    // Get target position
-                    let href = entry_struct
-                        .get("target_position")
-                        .and_then(|v| v.as_struct())
-                        .and_then(|s| s.get("id"))
-                        .and_then(|v| v.as_i64())
+                    // Get target position (includes id and optionally section_name)
+                    let target_pos = get_field(entry_fields, sym!(TargetPosition))
+                        .and_then(|v| v.as_struct());
+                    let href = target_pos
+                        .and_then(|s| get_field(s, sym!(Id)))
+                        .and_then(|v| v.as_int())
                         .map(|id| format!("#{}", id))
                         .unwrap_or_default();
 
                     // Recursively parse children
-                    let children = Self::parse_nav_entries(entry_struct);
+                    let children = self.parse_nav_entries(entry_fields);
 
                     entries.push(TocEntry {
                         title: label.to_string(),
@@ -379,17 +435,22 @@ impl KfxImporter {
 
     /// Parse spine from reading_orders.
     ///
-    /// This is a lightweight parse that just extracts section names.
-    /// Full storyline resolution happens lazily in load_raw().
+    /// Uses the section→storyline cache to get size estimates.
     fn parse_spine(&mut self) -> io::Result<()> {
         let section_names = self.get_reading_order_sections()?;
 
-        // Just store section names - storyline lookup happens on demand
         for (idx, name) in section_names.into_iter().enumerate() {
+            // Get size from cached storyline location
+            let size_estimate = self
+                .section_storylines
+                .get(&name)
+                .map(|loc| loc.length)
+                .unwrap_or(0);
+
             self.section_names.push(name);
             self.spine.push(SpineEntry {
                 id: ChapterId(idx as u32),
-                size_estimate: 0, // Unknown until loaded
+                size_estimate,
             });
         }
 
@@ -398,43 +459,58 @@ impl KfxImporter {
 
     /// Resolve a section name to its storyline entity location.
     fn resolve_section_to_storyline(&self, section_name: &str) -> io::Result<EntityLoc> {
-        // Find section entity with matching name
+        self.section_storylines
+            .get(section_name)
+            .copied()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Could not resolve section: {}", section_name),
+                )
+            })
+    }
+
+    /// Build the section name → storyline location cache.
+    fn index_section_storylines(&mut self) -> io::Result<()> {
+        if self.section_storylines_indexed {
+            return Ok(());
+        }
+
+        // First, build a map of story_name → storyline EntityLoc
+        let mut storyline_map: HashMap<String, EntityLoc> = HashMap::new();
+        for loc in &self.entities {
+            if loc.type_id == KfxSymbol::Storyline as u32 {
+                if let Ok(elem) = self.parse_entity_ion(*loc) {
+                    if let Some(fields) = elem.as_struct() {
+                        if let Some(name) = get_field(fields, sym!(StoryName))
+                            .and_then(|v| self.get_symbol_text(v))
+                        {
+                            storyline_map.insert(name.to_string(), *loc);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Then, map each section to its storyline
         for loc in &self.entities {
             if loc.type_id == KfxSymbol::Section as u32 {
                 if let Ok(elem) = self.parse_entity_ion(*loc) {
-                    if let Some(strukt) = elem.as_struct() {
-                        let name = strukt
-                            .get("section_name")
-                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
-                            .unwrap_or("");
-                        if name == section_name {
-                            // Found section - get storyline from page_templates
-                            if let Some(templates) = strukt.get("page_templates").and_then(|v| v.as_list()) {
-                                if let Some(template) = templates.iter().next() {
-                                    if let Some(tmpl_struct) = template.as_struct() {
-                                        let story_name = tmpl_struct
-                                            .get("story_name")
-                                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
-                                            .unwrap_or("");
+                    if let Some(fields) = elem.as_struct() {
+                        let section_name = get_field(fields, sym!(SectionName))
+                            .and_then(|v| self.get_symbol_text(v));
 
-                                        // Find storyline entity
-                                        for sloc in &self.entities {
-                                            if sloc.type_id == KfxSymbol::Storyline as u32 {
-                                                if let Ok(selem) = self.parse_entity_ion(*sloc) {
-                                                    if let Some(sstruct) = selem.as_struct() {
-                                                        let sname = sstruct
-                                                            .get("story_name")
-                                                            .and_then(|v| v.as_symbol().and_then(|s| s.text()).or_else(|| v.as_string()))
-                                                            .unwrap_or("");
-                                                        if sname == story_name {
-                                                            return Ok(*sloc);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                        let story_name = get_field(fields, sym!(PageTemplates))
+                            .and_then(|v| v.as_list())
+                            .and_then(|templates| templates.first())
+                            .and_then(|t| t.as_struct())
+                            .and_then(|f| get_field(f, sym!(StoryName)))
+                            .and_then(|v| self.get_symbol_text(v));
+
+                        if let (Some(sec_name), Some(story_name)) = (section_name, story_name) {
+                            if let Some(storyline_loc) = storyline_map.get(story_name) {
+                                self.section_storylines
+                                    .insert(sec_name.to_string(), *storyline_loc);
                             }
                         }
                     }
@@ -442,42 +518,52 @@ impl KfxImporter {
             }
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Could not resolve section: {}", section_name),
-        ))
+        self.section_storylines_indexed = true;
+        Ok(())
     }
 
     /// Extract section names from reading_orders in document_data or metadata.
+    ///
+    /// Prefers the "default" reading order if multiple are present.
     fn get_reading_order_sections(&self) -> io::Result<Vec<String>> {
         // Try document_data ($538) first, then metadata ($258)
-        let doc_data_loc = self.entities.iter()
+        let doc_data_loc = self
+            .entities
+            .iter()
             .find(|e| e.type_id == KfxSymbol::DocumentData as u32)
             .copied();
 
-        let metadata_loc = self.entities.iter()
+        let metadata_loc = self
+            .entities
+            .iter()
             .find(|e| e.type_id == KfxSymbol::Metadata as u32)
             .copied();
 
         for loc in [doc_data_loc, metadata_loc].into_iter().flatten() {
             if let Ok(elem) = self.parse_entity_ion(loc) {
-                if let Some(strukt) = elem.as_struct() {
-                    if let Some(orders) = strukt.get("reading_orders").and_then(|v| v.as_list()) {
-                        for order in orders.iter() {
-                            if let Some(order_struct) = order.as_struct() {
-                                if let Some(sections) = order_struct.get("sections").and_then(|v| v.as_list()) {
-                                    let mut section_names = Vec::new();
-                                    for section in sections.iter() {
-                                        let name = section.as_symbol()
-                                            .and_then(|s| s.text())
-                                            .or_else(|| section.as_string());
-                                        if let Some(n) = name {
-                                            section_names.push(n.to_string());
-                                        }
+                if let Some(fields) = elem.as_struct() {
+                    if let Some(orders) =
+                        get_field(fields, sym!(ReadingOrders)).and_then(|v| v.as_list())
+                    {
+                        // First pass: look for "default" reading order
+                        for order in orders {
+                            if let Some(order_fields) = order.as_struct() {
+                                let order_name = get_field(order_fields, sym!(ReadingOrderName))
+                                    .and_then(|v| self.get_symbol_text(v));
+
+                                if order_name == Some("default") {
+                                    if let Some(sections) = self.extract_sections(order_fields) {
+                                        return Ok(sections);
                                     }
-                                    if !section_names.is_empty() {
-                                        return Ok(section_names);
-                                    }
+                                }
+                            }
+                        }
+
+                        // Second pass: take first reading order with sections
+                        for order in orders {
+                            if let Some(order_fields) = order.as_struct() {
+                                if let Some(sections) = self.extract_sections(order_fields) {
+                                    return Ok(sections);
                                 }
                             }
                         }
@@ -489,8 +575,24 @@ impl KfxImporter {
         Ok(Vec::new())
     }
 
+    /// Extract section names from a reading order struct.
+    fn extract_sections(&self, order_fields: &[(u32, IonValue)]) -> Option<Vec<String>> {
+        let sections = get_field(order_fields, sym!(Sections))?.as_list()?;
+        let mut section_names = Vec::new();
+        for section in sections {
+            if let Some(name) = self.get_symbol_text(section) {
+                section_names.push(name.to_string());
+            }
+        }
+        if section_names.is_empty() {
+            None
+        } else {
+            Some(section_names)
+        }
+    }
+
     /// Resolve cover_image value which can be a string or list with symbol/string reference.
-    fn resolve_cover_value(&self, value: Option<&Element>) -> Option<String> {
+    fn resolve_cover_value(&self, value: Option<&IonValue>) -> Option<String> {
         let value = value?;
 
         // Format 1: Direct string
@@ -500,16 +602,10 @@ impl KfxImporter {
 
         // Format 2: List containing a symbol or string reference
         if let Some(list) = value.as_list() {
-            if let Some(first) = list.iter().next() {
+            if let Some(first) = list.first() {
                 // Try as symbol first
-                if let Some(sym) = first.as_symbol() {
-                    if let Some(text) = sym.text() {
-                        return Some(text.to_string());
-                    }
-                }
-                // Then try as string
-                if let Some(s) = first.as_string() {
-                    return Some(s.to_string());
+                if let Some(text) = self.get_symbol_text(first) {
+                    return Some(text.to_string());
                 }
             }
         }
@@ -523,28 +619,35 @@ impl KfxImporter {
             return Ok(());
         }
 
-        for loc in &self.entities {
-            if loc.type_id == KfxSymbol::ExternalResource as u32 {
-                if let Ok(elem) = self.parse_entity_ion(*loc) {
-                    if let Some(strukt) = elem.as_struct() {
-                        // Use location as key (e.g., "resource/rsrc7")
-                        let location = strukt
-                            .get("location")
-                            .and_then(|v| v.as_string())
-                            .unwrap_or("");
+        // Collect entities to process to avoid borrow conflicts
+        let locs: Vec<_> = self
+            .entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::ExternalResource as u32)
+            .copied()
+            .collect();
 
-                        // Also index by resource_name (e.g., "eF") for cover lookup
-                        let name = strukt
-                            .get("resource_name")
-                            .and_then(|v| v.as_symbol())
-                            .and_then(|s| s.text())
-                            .unwrap_or("");
+        for loc in locs {
+            if let Ok(elem) = self.parse_entity_ion(loc) {
+                if let Some(fields) = elem.as_struct() {
+                    // Use location as key (e.g., "resource/rsrc7")
+                    let location = get_field(fields, sym!(Location))
+                        .and_then(|v| v.as_string())
+                        .map(|s| s.to_string());
 
-                        if !location.is_empty() {
-                            self.resources.insert(location.to_string(), *loc);
+                    // Also index by resource_name (e.g., "eF") for cover lookup
+                    let name = get_field(fields, sym!(ResourceName))
+                        .and_then(|v| resolve_symbol_text(v, &self.doc_symbols))
+                        .map(|s| s.to_string());
+
+                    if let Some(loc_str) = &location {
+                        if !loc_str.is_empty() {
+                            self.resources.insert(loc_str.clone(), loc);
                         }
-                        if !name.is_empty() && name != location {
-                            self.resources.insert(name.to_string(), *loc);
+                    }
+                    if let Some(name_str) = &name {
+                        if !name_str.is_empty() && Some(name_str) != location.as_ref() {
+                            self.resources.insert(name_str.clone(), loc);
                         }
                     }
                 }
@@ -557,6 +660,33 @@ impl KfxImporter {
 }
 
 // --- Helper functions ---
+
+/// Get a field from a struct by symbol ID.
+#[inline]
+fn get_field(fields: &[(u32, IonValue)], symbol_id: u32) -> Option<&IonValue> {
+    fields
+        .iter()
+        .find(|(k, _)| *k == symbol_id)
+        .map(|(_, v)| v)
+}
+
+/// Resolve a symbol or string value to its text representation.
+fn resolve_symbol_text<'a>(value: &'a IonValue, doc_symbols: &'a [String]) -> Option<&'a str> {
+    match value {
+        IonValue::Symbol(id) => {
+            let id = *id as usize;
+            if id < KFX_SYMBOL_TABLE.len() {
+                Some(KFX_SYMBOL_TABLE[id])
+            } else {
+                // Document-local symbols start after the base symbol table
+                let doc_idx = id.saturating_sub(KFX_SYMBOL_TABLE.len());
+                doc_symbols.get(doc_idx).map(|s| s.as_str())
+            }
+        }
+        IonValue::String(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
 
 fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([
@@ -581,18 +711,32 @@ fn read_u64_le(data: &[u8], offset: usize) -> u64 {
 }
 
 /// Parse container info to extract a pair of offset/length fields.
-fn parse_container_info_field(data: &[u8], offset_field: &str, length_field: &str) -> io::Result<(usize, usize)> {
-    let elem = parse_ion_element(data, &[])?;
+fn parse_container_info_field(
+    data: &[u8],
+    offset_field: &str,
+    length_field: &str,
+) -> io::Result<(usize, usize)> {
+    let mut parser = IonParser::new(data);
+    let elem = parser.parse()?;
 
-    if let Some(strukt) = elem.as_struct() {
-        let offset = strukt
-            .get(offset_field)
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", offset_field)))?;
-        let length = strukt
-            .get(length_field)
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", length_field)))?;
+    if let Some(fields) = elem.as_struct() {
+        // Look up symbol IDs for field names
+        let offset_sym = symbol_id_for_name(offset_field)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unknown symbol"))?;
+        let length_sym = symbol_id_for_name(length_field)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unknown symbol"))?;
+
+        let offset = get_field(fields, offset_sym)
+            .and_then(|v| v.as_int())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", offset_field))
+            })?;
+
+        let length = get_field(fields, length_sym)
+            .and_then(|v| v.as_int())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", length_field))
+            })?;
 
         Ok((offset as usize, length as usize))
     } else {
@@ -603,74 +747,23 @@ fn parse_container_info_field(data: &[u8], offset_field: &str, length_field: &st
     }
 }
 
-/// Parse Ion data with KFX symbol table.
-fn parse_ion_element(data: &[u8], doc_symbols: &[String]) -> io::Result<Element> {
-    // Build symbol table
-    let mut all_symbols: Vec<&str> = KFX_SYMBOL_TABLE[10..].to_vec();
-    for sym in doc_symbols {
-        all_symbols.push(sym.as_str());
-    }
-
-    let max_id = (848 + doc_symbols.len()) as i64;
-
-    let mut catalog = MapCatalog::new();
-    if let Ok(table) = SharedSymbolTable::new("YJ_symbols", 10, all_symbols.iter().copied()) {
-        catalog.insert_table(table);
-    }
-
-    // Build preamble with symbol table import
-    let preamble = build_symbol_table_preamble(max_id);
-    let mut full_data = preamble;
-
-    if data.len() >= 4 && data[0..4] == ION_BVM {
-        full_data.extend_from_slice(&data[4..]);
-    } else {
-        full_data.extend_from_slice(data);
-    }
-
-    let mut reader = Reader::new(AnyEncoding.with_catalog(catalog), &full_data[..])
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-    for element in reader.elements() {
-        match element {
-            Ok(elem) => return Ok(elem),
-            Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "No Ion elements found",
-    ))
-}
-
-/// Build an Ion binary preamble that imports the KFX symbol table.
-fn build_symbol_table_preamble(max_id: i64) -> Vec<u8> {
-    use ion_rs::{ion_list, ion_struct, Element, ElementWriter, IntoAnnotatedElement, WriteConfig, Writer};
-    use ion_rs::v1_0::Binary;
-
-    let import = ion_struct! {
-        "name": "YJ_symbols",
-        "version": 10i64,
-        "max_id": max_id,
-    };
-
-    let symbol_table: Element = ion_struct! {
-        "imports": ion_list![import],
-    }
-    .with_annotations(["$ion_symbol_table"]);
-
-    let buffer = Vec::new();
-    let mut writer = Writer::new(WriteConfig::<Binary>::new(), buffer).unwrap();
-    writer.write_element(&symbol_table).unwrap();
-    writer.close().unwrap()
+/// Look up a symbol ID by name from the static symbol table.
+fn symbol_id_for_name(name: &str) -> Option<u32> {
+    KFX_SYMBOL_TABLE
+        .iter()
+        .position(|&s| s == name)
+        .map(|i| i as u32)
 }
 
 /// Extract document-specific symbols from the doc symbols section.
 fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
     let mut symbols = Vec::new();
 
-    let start = if data.len() >= 4 && data[0..4] == ION_BVM { 4 } else { 0 };
+    let start = if data.len() >= 4 && data[0..4] == ION_MAGIC {
+        4
+    } else {
+        0
+    };
 
     let mut i = start;
     while i < data.len() {
