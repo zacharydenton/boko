@@ -955,4 +955,66 @@ mod tests {
             ion
         );
     }
+
+    #[test]
+    fn test_heading_level_export() {
+        use crate::kfx::symbols::KfxSymbol;
+
+        let mut chapter = IRChapter::new();
+
+        // Create an H2 heading
+        let h2 = Node::new(Role::Heading(2));
+        let h2_id = chapter.alloc_node(h2);
+        chapter.append_child(chapter.root(), h2_id);
+
+        // Add text content
+        let text_range = chapter.append_text("Chapter Title");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(h2_id, text_id);
+
+        let mut ctx = ExportContext::new();
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Find the heading container in the output and verify yj.semantics.heading_level = 2
+        fn find_heading_level(ion: &IonValue) -> Option<i64> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    for (field_id, value) in fields {
+                        if *field_id == KfxSymbol::YjSemanticsHeadingLevel as u64 {
+                            if let IonValue::Int(level) = value {
+                                return Some(*level);
+                            }
+                        }
+                    }
+                    // Check content_list (children in KFX)
+                    for (field_id, value) in fields {
+                        if *field_id == KfxSymbol::ContentList as u64 {
+                            if let Some(level) = find_heading_level(value) {
+                                return Some(level);
+                            }
+                        }
+                    }
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(level) = find_heading_level(item) {
+                            return Some(level);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            None
+        }
+
+        let heading_level = find_heading_level(&ion);
+        assert_eq!(
+            heading_level,
+            Some(2),
+            "Expected yj.semantics.heading_level = 2, got {:?}",
+            heading_level
+        );
+    }
 }

@@ -721,15 +721,7 @@ fn build_anchor_fragments(ctx: &ExportContext) -> Vec<KfxFragment> {
 
 /// Generate a short resource name for a given href.
 fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
-    // Check if we already have a name for this resource
-    if let Some(_) = ctx.resource_registry.get(href) {
-        // Extract existing name from the resource:href symbol
-        // For simplicity, generate based on registry count
-    }
-
-    // Generate short name like "e0", "e1", etc.
-    let count = ctx.resource_registry.iter().count();
-    format!("e{}", count)
+    ctx.resource_registry.get_or_create_name(href)
 }
 
 /// Detect format symbol from file extension/magic bytes.

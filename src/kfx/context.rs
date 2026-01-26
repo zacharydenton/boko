@@ -137,6 +137,10 @@ impl Default for IdGenerator {
 pub struct ResourceRegistry {
     /// href → resource symbol ID
     resources: HashMap<String, u64>,
+    /// href → short resource name (e.g., "e0", "e1")
+    resource_names: HashMap<String, String>,
+    /// Counter for generating unique names
+    next_resource_id: usize,
 }
 
 impl ResourceRegistry {
@@ -144,6 +148,8 @@ impl ResourceRegistry {
     pub fn new() -> Self {
         Self {
             resources: HashMap::new(),
+            resource_names: HashMap::new(),
+            next_resource_id: 0,
         }
     }
 
@@ -159,14 +165,43 @@ impl ResourceRegistry {
         id
     }
 
+    /// Get or generate a short resource name (e.g., "e0", "e1").
+    ///
+    /// Returns the same name for the same href on subsequent calls.
+    pub fn get_or_create_name(&mut self, href: &str) -> String {
+        if let Some(name) = self.resource_names.get(href) {
+            return name.clone();
+        }
+
+        let name = format!("e{:X}", self.next_resource_id);
+        self.next_resource_id += 1;
+        self.resource_names.insert(href.to_string(), name.clone());
+        name
+    }
+
     /// Get the symbol ID for a resource (if registered).
     pub fn get(&self, href: &str) -> Option<u64> {
         self.resources.get(href).copied()
     }
 
+    /// Get the short name for a resource (if assigned).
+    pub fn get_name(&self, href: &str) -> Option<&str> {
+        self.resource_names.get(href).map(|s| s.as_str())
+    }
+
     /// Iterate over all registered resources.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &u64)> {
         self.resources.iter()
+    }
+
+    /// Get the number of resources registered.
+    pub fn len(&self) -> usize {
+        self.resource_names.len()
+    }
+
+    /// Check if the registry is empty.
+    pub fn is_empty(&self) -> bool {
+        self.resource_names.is_empty()
     }
 }
 
@@ -481,6 +516,28 @@ mod tests {
         assert_eq!(id1, id2);
         // Different resource should return different ID
         assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_resource_registry_unique_names() {
+        let mut registry = ResourceRegistry::new();
+
+        // Each resource should get a unique short name
+        let name1 = registry.get_or_create_name("images/cover.jpg");
+        let name2 = registry.get_or_create_name("images/photo.png");
+        let name3 = registry.get_or_create_name("images/logo.gif");
+
+        assert_eq!(name1, "e0");
+        assert_eq!(name2, "e1");
+        assert_eq!(name3, "e2");
+
+        // Same href should return the same name (idempotent)
+        assert_eq!(registry.get_or_create_name("images/cover.jpg"), "e0");
+        assert_eq!(registry.get_or_create_name("images/photo.png"), "e1");
+
+        // Verify get_name lookup
+        assert_eq!(registry.get_name("images/cover.jpg"), Some("e0"));
+        assert_eq!(registry.get_name("images/unknown.jpg"), None);
     }
 
     #[test]
