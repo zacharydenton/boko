@@ -210,6 +210,11 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 2g. Anchor fragments (for internal link targets)
     fragments.extend(build_anchor_fragments(&ctx));
 
+    // 2h. Navigation maps for reader functionality
+    fragments.push(build_position_map_fragment(&ctx));
+    fragments.push(build_position_id_map_fragment(&ctx));
+    fragments.push(build_location_map_fragment(&ctx));
+
     // Build symbol table ION using context
     let local_syms = ctx.symbols.local_symbols();
     let symtab_ion = build_symbol_table_ion(local_syms);
@@ -1095,6 +1100,129 @@ fn build_anchor_fragments(ctx: &ExportContext) -> Vec<KfxFragment> {
 /// Generate a short resource name for a given href.
 fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
     ctx.resource_registry.get_or_create_name(href)
+}
+
+// ============================================================================
+// Navigation Maps ($264, $265, $550)
+// ============================================================================
+
+/// Build position_map fragment ($264).
+///
+/// Maps each section to the list of EIDs it contains. This enables
+/// the Kindle reader to track which section contains a given position.
+fn build_position_map_fragment(ctx: &ExportContext) -> KfxFragment {
+    let mut entries = Vec::new();
+
+    // Build entries from section_ids and chapter_fragments
+    // Both are indexed the same way (in spine order)
+    let fragment_ids: Vec<_> = {
+        let mut ids: Vec<_> = ctx.chapter_fragments.values().copied().collect();
+        ids.sort();
+        ids
+    };
+
+    for (idx, &section_sym) in ctx.section_ids.iter().enumerate() {
+        if let Some(&fragment_id) = fragment_ids.get(idx) {
+            // For now, each section contains just its own EID
+            // A more complete implementation would track all content item EIDs
+            let eid_list = vec![IonValue::Int(fragment_id as i64)];
+            let entry = IonValue::Struct(vec![
+                (KfxSymbol::Contains as u64, IonValue::List(eid_list)),
+                (KfxSymbol::SectionName as u64, IonValue::Symbol(section_sym)),
+            ]);
+            entries.push(entry);
+        }
+    }
+
+    let ion = IonValue::List(entries);
+    KfxFragment::singleton(KfxSymbol::PositionMap, ion)
+}
+
+/// Build position_id_map fragment ($265).
+///
+/// Maps cumulative character positions (PIDs) to EIDs. This enables
+/// reading progress tracking and "go to position" functionality.
+fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
+    let mut entries = Vec::new();
+    let mut cumulative_offset = 0i64;
+
+    // Collect chapter fragment IDs in order
+    let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
+    chapter_entries.sort_by_key(|(_, fid)| **fid);
+
+    for (chapter_id, fragment_id) in &chapter_entries {
+        // Find max text offset for this chapter from position_map
+        let max_offset = ctx
+            .position_map
+            .iter()
+            .filter(|((cid, _), _)| cid == *chapter_id)
+            .map(|(_, pos)| pos.offset)
+            .max()
+            .unwrap_or(0);
+
+        // Entry: at cumulative_offset, content starts at this EID
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Pid as u64, IonValue::Int(cumulative_offset)),
+            (KfxSymbol::Eid as u64, IonValue::Int(**fragment_id as i64)),
+        ]);
+        entries.push(entry);
+
+        cumulative_offset += max_offset as i64;
+    }
+
+    // Terminator entry: total character count with EID 0
+    let terminator = IonValue::Struct(vec![
+        (KfxSymbol::Pid as u64, IonValue::Int(cumulative_offset)),
+        (KfxSymbol::Eid as u64, IonValue::Int(0)),
+    ]);
+    entries.push(terminator);
+
+    let ion = IonValue::List(entries);
+    KfxFragment::singleton(KfxSymbol::PositionIdMap, ion)
+}
+
+/// Build location_map fragment ($550).
+///
+/// Maps location numbers to positions. Locations are synthetic page-like
+/// markers every ~110 characters (Kindle's standard).
+fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
+    const CHARS_PER_LOCATION: i64 = 110;
+
+    let mut location_entries = Vec::new();
+
+    // Collect chapter fragment IDs in order
+    let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
+    chapter_entries.sort_by_key(|(_, fid)| **fid);
+
+    for (chapter_id, fragment_id) in &chapter_entries {
+        // Find max text offset for this chapter
+        let chapter_length = ctx
+            .position_map
+            .iter()
+            .filter(|((cid, _), _)| cid == *chapter_id)
+            .map(|(_, pos)| pos.offset)
+            .max()
+            .unwrap_or(0) as i64;
+
+        // Generate location entries for this chapter
+        let mut pos_in_chapter = 0i64;
+        while pos_in_chapter < chapter_length {
+            let entry = IonValue::Struct(vec![
+                (KfxSymbol::Id as u64, IonValue::Int(**fragment_id as i64)),
+                (KfxSymbol::Offset as u64, IonValue::Int(pos_in_chapter)),
+            ]);
+            location_entries.push(entry);
+            pos_in_chapter += CHARS_PER_LOCATION;
+        }
+    }
+
+    // Wrap in locations list structure
+    let ion = IonValue::List(vec![IonValue::Struct(vec![(
+        KfxSymbol::Locations as u64,
+        IonValue::List(location_entries),
+    )])]);
+
+    KfxFragment::singleton(KfxSymbol::LocationMap, ion)
 }
 
 /// Detect format symbol from file extension/magic bytes.
