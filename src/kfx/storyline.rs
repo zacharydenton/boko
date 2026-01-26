@@ -760,6 +760,11 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     fields.push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
                 }
 
+                // Add list_style for ordered lists
+                if elem.role == Role::OrderedList {
+                    fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric) as u64)));
+                }
+
                 // Add schema-driven attributes from kfx_attrs
                 // The schema handles Image src→resource_name, Link href→link_to, etc.
                 for (field_id, value_str) in &elem.kfx_attrs {

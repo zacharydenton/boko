@@ -323,6 +323,15 @@ impl KfxSchema {
             vec![],
         );
 
+        // Also register OrderedList for export (same KFX type, but with list_style)
+        self.export_strategy_table.insert(
+            Role::OrderedList,
+            Strategy::Structure {
+                role: Role::OrderedList,
+                kfx_type: KfxSymbol::List,
+            },
+        );
+
         // List item
         self.register_element(
             KfxSymbol::Listitem,
