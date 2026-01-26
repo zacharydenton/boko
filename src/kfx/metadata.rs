@@ -59,6 +59,10 @@ pub enum MetadataField {
     Identifier,
     Date,
     CoverImage,
+    /// Asset ID - from context (container ID), not Metadata.
+    AssetId,
+    /// Book ID - from context (derived from identifier), not Metadata.
+    BookId,
 }
 
 impl MetadataField {
@@ -92,6 +96,8 @@ impl MetadataField {
             }
             MetadataField::Date => meta.date.as_deref(),
             MetadataField::CoverImage => meta.cover_image.as_deref(),
+            // These are context-driven, not from Metadata
+            MetadataField::AssetId | MetadataField::BookId => None,
         }
     }
 }
@@ -138,6 +144,16 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
             category: MetadataCategory::KindleTitle,
             source: MetadataSource::Dynamic(MetadataField::CoverImage),
         },
+        MetadataRule {
+            key: "asset_id",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::AssetId),
+        },
+        MetadataRule {
+            key: "book_id",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::BookId),
+        },
         // kindle_ebook_metadata category
         MetadataRule {
             key: "selection",
@@ -170,6 +186,69 @@ pub struct MetadataContext<'a> {
     pub version: Option<&'a str>,
     /// Cover image resource name (e.g., "e6"), not the path.
     pub cover_resource_name: Option<&'a str>,
+    /// Asset ID (same as container ID, changes per export).
+    /// Format: "CR!" + 28 uppercase alphanumeric characters.
+    pub asset_id: Option<&'a str>,
+    /// Book ID (stable per publication, derived from identifier).
+    /// Format: 23-character URL-safe Base64.
+    pub book_id: Option<String>,
+}
+
+/// Generate a book ID from a publication identifier.
+///
+/// The book ID is a stable identifier for the publication that persists
+/// across different exports of the same book. It's derived deterministically
+/// from the book's identifier (e.g., ISBN, UUID).
+///
+/// Format: 23-character URL-safe Base64 (version byte + 16 derived bytes)
+pub fn generate_book_id(identifier: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Version prefix (0x05 based on reference KFX files)
+    let mut bytes = vec![0x05u8];
+
+    // Hash the identifier to get deterministic bytes
+    let mut hasher = DefaultHasher::new();
+    identifier.hash(&mut hasher);
+    let hash1 = hasher.finish();
+    // Hash again with salt for more bytes
+    "boko-book-id".hash(&mut hasher);
+    let hash2 = hasher.finish();
+
+    bytes.extend_from_slice(&hash1.to_le_bytes());
+    bytes.extend_from_slice(&hash2.to_le_bytes());
+
+    // URL-safe Base64 encode (no padding), 17 bytes → 23 chars
+    base64_url_encode(&bytes[..17])
+}
+
+/// URL-safe Base64 encoding without padding.
+fn base64_url_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    let mut result = String::new();
+    let mut bits: u32 = 0;
+    let mut bit_count = 0;
+
+    for &byte in bytes {
+        bits = (bits << 8) | byte as u32;
+        bit_count += 8;
+
+        while bit_count >= 6 {
+            bit_count -= 6;
+            let idx = ((bits >> bit_count) & 0x3F) as usize;
+            result.push(ALPHABET[idx] as char);
+        }
+    }
+
+    // Handle remaining bits (no padding)
+    if bit_count > 0 {
+        let idx = ((bits << (6 - bit_count)) & 0x3F) as usize;
+        result.push(ALPHABET[idx] as char);
+    }
+
+    result
 }
 
 /// Build metadata entries for a category from the schema.
@@ -207,6 +286,14 @@ pub fn build_category_entries(
                     MetadataField::Date => {
                         // KFX expects YYYY-MM-DD format, not full ISO timestamp
                         field.extract(meta).map(|s| truncate_to_date(s))
+                    }
+                    MetadataField::AssetId => {
+                        // Asset ID from context (same as container ID)
+                        ctx.asset_id.map(|s| s.to_string())
+                    }
+                    MetadataField::BookId => {
+                        // Book ID from context (derived from identifier)
+                        ctx.book_id.clone()
                     }
                     _ => field.extract(meta).map(|s| s.to_string()),
                 }
@@ -358,5 +445,62 @@ mod tests {
             MetadataCategory::KindleAudit.as_str(),
             "kindle_audit_metadata"
         );
+    }
+
+    #[test]
+    fn test_generate_book_id_format() {
+        let id = super::generate_book_id("urn:uuid:12345678-1234-1234-1234-123456789abc");
+
+        // Should be 23 characters (URL-safe Base64, no padding)
+        assert_eq!(id.len(), 23, "book_id should be 23 characters");
+
+        // Should only contain URL-safe Base64 characters
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "book_id should only contain URL-safe Base64 characters"
+        );
+    }
+
+    #[test]
+    fn test_generate_book_id_deterministic() {
+        let id1 = super::generate_book_id("urn:uuid:12345678-1234-1234-1234-123456789abc");
+        let id2 = super::generate_book_id("urn:uuid:12345678-1234-1234-1234-123456789abc");
+
+        // Same identifier should produce same book_id
+        assert_eq!(id1, id2, "book_id should be deterministic");
+    }
+
+    #[test]
+    fn test_generate_book_id_different_inputs() {
+        let id1 = super::generate_book_id("urn:uuid:aaaaaaaa-1234-1234-1234-123456789abc");
+        let id2 = super::generate_book_id("urn:uuid:bbbbbbbb-1234-1234-1234-123456789abc");
+
+        // Different identifiers should produce different book_ids
+        assert_ne!(id1, id2, "different identifiers should produce different book_ids");
+    }
+
+    #[test]
+    fn test_build_entries_with_asset_id_and_book_id() {
+        let meta = Metadata {
+            title: "Test".to_string(),
+            language: "en".to_string(),
+            identifier: "urn:uuid:test-id".to_string(),
+            ..Default::default()
+        };
+
+        let ctx = MetadataContext {
+            asset_id: Some("CR!ABCDEFGHIJKLMNOPQRSTUVWXYZ12"),
+            book_id: Some("BtestBookId12345678901".to_string()),
+            ..Default::default()
+        };
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
+
+        assert!(entries
+            .iter()
+            .any(|(k, v)| *k == "asset_id" && v == "CR!ABCDEFGHIJKLMNOPQRSTUVWXYZ12"));
+        assert!(entries
+            .iter()
+            .any(|(k, v)| *k == "book_id" && v == "BtestBookId12345678901"));
     }
 }

@@ -16,7 +16,7 @@ use crate::kfx::serialization::{
     create_entity_data, generate_container_id, serialize_annotated_ion, serialize_container,
     SerializedEntity,
 };
-use crate::kfx::metadata::{build_category_entries, MetadataCategory, MetadataContext};
+use crate::kfx::metadata::{build_category_entries, generate_book_id, MetadataCategory, MetadataContext};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
 use crate::util::detect_media_format;
@@ -133,7 +133,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.push(build_metadata_fragment(&ctx));
 
     // 2b. Book metadata fragment ($490) - contains categorised_metadata
-    fragments.push(build_book_metadata_fragment(book, &ctx));
+    fragments.push(build_book_metadata_fragment(book, &container_id, &ctx));
 
     // 2c. Format capabilities fragment
     fragments.push(build_format_capabilities_fragment());
@@ -310,7 +310,7 @@ fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
 ///
 /// Uses the metadata schema to map IR metadata to KFX categories.
 /// To add new metadata fields, update the schema in `kfx/metadata.rs`.
-fn build_book_metadata_fragment(book: &Book, ctx: &ExportContext) -> KfxFragment {
+fn build_book_metadata_fragment(book: &Book, container_id: &str, ctx: &ExportContext) -> KfxFragment {
     let meta = book.metadata();
 
     // Build metadata context with transformed values
@@ -339,9 +339,18 @@ fn build_book_metadata_fragment(book: &Book, ctx: &ExportContext) -> KfxFragment
         None
     });
 
+    // Generate book_id from identifier (deterministic per publication)
+    let book_id = if !meta.identifier.is_empty() {
+        Some(generate_book_id(&meta.identifier))
+    } else {
+        None
+    };
+
     let meta_ctx = MetadataContext {
         version: Some(env!("CARGO_PKG_VERSION")),
         cover_resource_name,
+        asset_id: Some(container_id),
+        book_id,
     };
 
     // Build each category using the schema
@@ -887,8 +896,9 @@ mod tests {
         // Load a real book from fixtures
         let book = Book::open("tests/fixtures/epictetus.epub").unwrap();
         let ctx = ExportContext::new();
+        let container_id = generate_container_id();
 
-        let frag = build_book_metadata_fragment(&book, &ctx);
+        let frag = build_book_metadata_fragment(&book, &container_id, &ctx);
 
         // Should be $490 (book_metadata) type
         assert_eq!(frag.ftype, KfxSymbol::BookMetadata as u64);
