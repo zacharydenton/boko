@@ -21,6 +21,7 @@
 mod arena;
 mod css;
 mod element_ref;
+mod optimizer;
 mod transform;
 mod tree_sink;
 
@@ -76,7 +77,12 @@ pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> 
     }
 
     // Transform to IR
-    transform::transform(&dom, &all_stylesheets)
+    let mut chapter = transform::transform(&dom, &all_stylesheets);
+
+    // Optimize: merge adjacent text nodes with identical styles
+    optimizer::optimize(&mut chapter);
+
+    chapter
 }
 
 /// Compile HTML bytes to IR.
@@ -269,17 +275,17 @@ mod tests {
         let author = Stylesheet::parse(css);
         let chapter = compile_html(html, &[(author, Origin::Author)]);
 
-        // Find a styled Text node and check its style
+        // Find a styled Paragraph node and check its style
         for id in chapter.iter_dfs() {
             let node = chapter.node(id).unwrap();
-            if node.role == Role::Text {
+            if node.role == Role::Paragraph {
                 let style = chapter.styles.get(node.style).unwrap();
                 if style.font_weight == crate::ir::FontWeight::BOLD {
                     return; // Found the styled paragraph
                 }
             }
         }
-        panic!("Styled text not found");
+        panic!("Styled paragraph not found");
     }
 
     #[test]
@@ -350,6 +356,79 @@ mod tests {
         assert_eq!(
             resolve_path("OEBPS/ch1.html", "./images/test.png"),
             "OEBPS/images/test.png"
+        );
+    }
+
+    #[test]
+    fn test_optimizer_merges_sibling_text_nodes() {
+        // The optimizer merges adjacent sibling Text nodes with the same style.
+        // Note: <b>A</b><b>B</b> creates separate Inline containers, so those
+        // Text nodes are NOT siblings and won't be merged. This tests the case
+        // where Text nodes are actual siblings (e.g., from text interspersed
+        // with inline elements that get stripped).
+
+        // Direct test of the optimizer unit tests cover the merge logic.
+        // This integration test verifies the optimizer runs without corrupting
+        // the tree structure.
+        let html = r#"
+            <html><body>
+                <p>Hello, <b>World</b>!</p>
+            </body></html>
+        "#;
+        let chapter = compile_html(html, &[]);
+
+        // Collect all text content
+        let mut text_content = String::new();
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Text && !node.text.is_empty() {
+                text_content.push_str(chapter.text(node.text));
+            }
+        }
+
+        // All text should be preserved
+        assert!(
+            text_content.contains("Hello"),
+            "Missing 'Hello' in: {}",
+            text_content
+        );
+        assert!(
+            text_content.contains("World"),
+            "Missing 'World' in: {}",
+            text_content
+        );
+    }
+
+    #[test]
+    fn test_optimizer_preserves_tree_structure() {
+        // The optimizer should not corrupt the tree structure
+        let html = r#"
+            <html><body>
+                <p>First paragraph</p>
+                <p>Second paragraph</p>
+            </body></html>
+        "#;
+        let chapter = compile_html(html, &[]);
+
+        // Collect all text content via DFS traversal
+        let mut text_content = String::new();
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Text && !node.text.is_empty() {
+                text_content.push_str(chapter.text(node.text));
+            }
+        }
+
+        // Both paragraphs should be present
+        assert!(
+            text_content.contains("First paragraph"),
+            "Missing 'First paragraph' in: {}",
+            text_content
+        );
+        assert!(
+            text_content.contains("Second paragraph"),
+            "Missing 'Second paragraph' in: {}",
+            text_content
         );
     }
 

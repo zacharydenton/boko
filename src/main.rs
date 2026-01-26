@@ -700,6 +700,7 @@ fn collect_styles(chapter: &IRChapter) -> Vec<StyleInfo> {
 fn role_to_string(role: Role) -> String {
     match role {
         Role::Text => "Text".to_string(),
+        Role::Paragraph => "Paragraph".to_string(),
         Role::Heading(level) => format!("Heading({})", level),
         Role::Container => "Container".to_string(),
         Role::Image => "Image".to_string(),

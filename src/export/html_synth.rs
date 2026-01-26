@@ -252,8 +252,12 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
         Role::Root => ("div", false, true),
         Role::Container => ("div", false, true),
 
-        // Text (paragraphs)
-        Role::Text => ("p", false, true),
+        // Paragraphs (block-level text containers)
+        Role::Paragraph => ("p", false, true),
+
+        // Text nodes are leaf content - handled specially in render
+        // This fallback shouldn't normally be used
+        Role::Text => ("span", false, false),
 
         // Headings with level
         Role::Heading(1) => ("h1", false, true),
@@ -317,13 +321,12 @@ mod tests {
     fn make_test_chapter() -> IRChapter {
         let mut chapter = IRChapter::new();
 
-        // Create a paragraph (Text role) with text content
-        let para = chapter.alloc_node(Node::new(Role::Text));
+        // Create a paragraph with text content
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Hello, World!");
-        let mut text_node = Node::new(Role::Text);
-        text_node.text = text_range;
+        let text_node = Node::text(text_range);
         let text_id = chapter.alloc_node(text_node);
         chapter.append_child(para, text_id);
 
@@ -351,15 +354,14 @@ mod tests {
         bold.font_weight = FontWeight::BOLD;
         let bold_id = chapter.styles.intern(bold);
 
-        // Create paragraph (Text role) with bold style
-        let mut para_node = Node::new(Role::Text);
+        // Create paragraph with bold style
+        let mut para_node = Node::new(Role::Paragraph);
         para_node.style = bold_id;
         let para = chapter.alloc_node(para_node);
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Bold text");
-        let mut text_node = Node::new(Role::Text);
-        text_node.text = text_range;
+        let text_node = Node::text(text_range);
         let text_id = chapter.alloc_node(text_node);
         chapter.append_child(para, text_id);
 
@@ -417,17 +419,13 @@ mod tests {
         let li1 = chapter.alloc_node(Node::new(Role::ListItem));
         chapter.append_child(ul, li1);
         let text1_range = chapter.append_text("Item 1");
-        let mut text1 = Node::new(Role::Text);
-        text1.text = text1_range;
-        let text1_id = chapter.alloc_node(text1);
+        let text1_id = chapter.alloc_node(Node::text(text1_range));
         chapter.append_child(li1, text1_id);
 
         let li2 = chapter.alloc_node(Node::new(Role::ListItem));
         chapter.append_child(ul, li2);
         let text2_range = chapter.append_text("Item 2");
-        let mut text2 = Node::new(Role::Text);
-        text2.text = text2_range;
-        let text2_id = chapter.alloc_node(text2);
+        let text2_id = chapter.alloc_node(Node::text(text2_range));
         chapter.append_child(li2, text2_id);
 
         let result = synthesize_html(&chapter, &HashMap::new());
@@ -492,9 +490,7 @@ mod tests {
             chapter.append_child(NodeId::ROOT, h);
 
             let text_range = chapter.append_text(&format!("Heading {}", level));
-            let mut text = Node::new(Role::Text);
-            text.text = text_range;
-            let text_id = chapter.alloc_node(text);
+            let text_id = chapter.alloc_node(Node::text(text_range));
             chapter.append_child(h, text_id);
         }
 

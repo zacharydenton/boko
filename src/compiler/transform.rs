@@ -170,8 +170,8 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         "figure" => Role::Figure,
         "figcaption" | "caption" => Role::Caption,
 
-        // Block-level text containers (paragraphs)
-        "p" => Role::Text,
+        // Paragraphs - block-level text containers
+        "p" => Role::Paragraph,
 
         // Preformatted code blocks
         "pre" => Role::CodeBlock,

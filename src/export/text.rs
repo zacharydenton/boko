@@ -192,8 +192,8 @@ impl<W: Write> ExportContext<'_, W> {
                 };
                 // Check if this is a block-level element
                 match child.role {
-                    Role::Text if child.text.is_empty() => {
-                        // Container paragraph
+                    Role::Paragraph => {
+                        // Paragraph is a block element
                         block_count += 1;
                     }
                     Role::BlockQuote
@@ -298,17 +298,20 @@ impl<W: Write> ExportContext<'_, W> {
 
         match role {
             Role::Text => {
-                // Leaf text node
+                // Leaf text node - output the text content directly
                 if !node.text.is_empty() {
                     let text = self.ir.text(node.text);
                     self.write_text(text, true)?;
-                } else {
-                    // Container text (paragraph)
-                    self.start_block()?;
-                    self.write_anchor_if_present(id)?;
-                    self.walk_children(id)?;
-                    self.end_block(role);
                 }
+                // Text nodes with no text content are skipped
+            }
+
+            Role::Paragraph => {
+                // Block-level text container
+                self.start_block()?;
+                self.write_anchor_if_present(id)?;
+                self.walk_children(id)?;
+                self.end_block(role);
             }
 
             Role::Heading(level) => {
@@ -1048,7 +1051,7 @@ mod tests {
     fn test_simple_paragraph() {
         let mut chapter = IRChapter::new();
 
-        let para = chapter.alloc_node(Node::new(Role::Text));
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, para);
 
         let text_range = chapter.append_text("Hello, World!");
@@ -1176,7 +1179,7 @@ mod tests {
         chapter.semantics.set_alt(img, "A photo".to_string());
 
         // Paragraph after image
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
         let t2 = chapter.append_text("Some text");
         let tn2 = chapter.alloc_node(Node::text(t2));
@@ -1200,14 +1203,14 @@ mod tests {
         chapter.append_child(NodeId::ROOT, bq);
 
         // First paragraph in blockquote
-        let p1 = chapter.alloc_node(Node::new(Role::Text));
+        let p1 = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(bq, p1);
         let t1 = chapter.append_text("Line one");
         let tn1 = chapter.alloc_node(Node::text(t1));
         chapter.append_child(p1, tn1);
 
         // Second paragraph in blockquote
-        let p2 = chapter.alloc_node(Node::new(Role::Text));
+        let p2 = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(bq, p2);
         let t2 = chapter.append_text("Line two");
         let tn2 = chapter.alloc_node(Node::text(t2));
@@ -1237,7 +1240,7 @@ mod tests {
         let bq = chapter.alloc_node(Node::new(Role::BlockQuote));
         chapter.append_child(li, bq);
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(bq, p);
 
         let t = chapter.append_text("Quoted text");
@@ -1258,7 +1261,7 @@ mod tests {
     fn test_whitespace_preservation() {
         let mut chapter = IRChapter::new();
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         // Text with leading space
@@ -1290,7 +1293,7 @@ mod tests {
     fn test_markdown_escaping() {
         let mut chapter = IRChapter::new();
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         let text_range = chapter.append_text("*bold* and _italic_ and [link] and `code`");
@@ -1309,7 +1312,7 @@ mod tests {
     fn test_plain_no_escaping() {
         let mut chapter = IRChapter::new();
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         let text_range = chapter.append_text("*bold* and _italic_");
@@ -1358,14 +1361,14 @@ mod tests {
             chapter.append_child(ul, li);
 
             // First paragraph
-            let p1 = chapter.alloc_node(Node::new(Role::Text));
+            let p1 = chapter.alloc_node(Node::new(Role::Paragraph));
             chapter.append_child(li, p1);
             let t1 = chapter.append_text("First para");
             let tn1 = chapter.alloc_node(Node::text(t1));
             chapter.append_child(p1, tn1);
 
             // Second paragraph (makes it loose)
-            let p2 = chapter.alloc_node(Node::new(Role::Text));
+            let p2 = chapter.alloc_node(Node::new(Role::Paragraph));
             chapter.append_child(li, p2);
             let t2 = chapter.append_text("Second para");
             let tn2 = chapter.alloc_node(Node::text(t2));
@@ -1469,7 +1472,7 @@ mod tests {
 
         let mut chapter = IRChapter::new();
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         // Create inline code span with monospace font
@@ -1502,7 +1505,7 @@ mod tests {
         let mut chapter = IRChapter::new();
 
         // Paragraph with footnote
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         let t1 = chapter.append_text("Main text");
@@ -1536,7 +1539,7 @@ mod tests {
     fn test_footnote_plain_text() {
         let mut chapter = IRChapter::new();
 
-        let p = chapter.alloc_node(Node::new(Role::Text));
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
 
         let t1 = chapter.append_text("Main text");

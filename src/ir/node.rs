@@ -17,6 +17,7 @@ impl NodeId {
 ///
 /// Design principle: Roles map to markdown concepts:
 /// - Text (leaf text content)
+/// - Paragraph (block-level text container)
 /// - Heading(level) (h1-h6)
 /// - Link, Image
 /// - List(kind), ListItem
@@ -28,9 +29,14 @@ pub enum Role {
     /// References a range in the chapter's text buffer.
     #[default]
     Text,
+    /// Paragraph - a block-level text container (`<p>`).
+    /// Distinct from Container because paragraphs contain inline content
+    /// where whitespace between elements is significant.
+    Paragraph,
     /// Headings with level 1-6.
     Heading(u8),
-    /// Generic layout/box container (div, section, article, etc.)
+    /// Generic structural container (div, section, article, etc.)
+    /// Used for layout/grouping, not for text content.
     Container,
     /// Raster images. src/alt in SemanticMap.
     Image,
