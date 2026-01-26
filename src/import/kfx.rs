@@ -13,11 +13,13 @@ use std::sync::Arc;
 use crate::book::{Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
+use crate::ir::IRChapter;
 use crate::kfx::container::{
     self, extract_doc_symbols, get_field, get_symbol_text, parse_container_header,
     parse_container_info, parse_index_table, skip_enty_header, ContainerError, EntityLoc,
 };
 use crate::kfx::ion::{IonParser, IonValue};
+use crate::kfx::storyline::parse_storyline_to_ir;
 use crate::kfx::symbols::KfxSymbol;
 
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
@@ -63,6 +65,9 @@ pub struct KfxImporter {
     resources: HashMap<String, EntityLoc>,
     /// Whether resources have been indexed
     resources_indexed: bool,
+
+    /// Content cache: name -> list of strings (lazily populated)
+    content_cache: HashMap<String, Vec<String>>,
 }
 
 impl From<ContainerError> for io::Error {
@@ -92,6 +97,30 @@ impl Importer for KfxImporter {
 
     fn source_id(&self, id: ChapterId) -> Option<&str> {
         self.section_names.get(id.0 as usize).map(|s| s.as_str())
+    }
+
+    fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
+        let section_name = self
+            .section_names
+            .get(id.0 as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Chapter not found"))?
+            .clone();
+
+        // Get storyline location
+        let storyline_loc = self.resolve_section_to_storyline(&section_name)?;
+
+        // Parse storyline entity
+        let storyline_ion = self.parse_entity_ion(storyline_loc)?;
+
+        // Clone doc_symbols to avoid borrow conflict with content lookup closure
+        let doc_symbols = self.doc_symbols.clone();
+
+        // Parse storyline and build IR using schema-driven tokenization
+        let chapter = parse_storyline_to_ir(&storyline_ion, &doc_symbols, |name, index| {
+            self.lookup_content_text(name, index)
+        });
+
+        Ok(chapter)
     }
 
     fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
@@ -177,6 +206,7 @@ impl KfxImporter {
             section_storylines_indexed: false,
             resources: HashMap::new(),
             resources_indexed: false,
+            content_cache: HashMap::new(),
         };
 
         // Parse metadata (only reads needed entities)
@@ -572,6 +602,55 @@ impl KfxImporter {
             }
         }
 
+        None
+    }
+
+    /// Look up text content by name and index.
+    ///
+    /// Lazily loads and caches content entities as needed.
+    fn lookup_content_text(&mut self, name: &str, index: usize) -> Option<String> {
+        // Check cache first
+        if let Some(content_list) = self.content_cache.get(name) {
+            return content_list.get(index).cloned();
+        }
+
+        // Load and cache the content entity
+        if let Some(content_list) = self.load_content_entity(name) {
+            let result = content_list.get(index).cloned();
+            self.content_cache.insert(name.to_string(), content_list);
+            return result;
+        }
+
+        None
+    }
+
+    /// Load a content entity by name and return its string list.
+    fn load_content_entity(&self, name: &str) -> Option<Vec<String>> {
+        // Find content entity with matching name
+        for loc in &self.entities {
+            if loc.type_id == KfxSymbol::Content as u32 {
+                if let Ok(elem) = self.parse_entity_ion(*loc) {
+                    if let Some(fields) = elem.as_struct() {
+                        // Check if name matches
+                        let entity_name = get_field(fields, sym!(Name))
+                            .and_then(|v| self.get_symbol_text(v));
+
+                        if entity_name == Some(name) {
+                            // Extract content_list
+                            if let Some(list) = get_field(fields, sym!(ContentList))
+                                .and_then(|v| v.as_list())
+                            {
+                                return Some(
+                                    list.iter()
+                                        .filter_map(|v| v.as_string().map(|s| s.to_string()))
+                                        .collect(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         None
     }
 
