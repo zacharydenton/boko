@@ -49,10 +49,12 @@ macro_rules! sym {
 /// into a flat stream of tokens that can be processed by the stack builder.
 ///
 /// The `anchors` map is used to resolve external links (anchor_name → uri).
+/// The `styles` map is passed through for the IR building phase.
 pub fn tokenize_storyline(
     storyline: &IonValue,
     doc_symbols: &[String],
     anchors: Option<&HashMap<String, String>>,
+    _styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
 ) -> TokenStream {
     let mut stream = TokenStream::new();
 
@@ -136,6 +138,10 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     // Get nested children
     let has_children = get_field(fields, sym!(ContentList)).is_some();
 
+    // Get style reference (symbol ID or name) for later lookup
+    let style_name = get_field(fields, sym!(Style))
+        .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols));
+
     // Emit StartElement token
     stream.push(KfxToken::StartElement(ElementStart {
         role,
@@ -144,7 +150,8 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         content_ref,
         style_events,
         kfx_attrs: Vec::new(),
-        style_symbol: None, // Set during export, not import
+        style_symbol: None, // Symbol ID (for export)
+        style_name,         // Style name (for import lookup)
     }));
 
     // Recurse into children
@@ -274,7 +281,12 @@ where
 ///
 /// Uses a stack-based approach to handle nested elements.
 /// Applies semantics **generically** from the token's semantics map.
-pub fn build_ir_from_tokens<F>(tokens: &TokenStream, mut content_lookup: F) -> IRChapter
+/// The `styles` map is used to look up style definitions by name.
+pub fn build_ir_from_tokens<F>(
+    tokens: &TokenStream,
+    styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
+    mut content_lookup: F,
+) -> IRChapter
 where
     F: FnMut(&str, usize) -> Option<String>,
 {
@@ -290,6 +302,19 @@ where
                 let node = Node::new(elem.role);
                 let node_id = chapter.alloc_node(node);
                 chapter.append_child(parent, node_id);
+
+                // Apply style from the styles map (if present)
+                if let Some(style_name) = &elem.style_name {
+                    if let Some(styles_map) = styles {
+                        if let Some(kfx_props) = styles_map.get(style_name) {
+                            let ir_style = kfx_style_to_ir(kfx_props);
+                            let style_id = chapter.styles.intern(ir_style);
+                            if let Some(node) = chapter.node_mut(node_id) {
+                                node.style = style_id;
+                            }
+                        }
+                    }
+                }
 
                 // Apply ALL semantic attributes from the generic map
                 apply_semantics_to_node(&mut chapter, node_id, &elem.semantics);
@@ -351,6 +376,17 @@ fn apply_semantics_to_node(
             SemanticTarget::Id => chapter.semantics.set_id(node_id, value.clone()),
         }
     }
+}
+
+/// Convert KFX style properties to an IR ComputedStyle using the schema.
+///
+/// This is schema-driven: iterates schema rules with KFX symbol mappings,
+/// applies inverse transforms to convert KFX values back to IR values.
+fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
+    use crate::kfx::style_schema::{import_kfx_style, StyleSchema};
+
+    let schema = StyleSchema::standard();
+    import_kfx_style(&schema, props)
 }
 
 /// Build text nodes with inline spans applied.
@@ -455,17 +491,19 @@ fn resolve_symbol_or_string(value: &IonValue, doc_symbols: &[String]) -> Option<
 /// This is the main entry point for KFX import.
 ///
 /// The `anchors` map is used to resolve external links (anchor_name → uri).
+/// The `styles` map is used to resolve style references (style_name → properties).
 pub fn parse_storyline_to_ir<F>(
     storyline: &IonValue,
     doc_symbols: &[String],
     anchors: Option<&HashMap<String, String>>,
+    styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
     content_lookup: F,
 ) -> IRChapter
 where
     F: FnMut(&str, usize) -> Option<String>,
 {
-    let tokens = tokenize_storyline(storyline, doc_symbols, anchors);
-    build_ir_from_tokens(&tokens, content_lookup)
+    let tokens = tokenize_storyline(storyline, doc_symbols, anchors, styles);
+    build_ir_from_tokens(&tokens, styles, content_lookup)
 }
 
 // ============================================================================
@@ -757,7 +795,7 @@ mod tests {
         stream.text("Hello");
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, |_, _| None);
+        let chapter = build_ir_from_tokens(&stream, None, |_, _| None);
         assert_eq!(chapter.node_count(), 3); // root + para + text
     }
 
@@ -775,10 +813,11 @@ mod tests {
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, |_, _| None);
+        let chapter = build_ir_from_tokens(&stream, None, |_, _| None);
 
         let children: Vec<_> = chapter.children(chapter.root()).collect();
         assert_eq!(children.len(), 1);
@@ -802,10 +841,11 @@ mod tests {
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, |name, idx| {
+        let chapter = build_ir_from_tokens(&stream, None, |name, idx| {
             if name == "content_1" && idx == 0 {
                 Some("Hello, world!".to_string())
             } else {
@@ -834,10 +874,11 @@ mod tests {
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, |_, _| Some("Chapter 1".to_string()));
+        let chapter = build_ir_from_tokens(&stream, None, |_, _| Some("Chapter 1".to_string()));
 
         let heading_id = chapter.children(chapter.root()).next().unwrap();
         let heading = chapter.node(heading_id).unwrap();
@@ -866,11 +907,12 @@ mod tests {
             }],
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }));
         stream.end_element();
 
         // Text is "Hello, world!" - span at offset 7, length 5 = "world"
-        let chapter = build_ir_from_tokens(&stream, |_, _| Some("Hello, world!".to_string()));
+        let chapter = build_ir_from_tokens(&stream, None, |_, _| Some("Hello, world!".to_string()));
 
         // Should have: root -> para -> [text("Hello, "), link("world"), text("!")]
         let para_id = chapter.children(chapter.root()).next().unwrap();

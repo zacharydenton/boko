@@ -132,6 +132,15 @@ impl IonValue {
         }
     }
 
+    /// Get float value if this is a Float value.
+    #[inline]
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            IonValue::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
     /// Get field from struct by symbol ID. O(n) scan - optimal for small structs.
     #[inline]
     pub fn get(&self, symbol_id: u64) -> Option<&IonValue> {

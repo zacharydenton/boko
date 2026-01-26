@@ -50,6 +50,9 @@ pub struct ElementStart {
     /// KFX style symbol ID for this element.
     /// Populated during export after registering the node's style.
     pub style_symbol: Option<u64>,
+    /// Style name reference (for import lookup).
+    /// Populated during import from the element's `style` field.
+    pub style_name: Option<String>,
 }
 
 impl ElementStart {
@@ -63,6 +66,7 @@ impl ElementStart {
             style_events: Vec::new(),
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }
     }
 
@@ -157,6 +161,7 @@ impl TokenStream {
             style_events,
             kfx_attrs: Vec::new(),
             style_symbol: None,
+            style_name: None,
         }));
     }
 

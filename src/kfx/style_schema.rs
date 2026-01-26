@@ -896,6 +896,265 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
 }
 
 // ============================================================================
+// KFX Import (Inverse Direction)
+// ============================================================================
+
+impl StyleSchema {
+    /// Look up a schema rule by its KFX symbol.
+    pub fn get_by_kfx_symbol(&self, kfx_symbol: u64) -> Option<&StylePropertyRule> {
+        self.rules.values().find(|r| r.kfx_symbol as u64 == kfx_symbol)
+    }
+}
+
+impl ValueTransform {
+    /// Apply inverse transform: convert KFX value back to CSS string.
+    ///
+    /// This is the reverse of `apply()` - used during import.
+    pub fn inverse(&self, value: &IonValue) -> Option<String> {
+        match self {
+            ValueTransform::Identity => {
+                // Identity: extract string or symbol text
+                value.as_string().map(|s| s.to_string())
+            }
+
+            ValueTransform::Map(mappings) => {
+                // Reverse map lookup: find CSS value for KFX value
+                if let Some(sym_id) = value.as_symbol() {
+                    for (css_val, kfx_val) in mappings {
+                        if let KfxValue::Symbol(kfx_sym) = kfx_val {
+                            if *kfx_sym as u64 == sym_id {
+                                return Some(css_val.clone());
+                            }
+                        }
+                    }
+                }
+                if let Some(i) = value.as_int() {
+                    for (css_val, kfx_val) in mappings {
+                        if let KfxValue::Integer(kfx_int) = kfx_val {
+                            if *kfx_int == i {
+                                return Some(css_val.clone());
+                            }
+                        }
+                    }
+                }
+                if let Some(b) = value.as_bool() {
+                    for (css_val, kfx_val) in mappings {
+                        if let KfxValue::Bool(kfx_bool) = kfx_val {
+                            if *kfx_bool == b {
+                                return Some(css_val.clone());
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            ValueTransform::Dimensioned { unit } => {
+                // Parse {value: N, unit: sym} struct
+                // Value may be Int (whole numbers) or Float
+                let fields = value.as_struct()?;
+                let value_field = get_field_by_symbol(fields, KfxSymbol::Value)?;
+                let num = value_field.as_float()
+                    .or_else(|| value_field.as_int().map(|i| i as f64))?;
+                let unit_sym = get_field_by_symbol(fields, KfxSymbol::Unit)?.as_symbol()? as u32;
+
+                // Convert unit symbol back to CSS unit string
+                let unit_str = match unit_sym {
+                    id if id == KfxSymbol::Em as u32 => "em",
+                    id if id == KfxSymbol::Rem as u32 => "rem",
+                    id if id == KfxSymbol::Percent as u32 => "%",
+                    id if id == KfxSymbol::Px as u32 => "px",
+                    _ => {
+                        // Use the expected unit from the rule
+                        match *unit as u32 {
+                            id if id == KfxSymbol::Em as u32 => "em",
+                            id if id == KfxSymbol::Rem as u32 => "rem",
+                            id if id == KfxSymbol::Percent as u32 => "%",
+                            _ => "em",
+                        }
+                    }
+                };
+
+                Some(format!("{}{}", num, unit_str))
+            }
+
+            ValueTransform::ParseColor { .. } => {
+                // Packed integer: 0xRRGGBB
+                let packed = value.as_int()? as u32;
+                let r = (packed >> 16) & 0xFF;
+                let g = (packed >> 8) & 0xFF;
+                let b = packed & 0xFF;
+                Some(format!("#{:02x}{:02x}{:02x}", r, g, b))
+            }
+
+            ValueTransform::ScaleFloat { factor, .. } => {
+                // Reverse scaling
+                let i = value.as_int()?;
+                let original = i as f64 / factor;
+                Some(original.to_string())
+            }
+
+            _ => None, // Other transforms not commonly used for styles
+        }
+    }
+}
+
+/// Helper to get a field from an Ion struct by KfxSymbol.
+fn get_field_by_symbol(fields: &[(u64, IonValue)], sym: KfxSymbol) -> Option<&IonValue> {
+    fields.iter().find(|(k, _)| *k == sym as u64).map(|(_, v)| v)
+}
+
+/// Apply a CSS value to an IR ComputedStyle field.
+///
+/// This is the inverse of `extract_ir_field` - sets the field instead of reading it.
+pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, css_value: &str) {
+    match field {
+        IrField::FontWeight => {
+            // Parse CSS font-weight (number or keyword)
+            ir_style.font_weight = match css_value {
+                "bold" => ir_style::FontWeight::BOLD,
+                "normal" => ir_style::FontWeight::NORMAL,
+                s => s.parse::<u16>().map(ir_style::FontWeight).unwrap_or(ir_style::FontWeight::NORMAL),
+            };
+        }
+        IrField::FontStyle => {
+            ir_style.font_style = match css_value {
+                "italic" => ir_style::FontStyle::Italic,
+                "oblique" => ir_style::FontStyle::Oblique,
+                _ => ir_style::FontStyle::Normal,
+            };
+        }
+        IrField::FontSize => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.font_size = len;
+            }
+        }
+        IrField::TextAlign => {
+            ir_style.text_align = match css_value {
+                "left" => ir_style::TextAlign::Left,
+                "right" => ir_style::TextAlign::Right,
+                "center" => ir_style::TextAlign::Center,
+                "justify" => ir_style::TextAlign::Justify,
+                "start" => ir_style::TextAlign::Start,
+                "end" => ir_style::TextAlign::End,
+                _ => ir_style::TextAlign::Start,
+            };
+        }
+        IrField::TextIndent => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.text_indent = len;
+            }
+        }
+        IrField::LineHeight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.line_height = len;
+            }
+        }
+        IrField::MarginTop => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.margin_top = len;
+            }
+        }
+        IrField::MarginBottom => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.margin_bottom = len;
+            }
+        }
+        IrField::MarginLeft => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.margin_left = len;
+            }
+        }
+        IrField::MarginRight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.margin_right = len;
+            }
+        }
+        IrField::PaddingTop => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.padding_top = len;
+            }
+        }
+        IrField::PaddingBottom => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.padding_bottom = len;
+            }
+        }
+        IrField::PaddingLeft => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.padding_left = len;
+            }
+        }
+        IrField::PaddingRight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.padding_right = len;
+            }
+        }
+        IrField::Color => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.color = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::BackgroundColor => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.background_color = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::VerticalAlign => {
+            match css_value {
+                "super" => ir_style.vertical_align_super = true,
+                "sub" => ir_style.vertical_align_sub = true,
+                _ => {}
+            }
+        }
+        IrField::TextDecorationUnderline => {
+            ir_style.text_decoration_underline = css_value == "underline";
+        }
+        IrField::TextDecorationStrikethrough => {
+            ir_style.text_decoration_line_through = css_value == "line-through";
+        }
+    }
+}
+
+/// Parse a CSS length string to IR Length.
+fn parse_css_length_to_ir(s: &str) -> Option<ir_style::Length> {
+    let (value, unit) = parse_css_length(s)?;
+    let value = value as f32;
+    Some(match unit.as_str() {
+        "px" => ir_style::Length::Px(value),
+        "em" => ir_style::Length::Em(value),
+        "rem" => ir_style::Length::Rem(value),
+        "%" => ir_style::Length::Percent(value),
+        _ => ir_style::Length::Px(value),
+    })
+}
+
+/// Import KFX style properties to an IR ComputedStyle using the schema.
+///
+/// This is the inverse of the export direction:
+/// 1. For each KFX property, look up the schema rule by kfx_symbol
+/// 2. Apply inverse transform to get CSS value
+/// 3. Apply CSS value to IR field
+pub fn import_kfx_style(schema: &StyleSchema, props: &[(u64, IonValue)]) -> ir_style::ComputedStyle {
+    let mut style = ir_style::ComputedStyle::default();
+
+    for (kfx_symbol, kfx_value) in props {
+        // Look up the schema rule for this KFX symbol
+        if let Some(rule) = schema.get_by_kfx_symbol(*kfx_symbol) {
+            // Apply inverse transform to get CSS value
+            if let Some(css_value) = rule.transform.inverse(kfx_value) {
+                // Apply to IR field (if the rule has an IR field mapping)
+                if let Some(ir_field) = rule.ir_field {
+                    apply_ir_field(&mut style, ir_field, &css_value);
+                }
+            }
+        }
+    }
+
+    style
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1344,5 +1603,82 @@ mod tests {
 
         assert!(matches!(rule.transform.apply("super"), Some(KfxValue::Symbol(KfxSymbol::Superscript))));
         assert!(matches!(rule.transform.apply("sub"), Some(KfxValue::Symbol(KfxSymbol::Subscript))));
+    }
+
+    // ========================================================================
+    // Inverse Transform Tests (KFX → IR Import Direction)
+    // ========================================================================
+
+    #[test]
+    fn test_inverse_font_weight_symbol_to_css() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("font-weight").unwrap();
+
+        // Bold symbol → "bold" CSS string
+        let kfx_value = IonValue::Symbol(KfxSymbol::Bold as u64);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("bold".to_string()));
+
+        // Normal symbol → "normal" CSS string
+        let kfx_value = IonValue::Symbol(KfxSymbol::Normal as u64);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("normal".to_string()));
+    }
+
+    #[test]
+    fn test_inverse_dimensioned_value() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("margin-top").unwrap();
+
+        // {value: 1.5, unit: em} → "1.5em" (Float)
+        let kfx_value = IonValue::Struct(vec![
+            (KfxSymbol::Value as u64, IonValue::Float(1.5)),
+            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+        ]);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("1.5em".to_string()));
+
+        // {value: 2, unit: em} → "2em" (Int - Amazon may store whole numbers as Int)
+        let kfx_value = IonValue::Struct(vec![
+            (KfxSymbol::Value as u64, IonValue::Int(2)),
+            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+        ]);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("2em".to_string()));
+    }
+
+    #[test]
+    fn test_inverse_color_packed_to_hex() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("color").unwrap();
+
+        // 0xFF0000 → "#ff0000"
+        let kfx_value = IonValue::Int(0xFF0000);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("#ff0000".to_string()));
+
+        // 0x00FF00 → "#00ff00"
+        let kfx_value = IonValue::Int(0x00FF00);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("#00ff00".to_string()));
+    }
+
+    #[test]
+    fn test_import_kfx_style_full() {
+        use crate::ir::{FontWeight, TextAlign};
+
+        let schema = StyleSchema::standard();
+
+        // Build KFX style properties
+        let props = vec![
+            (KfxSymbol::FontWeight as u64, IonValue::Symbol(KfxSymbol::Bold as u64)),
+            (KfxSymbol::TextAlignment as u64, IonValue::Symbol(KfxSymbol::Center as u64)),
+            (KfxSymbol::MarginTop as u64, IonValue::Struct(vec![
+                (KfxSymbol::Value as u64, IonValue::Float(2.0)),
+                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            ])),
+        ];
+
+        // Import using schema
+        let ir_style = import_kfx_style(&schema, &props);
+
+        // Verify fields were set correctly
+        assert_eq!(ir_style.font_weight, FontWeight::BOLD);
+        assert_eq!(ir_style.text_align, TextAlign::Center);
+        assert_eq!(ir_style.margin_top, crate::ir::Length::Em(2.0));
     }
 }

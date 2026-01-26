@@ -73,6 +73,11 @@ pub struct KfxImporter {
     anchors: HashMap<String, String>,
     /// Whether anchors have been indexed
     anchors_indexed: bool,
+
+    /// Style map: style_name -> KFX style properties (for style resolution)
+    styles: HashMap<String, Vec<(u64, IonValue)>>,
+    /// Whether styles have been indexed
+    styles_indexed: bool,
 }
 
 impl From<ContainerError> for io::Error {
@@ -105,8 +110,9 @@ impl Importer for KfxImporter {
     }
 
     fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
-        // Ensure anchors are indexed (for external link resolution)
+        // Ensure anchors and styles are indexed
         self.index_anchors()?;
+        self.index_styles()?;
 
         let section_name = self
             .section_names
@@ -120,14 +126,19 @@ impl Importer for KfxImporter {
         // Parse storyline entity
         let storyline_ion = self.parse_entity_ion(storyline_loc)?;
 
-        // Clone doc_symbols and anchors to avoid borrow conflict with content lookup closure
+        // Clone doc_symbols, anchors, and styles to avoid borrow conflict with content lookup closure
         let doc_symbols = self.doc_symbols.clone();
         let anchors = self.anchors.clone();
+        let styles = self.styles.clone();
 
         // Parse storyline and build IR using schema-driven tokenization
-        let chapter = parse_storyline_to_ir(&storyline_ion, &doc_symbols, Some(&anchors), |name, index| {
-            self.lookup_content_text(name, index)
-        });
+        let chapter = parse_storyline_to_ir(
+            &storyline_ion,
+            &doc_symbols,
+            Some(&anchors),
+            Some(&styles),
+            |name, index| self.lookup_content_text(name, index),
+        );
 
         Ok(chapter)
     }
@@ -230,6 +241,8 @@ impl KfxImporter {
             content_cache: HashMap::new(),
             anchors: HashMap::new(),
             anchors_indexed: false,
+            styles: HashMap::new(),
+            styles_indexed: false,
         };
 
         // Parse metadata (only reads needed entities)
@@ -761,6 +774,48 @@ impl KfxImporter {
         }
 
         self.anchors_indexed = true;
+        Ok(())
+    }
+
+    /// Index style entities to build style_name → properties map.
+    ///
+    /// This enables resolution of style references in storyline elements.
+    /// Style entities ($157) contain properties like font_weight, text_alignment, margins, etc.
+    fn index_styles(&mut self) -> io::Result<()> {
+        if self.styles_indexed {
+            return Ok(());
+        }
+
+        // Find all style entities (type $157)
+        let locs: Vec<_> = self
+            .entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::Style as u32)
+            .copied()
+            .collect();
+
+        for loc in locs {
+            if let Ok(elem) = self.parse_entity_ion(loc) {
+                if let Some(fields) = elem.as_struct() {
+                    // Get style_name
+                    let style_name = get_field(fields, sym!(StyleName))
+                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                        .map(|s| s.to_string());
+
+                    if let Some(name) = style_name {
+                        // Store all fields (cloned) for later interpretation
+                        let props: Vec<(u64, IonValue)> = fields
+                            .iter()
+                            .filter(|(k, _)| *k != sym!(StyleName)) // Exclude the name itself
+                            .map(|(k, v)| (*k, v.clone()))
+                            .collect();
+                        self.styles.insert(name, props);
+                    }
+                }
+            }
+        }
+
+        self.styles_indexed = true;
         Ok(())
     }
 }
