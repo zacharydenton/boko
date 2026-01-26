@@ -109,12 +109,14 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 1b. Register TOC strings
     register_toc_symbols(book.toc(), &mut ctx);
 
-    // 1c. Register resource paths
+    // 1c. Register resource paths and create short names
     let asset_paths: Vec<_> = book.list_assets();
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
             let href = asset_path.to_string_lossy().to_string();
             ctx.resource_registry.register(&href, &mut ctx.symbols);
+            // Pre-create the short name so it's available for metadata lookup
+            ctx.resource_registry.get_or_create_name(&href);
         }
     }
 
@@ -312,10 +314,30 @@ fn build_book_metadata_fragment(book: &Book, ctx: &ExportContext) -> KfxFragment
     let meta = book.metadata();
 
     // Build metadata context with transformed values
-    let cover_resource_name = meta
-        .cover_image
-        .as_ref()
-        .and_then(|path| ctx.resource_registry.get_name(path));
+    // Cover path in metadata may not match the registered resource path exactly.
+    // Try common path variations (with/without epub/ prefix, etc.)
+    let cover_resource_name = meta.cover_image.as_ref().and_then(|path| {
+        // Try exact path first
+        if let Some(name) = ctx.resource_registry.get_name(path) {
+            return Some(name);
+        }
+        // Try with epub/ prefix
+        let with_prefix = format!("epub/{}", path);
+        if let Some(name) = ctx.resource_registry.get_name(&with_prefix) {
+            return Some(name);
+        }
+        // Try stripping leading path components to match filename
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())?;
+        // Search for a resource ending with this filename
+        for (href, _) in ctx.resource_registry.iter() {
+            if href.ends_with(filename) {
+                return ctx.resource_registry.get_name(href);
+            }
+        }
+        None
+    });
 
     let meta_ctx = MetadataContext {
         version: Some(env!("CARGO_PKG_VERSION")),

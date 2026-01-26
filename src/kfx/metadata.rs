@@ -158,6 +158,8 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
     ]
 }
 
+use crate::util::truncate_to_date;
+
 /// Context for metadata entry building.
 ///
 /// This provides values that need transformation during export,
@@ -201,6 +203,10 @@ pub fn build_category_entries(
                     MetadataField::CoverImage => {
                         // Use the resource name from context, not the path from metadata
                         ctx.cover_resource_name.map(|s| s.to_string())
+                    }
+                    MetadataField::Date => {
+                        // KFX expects YYYY-MM-DD format, not full ISO timestamp
+                        field.extract(meta).map(|s| truncate_to_date(s))
                     }
                     _ => field.extract(meta).map(|s| s.to_string()),
                 }

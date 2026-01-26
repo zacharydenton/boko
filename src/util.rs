@@ -308,6 +308,29 @@ pub fn detect_mime_type(filename: &str, data: &[u8]) -> Option<&'static str> {
 }
 
 // ============================================================================
+// Date Utilities
+// ============================================================================
+
+/// Truncate an ISO date/timestamp to just the date portion (YYYY-MM-DD).
+///
+/// Many ebook formats expect dates in YYYY-MM-DD format, but source metadata
+/// often includes full ISO timestamps like "2022-05-26T16:26:51Z".
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(truncate_to_date("2022-05-26T16:26:51Z"), "2022-05-26");
+/// assert_eq!(truncate_to_date("2022-05-26"), "2022-05-26");
+/// ```
+pub fn truncate_to_date(s: &str) -> String {
+    if let Some(t_pos) = s.find('T') {
+        s[..t_pos].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+// ============================================================================
 // Encoding Detection
 // ============================================================================
 
@@ -418,5 +441,15 @@ mod tests {
         assert_eq!(detect_mime_type("image.jpg", &[]), Some("image/jpeg"));
         assert_eq!(detect_mime_type("image.png", &[]), Some("image/png"));
         assert_eq!(detect_mime_type("unknown", &[]), None);
+    }
+
+    #[test]
+    fn test_truncate_to_date() {
+        // Full ISO timestamp -> date only
+        assert_eq!(truncate_to_date("2022-05-26T16:26:51Z"), "2022-05-26");
+        // Already just a date
+        assert_eq!(truncate_to_date("2022-05-26"), "2022-05-26");
+        // With timezone offset
+        assert_eq!(truncate_to_date("2022-05-26T16:26:51+00:00"), "2022-05-26");
     }
 }
