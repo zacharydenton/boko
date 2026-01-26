@@ -1,6 +1,9 @@
 //! KFX format importer.
 //!
 //! KFX is Amazon's Kindle Format 10, using Ion binary data format.
+//!
+//! This module handles I/O operations for reading KFX containers.
+//! Pure parsing functions are in `crate::kfx::container`.
 
 use std::collections::HashMap;
 use std::io;
@@ -10,8 +13,12 @@ use std::sync::Arc;
 use crate::book::{Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
-use crate::kfx::ion::{IonParser, IonValue, ION_MAGIC};
-use crate::kfx::symbols::{KfxSymbol, KFX_SYMBOL_TABLE};
+use crate::kfx::container::{
+    self, extract_doc_symbols, get_field, get_symbol_text, parse_container_header,
+    parse_container_info, parse_index_table, skip_enty_header, ContainerError, EntityLoc,
+};
+use crate::kfx::ion::{IonParser, IonValue};
+use crate::kfx::symbols::KfxSymbol;
 
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
 macro_rules! sym {
@@ -58,13 +65,10 @@ pub struct KfxImporter {
     resources_indexed: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct EntityLoc {
-    #[allow(dead_code)]
-    id: u32,
-    type_id: u32,
-    offset: usize,
-    length: usize,
+impl From<ContainerError> for io::Error {
+    fn from(e: ContainerError) -> Self {
+        io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+    }
 }
 
 impl Importer for KfxImporter {
@@ -130,63 +134,39 @@ impl Importer for KfxImporter {
 impl KfxImporter {
     /// Create an importer from a ByteSource.
     pub fn from_source(source: Arc<dyn ByteSource>) -> io::Result<Self> {
-        // Read container header (18 bytes)
-        let header = source.read_at(0, 18)?;
-        if &header[0..4] != b"CONT" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Not a valid KFX container",
-            ));
-        }
+        // Read and parse container header (18 bytes)
+        let header_data = source.read_at(0, 18)?;
+        let header = parse_container_header(&header_data)?;
 
-        let header_len = read_u32_le(&header, 6) as usize;
-        let container_info_offset = read_u32_le(&header, 10) as usize;
-        let container_info_length = read_u32_le(&header, 14) as usize;
+        // Read and parse container info
+        let container_info_data =
+            source.read_at(header.container_info_offset as u64, header.container_info_length)?;
+        let container_info = parse_container_info(&container_info_data)?;
 
-        // Read container info
-        let container_info = source.read_at(container_info_offset as u64, container_info_length)?;
-        let (index_offset, index_length) =
-            parse_container_info_field(&container_info, "bcIndexTabOffset", "bcIndexTabLength")?;
-        let (doc_sym_offset, doc_sym_length) =
-            parse_container_info_field(&container_info, "bcDocSymbolOffset", "bcDocSymbolLength")
-                .unwrap_or((0, 0));
+        // Get index table location (required)
+        let (index_offset, index_length) = container_info.index.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Missing index table in container")
+        })?;
 
-        // Read and parse document symbols
-        let doc_symbols = if doc_sym_length > 0 {
-            let doc_sym_data = source.read_at(doc_sym_offset as u64, doc_sym_length)?;
-            extract_doc_symbols(&doc_sym_data)
+        // Read and parse document symbols (optional)
+        let doc_symbols = if let Some((offset, length)) = container_info.doc_symbols {
+            if length > 0 {
+                let doc_sym_data = source.read_at(offset as u64, length)?;
+                extract_doc_symbols(&doc_sym_data)
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         };
 
         // Read and parse index table
         let index_data = source.read_at(index_offset as u64, index_length)?;
-        let entry_size = 24;
-        let num_entries = index_length / entry_size;
-        let mut entities = Vec::with_capacity(num_entries);
-
-        for i in 0..num_entries {
-            let entry_offset = i * entry_size;
-            if entry_offset + entry_size > index_data.len() {
-                break;
-            }
-
-            let id = read_u32_le(&index_data, entry_offset);
-            let type_id = read_u32_le(&index_data, entry_offset + 4);
-            let offset = read_u64_le(&index_data, entry_offset + 8) as usize;
-            let length = read_u64_le(&index_data, entry_offset + 16) as usize;
-
-            entities.push(EntityLoc {
-                id,
-                type_id,
-                offset: header_len + offset,
-                length,
-            });
-        }
+        let entities = parse_index_table(&index_data, header.header_len);
 
         let mut importer = Self {
             source,
-            header_len,
+            header_len: header.header_len,
             entities,
             doc_symbols,
             metadata: Metadata::default(),
@@ -218,15 +198,13 @@ impl KfxImporter {
     fn read_entity(&self, loc: EntityLoc) -> io::Result<Vec<u8>> {
         let entity_data = self.source.read_at(loc.offset as u64, loc.length)?;
 
-        // Skip ENTY header if present
-        if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY" {
-            let enty_header_len = read_u32_le(&entity_data, 6) as usize;
-            if enty_header_len < entity_data.len() {
-                return Ok(entity_data[enty_header_len..].to_vec());
-            }
+        // Use pure function to skip ENTY header
+        let payload = skip_enty_header(&entity_data);
+        if payload.len() != entity_data.len() {
+            Ok(payload.to_vec())
+        } else {
+            Ok(entity_data)
         }
-
-        Ok(entity_data)
     }
 
     /// Parse an entity as Ion and return the parsed value.
@@ -236,25 +214,9 @@ impl KfxImporter {
         parser.parse()
     }
 
-    /// Resolve a symbol ID to its text representation.
-    fn resolve_symbol(&self, id: u32) -> Option<&str> {
-        let id = id as usize;
-        if id < KFX_SYMBOL_TABLE.len() {
-            Some(KFX_SYMBOL_TABLE[id])
-        } else {
-            // Document-local symbols start after the base symbol table
-            let doc_idx = id.saturating_sub(KFX_SYMBOL_TABLE.len());
-            self.doc_symbols.get(doc_idx).map(|s| s.as_str())
-        }
-    }
-
     /// Get a symbol's text from an IonValue (handles both Symbol and String).
     fn get_symbol_text<'a>(&'a self, value: &'a IonValue) -> Option<&'a str> {
-        match value {
-            IonValue::Symbol(id) => self.resolve_symbol(*id),
-            IonValue::String(s) => Some(s.as_str()),
-            _ => None,
-        }
+        get_symbol_text(value, &self.doc_symbols)
     }
 
     /// Parse book metadata.
@@ -637,7 +599,7 @@ impl KfxImporter {
 
                     // Also index by resource_name (e.g., "eF") for cover lookup
                     let name = get_field(fields, sym!(ResourceName))
-                        .and_then(|v| resolve_symbol_text(v, &self.doc_symbols))
+                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
                         .map(|s| s.to_string());
 
                     if let Some(loc_str) = &location {
@@ -657,159 +619,4 @@ impl KfxImporter {
         self.resources_indexed = true;
         Ok(())
     }
-}
-
-// --- Helper functions ---
-
-/// Get a field from a struct by symbol ID.
-#[inline]
-fn get_field(fields: &[(u32, IonValue)], symbol_id: u32) -> Option<&IonValue> {
-    fields
-        .iter()
-        .find(|(k, _)| *k == symbol_id)
-        .map(|(_, v)| v)
-}
-
-/// Resolve a symbol or string value to its text representation.
-fn resolve_symbol_text<'a>(value: &'a IonValue, doc_symbols: &'a [String]) -> Option<&'a str> {
-    match value {
-        IonValue::Symbol(id) => {
-            let id = *id as usize;
-            if id < KFX_SYMBOL_TABLE.len() {
-                Some(KFX_SYMBOL_TABLE[id])
-            } else {
-                // Document-local symbols start after the base symbol table
-                let doc_idx = id.saturating_sub(KFX_SYMBOL_TABLE.len());
-                doc_symbols.get(doc_idx).map(|s| s.as_str())
-            }
-        }
-        IonValue::String(s) => Some(s.as_str()),
-        _ => None,
-    }
-}
-
-fn read_u32_le(data: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-    ])
-}
-
-fn read_u64_le(data: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes([
-        data[offset],
-        data[offset + 1],
-        data[offset + 2],
-        data[offset + 3],
-        data[offset + 4],
-        data[offset + 5],
-        data[offset + 6],
-        data[offset + 7],
-    ])
-}
-
-/// Parse container info to extract a pair of offset/length fields.
-fn parse_container_info_field(
-    data: &[u8],
-    offset_field: &str,
-    length_field: &str,
-) -> io::Result<(usize, usize)> {
-    let mut parser = IonParser::new(data);
-    let elem = parser.parse()?;
-
-    if let Some(fields) = elem.as_struct() {
-        // Look up symbol IDs for field names
-        let offset_sym = symbol_id_for_name(offset_field)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unknown symbol"))?;
-        let length_sym = symbol_id_for_name(length_field)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unknown symbol"))?;
-
-        let offset = get_field(fields, offset_sym)
-            .and_then(|v| v.as_int())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", offset_field))
-            })?;
-
-        let length = get_field(fields, length_sym)
-            .and_then(|v| v.as_int())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("Missing {}", length_field))
-            })?;
-
-        Ok((offset as usize, length as usize))
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Container info is not a struct",
-        ))
-    }
-}
-
-/// Look up a symbol ID by name from the static symbol table.
-fn symbol_id_for_name(name: &str) -> Option<u32> {
-    KFX_SYMBOL_TABLE
-        .iter()
-        .position(|&s| s == name)
-        .map(|i| i as u32)
-}
-
-/// Extract document-specific symbols from the doc symbols section.
-fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
-    let mut symbols = Vec::new();
-
-    let start = if data.len() >= 4 && data[0..4] == ION_MAGIC {
-        4
-    } else {
-        0
-    };
-
-    let mut i = start;
-    while i < data.len() {
-        let type_byte = data[i];
-        let type_code = (type_byte >> 4) & 0x0F;
-
-        // Type 8 = string
-        if type_code == 8 {
-            let len_nibble = type_byte & 0x0F;
-            let (str_len, header_len) = if len_nibble == 14 {
-                if i + 1 < data.len() {
-                    let len = data[i + 1] as usize;
-                    if len & 0x80 == 0 {
-                        (len, 2)
-                    } else {
-                        ((len & 0x7F), 2)
-                    }
-                } else {
-                    break;
-                }
-            } else if len_nibble == 15 {
-                i += 1;
-                continue;
-            } else {
-                (len_nibble as usize, 1)
-            };
-
-            if i + header_len + str_len <= data.len() {
-                let str_bytes = &data[i + header_len..i + header_len + str_len];
-                if let Ok(s) = std::str::from_utf8(str_bytes) {
-                    if !s.starts_with("YJ_symbols") && !s.is_empty() && !s.contains("version") {
-                        symbols.push(s.to_string());
-                    }
-                }
-                i += header_len + str_len;
-            } else {
-                break;
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    // Remove duplicates while preserving order
-    let mut seen = std::collections::HashSet::new();
-    symbols.retain(|s| seen.insert(s.clone()));
-
-    symbols
 }
