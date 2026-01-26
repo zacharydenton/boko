@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crate::export::{Azw3Exporter, EpubExporter, Exporter, TextExporter, TextFormat};
-use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, MobiImporter, SpineEntry};
+use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry};
 use crate::io::MemorySource;
 use crate::ir::IRChapter;
 
@@ -27,6 +27,8 @@ pub enum Format {
     Azw3,
     /// MOBI format (legacy Kindle)
     Mobi,
+    /// KFX format (Kindle Format 10)
+    Kfx,
     /// Plain text (export only)
     Text,
     /// Markdown (export only)
@@ -119,6 +121,7 @@ impl Format {
                 "epub" => Some(Format::Epub),
                 "azw3" => Some(Format::Azw3),
                 "mobi" => Some(Format::Mobi),
+                "kfx" => Some(Format::Kfx),
                 "txt" => Some(Format::Text),
                 "md" => Some(Format::Markdown),
                 _ => None,
@@ -127,12 +130,12 @@ impl Format {
 
     /// Whether this format can be used for input/import.
     pub fn can_import(&self) -> bool {
-        matches!(self, Format::Epub | Format::Azw3 | Format::Mobi)
+        matches!(self, Format::Epub | Format::Azw3 | Format::Mobi | Format::Kfx)
     }
 
     /// Whether this format can be used for output/export.
     pub fn can_export(&self) -> bool {
-        !matches!(self, Format::Mobi)
+        !matches!(self, Format::Mobi | Format::Kfx)
     }
 }
 
@@ -155,6 +158,7 @@ impl Book {
             Format::Epub => Box::new(EpubImporter::open(path.as_ref())?),
             Format::Azw3 => Box::new(Azw3Importer::open(path.as_ref())?),
             Format::Mobi => Box::new(MobiImporter::open(path.as_ref())?),
+            Format::Kfx => Box::new(KfxImporter::open(path.as_ref())?),
             Format::Text | Format::Markdown => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -177,6 +181,7 @@ impl Book {
             Format::Epub => Box::new(EpubImporter::from_source(source)?),
             Format::Azw3 => Box::new(Azw3Importer::from_source(source)?),
             Format::Mobi => Box::new(MobiImporter::from_source(source)?),
+            Format::Kfx => Box::new(KfxImporter::from_source(source)?),
             Format::Text | Format::Markdown => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -338,9 +343,9 @@ impl Book {
             Format::Azw3 => Azw3Exporter::new().export(self, writer),
             Format::Text => TextExporter::new().format(TextFormat::Plain).export(self, writer),
             Format::Markdown => TextExporter::new().format(TextFormat::Markdown).export(self, writer),
-            Format::Mobi => Err(io::Error::new(
+            Format::Mobi | Format::Kfx => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "MOBI export is not supported; use AZW3 instead",
+                format!("{:?} export is not supported", format),
             )),
         }
     }

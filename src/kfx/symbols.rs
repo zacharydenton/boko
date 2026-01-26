@@ -867,7 +867,7 @@ pub fn symbol_name(id: u64) -> Option<&'static str> {
 /// Generated from the table using `scripts/gen_kfx_enum.py`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u16)]
+#[repr(u32)]
 #[allow(non_camel_case_types)]
 pub enum KfxSymbol {
     KpropertyInvalid = 0,

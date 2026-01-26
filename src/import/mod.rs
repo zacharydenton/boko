@@ -6,10 +6,12 @@
 
 mod azw3;
 mod epub;
+mod kfx;
 mod mobi;
 
 pub use azw3::Azw3Importer;
 pub use epub::EpubImporter;
+pub use kfx::KfxImporter;
 pub use mobi::MobiImporter;
 
 use std::path::{Path, PathBuf};
