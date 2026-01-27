@@ -178,6 +178,7 @@ pub enum IrField {
     FontWeight,
     FontStyle,
     FontSize,
+    FontVariant,
     TextAlign,
     TextIndent,
     LineHeight,
@@ -305,6 +306,17 @@ impl StyleSchema {
             context: StyleContext::Any,
         });
 
+        // font-variant: small-caps -> glyph_transform: small_caps
+        schema.register(StylePropertyRule {
+            ir_key: "font-variant",
+            ir_field: Some(IrField::FontVariant),
+            kfx_symbol: KfxSymbol::GlyphTransform,
+            transform: ValueTransform::Map(vec![
+                ("small-caps".into(), KfxValue::Symbol(KfxSymbol::SmallCaps)),
+            ]),
+            context: StyleContext::InlineSafe,
+        });
+
         // ====================================================================
         // Text Properties
         // ====================================================================
@@ -349,30 +361,30 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
-        // text-decoration: underline -> underline: true
+        // text-decoration: underline -> underline: solid (symbol, not bool)
         schema.register(StylePropertyRule {
             ir_key: "text-decoration",
             ir_field: Some(IrField::TextDecorationUnderline),
             kfx_symbol: KfxSymbol::Underline,
             transform: ValueTransform::Map(vec![
-                ("underline".into(), KfxValue::Bool(true)),
-                ("true".into(), KfxValue::Bool(true)),
-                ("false".into(), KfxValue::Bool(false)),
-                ("none".into(), KfxValue::Bool(false)),
+                ("underline".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("true".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
             context: StyleContext::InlineSafe,
         });
 
-        // text-decoration: line-through -> strikethrough: true
+        // text-decoration: line-through -> strikethrough: solid (symbol, not bool)
         schema.register(StylePropertyRule {
             ir_key: "text-decoration-strikethrough",
             ir_field: Some(IrField::TextDecorationStrikethrough),
             kfx_symbol: KfxSymbol::Strikethrough,
             transform: ValueTransform::Map(vec![
-                ("line-through".into(), KfxValue::Bool(true)),
-                ("true".into(), KfxValue::Bool(true)),
-                ("false".into(), KfxValue::Bool(false)),
-                ("none".into(), KfxValue::Bool(false)),
+                ("line-through".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("true".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
             context: StyleContext::InlineSafe,
         });
@@ -923,6 +935,13 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        IrField::FontVariant => {
+            if ir_style.font_variant != default.font_variant {
+                Some(ir_style.font_variant.to_css_string())
+            } else {
+                None
+            }
+        }
         IrField::TextAlign => {
             if ir_style.text_align != default.text_align {
                 Some(ir_style.text_align.to_css_string())
@@ -1162,6 +1181,12 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             if let Some(len) = parse_css_length_to_ir(css_value) {
                 ir_style.font_size = len;
             }
+        }
+        IrField::FontVariant => {
+            ir_style.font_variant = match css_value {
+                "small-caps" => ir_style::FontVariant::SmallCaps,
+                _ => ir_style::FontVariant::Normal,
+            };
         }
         IrField::TextAlign => {
             ir_style.text_align = match css_value {

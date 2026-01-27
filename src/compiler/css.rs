@@ -789,7 +789,10 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         }
         "font-variant" | "font-variant-caps" => {
             if let PropertyValue::Keyword(k) = &decl.value {
-                style.font_variant_small_caps = k == "small-caps";
+                style.font_variant = match k.as_str() {
+                    "small-caps" => crate::ir::FontVariant::SmallCaps,
+                    _ => crate::ir::FontVariant::Normal,
+                };
             }
         }
         _ => {}

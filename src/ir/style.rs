@@ -64,6 +64,23 @@ impl ToCss for FontStyle {
     }
 }
 
+/// Font variant (normal, small-caps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FontVariant {
+    #[default]
+    Normal,
+    SmallCaps,
+}
+
+impl ToCss for FontVariant {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            FontVariant::Normal => "normal",
+            FontVariant::SmallCaps => "small-caps",
+        });
+    }
+}
+
 /// Text alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TextAlign {
@@ -288,7 +305,7 @@ pub struct ComputedStyle {
     pub list_style_type: ListStyleType,
 
     // Font variant
-    pub font_variant_small_caps: bool,
+    pub font_variant: FontVariant,
 }
 
 impl ComputedStyle {
@@ -364,7 +381,7 @@ impl ComputedStyle {
     /// Check if the style uses small-caps font variant.
     #[inline]
     pub fn is_small_caps(&self) -> bool {
-        self.font_variant_small_caps
+        matches!(self.font_variant, FontVariant::SmallCaps)
     }
 }
 
@@ -499,8 +516,10 @@ impl ToCss for ComputedStyle {
         }
 
         // Font variant
-        if self.font_variant_small_caps {
-            buf.push_str("font-variant: small-caps; ");
+        if self.font_variant != FontVariant::Normal {
+            buf.push_str("font-variant: ");
+            self.font_variant.to_css(buf);
+            buf.push_str("; ");
         }
     }
 }
