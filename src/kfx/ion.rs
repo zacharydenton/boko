@@ -65,6 +65,9 @@ pub enum IonValue {
     Bool(bool),
     Int(i64),
     Float(f64),
+    /// Decimal value stored as string for precision (e.g., "0.833333").
+    /// Encoded as Ion decimal (type 5) with coefficient + exponent.
+    Decimal(String),
     /// Symbol ID (resolve via KFX_SYMBOL_TABLE or doc_symbols)
     Symbol(u64),
     String(String),
@@ -428,6 +431,7 @@ impl IonWriter {
             IonValue::Bool(b) => self.write_bool(*b),
             IonValue::Int(n) => self.write_int(*n),
             IonValue::Float(f) => self.write_float(*f),
+            IonValue::Decimal(s) => self.write_decimal(s),
             IonValue::Symbol(id) => self.write_symbol(*id),
             IonValue::String(s) => self.write_string(s),
             IonValue::Blob(data) => self.write_blob(data),
@@ -476,6 +480,72 @@ impl IonWriter {
             self.buffer.push(0x48); // type 4, length 8
             self.buffer.extend_from_slice(&value.to_be_bytes());
         }
+    }
+
+    /// Write decimal value from string (e.g., "0.833333", "1.5").
+    ///
+    /// Encodes as Ion decimal (type 5) with coefficient + exponent.
+    /// This matches Kindle's expected format for style values.
+    pub fn write_decimal(&mut self, s: &str) {
+        let val: f64 = s.parse().unwrap_or(0.0);
+
+        if val == 0.0 {
+            // Zero: single byte with exponent 0
+            self.buffer.push(0x51); // type 5, length 1
+            self.buffer.push(0x80); // exponent 0, stop bit
+            return;
+        }
+
+        // Convert to coefficient and exponent with precision 6
+        // (matches Kindle Previewer output like 0.833333)
+        let mut coef = (val * 1_000_000.0).round() as i64;
+        let mut exp: i8 = -6;
+
+        // Normalize: remove trailing zeros
+        while coef != 0 && coef % 10 == 0 {
+            coef /= 10;
+            exp += 1;
+        }
+
+        // Encode decimal bytes
+        let mut decimal_bytes = Vec::new();
+
+        // 1. Exponent as VarInt (signed)
+        let exp_mag = exp.unsigned_abs();
+        let exp_sign = if exp < 0 { 0x40 } else { 0x00 };
+        decimal_bytes.push(0x80 | exp_sign | (exp_mag & 0x3F));
+
+        // 2. Coefficient as signed Int (magnitude encoding)
+        if coef != 0 {
+            let coef_mag = coef.unsigned_abs();
+            let is_neg = coef < 0;
+
+            // Encode magnitude as big-endian bytes
+            let coef_bytes = uint_bytes(coef_mag);
+
+            // Check if we need a sign byte
+            let needs_sign_byte = (coef_bytes[0] & 0x80) != 0;
+
+            if is_neg {
+                if needs_sign_byte {
+                    decimal_bytes.push(0x80); // negative sign byte
+                    decimal_bytes.extend_from_slice(&coef_bytes);
+                } else {
+                    // Set sign bit in first byte
+                    decimal_bytes.push(coef_bytes[0] | 0x80);
+                    decimal_bytes.extend_from_slice(&coef_bytes[1..]);
+                }
+            } else {
+                if needs_sign_byte {
+                    decimal_bytes.push(0x00); // positive sign byte
+                }
+                decimal_bytes.extend_from_slice(&coef_bytes);
+            }
+        }
+
+        // Write type descriptor and bytes
+        self.write_type_descriptor(5, decimal_bytes.len());
+        self.buffer.extend_from_slice(&decimal_bytes);
     }
 
     /// Write symbol (by ID).
@@ -854,5 +924,37 @@ mod tests {
 
         assert_eq!(parsed.get(1).and_then(|v| v.as_string()), Some("title"));
         assert_eq!(parsed.get(3).and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn test_writer_decimal_encoding() {
+        // Test that decimal produces type 5 (0x5X) bytes
+        let mut writer = IonWriter::new();
+        writer.write_decimal("0.833333");
+
+        let data = writer.into_bytes();
+        // First byte should be type 5 (decimal)
+        assert_eq!(data[0] >> 4, 5, "Expected type 5 (decimal), got type {}", data[0] >> 4);
+    }
+
+    #[test]
+    fn test_writer_decimal_zero() {
+        let mut writer = IonWriter::new();
+        writer.write_decimal("0");
+
+        let data = writer.into_bytes();
+        // Zero: type 5, length 1, exponent byte 0x80
+        assert_eq!(data[0], 0x51);
+        assert_eq!(data[1], 0x80);
+    }
+
+    #[test]
+    fn test_writer_decimal_whole_number() {
+        let mut writer = IonWriter::new();
+        writer.write_decimal("1.5");
+
+        let data = writer.into_bytes();
+        // Should be type 5
+        assert_eq!(data[0] >> 4, 5);
     }
 }

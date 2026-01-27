@@ -117,7 +117,7 @@ impl KfxValue {
             KfxValue::Bool(b) => IonValue::Bool(*b),
             KfxValue::Null => IonValue::Null,
             KfxValue::Dimensioned { value, unit } => IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Float(*value)),
+                (KfxSymbol::Value as u64, IonValue::Decimal(value.to_string())),
                 (KfxSymbol::Unit as u64, IonValue::Symbol(*unit as u64)),
             ]),
         }

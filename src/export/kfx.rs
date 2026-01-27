@@ -622,7 +622,7 @@ fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
         (
             KfxSymbol::FontSize as u64,
             IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Float(1.0)),
+                (KfxSymbol::Value as u64, IonValue::Decimal("1".to_string())),
                 (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
             ]),
         ),
@@ -638,7 +638,7 @@ fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
         (
             KfxSymbol::LineHeight as u64,
             IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Float(1.2)),
+                (KfxSymbol::Value as u64, IonValue::Decimal("1.2".to_string())),
                 (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
             ]),
         ),
