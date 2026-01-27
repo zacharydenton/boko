@@ -291,12 +291,15 @@ impl KfxSchema {
             },
         );
 
-        // Container
+        // Container - maps to type: text (not type: container)
+        // In KFX, type: container is only for special layout containers with
+        // layout/fixed_width/fit_width attributes. Regular structural elements
+        // with children use type: text.
         self.register_element(
             KfxSymbol::Container,
             Strategy::Structure {
                 role: Role::Container,
-                kfx_type: KfxSymbol::Container,
+                kfx_type: KfxSymbol::Text,
             },
             vec![],
         );

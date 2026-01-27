@@ -238,9 +238,8 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // After Pass 1: ctx.symbols is COMPLETE, ctx.position_map has all EIDs
-
-    // Compute TOC anchor entity IDs now that all anchor symbols are interned
-    ctx.finalize_toc_anchor_entity_ids(book.toc());
+    // Note: TOC anchor entity IDs are computed AFTER Pass 2 chapter processing
+    // since anchors are created during content generation.
 
     // ========================================================================
     // PASS 2: SYNTHESIS (Generate Ion)
@@ -268,8 +267,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 2c. Metadata fragment ($258) - contains reading_orders
     fragments.push(build_metadata_fragment(&ctx));
 
-    // 2d. Document data fragment ($538) - contains document settings
-    fragments.push(build_document_data_fragment(&ctx));
+    // NOTE: document_data ($538) is built AFTER chapters so max_id includes all content IDs.
+    // We'll insert it at this position (index 3) later.
+    let document_data_index = fragments.len();
 
     // 2g. Chapter entities - collect separately for proper grouping
     // Note: This also collects styles during token generation
@@ -281,13 +281,26 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // Note: cover_fragment_id was assigned in Pass 1 for landmark resolution
     if let Some(ref cover_path) = standalone_cover_path {
         let section_id = ctx.cover_fragment_id.expect("cover_fragment_id should be set in Pass 1");
+        // Get the next fragment ID which will be the cover's content ID
+        let cover_content_id = ctx.fragment_ids.peek();
+        // Store cover content ID for position_map (so c0 contains both section and content IDs)
+        ctx.cover_content_id = Some(cover_content_id);
         let (section, storyline) = build_cover_section(cover_path, section_id, &mut ctx);
         section_fragments.push(section);
         storyline_fragments.push(storyline);
+
+        // Update cover landmark to use the content ID instead of section ID
+        if let Some(target) = ctx.landmark_fragments.get_mut(&LandmarkType::Cover) {
+            target.fragment_id = cover_content_id;
+        }
     }
 
     for (chapter_id, section_name) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
+            // Set up chapter-start anchor before generating content
+            let source_path = book.source_id(*chapter_id).unwrap_or("");
+            ctx.begin_chapter_export(*chapter_id, source_path);
+
             let (section, storyline, content) = build_chapter_entities_grouped(
                 &chapter,
                 *chapter_id,
@@ -302,7 +315,10 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // 2e. Book navigation fragment - built AFTER chapters so heading positions are available
+    // Fix landmark IDs to use storyline content IDs instead of section IDs
+    ctx.fix_landmark_content_ids(&source_to_chapter);
+
+    // 2e. Book navigation fragment - built AFTER chapters so heading/anchor positions are available
     fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
 
     // Add chapter content in reference order: sections, then storylines, then content
@@ -323,10 +339,10 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 2i. Auxiliary data fragments - mark sections as navigation targets
     // Generate one auxiliary_data entity per section
     if standalone_cover_path.is_some() {
-        fragments.push(build_auxiliary_data_fragment(COVER_SECTION_NAME));
+        fragments.push(build_auxiliary_data_fragment(COVER_SECTION_NAME, &mut ctx));
     }
     for (_, section_name) in &spine_info {
-        fragments.push(build_auxiliary_data_fragment(section_name));
+        fragments.push(build_auxiliary_data_fragment(section_name, &mut ctx));
     }
 
     // 2j. Resource fragments (images, fonts, etc.)
@@ -347,6 +363,14 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.push(build_position_map_fragment(&ctx, &anchor_ids_by_fragment));
     fragments.push(build_position_id_map_fragment(&ctx));
     fragments.push(build_location_map_fragment(&ctx));
+
+    // 2l. Container metadata entities
+    fragments.push(build_resource_path_fragment());
+    fragments.push(build_container_entity_map_fragment(&container_id, &fragments, &ctx));
+
+    // 2d. Document data fragment ($538) - built AFTER all IDs are assigned so max_id is correct
+    // Insert at position 3 (after content_features, book_metadata, metadata)
+    fragments.insert(document_data_index, build_document_data_fragment(&ctx));
 
     // Build symbol table ION using context
     let local_syms = ctx.symbols.local_symbols();
@@ -416,22 +440,10 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     // where actual content fragment IDs are available.
 
     // If node has an anchor ID, record it for link resolution
+    // Note: Anchor entities are created during Pass 2 in tokens_to_ion()
+    // where actual content fragment IDs are available.
     if let Some(anchor_id) = chapter.semantics.id(node_id) {
         ctx.record_anchor(anchor_id, node_id);
-
-        // Create anchor entity if this ID is a TOC/link target
-        if ctx.is_anchor_needed(anchor_id) {
-            // Use full key (e.g., "chapter.xhtml#section1") to avoid collisions
-            let full_key = ctx.build_anchor_key(anchor_id);
-            if let Some(symbol) = ctx.anchor_registry.create_content_anchor(
-                &full_key,
-                ctx.current_fragment_id(),
-                ctx.current_text_offset(),
-            ) {
-                // Intern symbol immediately so entity IDs are known for TOC
-                ctx.intern(&symbol);
-            }
-        }
     }
 
     // Register resources (src attributes) - creates short names like "e0"
@@ -1010,22 +1022,20 @@ fn build_toc_entries_with_positions(
             )]);
             fields.push((KfxSymbol::Representation as u64, representation));
 
-            // Look up the pre-assigned anchor entity ID for this TOC entry
-            // TOC points to anchor entities, which then point to content positions
-            let anchor_entity_id = ctx
-                .toc_anchor_entity_ids
-                .get(&entry.href)
-                .copied()
+            // Look up the content position for this TOC entry
+            // TOC points directly to content fragment IDs (not anchor entities)
+            let (fragment_id, offset) = ctx
+                .anchor_registry
+                .get_anchor_position(&entry.href)
                 .unwrap_or_else(|| {
-                    // Fallback to direct position if no anchor (shouldn't happen)
-                    let (fid, _) = resolve_toc_position(&entry.href, ctx);
-                    fid
+                    // Fallback to resolve_toc_position if anchor not found
+                    resolve_toc_position(&entry.href, ctx)
                 });
 
-            // Target position points to anchor entity with offset 0
+            // Target position points directly to content fragment
             let target = IonValue::Struct(vec![
-                (KfxSymbol::Id as u64, IonValue::Int(anchor_entity_id as i64)),
-                (KfxSymbol::Offset as u64, IonValue::Int(0)),
+                (KfxSymbol::Id as u64, IonValue::Int(fragment_id as i64)),
+                (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
             ]);
             fields.push((KfxSymbol::TargetPosition as u64, target));
 
@@ -1043,24 +1053,18 @@ fn build_toc_entries_with_positions(
 }
 
 /// Resolve a TOC href to (fragment_id, offset).
+/// Note: Kindle expects offset: 0 for all navigation entries (per reference KFX analysis).
 fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
-    // Extract base path and anchor from href
-    let (base_path, anchor) = if let Some(hash_pos) = href.find('#') {
-        (&href[..hash_pos], Some(&href[hash_pos + 1..]))
+    // Extract base path from href (ignore anchor since we use offset 0)
+    let base_path = if let Some(hash_pos) = href.find('#') {
+        &href[..hash_pos]
     } else {
-        (href, None)
+        href
     };
 
     // Look up the fragment ID for this path
     if let Some(fragment_id) = ctx.get_fragment_for_path(base_path) {
-        // If there's an anchor, try to get its offset
-        let offset = anchor
-            .and_then(|anchor_id| ctx.anchor_map.get(anchor_id))
-            .and_then(|(chapter_id, node_id)| ctx.position_map.get(&(*chapter_id, *node_id)))
-            .map(|pos| pos.offset)
-            .unwrap_or(0);
-
-        return (fragment_id, offset);
+        return (fragment_id, 0);
     }
 
     // Fallback: try first chapter fragment
@@ -1505,18 +1509,18 @@ fn build_anchor_fragments(
         // Intern the anchor symbol to get its ID
         let anchor_symbol_id = ctx.symbols.get_or_intern(&anchor.symbol);
 
-        // Track which anchors belong to which fragment for position_map
+        // Track which anchors belong to which SECTION for position_map
+        // Key by section_id (page_template ID), not fragment_id (content ID)
         anchor_ids_by_fragment
-            .entry(anchor.fragment_id)
+            .entry(anchor.section_id)
             .or_default()
             .push(anchor_symbol_id);
 
-        // Build position struct
+        // Build position struct - uses content fragment_id for navigation target
         let mut pos_fields = Vec::new();
         pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(anchor.fragment_id as i64)));
-        if anchor.offset > 0 {
-            pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
-        }
+        // Always include offset field - Kindle requires it even when 0
+        pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
 
         let ion = IonValue::Struct(vec![
             (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
@@ -1549,10 +1553,15 @@ fn build_position_map_fragment(
     let mut entries = Vec::new();
 
     // Handle standalone cover section (c0) if present
-    // Cover has no text anchors, just contains its own fragment ID
+    // Cover contains both the page_template ID and the storyline content ID
     let section_offset = if let Some(cover_fid) = ctx.cover_fragment_id {
+        // Build contains list: [section_id, content_id]
+        let mut contains_list = vec![IonValue::Int(cover_fid as i64)];
+        if let Some(content_id) = ctx.cover_content_id {
+            contains_list.push(IonValue::Int(content_id as i64));
+        }
         let entry = IonValue::Struct(vec![
-            (KfxSymbol::Contains as u64, IonValue::List(vec![IonValue::Int(cover_fid as i64)])),
+            (KfxSymbol::Contains as u64, IonValue::List(contains_list)),
             (KfxSymbol::SectionName as u64, IonValue::Symbol(ctx.section_ids[0])),
         ]);
         entries.push(entry);
@@ -1562,18 +1571,23 @@ fn build_position_map_fragment(
     };
 
     // Build entries for spine chapters (skip cover section if present)
-    let fragment_ids: Vec<_> = {
-        let mut ids: Vec<_> = ctx.chapter_fragments.values().copied().collect();
-        ids.sort();
-        ids
-    };
+    // Sort chapters by fragment ID to maintain consistent ordering
+    let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
+    chapter_entries.sort_by_key(|(_, fid)| **fid);
 
     for (idx, &section_sym) in ctx.section_ids.iter().skip(section_offset).enumerate() {
-        if let Some(&fragment_id) = fragment_ids.get(idx) {
-            // Start with the fragment ID itself
+        if let Some(&(chapter_id, &fragment_id)) = chapter_entries.get(idx) {
+            // Start with the page_template fragment ID
             let mut eid_list = vec![IonValue::Int(fragment_id as i64)];
 
-            // Add all anchor IDs that belong to this fragment
+            // Add all content fragment IDs for this chapter (for navigation target resolution)
+            if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
+                for &content_id in content_ids {
+                    eid_list.push(IonValue::Int(content_id as i64));
+                }
+            }
+
+            // Add all anchor IDs that belong to this section
             if let Some(anchor_ids) = anchor_ids_by_fragment.get(&fragment_id) {
                 for &anchor_id in anchor_ids {
                     eid_list.push(IonValue::Int(anchor_id as i64));
@@ -1596,40 +1610,43 @@ fn build_position_map_fragment(
 ///
 /// Maps cumulative character positions (PIDs) to EIDs. This enables
 /// reading progress tracking and "go to position" functionality.
+///
+/// Reference format: Sequential PIDs (0, 1, 2...) for initial entries,
+/// then character position offsets for content fragments.
 fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
     let mut entries = Vec::new();
-    let mut cumulative_offset = 0i64;
+    let mut pid = 0i64;
 
-    // Collect chapter fragment IDs in order
+    // Collect all content fragment IDs across all chapters, sorted by ID
+    let mut all_content_ids: Vec<u64> = Vec::new();
+
+    // Add cover content ID if present
+    if let Some(cover_id) = ctx.cover_content_id {
+        all_content_ids.push(cover_id);
+    }
+
+    // Add all chapter content IDs
     let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
-    for (chapter_id, fragment_id) in &chapter_entries {
-        // Find max text offset for this chapter from position_map
-        let max_offset = ctx
-            .position_map
-            .iter()
-            .filter(|((cid, _), _)| cid == *chapter_id)
-            .map(|(_, pos)| pos.offset)
-            .max()
-            .unwrap_or(0);
-
-        // Entry: at cumulative_offset, content starts at this EID
-        let entry = IonValue::Struct(vec![
-            (KfxSymbol::Pid as u64, IonValue::Int(cumulative_offset)),
-            (KfxSymbol::Eid as u64, IonValue::Int(**fragment_id as i64)),
-        ]);
-        entries.push(entry);
-
-        cumulative_offset += max_offset as i64;
+    for (chapter_id, _) in &chapter_entries {
+        if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
+            all_content_ids.extend(content_ids.iter().copied());
+        }
     }
 
-    // Terminator entry: total character count with EID 0
-    let terminator = IonValue::Struct(vec![
-        (KfxSymbol::Pid as u64, IonValue::Int(cumulative_offset)),
-        (KfxSymbol::Eid as u64, IonValue::Int(0)),
-    ]);
-    entries.push(terminator);
+    // Sort all content IDs to ensure consistent ordering
+    all_content_ids.sort();
+
+    // Generate an entry for each content fragment
+    for eid in all_content_ids {
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Pid as u64, IonValue::Int(pid)),
+            (KfxSymbol::Eid as u64, IonValue::Int(eid as i64)),
+        ]);
+        entries.push(entry);
+        pid += 1;
+    }
 
     let ion = IonValue::List(entries);
     KfxFragment::singleton(KfxSymbol::PositionIdMap, ion)
@@ -1679,6 +1696,59 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
     KfxFragment::singleton(KfxSymbol::LocationMap, ion)
 }
 
+/// Build resource_path fragment ($395).
+///
+/// This entity lists additional resource paths. For simple conversions,
+/// the entries array is empty.
+fn build_resource_path_fragment() -> KfxFragment {
+    let ion = IonValue::Struct(vec![(
+        KfxSymbol::Entries as u64,
+        IonValue::List(vec![]),
+    )]);
+    KfxFragment::singleton(KfxSymbol::ResourcePath, ion)
+}
+
+/// Build container_entity_map fragment ($419).
+///
+/// Lists all entities in the container for the reader to enumerate.
+/// Each entry contains the container ID and a list of entity name symbols.
+fn build_container_entity_map_fragment(
+    container_id: &str,
+    fragments: &[KfxFragment],
+    ctx: &ExportContext,
+) -> KfxFragment {
+    // Collect all non-singleton entity name symbols
+    let mut entity_names: Vec<IonValue> = Vec::new();
+
+    for frag in fragments {
+        // Skip singleton fragments (those with fid like "$258")
+        if frag.fid.starts_with('$') {
+            continue;
+        }
+        // Skip raw media fragments (bcRawMedia)
+        if frag.is_raw() {
+            continue;
+        }
+        // Get the symbol ID for this entity name
+        if let Some(symbol_id) = ctx.symbols.get(&frag.fid) {
+            entity_names.push(IonValue::Symbol(symbol_id));
+        }
+    }
+
+    // Build the container_list entry
+    let container_entry = IonValue::Struct(vec![
+        (KfxSymbol::Id as u64, IonValue::String(container_id.to_string())),
+        (KfxSymbol::Contains as u64, IonValue::List(entity_names)),
+    ]);
+
+    let ion = IonValue::Struct(vec![(
+        KfxSymbol::ContainerList as u64,
+        IonValue::List(vec![container_entry]),
+    )]);
+
+    KfxFragment::singleton(KfxSymbol::ContainerEntityMap, ion)
+}
+
 /// Detect format symbol from file extension/magic bytes.
 ///
 /// Delegates to the pure `detect_media_format()` utility and maps to KFX symbol.
@@ -1726,9 +1796,10 @@ fn resolve_landmarks_from_ir(
                 let full_href = format!("{}#{}", href_path, anchor_id);
                 if let Some(&(_, node_id)) = ctx.anchor_map.get(&full_href) {
                     if let Some(pos) = ctx.position_map.get(&(cid, node_id)) {
+                        // Kindle expects offset: 0 for all navigation entries
                         Some(LandmarkTarget {
                             fragment_id: pos.fragment_id,
-                            offset: pos.offset as u64,
+                            offset: 0,
                             label: landmark.label.clone(),
                         })
                     } else {
@@ -2076,6 +2147,40 @@ mod tests {
     }
 
     #[test]
+    fn test_document_data_max_id_reflects_all_fragment_ids() {
+        let mut ctx = ExportContext::new();
+        ctx.register_section("c0");
+
+        // Simulate generating many fragment IDs (like content generation does)
+        for _ in 0..100 {
+            ctx.next_fragment_id();
+        }
+
+        let frag = build_document_data_fragment(&ctx);
+
+        // Extract max_id from the fragment
+        if let crate::kfx::fragment::FragmentData::Ion(IonValue::Struct(fields)) = &frag.data {
+            let max_id_field = fields
+                .iter()
+                .find(|(id, _)| *id == KfxSymbol::MaxId as u64);
+
+            if let Some((_, IonValue::Int(max_id))) = max_id_field {
+                // max_id should be at least 100 (the IDs we generated)
+                // Context starts at 866, so after 100 IDs we should be at 965
+                assert!(
+                    *max_id >= 100,
+                    "max_id ({}) should reflect all generated fragment IDs",
+                    max_id
+                );
+            } else {
+                panic!("max_id should be an integer");
+            }
+        } else {
+            panic!("expected Ion struct data");
+        }
+    }
+
+    #[test]
     fn test_singleton_uses_null_symbol() {
         // Build a singleton fragment and serialize it
         let frag = build_content_features_fragment();
@@ -2270,6 +2375,75 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_position_id_map_includes_all_content_ids() {
+        use crate::ChapterId;
+
+        let mut ctx = ExportContext::new();
+        ctx.register_section("c0");
+        ctx.register_section("c1");
+
+        // Simulate two chapters with multiple content IDs each
+        let chapter1 = ChapterId(1);
+        let chapter2 = ChapterId(2);
+
+        // Add content IDs for each chapter
+        ctx.content_ids_by_chapter
+            .entry(chapter1)
+            .or_default()
+            .extend(vec![100, 101, 102]);
+        ctx.content_ids_by_chapter
+            .entry(chapter2)
+            .or_default()
+            .extend(vec![200, 201]);
+
+        // Set up chapter_fragments for ordering
+        ctx.chapter_fragments.insert(chapter1, 90);
+        ctx.chapter_fragments.insert(chapter2, 95);
+
+        let frag = build_position_id_map_fragment(&ctx);
+
+        // Extract and verify the position_id_map entries
+        if let crate::kfx::fragment::FragmentData::Ion(IonValue::List(entries)) = &frag.data {
+            // Should have 5 entries (100, 101, 102, 200, 201)
+            assert_eq!(
+                entries.len(),
+                5,
+                "position_id_map should have one entry per content ID"
+            );
+
+            // Extract all eids
+            let eids: Vec<i64> = entries
+                .iter()
+                .filter_map(|entry| {
+                    if let IonValue::Struct(fields) = entry {
+                        fields
+                            .iter()
+                            .find(|(id, _)| *id == KfxSymbol::Eid as u64)
+                            .and_then(|(_, v)| {
+                                if let IonValue::Int(eid) = v {
+                                    Some(*eid)
+                                } else {
+                                    None
+                                }
+                            })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Should contain all content IDs
+            assert!(eids.contains(&100), "should contain content ID 100");
+            assert!(eids.contains(&101), "should contain content ID 101");
+            assert!(eids.contains(&102), "should contain content ID 102");
+            assert!(eids.contains(&200), "should contain content ID 200");
+            assert!(eids.contains(&201), "should contain content ID 201");
+        } else {
+            panic!("expected List data");
         }
     }
 }

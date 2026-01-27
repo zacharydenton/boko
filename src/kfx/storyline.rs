@@ -742,6 +742,18 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 let container_id = ctx.fragment_ids.next();
                 fields.push((sym!(Id), IonValue::Int(container_id as i64)));
 
+                // Record this content ID for position_map (so navigation targets are resolvable)
+                ctx.record_content_id(container_id);
+
+                // Create chapter-start anchor with first content fragment ID (if pending)
+                ctx.resolve_pending_chapter_start_anchor(container_id);
+
+                // Create fragment-based anchor if this element has an ID that's a TOC/link target
+                // Note: Kindle expects offset: 0 for all navigation entries (per reference KFX)
+                if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
+                    ctx.create_anchor_if_needed(anchor_id, container_id, 0);
+                }
+
                 // Style reference - use per-element style if available, else default
                 // Required for text rendering on Kindle
                 let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
