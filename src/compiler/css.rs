@@ -791,6 +791,52 @@ fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     Some(PropertyValue::Visibility(visibility))
 }
 
+/// Create a new style with only CSS-inherited properties from parent.
+///
+/// CSS inherited properties include:
+/// - color, font-*, line-height, text-align, text-indent
+/// - letter-spacing, word-spacing, hyphens, text-transform
+/// - list-style-*, visibility
+///
+/// Non-inherited properties (width, height, margin, padding, display, etc.)
+/// are NOT copied from the parent.
+fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
+    let mut style = ComputedStyle::default();
+
+    // Font properties (inherited)
+    style.font_size = parent.font_size;
+    style.font_weight = parent.font_weight;
+    style.font_style = parent.font_style;
+    style.font_variant = parent.font_variant;
+
+    // Text properties (inherited)
+    style.color = parent.color;
+    style.text_align = parent.text_align;
+    style.text_indent = parent.text_indent;
+    style.line_height = parent.line_height;
+    style.letter_spacing = parent.letter_spacing;
+    style.word_spacing = parent.word_spacing;
+    style.text_transform = parent.text_transform;
+    style.hyphens = parent.hyphens;
+
+    // Text decoration (inherited in some contexts)
+    style.text_decoration_underline = parent.text_decoration_underline;
+    style.text_decoration_line_through = parent.text_decoration_line_through;
+    style.underline_style = parent.underline_style;
+    style.underline_color = parent.underline_color;
+    style.overline = parent.overline;
+
+    // List properties (inherited)
+    style.list_style_type = parent.list_style_type;
+    style.list_style_position = parent.list_style_position;
+
+    // Other inherited properties
+    style.visibility = parent.visibility;
+    style.language = parent.language.clone();
+
+    style
+}
+
 /// Compute styles for an element by applying the cascade.
 pub fn compute_styles(
     elem: ElementRef<'_>,
@@ -843,8 +889,12 @@ pub fn compute_styles(
         a.order.cmp(&b.order)
     });
 
-    // Start with inherited values from parent
-    let mut style = parent_style.cloned().unwrap_or_default();
+    // Start with inherited values from parent (only CSS-inherited properties)
+    let mut style = if let Some(parent) = parent_style {
+        inherit_from_parent(parent)
+    } else {
+        ComputedStyle::default()
+    };
 
     // Apply matched declarations in cascade order
     for matched_rule in &matched {
