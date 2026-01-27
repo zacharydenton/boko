@@ -1094,7 +1094,9 @@ fn build_chapter_entities_grouped(
     use crate::kfx::storyline::{ir_to_tokens, tokens_to_ion};
 
     // Check if this is a cover chapter (image-only)
-    let is_cover = is_image_only_chapter(chapter);
+    // Only treat as cover if there's no standalone cover section (c0)
+    // When ctx.cover_fragment_id is set, c0 already handles the cover
+    let is_cover = ctx.cover_fragment_id.is_none() && is_image_only_chapter(chapter);
 
     // =========================================================================
     // 1. SETUP: Naming for this chapter's entity triad
@@ -2458,6 +2460,85 @@ mod entity_structure_tests {
                 assert!(has_name, "content should have name");
                 assert!(has_content_list, "content should have content_list");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod section_type_tests {
+    use super::*;
+    use crate::book::Book;
+    use crate::kfx::cover::{needs_standalone_cover, normalize_cover_path};
+    use crate::kfx::fragment::FragmentData;
+
+    /// When a standalone cover (c0) exists, the titlepage chapter (c1) should have
+    /// type: text, NOT type: container. The container type is reserved for c0.
+    #[test]
+    fn test_titlepage_section_has_text_type_when_standalone_cover_exists() {
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let mut ctx = ExportContext::new();
+
+        // Verify this book needs a standalone cover (cover.jpg != titlepage.png)
+        let asset_paths: Vec<_> = book.list_assets();
+        let cover_image = book.metadata().cover_image.clone().expect("should have cover");
+        let normalized = normalize_cover_path(&cover_image, &asset_paths);
+
+        // Get first chapter ID
+        let first_chapter_id = book.spine().first().expect("should have spine").id;
+        let first_chapter = book.load_chapter(first_chapter_id).unwrap();
+        assert!(
+            needs_standalone_cover(&normalized, &first_chapter),
+            "test requires a book with different cover and titlepage images"
+        );
+
+        // Register c0 for standalone cover, c1 for titlepage
+        ctx.register_section("c0");
+        ctx.register_section("c1");
+        ctx.cover_fragment_id = Some(ctx.next_fragment_id()); // Mark that standalone cover exists
+
+        // Survey the titlepage chapter
+        let source_path = book.source_id(first_chapter_id).unwrap_or("").to_string();
+        let first_chapter = book.load_chapter(first_chapter_id).unwrap();
+        survey_chapter(&first_chapter, first_chapter_id, &source_path, &mut ctx);
+
+        // Build the titlepage section (c1)
+        let first_chapter = book.load_chapter(first_chapter_id).unwrap();
+        let (section, _, _) = build_chapter_entities_grouped(
+            &first_chapter,
+            first_chapter_id,
+            "c1",
+            &mut ctx,
+        );
+
+        // Extract the page_template type from the section
+        if let FragmentData::Ion(IonValue::Struct(fields)) = &section.data {
+            let page_templates = fields
+                .iter()
+                .find(|(id, _)| *id == KfxSymbol::PageTemplates as u64)
+                .expect("section should have page_templates");
+
+            if let (_, IonValue::List(templates)) = page_templates {
+                let template = &templates[0];
+                if let IonValue::Struct(template_fields) = template {
+                    let type_field = template_fields
+                        .iter()
+                        .find(|(id, _)| *id == KfxSymbol::Type as u64)
+                        .expect("page_template should have type");
+
+                    if let (_, IonValue::Symbol(type_sym)) = type_field {
+                        assert_eq!(
+                            *type_sym,
+                            KfxSymbol::Text as u64,
+                            "titlepage (c1) should have type: text when standalone cover exists, \
+                             but got type: container"
+                        );
+                    } else {
+                        panic!("type should be a symbol");
+                    }
+                }
+            }
+        } else {
+            panic!("section should have Ion struct data");
         }
     }
 }
