@@ -3,6 +3,7 @@
 //! This module provides the `KfxExporter` which implements the `Exporter` trait
 //! for writing books in Amazon's KFX format.
 
+use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 
 use crate::book::Book;
@@ -214,10 +215,12 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // 2g. Anchor fragments (for internal link targets)
-    fragments.extend(build_anchor_fragments(&mut ctx));
+    // Also collect fragment_id → anchor symbol IDs for position_map
+    let (anchor_frags, anchor_ids_by_fragment) = build_anchor_fragments(&mut ctx);
+    fragments.extend(anchor_frags);
 
     // 2h. Navigation maps for reader functionality
-    fragments.push(build_position_map_fragment(&ctx));
+    fragments.push(build_position_map_fragment(&ctx, &anchor_ids_by_fragment));
     fragments.push(build_position_id_map_fragment(&ctx));
     fragments.push(build_location_map_fragment(&ctx));
 
@@ -1212,8 +1215,14 @@ fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> 
 }
 
 /// Build anchor fragments ($266) for all recorded anchors.
-fn build_anchor_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
+///
+/// Returns (fragments, anchor_ids_by_fragment) where anchor_ids_by_fragment
+/// maps fragment_id → list of anchor symbol IDs for use in position_map.
+fn build_anchor_fragments(
+    ctx: &mut ExportContext,
+) -> (Vec<KfxFragment>, HashMap<u64, Vec<u64>>) {
     let mut fragments = Vec::new();
+    let mut anchor_ids_by_fragment: HashMap<u64, Vec<u64>> = HashMap::new();
 
     // Get resolved anchors from the AnchorRegistry
     let resolved_anchors = ctx.anchor_registry.drain_anchors();
@@ -1221,6 +1230,12 @@ fn build_anchor_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
     for anchor in resolved_anchors {
         // Intern the anchor symbol to get its ID
         let anchor_symbol_id = ctx.symbols.get_or_intern(&anchor.symbol);
+
+        // Track which anchors belong to which fragment for position_map
+        anchor_ids_by_fragment
+            .entry(anchor.fragment_id)
+            .or_default()
+            .push(anchor_symbol_id);
 
         // Build position struct
         let mut pos_fields = Vec::new();
@@ -1237,7 +1252,7 @@ fn build_anchor_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
         fragments.push(KfxFragment::new(KfxSymbol::Anchor, &anchor.symbol, ion));
     }
 
-    fragments
+    (fragments, anchor_ids_by_fragment)
 }
 
 /// Generate a short resource name for a given href.
@@ -1253,7 +1268,10 @@ fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
 ///
 /// Maps each section to the list of EIDs it contains. This enables
 /// the Kindle reader to track which section contains a given position.
-fn build_position_map_fragment(ctx: &ExportContext) -> KfxFragment {
+fn build_position_map_fragment(
+    ctx: &ExportContext,
+    anchor_ids_by_fragment: &HashMap<u64, Vec<u64>>,
+) -> KfxFragment {
     let mut entries = Vec::new();
 
     // Build entries from section_ids and chapter_fragments
@@ -1266,9 +1284,16 @@ fn build_position_map_fragment(ctx: &ExportContext) -> KfxFragment {
 
     for (idx, &section_sym) in ctx.section_ids.iter().enumerate() {
         if let Some(&fragment_id) = fragment_ids.get(idx) {
-            // For now, each section contains just its own EID
-            // A more complete implementation would track all content item EIDs
-            let eid_list = vec![IonValue::Int(fragment_id as i64)];
+            // Start with the fragment ID itself
+            let mut eid_list = vec![IonValue::Int(fragment_id as i64)];
+
+            // Add all anchor IDs that belong to this fragment
+            if let Some(anchor_ids) = anchor_ids_by_fragment.get(&fragment_id) {
+                for &anchor_id in anchor_ids {
+                    eid_list.push(IonValue::Int(anchor_id as i64));
+                }
+            }
+
             let entry = IonValue::Struct(vec![
                 (KfxSymbol::Contains as u64, IonValue::List(eid_list)),
                 (KfxSymbol::SectionName as u64, IonValue::Symbol(section_sym)),
