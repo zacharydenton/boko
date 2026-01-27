@@ -441,14 +441,20 @@ impl KfxImporter {
                         continue;
                     }
 
-                    // Get target position (includes id and optionally section_name)
+                    // Get target position (includes id and offset for within-section navigation)
                     let target_pos = get_field(entry_fields, sym!(TargetPosition))
                         .and_then(|v| v.as_struct());
-                    let href = target_pos
-                        .and_then(|s| get_field(s, sym!(Id)))
-                        .and_then(|v| v.as_int())
-                        .map(|id| format!("#{}", id))
-                        .unwrap_or_default();
+                    let href = if let Some(pos) = target_pos {
+                        let id = get_field(pos, sym!(Id)).and_then(|v| v.as_int());
+                        let offset = get_field(pos, sym!(Offset)).and_then(|v| v.as_int());
+                        match (id, offset) {
+                            (Some(id), Some(off)) if off > 0 => format!("#{}:{}", id, off),
+                            (Some(id), _) => format!("#{}", id),
+                            _ => String::new(),
+                        }
+                    } else {
+                        String::new()
+                    };
 
                     // Recursively parse children
                     let children = self.parse_nav_entries(entry_fields);
