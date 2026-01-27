@@ -195,6 +195,48 @@ pub enum IrField {
     VerticalAlign,
     TextDecorationUnderline,
     TextDecorationStrikethrough,
+    // Phase 1: Text properties
+    LetterSpacing,
+    WordSpacing,
+    TextTransform,
+    Hyphens,
+    NoBreak,
+    // Phase 2: Text decoration extensions
+    UnderlineStyle,
+    Overline,
+    UnderlineColor,
+    // Phase 3: Layout properties
+    Width,
+    Height,
+    MaxWidth,
+    MinHeight,
+    Float,
+    // Phase 4: Page break properties
+    BreakBefore,
+    BreakAfter,
+    BreakInside,
+    // Phase 5: Border properties
+    BorderStyleTop,
+    BorderStyleRight,
+    BorderStyleBottom,
+    BorderStyleLeft,
+    BorderWidthTop,
+    BorderWidthRight,
+    BorderWidthBottom,
+    BorderWidthLeft,
+    BorderColorTop,
+    BorderColorRight,
+    BorderColorBottom,
+    BorderColorLeft,
+    BorderRadiusTopLeft,
+    BorderRadiusTopRight,
+    BorderRadiusBottomLeft,
+    BorderRadiusBottomRight,
+    // Phase 6: List properties
+    ListStylePosition,
+    // Phase 7: Amazon properties
+    Language,
+    Visibility,
 }
 
 /// Declarative definition for how a style property maps from IR to KFX.
@@ -526,6 +568,444 @@ impl StyleSchema {
                 ("baseline".into(), KfxValue::Symbol(KfxSymbol::TextBaseline)),
             ]),
             context: StyleContext::InlineSafe,
+        });
+
+        // ====================================================================
+        // Phase 1: High-Priority Text Properties
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "letter-spacing",
+            ir_field: Some(IrField::LetterSpacing),
+            kfx_symbol: KfxSymbol::Letterspacing,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::InlineSafe,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "word-spacing",
+            ir_field: Some(IrField::WordSpacing),
+            kfx_symbol: KfxSymbol::Wordspacing,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::InlineSafe,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "text-transform",
+            ir_field: Some(IrField::TextTransform),
+            kfx_symbol: KfxSymbol::TextTransform,
+            transform: ValueTransform::Map(vec![
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("uppercase".into(), KfxValue::Symbol(KfxSymbol::Uppercase)),
+                ("lowercase".into(), KfxValue::Symbol(KfxSymbol::Lowercase)),
+                ("capitalize".into(), KfxValue::Symbol(KfxSymbol::Titlecase)),
+            ]),
+            context: StyleContext::InlineSafe,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "hyphens",
+            ir_field: Some(IrField::Hyphens),
+            kfx_symbol: KfxSymbol::Hyphens,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("manual".into(), KfxValue::Symbol(KfxSymbol::Manual)),
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "white-space",
+            ir_field: Some(IrField::NoBreak),
+            kfx_symbol: KfxSymbol::Nobreak,
+            transform: ValueTransform::Map(vec![
+                ("nowrap".into(), KfxValue::Bool(true)),
+                ("normal".into(), KfxValue::Bool(false)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 2: Text Decoration Extensions
+        // ====================================================================
+
+        // Underline style (solid/dotted/dashed/double)
+        // Note: This extends the existing underline property with style info
+        schema.register(StylePropertyRule {
+            ir_key: "text-decoration-style",
+            ir_field: Some(IrField::UnderlineStyle),
+            kfx_symbol: KfxSymbol::Underline,
+            transform: ValueTransform::Map(vec![
+                ("solid".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("dotted".into(), KfxValue::Symbol(KfxSymbol::Dotted)),
+                ("dashed".into(), KfxValue::Symbol(KfxSymbol::Dashed)),
+                ("double".into(), KfxValue::Symbol(KfxSymbol::Double)),
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+            ]),
+            context: StyleContext::InlineSafe,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "overline",
+            ir_field: Some(IrField::Overline),
+            kfx_symbol: KfxSymbol::Overline,
+            transform: ValueTransform::Map(vec![
+                ("true".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("solid".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+            ]),
+            context: StyleContext::InlineSafe,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "text-decoration-color",
+            ir_field: Some(IrField::UnderlineColor),
+            kfx_symbol: KfxSymbol::UnderlineColor,
+            transform: ValueTransform::ParseColor {
+                output_format: ColorFormat::PackedInt,
+            },
+            context: StyleContext::InlineSafe,
+        });
+
+        // ====================================================================
+        // Phase 3: Layout Properties
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "width",
+            ir_field: Some(IrField::Width),
+            kfx_symbol: KfxSymbol::Width,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "height",
+            ir_field: Some(IrField::Height),
+            kfx_symbol: KfxSymbol::Height,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "max-width",
+            ir_field: Some(IrField::MaxWidth),
+            kfx_symbol: KfxSymbol::MaxWidth,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "min-height",
+            ir_field: Some(IrField::MinHeight),
+            kfx_symbol: KfxSymbol::MinHeight,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "float",
+            ir_field: Some(IrField::Float),
+            kfx_symbol: KfxSymbol::Float,
+            transform: ValueTransform::Map(vec![
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("left".into(), KfxValue::Symbol(KfxSymbol::Left)),
+                ("right".into(), KfxValue::Symbol(KfxSymbol::Right)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 4: Page Break Properties
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "break-before",
+            ir_field: Some(IrField::BreakBefore),
+            kfx_symbol: KfxSymbol::BreakBefore,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
+                ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
+                ("column".into(), KfxValue::Symbol(KfxSymbol::Column)),
+                // Legacy CSS2 page-break-* values
+                ("page".into(), KfxValue::Symbol(KfxSymbol::Always)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "break-after",
+            ir_field: Some(IrField::BreakAfter),
+            kfx_symbol: KfxSymbol::BreakAfter,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
+                ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
+                ("column".into(), KfxValue::Symbol(KfxSymbol::Column)),
+                ("page".into(), KfxValue::Symbol(KfxSymbol::Always)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "break-inside",
+            ir_field: Some(IrField::BreakInside),
+            kfx_symbol: KfxSymbol::BreakInside,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // Kindle-specific break properties (yj_break_before/after)
+        // These use the same IR fields but different KFX symbols
+        schema.register(StylePropertyRule {
+            ir_key: "yj-break-before",
+            ir_field: Some(IrField::BreakBefore),
+            kfx_symbol: KfxSymbol::YjBreakBefore,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
+                ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "yj-break-after",
+            ir_field: Some(IrField::BreakAfter),
+            kfx_symbol: KfxSymbol::YjBreakAfter,
+            transform: ValueTransform::Map(vec![
+                ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
+                ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
+                ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 5: Border Properties
+        // ====================================================================
+
+        // Border style transform (shared by all sides)
+        let border_style_transform = ValueTransform::Map(vec![
+            ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+            ("solid".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+            ("dotted".into(), KfxValue::Symbol(KfxSymbol::Dotted)),
+            ("dashed".into(), KfxValue::Symbol(KfxSymbol::Dashed)),
+            ("double".into(), KfxValue::Symbol(KfxSymbol::Double)),
+            ("groove".into(), KfxValue::Symbol(KfxSymbol::Groove)),
+            ("ridge".into(), KfxValue::Symbol(KfxSymbol::Ridge)),
+            ("inset".into(), KfxValue::Symbol(KfxSymbol::Inset)),
+            ("outset".into(), KfxValue::Symbol(KfxSymbol::Outset)),
+        ]);
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-top-style",
+            ir_field: Some(IrField::BorderStyleTop),
+            kfx_symbol: KfxSymbol::BorderStyleTop,
+            transform: border_style_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-right-style",
+            ir_field: Some(IrField::BorderStyleRight),
+            kfx_symbol: KfxSymbol::BorderStyleRight,
+            transform: border_style_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-bottom-style",
+            ir_field: Some(IrField::BorderStyleBottom),
+            kfx_symbol: KfxSymbol::BorderStyleBottom,
+            transform: border_style_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-left-style",
+            ir_field: Some(IrField::BorderStyleLeft),
+            kfx_symbol: KfxSymbol::BorderStyleLeft,
+            transform: border_style_transform,
+            context: StyleContext::BlockOnly,
+        });
+
+        // Border widths
+        let border_width_transform = ValueTransform::ConvertToDimensioned {
+            base_pixels: DEFAULT_BASE_FONT_SIZE,
+            target_unit: KfxSymbol::Em,
+        };
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-top-width",
+            ir_field: Some(IrField::BorderWidthTop),
+            kfx_symbol: KfxSymbol::BorderWeightTop,
+            transform: border_width_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-right-width",
+            ir_field: Some(IrField::BorderWidthRight),
+            kfx_symbol: KfxSymbol::BorderWeightRight,
+            transform: border_width_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-bottom-width",
+            ir_field: Some(IrField::BorderWidthBottom),
+            kfx_symbol: KfxSymbol::BorderWeightBottom,
+            transform: border_width_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-left-width",
+            ir_field: Some(IrField::BorderWidthLeft),
+            kfx_symbol: KfxSymbol::BorderWeightLeft,
+            transform: border_width_transform,
+            context: StyleContext::BlockOnly,
+        });
+
+        // Border colors
+        let border_color_transform = ValueTransform::ParseColor {
+            output_format: ColorFormat::PackedInt,
+        };
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-top-color",
+            ir_field: Some(IrField::BorderColorTop),
+            kfx_symbol: KfxSymbol::BorderColorTop,
+            transform: border_color_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-right-color",
+            ir_field: Some(IrField::BorderColorRight),
+            kfx_symbol: KfxSymbol::BorderColorRight,
+            transform: border_color_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-bottom-color",
+            ir_field: Some(IrField::BorderColorBottom),
+            kfx_symbol: KfxSymbol::BorderColorBottom,
+            transform: border_color_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-left-color",
+            ir_field: Some(IrField::BorderColorLeft),
+            kfx_symbol: KfxSymbol::BorderColorLeft,
+            transform: border_color_transform,
+            context: StyleContext::BlockOnly,
+        });
+
+        // Border radius
+        let border_radius_transform = ValueTransform::ConvertToDimensioned {
+            base_pixels: DEFAULT_BASE_FONT_SIZE,
+            target_unit: KfxSymbol::Em,
+        };
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-top-left-radius",
+            ir_field: Some(IrField::BorderRadiusTopLeft),
+            kfx_symbol: KfxSymbol::BorderRadiusTopLeft,
+            transform: border_radius_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-top-right-radius",
+            ir_field: Some(IrField::BorderRadiusTopRight),
+            kfx_symbol: KfxSymbol::BorderRadiusTopRight,
+            transform: border_radius_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-bottom-left-radius",
+            ir_field: Some(IrField::BorderRadiusBottomLeft),
+            kfx_symbol: KfxSymbol::BorderRadiusBottomLeft,
+            transform: border_radius_transform.clone(),
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "border-bottom-right-radius",
+            ir_field: Some(IrField::BorderRadiusBottomRight),
+            kfx_symbol: KfxSymbol::BorderRadiusBottomRight,
+            transform: border_radius_transform,
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 6: List Properties
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "list-style-position",
+            ir_field: Some(IrField::ListStylePosition),
+            kfx_symbol: KfxSymbol::ListStylePosition,
+            transform: ValueTransform::Map(vec![
+                ("outside".into(), KfxValue::Symbol(KfxSymbol::Outside)),
+                ("inside".into(), KfxValue::Symbol(KfxSymbol::Inside)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 7: Amazon Properties
+        // ====================================================================
+
+        // Language (maps to HTML lang attribute in CSS, stored as string in KFX)
+        schema.register(StylePropertyRule {
+            ir_key: "language",
+            ir_field: Some(IrField::Language),
+            kfx_symbol: KfxSymbol::Language,
+            transform: ValueTransform::Identity,
+            context: StyleContext::Any,
+        });
+
+        // Visibility
+        schema.register(StylePropertyRule {
+            ir_key: "visibility",
+            ir_field: Some(IrField::Visibility),
+            kfx_symbol: KfxSymbol::Visibility,
+            transform: ValueTransform::Map(vec![
+                ("visible".into(), KfxValue::Symbol(KfxSymbol::Show)),
+                ("hidden".into(), KfxValue::Symbol(KfxSymbol::Hide)),
+                ("collapse".into(), KfxValue::Symbol(KfxSymbol::Hide)),
+            ]),
+            context: StyleContext::Any,
         });
 
         schema
@@ -1044,6 +1524,222 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        // Phase 1: Text properties
+        IrField::LetterSpacing => {
+            if ir_style.letter_spacing != default.letter_spacing {
+                Some(ir_style.letter_spacing.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::WordSpacing => {
+            if ir_style.word_spacing != default.word_spacing {
+                Some(ir_style.word_spacing.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::TextTransform => {
+            if ir_style.text_transform != default.text_transform {
+                Some(ir_style.text_transform.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::Hyphens => {
+            if ir_style.hyphens != default.hyphens {
+                Some(ir_style.hyphens.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::NoBreak => {
+            if ir_style.no_break {
+                Some("nowrap".to_string())
+            } else {
+                None
+            }
+        }
+        // Phase 2: Text decoration extensions
+        IrField::UnderlineStyle => {
+            if ir_style.underline_style != default.underline_style {
+                Some(ir_style.underline_style.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::Overline => {
+            if ir_style.overline {
+                Some("solid".to_string())
+            } else {
+                None
+            }
+        }
+        IrField::UnderlineColor => ir_style.underline_color.map(|c| c.to_css_string()),
+        // Phase 3: Layout properties
+        IrField::Width => {
+            if ir_style.width != default.width {
+                Some(ir_style.width.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::Height => {
+            if ir_style.height != default.height {
+                Some(ir_style.height.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::MaxWidth => {
+            if ir_style.max_width != default.max_width {
+                Some(ir_style.max_width.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::MinHeight => {
+            if ir_style.min_height != default.min_height {
+                Some(ir_style.min_height.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::Float => {
+            if ir_style.float != default.float {
+                Some(ir_style.float.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 4: Page break properties
+        IrField::BreakBefore => {
+            if ir_style.break_before != default.break_before {
+                Some(ir_style.break_before.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BreakAfter => {
+            if ir_style.break_after != default.break_after {
+                Some(ir_style.break_after.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BreakInside => {
+            if ir_style.break_inside != default.break_inside {
+                Some(ir_style.break_inside.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 5: Border properties
+        IrField::BorderStyleTop => {
+            if ir_style.border_style_top != default.border_style_top {
+                Some(ir_style.border_style_top.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderStyleRight => {
+            if ir_style.border_style_right != default.border_style_right {
+                Some(ir_style.border_style_right.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderStyleBottom => {
+            if ir_style.border_style_bottom != default.border_style_bottom {
+                Some(ir_style.border_style_bottom.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderStyleLeft => {
+            if ir_style.border_style_left != default.border_style_left {
+                Some(ir_style.border_style_left.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderWidthTop => {
+            if ir_style.border_width_top != default.border_width_top {
+                Some(ir_style.border_width_top.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderWidthRight => {
+            if ir_style.border_width_right != default.border_width_right {
+                Some(ir_style.border_width_right.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderWidthBottom => {
+            if ir_style.border_width_bottom != default.border_width_bottom {
+                Some(ir_style.border_width_bottom.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderWidthLeft => {
+            if ir_style.border_width_left != default.border_width_left {
+                Some(ir_style.border_width_left.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderColorTop => ir_style.border_color_top.map(|c| c.to_css_string()),
+        IrField::BorderColorRight => ir_style.border_color_right.map(|c| c.to_css_string()),
+        IrField::BorderColorBottom => ir_style.border_color_bottom.map(|c| c.to_css_string()),
+        IrField::BorderColorLeft => ir_style.border_color_left.map(|c| c.to_css_string()),
+        IrField::BorderRadiusTopLeft => {
+            if ir_style.border_radius_top_left != default.border_radius_top_left {
+                Some(ir_style.border_radius_top_left.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderRadiusTopRight => {
+            if ir_style.border_radius_top_right != default.border_radius_top_right {
+                Some(ir_style.border_radius_top_right.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderRadiusBottomLeft => {
+            if ir_style.border_radius_bottom_left != default.border_radius_bottom_left {
+                Some(ir_style.border_radius_bottom_left.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderRadiusBottomRight => {
+            if ir_style.border_radius_bottom_right != default.border_radius_bottom_right {
+                Some(ir_style.border_radius_bottom_right.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 6: List properties
+        IrField::ListStylePosition => {
+            if ir_style.list_style_position != default.list_style_position {
+                Some(ir_style.list_style_position.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 7: Amazon properties
+        IrField::Language => ir_style.language.clone(),
+        IrField::Visibility => {
+            if ir_style.visibility != default.visibility {
+                Some(ir_style.visibility.to_css_string())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1272,6 +1968,209 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
         IrField::TextDecorationStrikethrough => {
             ir_style.text_decoration_line_through = css_value == "line-through";
         }
+        // Phase 1: Text properties
+        IrField::LetterSpacing => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.letter_spacing = len;
+            }
+        }
+        IrField::WordSpacing => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.word_spacing = len;
+            }
+        }
+        IrField::TextTransform => {
+            ir_style.text_transform = match css_value {
+                "uppercase" => ir_style::TextTransform::Uppercase,
+                "lowercase" => ir_style::TextTransform::Lowercase,
+                "capitalize" => ir_style::TextTransform::Capitalize,
+                _ => ir_style::TextTransform::None,
+            };
+        }
+        IrField::Hyphens => {
+            ir_style.hyphens = match css_value {
+                "auto" => ir_style::Hyphens::Auto,
+                "manual" => ir_style::Hyphens::Manual,
+                _ => ir_style::Hyphens::None,
+            };
+        }
+        IrField::NoBreak => {
+            ir_style.no_break = css_value == "nowrap";
+        }
+        // Phase 2: Text decoration extensions
+        IrField::UnderlineStyle => {
+            ir_style.underline_style = match css_value {
+                "solid" => ir_style::DecorationStyle::Solid,
+                "dotted" => ir_style::DecorationStyle::Dotted,
+                "dashed" => ir_style::DecorationStyle::Dashed,
+                "double" => ir_style::DecorationStyle::Double,
+                _ => ir_style::DecorationStyle::None,
+            };
+        }
+        IrField::Overline => {
+            ir_style.overline = css_value == "solid" || css_value == "true";
+        }
+        IrField::UnderlineColor => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.underline_color = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        // Phase 3: Layout properties
+        IrField::Width => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.width = len;
+            }
+        }
+        IrField::Height => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.height = len;
+            }
+        }
+        IrField::MaxWidth => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.max_width = len;
+            }
+        }
+        IrField::MinHeight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.min_height = len;
+            }
+        }
+        IrField::Float => {
+            ir_style.float = match css_value {
+                "left" => ir_style::Float::Left,
+                "right" => ir_style::Float::Right,
+                _ => ir_style::Float::None,
+            };
+        }
+        // Phase 4: Page break properties
+        IrField::BreakBefore => {
+            ir_style.break_before = match css_value {
+                "always" | "page" => ir_style::BreakValue::Always,
+                "avoid" => ir_style::BreakValue::Avoid,
+                "column" => ir_style::BreakValue::Column,
+                _ => ir_style::BreakValue::Auto,
+            };
+        }
+        IrField::BreakAfter => {
+            ir_style.break_after = match css_value {
+                "always" | "page" => ir_style::BreakValue::Always,
+                "avoid" => ir_style::BreakValue::Avoid,
+                "column" => ir_style::BreakValue::Column,
+                _ => ir_style::BreakValue::Auto,
+            };
+        }
+        IrField::BreakInside => {
+            ir_style.break_inside = match css_value {
+                "avoid" => ir_style::BreakValue::Avoid,
+                _ => ir_style::BreakValue::Auto,
+            };
+        }
+        // Phase 5: Border properties
+        IrField::BorderStyleTop => {
+            ir_style.border_style_top = parse_border_style(css_value);
+        }
+        IrField::BorderStyleRight => {
+            ir_style.border_style_right = parse_border_style(css_value);
+        }
+        IrField::BorderStyleBottom => {
+            ir_style.border_style_bottom = parse_border_style(css_value);
+        }
+        IrField::BorderStyleLeft => {
+            ir_style.border_style_left = parse_border_style(css_value);
+        }
+        IrField::BorderWidthTop => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_width_top = len;
+            }
+        }
+        IrField::BorderWidthRight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_width_right = len;
+            }
+        }
+        IrField::BorderWidthBottom => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_width_bottom = len;
+            }
+        }
+        IrField::BorderWidthLeft => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_width_left = len;
+            }
+        }
+        IrField::BorderColorTop => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.border_color_top = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::BorderColorRight => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.border_color_right = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::BorderColorBottom => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.border_color_bottom = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::BorderColorLeft => {
+            if let Some((r, g, b)) = parse_css_color(css_value) {
+                ir_style.border_color_left = Some(ir_style::Color::rgb(r, g, b));
+            }
+        }
+        IrField::BorderRadiusTopLeft => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_radius_top_left = len;
+            }
+        }
+        IrField::BorderRadiusTopRight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_radius_top_right = len;
+            }
+        }
+        IrField::BorderRadiusBottomLeft => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_radius_bottom_left = len;
+            }
+        }
+        IrField::BorderRadiusBottomRight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_radius_bottom_right = len;
+            }
+        }
+        // Phase 6: List properties
+        IrField::ListStylePosition => {
+            ir_style.list_style_position = match css_value {
+                "inside" => ir_style::ListStylePosition::Inside,
+                _ => ir_style::ListStylePosition::Outside,
+            };
+        }
+        // Phase 7: Amazon properties
+        IrField::Language => {
+            ir_style.language = Some(css_value.to_string());
+        }
+        IrField::Visibility => {
+            ir_style.visibility = match css_value {
+                "hidden" | "collapse" => ir_style::Visibility::Hidden,
+                _ => ir_style::Visibility::Visible,
+            };
+        }
+    }
+}
+
+/// Parse a CSS border-style value to IR BorderStyle.
+fn parse_border_style(css_value: &str) -> ir_style::BorderStyle {
+    match css_value {
+        "solid" => ir_style::BorderStyle::Solid,
+        "dotted" => ir_style::BorderStyle::Dotted,
+        "dashed" => ir_style::BorderStyle::Dashed,
+        "double" => ir_style::BorderStyle::Double,
+        "groove" => ir_style::BorderStyle::Groove,
+        "ridge" => ir_style::BorderStyle::Ridge,
+        "inset" => ir_style::BorderStyle::Inset,
+        "outset" => ir_style::BorderStyle::Outset,
+        _ => ir_style::BorderStyle::None,
     }
 }
 
@@ -1905,5 +2804,209 @@ mod tests {
 
         let css = transform.inverse(&kfx_value).unwrap();
         assert_eq!(css, "3em");
+    }
+
+    // ========================================================================
+    // Phase 1-7: New Style Properties Tests
+    // ========================================================================
+
+    #[test]
+    fn test_letter_spacing_transform() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("letter-spacing").unwrap();
+
+        // 0.1em should convert to dimensioned value
+        let result = rule.transform.apply("0.1em");
+        assert!(matches!(result, Some(KfxValue::Dimensioned { .. })));
+    }
+
+    #[test]
+    fn test_text_transform_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("text-transform").unwrap();
+
+        assert!(matches!(rule.transform.apply("uppercase"), Some(KfxValue::Symbol(KfxSymbol::Uppercase))));
+        assert!(matches!(rule.transform.apply("lowercase"), Some(KfxValue::Symbol(KfxSymbol::Lowercase))));
+        assert!(matches!(rule.transform.apply("capitalize"), Some(KfxValue::Symbol(KfxSymbol::Titlecase))));
+        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+    }
+
+    #[test]
+    fn test_hyphens_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("hyphens").unwrap();
+
+        assert!(matches!(rule.transform.apply("auto"), Some(KfxValue::Symbol(KfxSymbol::Auto))));
+        assert!(matches!(rule.transform.apply("manual"), Some(KfxValue::Symbol(KfxSymbol::Manual))));
+        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+    }
+
+    #[test]
+    fn test_white_space_nobreak() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("white-space").unwrap();
+
+        assert!(matches!(rule.transform.apply("nowrap"), Some(KfxValue::Bool(true))));
+        assert!(matches!(rule.transform.apply("normal"), Some(KfxValue::Bool(false))));
+    }
+
+    #[test]
+    fn test_break_properties() {
+        let schema = StyleSchema::standard();
+
+        let rule = schema.get("break-before").unwrap();
+        assert!(matches!(rule.transform.apply("always"), Some(KfxValue::Symbol(KfxSymbol::Always))));
+        assert!(matches!(rule.transform.apply("avoid"), Some(KfxValue::Symbol(KfxSymbol::Avoid))));
+        assert!(matches!(rule.transform.apply("auto"), Some(KfxValue::Symbol(KfxSymbol::Auto))));
+
+        let rule = schema.get("break-inside").unwrap();
+        assert!(matches!(rule.transform.apply("avoid"), Some(KfxValue::Symbol(KfxSymbol::Avoid))));
+    }
+
+    #[test]
+    fn test_float_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("float").unwrap();
+
+        assert!(matches!(rule.transform.apply("left"), Some(KfxValue::Symbol(KfxSymbol::Left))));
+        assert!(matches!(rule.transform.apply("right"), Some(KfxValue::Symbol(KfxSymbol::Right))));
+        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+    }
+
+    #[test]
+    fn test_border_style_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("border-top-style").unwrap();
+
+        assert!(matches!(rule.transform.apply("solid"), Some(KfxValue::Symbol(KfxSymbol::Solid))));
+        assert!(matches!(rule.transform.apply("dashed"), Some(KfxValue::Symbol(KfxSymbol::Dashed))));
+        assert!(matches!(rule.transform.apply("dotted"), Some(KfxValue::Symbol(KfxSymbol::Dotted))));
+        assert!(matches!(rule.transform.apply("double"), Some(KfxValue::Symbol(KfxSymbol::Double))));
+        assert!(matches!(rule.transform.apply("groove"), Some(KfxValue::Symbol(KfxSymbol::Groove))));
+        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+    }
+
+    #[test]
+    fn test_list_style_position() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("list-style-position").unwrap();
+
+        assert!(matches!(rule.transform.apply("inside"), Some(KfxValue::Symbol(KfxSymbol::Inside))));
+        assert!(matches!(rule.transform.apply("outside"), Some(KfxValue::Symbol(KfxSymbol::Outside))));
+    }
+
+    #[test]
+    fn test_visibility_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get("visibility").unwrap();
+
+        assert!(matches!(rule.transform.apply("visible"), Some(KfxValue::Symbol(KfxSymbol::Show))));
+        assert!(matches!(rule.transform.apply("hidden"), Some(KfxValue::Symbol(KfxSymbol::Hide))));
+    }
+
+    #[test]
+    fn test_extract_ir_field_letter_spacing() {
+        use crate::ir::{ComputedStyle, Length};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::LetterSpacing), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.letter_spacing = Length::Em(0.1);
+        assert_eq!(extract_ir_field(&styled, IrField::LetterSpacing), Some("0.1em".to_string()));
+    }
+
+    #[test]
+    fn test_extract_ir_field_text_transform() {
+        use crate::ir::{ComputedStyle, TextTransform};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::TextTransform), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.text_transform = TextTransform::Uppercase;
+        assert_eq!(extract_ir_field(&styled, IrField::TextTransform), Some("uppercase".to_string()));
+    }
+
+    #[test]
+    fn test_extract_ir_field_break_before() {
+        use crate::ir::{BreakValue, ComputedStyle};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::BreakBefore), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.break_before = BreakValue::Always;
+        assert_eq!(extract_ir_field(&styled, IrField::BreakBefore), Some("always".to_string()));
+    }
+
+    #[test]
+    fn test_extract_ir_field_border_style() {
+        use crate::ir::{BorderStyle, ComputedStyle};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::BorderStyleTop), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.border_style_top = BorderStyle::Solid;
+        assert_eq!(extract_ir_field(&styled, IrField::BorderStyleTop), Some("solid".to_string()));
+    }
+
+    #[test]
+    fn test_apply_ir_field_text_transform() {
+        use crate::ir::{ComputedStyle, TextTransform};
+
+        let mut style = ComputedStyle::default();
+        apply_ir_field(&mut style, IrField::TextTransform, "uppercase");
+        assert_eq!(style.text_transform, TextTransform::Uppercase);
+
+        apply_ir_field(&mut style, IrField::TextTransform, "lowercase");
+        assert_eq!(style.text_transform, TextTransform::Lowercase);
+
+        apply_ir_field(&mut style, IrField::TextTransform, "capitalize");
+        assert_eq!(style.text_transform, TextTransform::Capitalize);
+    }
+
+    #[test]
+    fn test_apply_ir_field_border_style() {
+        use crate::ir::{BorderStyle, ComputedStyle};
+
+        let mut style = ComputedStyle::default();
+        apply_ir_field(&mut style, IrField::BorderStyleTop, "solid");
+        assert_eq!(style.border_style_top, BorderStyle::Solid);
+
+        apply_ir_field(&mut style, IrField::BorderStyleTop, "dashed");
+        assert_eq!(style.border_style_top, BorderStyle::Dashed);
+
+        apply_ir_field(&mut style, IrField::BorderStyleTop, "groove");
+        assert_eq!(style.border_style_top, BorderStyle::Groove);
+    }
+
+    #[test]
+    fn test_negative_letter_spacing() {
+        use crate::ir::{ComputedStyle, Length};
+
+        // Negative letter-spacing is valid CSS
+        let mut style = ComputedStyle::default();
+        apply_ir_field(&mut style, IrField::LetterSpacing, "-0.05em");
+        assert_eq!(style.letter_spacing, Length::Em(-0.05));
+    }
+
+    #[test]
+    fn test_hyphens_default_is_auto() {
+        use crate::ir::{ComputedStyle, Hyphens};
+
+        // Default is auto for better Kindle reading experience
+        let default = ComputedStyle::default();
+        assert_eq!(default.hyphens, Hyphens::Auto);
+    }
+
+    #[test]
+    fn test_ir_mapped_rules_count() {
+        let schema = StyleSchema::standard();
+
+        // Count rules with IR field mappings (should be ~50+ now with all phases)
+        let mapped_count = schema.ir_mapped_rules().count();
+        assert!(mapped_count >= 40, "Expected >=40 IR-mapped rules, got {}", mapped_count);
     }
 }

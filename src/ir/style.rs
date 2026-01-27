@@ -72,6 +72,178 @@ pub enum FontVariant {
     SmallCaps,
 }
 
+/// Text transform values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TextTransform {
+    #[default]
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+impl ToCss for TextTransform {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            TextTransform::None => "none",
+            TextTransform::Uppercase => "uppercase",
+            TextTransform::Lowercase => "lowercase",
+            TextTransform::Capitalize => "capitalize",
+        });
+    }
+}
+
+/// Hyphenation mode.
+/// Default is `auto` for better reading experience on Kindle devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Hyphens {
+    #[default]
+    Auto,
+    Manual,
+    None,
+}
+
+impl ToCss for Hyphens {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            Hyphens::Auto => "auto",
+            Hyphens::Manual => "manual",
+            Hyphens::None => "none",
+        });
+    }
+}
+
+/// Text decoration line style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DecorationStyle {
+    #[default]
+    None,
+    Solid,
+    Dotted,
+    Dashed,
+    Double,
+}
+
+impl ToCss for DecorationStyle {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            DecorationStyle::None => "none",
+            DecorationStyle::Solid => "solid",
+            DecorationStyle::Dotted => "dotted",
+            DecorationStyle::Dashed => "dashed",
+            DecorationStyle::Double => "double",
+        });
+    }
+}
+
+/// Float positioning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Float {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+impl ToCss for Float {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            Float::None => "none",
+            Float::Left => "left",
+            Float::Right => "right",
+        });
+    }
+}
+
+/// Page break behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BreakValue {
+    #[default]
+    Auto,
+    Always,
+    Avoid,
+    /// Break to a new column (for multi-column layouts)
+    Column,
+}
+
+impl ToCss for BreakValue {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            BreakValue::Auto => "auto",
+            BreakValue::Always => "always",
+            BreakValue::Avoid => "avoid",
+            BreakValue::Column => "column",
+        });
+    }
+}
+
+/// Border style values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BorderStyle {
+    #[default]
+    None,
+    Solid,
+    Dotted,
+    Dashed,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
+}
+
+impl ToCss for BorderStyle {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            BorderStyle::None => "none",
+            BorderStyle::Solid => "solid",
+            BorderStyle::Dotted => "dotted",
+            BorderStyle::Dashed => "dashed",
+            BorderStyle::Double => "double",
+            BorderStyle::Groove => "groove",
+            BorderStyle::Ridge => "ridge",
+            BorderStyle::Inset => "inset",
+            BorderStyle::Outset => "outset",
+        });
+    }
+}
+
+/// List style position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ListStylePosition {
+    #[default]
+    Outside,
+    Inside,
+}
+
+impl ToCss for ListStylePosition {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            ListStylePosition::Outside => "outside",
+            ListStylePosition::Inside => "inside",
+        });
+    }
+}
+
+/// CSS visibility values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Visibility {
+    #[default]
+    Visible,
+    Hidden,
+    Collapse,
+}
+
+impl ToCss for Visibility {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            Visibility::Visible => "visible",
+            Visibility::Hidden => "hidden",
+            Visibility::Collapse => "collapse",
+        });
+    }
+}
+
 impl ToCss for FontVariant {
     fn to_css(&self, buf: &mut String) {
         buf.push_str(match self {
@@ -306,6 +478,62 @@ pub struct ComputedStyle {
 
     // Font variant
     pub font_variant: FontVariant,
+
+    // Text spacing
+    pub letter_spacing: Length,
+    pub word_spacing: Length,
+
+    // Text transform
+    pub text_transform: TextTransform,
+
+    // Hyphenation
+    pub hyphens: Hyphens,
+
+    // No-break (white-space: nowrap)
+    pub no_break: bool,
+
+    // Phase 2: Text decoration extensions
+    pub underline_style: DecorationStyle,
+    pub overline: bool,
+    pub underline_color: Option<Color>,
+
+    // Phase 3: Layout properties
+    pub width: Length,
+    pub height: Length,
+    pub max_width: Length,
+    pub min_height: Length,
+    pub float: Float,
+
+    // Phase 4: Page break properties
+    pub break_before: BreakValue,
+    pub break_after: BreakValue,
+    pub break_inside: BreakValue,
+
+    // Phase 5: Border properties (4 sides)
+    pub border_style_top: BorderStyle,
+    pub border_style_right: BorderStyle,
+    pub border_style_bottom: BorderStyle,
+    pub border_style_left: BorderStyle,
+    pub border_width_top: Length,
+    pub border_width_right: Length,
+    pub border_width_bottom: Length,
+    pub border_width_left: Length,
+    pub border_color_top: Option<Color>,
+    pub border_color_right: Option<Color>,
+    pub border_color_bottom: Option<Color>,
+    pub border_color_left: Option<Color>,
+    // Border radius (corners)
+    pub border_radius_top_left: Length,
+    pub border_radius_top_right: Length,
+    pub border_radius_bottom_left: Length,
+    pub border_radius_bottom_right: Length,
+
+    // Phase 6: List properties
+    pub list_style_position: ListStylePosition,
+
+    // Phase 7: Amazon properties
+    pub language: Option<String>,
+    pub visibility: Visibility,
 }
 
 impl ComputedStyle {
@@ -521,6 +749,219 @@ impl ToCss for ComputedStyle {
             self.font_variant.to_css(buf);
             buf.push_str("; ");
         }
+
+        // Letter spacing
+        if self.letter_spacing != default.letter_spacing {
+            buf.push_str("letter-spacing: ");
+            self.letter_spacing.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Word spacing
+        if self.word_spacing != default.word_spacing {
+            buf.push_str("word-spacing: ");
+            self.word_spacing.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Text transform
+        if self.text_transform != default.text_transform {
+            buf.push_str("text-transform: ");
+            self.text_transform.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Hyphens
+        if self.hyphens != default.hyphens {
+            buf.push_str("hyphens: ");
+            self.hyphens.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // White-space nowrap
+        if self.no_break {
+            buf.push_str("white-space: nowrap; ");
+        }
+
+        // Underline style (if different from boolean)
+        if self.underline_style != default.underline_style {
+            buf.push_str("text-decoration-style: ");
+            self.underline_style.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Overline
+        if self.overline {
+            buf.push_str("text-decoration-line: overline; ");
+        }
+
+        // Underline color
+        if let Some(color) = self.underline_color {
+            buf.push_str("text-decoration-color: ");
+            color.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Width
+        if self.width != default.width {
+            buf.push_str("width: ");
+            self.width.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Height
+        if self.height != default.height {
+            buf.push_str("height: ");
+            self.height.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Max-width
+        if self.max_width != default.max_width {
+            buf.push_str("max-width: ");
+            self.max_width.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Min-height
+        if self.min_height != default.min_height {
+            buf.push_str("min-height: ");
+            self.min_height.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Float
+        if self.float != default.float {
+            buf.push_str("float: ");
+            self.float.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Break before
+        if self.break_before != default.break_before {
+            buf.push_str("break-before: ");
+            self.break_before.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Break after
+        if self.break_after != default.break_after {
+            buf.push_str("break-after: ");
+            self.break_after.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Break inside
+        if self.break_inside != default.break_inside {
+            buf.push_str("break-inside: ");
+            self.break_inside.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Border styles
+        if self.border_style_top != default.border_style_top {
+            buf.push_str("border-top-style: ");
+            self.border_style_top.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_style_right != default.border_style_right {
+            buf.push_str("border-right-style: ");
+            self.border_style_right.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_style_bottom != default.border_style_bottom {
+            buf.push_str("border-bottom-style: ");
+            self.border_style_bottom.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_style_left != default.border_style_left {
+            buf.push_str("border-left-style: ");
+            self.border_style_left.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Border widths
+        if self.border_width_top != default.border_width_top {
+            buf.push_str("border-top-width: ");
+            self.border_width_top.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_width_right != default.border_width_right {
+            buf.push_str("border-right-width: ");
+            self.border_width_right.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_width_bottom != default.border_width_bottom {
+            buf.push_str("border-bottom-width: ");
+            self.border_width_bottom.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_width_left != default.border_width_left {
+            buf.push_str("border-left-width: ");
+            self.border_width_left.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Border colors
+        if let Some(color) = self.border_color_top {
+            buf.push_str("border-top-color: ");
+            color.to_css(buf);
+            buf.push_str("; ");
+        }
+        if let Some(color) = self.border_color_right {
+            buf.push_str("border-right-color: ");
+            color.to_css(buf);
+            buf.push_str("; ");
+        }
+        if let Some(color) = self.border_color_bottom {
+            buf.push_str("border-bottom-color: ");
+            color.to_css(buf);
+            buf.push_str("; ");
+        }
+        if let Some(color) = self.border_color_left {
+            buf.push_str("border-left-color: ");
+            color.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Border radius
+        if self.border_radius_top_left != default.border_radius_top_left {
+            buf.push_str("border-top-left-radius: ");
+            self.border_radius_top_left.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_radius_top_right != default.border_radius_top_right {
+            buf.push_str("border-top-right-radius: ");
+            self.border_radius_top_right.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_radius_bottom_left != default.border_radius_bottom_left {
+            buf.push_str("border-bottom-left-radius: ");
+            self.border_radius_bottom_left.to_css(buf);
+            buf.push_str("; ");
+        }
+        if self.border_radius_bottom_right != default.border_radius_bottom_right {
+            buf.push_str("border-bottom-right-radius: ");
+            self.border_radius_bottom_right.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // List style position
+        if self.list_style_position != default.list_style_position {
+            buf.push_str("list-style-position: ");
+            self.list_style_position.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Visibility
+        if self.visibility != default.visibility {
+            buf.push_str("visibility: ");
+            self.visibility.to_css(buf);
+            buf.push_str("; ");
+        }
+
+        // Language (output as data attribute comment - not standard CSS)
+        // Note: language is stored but typically output via HTML lang attribute
     }
 }
 
