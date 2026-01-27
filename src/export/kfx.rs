@@ -1553,15 +1553,27 @@ fn build_position_map_fragment(
 ) -> KfxFragment {
     let mut entries = Vec::new();
 
-    // Build entries from section_ids and chapter_fragments
-    // Both are indexed the same way (in spine order)
+    // Handle standalone cover section (c0) if present
+    // Cover has no text anchors, just contains its own fragment ID
+    let section_offset = if let Some(cover_fid) = ctx.cover_fragment_id {
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Contains as u64, IonValue::List(vec![IonValue::Int(cover_fid as i64)])),
+            (KfxSymbol::SectionName as u64, IonValue::Symbol(ctx.section_ids[0])),
+        ]);
+        entries.push(entry);
+        1 // Skip c0 when processing spine chapters
+    } else {
+        0
+    };
+
+    // Build entries for spine chapters (skip cover section if present)
     let fragment_ids: Vec<_> = {
         let mut ids: Vec<_> = ctx.chapter_fragments.values().copied().collect();
         ids.sort();
         ids
     };
 
-    for (idx, &section_sym) in ctx.section_ids.iter().enumerate() {
+    for (idx, &section_sym) in ctx.section_ids.iter().skip(section_offset).enumerate() {
         if let Some(&fragment_id) = fragment_ids.get(idx) {
             // Start with the fragment ID itself
             let mut eid_list = vec![IonValue::Int(fragment_id as i64)];
