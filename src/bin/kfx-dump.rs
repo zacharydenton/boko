@@ -705,37 +705,51 @@ fn dump_ion_data_extended(
 /// Convert an Element to Ion text format, using $NNN for unknown symbols
 fn element_to_ion_text(
     elem: &ion_rs::Element,
-    symbols: &[&str],
+    _symbols: &[&str], // Unused: symbol resolution handled by ion_rs catalog
     maps: &ResolutionMaps,
     resolve: bool,
 ) -> String {
-    element_to_ion_text_inner(elem, symbols, maps, resolve, 0, None)
+    element_to_ion_text_inner(elem, maps, resolve, 0, None)
 }
 
-/// Check if a field name is an entity reference field (for entity symbol IDs)
-fn is_entity_ref_field(field_name: &str) -> bool {
-    matches!(field_name,
-        "target" | "anchor" | "section" |
-        "story_name" | "section_name" | "resource_name" | "kfx_id" |
-        "reading_order_start" | "reading_order_end"
-    )
+/// Check if this is an integer entity reference field (for reading_order bounds)
+/// Note: story_name/section_name are typically symbols, not integers
+fn is_int_entity_ref_field(field_name: &str) -> bool {
+    matches!(field_name, "reading_order_start" | "reading_order_end")
 }
 
-/// Check if a field name contains content fragment IDs (for target_position.id)
-fn is_fragment_id_field(field_name: &str) -> bool {
-    matches!(field_name, "id")
+/// Context for tracking parent struct when resolving references
+#[derive(Clone, Copy)]
+struct FieldContext<'a> {
+    /// Current field name (e.g., "id")
+    field_name: Option<&'a str>,
+    /// Whether we're inside a target_position struct
+    in_target_position: bool,
+}
+
+impl<'a> FieldContext<'a> {
+    fn new() -> Self {
+        Self { field_name: None, in_target_position: false }
+    }
+
+    fn with_field(self, name: Option<&'a str>) -> Self {
+        Self {
+            field_name: name,
+            in_target_position: self.in_target_position || name == Some("target_position"),
+        }
+    }
 }
 
 fn element_to_ion_text_inner(
     elem: &ion_rs::Element,
-    symbols: &[&str],
     maps: &ResolutionMaps,
     resolve: bool,
     indent: usize,
-    context_field: Option<&str>,
+    ctx: Option<FieldContext<'_>>,
 ) -> String {
     use ion_rs::IonType;
 
+    let ctx = ctx.unwrap_or_else(FieldContext::new);
     let indent_str = "  ".repeat(indent);
     let mut result = String::new();
 
@@ -764,15 +778,15 @@ fn element_to_ion_text_inner(
                 result.push_str(&i.to_string());
                 // Try to resolve references
                 if resolve {
-                    let field = context_field.unwrap_or("");
-                    // First check fragment_map for content fragment IDs (e.g., target_position.id)
-                    if is_fragment_id_field(field) {
+                    let field = ctx.field_name.unwrap_or("");
+                    // Only resolve "id" fields inside target_position structs
+                    if field == "id" && ctx.in_target_position {
                         if let Some(story_name) = maps.fragment_map.get(&(i as u64)) {
                             result.push_str(&format!(" /* {} */", story_name));
                         }
                     }
-                    // Then check maps for entity symbol IDs
-                    else if is_entity_ref_field(field) {
+                    // Resolve integer entity references (reading_order bounds)
+                    else if is_int_entity_ref_field(field) {
                         if let Some(info) = maps.entity_map.get(&(i as u64)) {
                             if let Some(name) = &info.name {
                                 result.push_str(&format!(" /* {}:{} */", info.entity_type, name));
@@ -858,14 +872,14 @@ fn element_to_ion_text_inner(
                     result.push_str("[]");
                 } else if items.len() == 1 && !matches!(items[0].ion_type(), IonType::Struct | IonType::List) {
                     result.push('[');
-                    result.push_str(&element_to_ion_text_inner(items[0], symbols, maps, resolve, 0, context_field));
+                    result.push_str(&element_to_ion_text_inner(items[0], maps, resolve, 0, Some(ctx)));
                     result.push(']');
                 } else {
                     result.push_str("[\n");
                     let inner_indent = "  ".repeat(indent + 1);
                     for (i, item) in items.iter().enumerate() {
                         result.push_str(&inner_indent);
-                        result.push_str(&element_to_ion_text_inner(item, symbols, maps, resolve, indent + 1, context_field));
+                        result.push_str(&element_to_ion_text_inner(item, maps, resolve, indent + 1, Some(ctx)));
                         if i < items.len() - 1 {
                             result.push(',');
                         }
@@ -881,7 +895,7 @@ fn element_to_ion_text_inner(
         IonType::SExp => {
             if let Some(sexp) = elem.as_sexp() {
                 result.push('(');
-                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_inner(e, symbols, maps, resolve, 0, None)).collect();
+                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_inner(e, maps, resolve, 0, None)).collect();
                 result.push_str(&items.join(" "));
                 result.push(')');
             } else {
@@ -897,7 +911,7 @@ fn element_to_ion_text_inner(
                     result.push_str("{\n");
                     let inner_indent = "  ".repeat(indent + 1);
                     for (i, (name, value)) in fields.iter().enumerate() {
-                        let field_name = if let Some(text) = name.text() {
+                        let field_name_str = if let Some(text) = name.text() {
                             if text.chars().all(|c| c.is_alphanumeric() || c == '_') && !text.is_empty() {
                                 text.to_string()
                             } else {
@@ -907,11 +921,11 @@ fn element_to_ion_text_inner(
                             "$0".to_string()  // Ion format for symbol with unknown text
                         };
                         result.push_str(&inner_indent);
-                        result.push_str(&field_name);
+                        result.push_str(&field_name_str);
                         result.push_str(": ");
-                        // Pass field name as context for entity resolution
-                        let field_text = name.text();
-                        result.push_str(&element_to_ion_text_inner(value, symbols, maps, resolve, indent + 1, field_text));
+                        // Pass field context for resolution (tracks target_position ancestry)
+                        let field_ctx = ctx.with_field(name.text());
+                        result.push_str(&element_to_ion_text_inner(value, maps, resolve, indent + 1, Some(field_ctx)));
                         if i < fields.len() - 1 {
                             result.push(',');
                         }
