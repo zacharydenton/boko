@@ -755,6 +755,9 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Add heading level if this is a heading
                 if let Role::Heading(level) = elem.role {
                     fields.push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
+
+                    // Record heading position with ACTUAL content fragment ID (Fix for navigation)
+                    ctx.record_heading_with_id(level, container_id);
                 }
 
                 // Add list_style for ordered lists

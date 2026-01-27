@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::book::LandmarkType;
+use crate::book::{LandmarkType, TocEntry};
 use crate::import::ChapterId;
 use crate::ir::{NodeId, StyleId};
 
@@ -305,6 +305,9 @@ pub struct AnchorRegistry {
     /// Used for resolving when we encounter the target element
     anchor_to_symbol: HashMap<String, String>,
 
+    /// Symbols that have already been resolved (for deduplication)
+    resolved_symbols: HashSet<String>,
+
     /// Resolved anchors ready for entity emission
     resolved: Vec<AnchorPosition>,
 
@@ -362,8 +365,20 @@ impl AnchorRegistry {
     ///
     /// Call this when we know where an anchor target lives (e.g., when
     /// processing an element with `id="note-1"`).
-    pub fn resolve_anchor(&mut self, anchor_name: &str, fragment_id: u64, offset: usize) {
+    ///
+    /// Accepts either a bare anchor name ("note-1") or a full href
+    /// ("chapter.xhtml#note-1" or "chapter.xhtml"). The fragment is
+    /// extracted automatically if present.
+    pub fn resolve_anchor(&mut self, anchor_or_href: &str, fragment_id: u64, offset: usize) {
+        // Extract fragment if href contains #, otherwise use as-is
+        let anchor_name = extract_fragment(anchor_or_href).unwrap_or(anchor_or_href);
+
         if let Some(symbol) = self.anchor_to_symbol.get(anchor_name).cloned() {
+            // Skip if already resolved (prevents duplicates)
+            if self.resolved_symbols.contains(&symbol) {
+                return;
+            }
+            self.resolved_symbols.insert(symbol.clone());
             self.resolved.push(AnchorPosition {
                 symbol,
                 anchor_name: anchor_name.to_string(),
@@ -376,6 +391,44 @@ impl AnchorRegistry {
     /// Check if an anchor name is needed (has a link pointing to it).
     pub fn is_anchor_needed(&self, anchor_name: &str) -> bool {
         self.anchor_to_symbol.contains_key(anchor_name)
+    }
+
+    /// Create an anchor from content (element with id attribute).
+    ///
+    /// This creates an anchor symbol and resolves it in one step. Use this
+    /// when encountering an element with an id that's a TOC/link target.
+    /// Returns the anchor symbol, or None if already resolved.
+    pub fn create_content_anchor(
+        &mut self,
+        anchor_name: &str,
+        fragment_id: u64,
+        offset: usize,
+    ) -> Option<String> {
+        // Check if already registered via a link
+        let symbol = if let Some(existing) = self.anchor_to_symbol.get(anchor_name) {
+            existing.clone()
+        } else {
+            // Create new anchor symbol
+            let symbol = format!("a{:X}", self.next_anchor_id);
+            self.next_anchor_id += 1;
+            self.anchor_to_symbol.insert(anchor_name.to_string(), symbol.clone());
+            symbol
+        };
+
+        // Skip if already resolved
+        if self.resolved_symbols.contains(&symbol) {
+            return None;
+        }
+
+        self.resolved_symbols.insert(symbol.clone());
+        self.resolved.push(AnchorPosition {
+            symbol: symbol.clone(),
+            anchor_name: anchor_name.to_string(),
+            fragment_id,
+            offset,
+        });
+
+        Some(symbol)
     }
 
     /// Drain all resolved anchors for entity emission.
@@ -392,6 +445,7 @@ impl AnchorRegistry {
     pub fn is_empty(&self) -> bool {
         self.link_to_symbol.is_empty()
     }
+
 }
 
 /// Extract the fragment (anchor) part from an href.
@@ -448,6 +502,9 @@ pub struct ExportContext {
     /// Current chapter being processed (for position tracking).
     current_chapter: Option<ChapterId>,
 
+    /// Current chapter path (e.g., "chapter1.xhtml") for anchor key construction.
+    current_chapter_path: Option<String>,
+
     /// Current fragment ID being built.
     current_fragment_id: u64,
 
@@ -492,6 +549,10 @@ pub struct ExportContext {
     /// Fragment ID for standalone cover section (if EPUB has cover image not in spine).
     /// When Some, c0 is reserved for the cover and spine chapters start at c1.
     pub cover_fragment_id: Option<u64>,
+
+    /// Pre-assigned entity IDs for TOC anchor entities.
+    /// Maps TOC href → anchor entity ID, enabling TOC to point to anchors.
+    pub toc_anchor_entity_ids: HashMap<String, u64>,
 }
 
 /// Position of a heading element for navigation.
@@ -541,6 +602,7 @@ impl ExportContext {
             position_map: HashMap::new(),
             chapter_fragments: HashMap::new(),
             current_chapter: None,
+            current_chapter_path: None,
             current_fragment_id: 0,
             current_text_offset: 0,
             anchor_map: HashMap::new(),
@@ -553,6 +615,7 @@ impl ExportContext {
             nav_container_symbols: NavContainerSymbols::default(),
             heading_positions: Vec::new(),
             cover_fragment_id: None,
+            toc_anchor_entity_ids: HashMap::new(),
         }
     }
 
@@ -651,14 +714,26 @@ impl ExportContext {
         self.chapter_fragments.insert(chapter_id, fragment_id);
         self.path_to_fragment.insert(path.to_string(), fragment_id);
         self.current_chapter = Some(chapter_id);
+        self.current_chapter_path = Some(path.to_string());
         self.current_fragment_id = fragment_id;
         self.current_text_offset = 0;
+
+        // Create chapter-start anchor for TOC entries without fragments (e.g., "chapter1.xhtml")
+        // These point to offset 0 of the chapter
+        if self.is_anchor_needed(path) {
+            if let Some(symbol) = self.anchor_registry.create_content_anchor(path, fragment_id, 0) {
+                // Intern symbol immediately so entity IDs are known for TOC
+                self.symbols.get_or_intern(&symbol);
+            }
+        }
+
         fragment_id
     }
 
     /// End surveying a chapter.
     pub fn end_chapter_survey(&mut self) {
         self.current_chapter = None;
+        self.current_chapter_path = None;
     }
 
     /// Get the fragment ID for a given source path.
@@ -690,6 +765,17 @@ impl ExportContext {
         });
     }
 
+    /// Record heading position during Pass 2 with actual content fragment ID.
+    /// This replaces the Pass 1 recording which used chapter-level IDs.
+    pub fn record_heading_with_id(&mut self, level: u8, fragment_id: u64) {
+        let offset = self.text_accumulator.len();
+        self.heading_positions.push(HeadingPosition {
+            level,
+            fragment_id,
+            offset,
+        });
+    }
+
     /// Register an anchor as needed (it's a link target or TOC destination).
     ///
     /// Call this during the initial survey when encountering href="#anchor".
@@ -697,27 +783,44 @@ impl ExportContext {
         self.needed_anchors.insert(anchor_id.to_string());
     }
 
+    /// Build the full anchor key from an anchor ID.
+    ///
+    /// If there's a current chapter path, returns "chapter.xhtml#anchor_id".
+    /// Otherwise, returns the anchor_id as-is.
+    pub fn build_anchor_key(&self, anchor_id: &str) -> String {
+        if let Some(ref path) = self.current_chapter_path {
+            format!("{}#{}", path, anchor_id)
+        } else {
+            anchor_id.to_string()
+        }
+    }
+
     /// Check if an anchor is needed (has a link pointing to it).
+    ///
+    /// If there's a current chapter path, builds the full key (e.g., "chapter.xhtml#section1").
+    /// Otherwise, checks the anchor_id directly (for chapter-start anchors).
     pub fn is_anchor_needed(&self, anchor_id: &str) -> bool {
-        self.needed_anchors.contains(anchor_id)
+        let full_key = self.build_anchor_key(anchor_id);
+        self.needed_anchors.contains(&full_key)
     }
 
     /// Record position for a node with a specific anchor ID.
     /// Only records if the anchor is actually needed (has incoming links).
     pub fn record_anchor(&mut self, anchor_id: &str, node_id: NodeId) {
+        let full_key = self.build_anchor_key(anchor_id);
+
         // Only create anchors for IDs that are actually link targets
-        if !self.needed_anchors.contains(anchor_id) {
+        if !self.needed_anchors.contains(&full_key) {
             return;
         }
 
-        // Intern the anchor for later lookup
-        self.intern(anchor_id);
+        // Intern the full key for later lookup
+        self.intern(&full_key);
         self.record_position(node_id);
 
-        // Store mapping from anchor_id to position key
+        // Store mapping from full key to position
         if let Some(chapter_id) = self.current_chapter {
-            self.anchor_map
-                .insert(anchor_id.to_string(), (chapter_id, node_id));
+            self.anchor_map.insert(full_key, (chapter_id, node_id));
         }
     }
 
@@ -770,6 +873,57 @@ impl ExportContext {
         let fid_encoded = encode_base32(fragment_id as u32, 4);
         let off_encoded = encode_base32(offset as u32, 10);
         format!("kindle:pos:fid:{}:off:{}", fid_encoded, off_encoded)
+    }
+
+    // =========================================================================
+    // TOC Anchor Management
+    // =========================================================================
+
+    /// Register TOC entries so we know which anchors are needed.
+    ///
+    /// This does NOT create anchor entities - it just marks which element IDs
+    /// are TOC destinations so we create anchors for them during content survey.
+    ///
+    /// Anchors are keyed by full href (e.g., "chapter1.xhtml#section1") to avoid
+    /// collisions when different chapters have the same fragment IDs.
+    pub fn register_toc_anchors(&mut self, entries: &[TocEntry]) {
+        for entry in entries {
+            // Mark the anchor as needed so we create it during content survey
+            // Key by full href to avoid collisions across chapters
+            self.register_needed_anchor(&entry.href);
+
+            // Recurse into children
+            if !entry.children.is_empty() {
+                self.register_toc_anchors(&entry.children);
+            }
+        }
+    }
+
+    /// Compute TOC anchor entity IDs after anchor fragments are built.
+    ///
+    /// Looks up the anchor for each TOC entry and records its entity ID.
+    /// Entity IDs are: KFX_SYMBOL_TABLE_SIZE + position_in_local_symbols
+    pub fn finalize_toc_anchor_entity_ids(&mut self, toc: &[TocEntry]) {
+        let local_syms = self.symbols.local_symbols().to_vec();
+        self.compute_toc_entity_ids_recursive(toc, &local_syms);
+    }
+
+    fn compute_toc_entity_ids_recursive(&mut self, entries: &[TocEntry], local_syms: &[String]) {
+        for entry in entries {
+            // Use full href as anchor key (e.g., "chapter1.xhtml#section1" or "chapter1.xhtml")
+            // This matches how anchors are registered in register_toc_anchors
+            if let Some(symbol) = self.anchor_registry.get_symbol_for_anchor(&entry.href) {
+                if let Some(pos) = local_syms.iter().position(|s| s == symbol) {
+                    let entity_id = (KFX_SYMBOL_TABLE_SIZE + pos) as u64;
+                    self.toc_anchor_entity_ids.insert(entry.href.clone(), entity_id);
+                }
+            }
+
+            // Recurse into children
+            if !entry.children.is_empty() {
+                self.compute_toc_entity_ids_recursive(&entry.children, local_syms);
+            }
+        }
     }
 }
 

@@ -139,7 +139,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 1a. Collect needed anchors FIRST (before survey)
     // Only IDs that are link targets or TOC destinations need anchor entities.
     // This prevents creating anchors for every element ID in the source.
-    collect_needed_anchors_from_toc(book.toc(), &mut ctx);
+    ctx.register_toc_anchors(book.toc());
     for (chapter_id, _) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
             collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
@@ -216,8 +216,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // 1c. Register TOC strings
-    register_toc_symbols(book.toc(), &mut ctx);
+    // 1c. TOC strings are used directly in Ion output, no symbol interning needed
 
     // 1d. Register nav container names as symbols
     ctx.nav_container_symbols.toc = ctx.symbols.get_or_intern("toc");
@@ -239,6 +238,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // After Pass 1: ctx.symbols is COMPLETE, ctx.position_map has all EIDs
+
+    // Compute TOC anchor entity IDs now that all anchor symbols are interned
+    ctx.finalize_toc_anchor_entity_ids(book.toc());
 
     // ========================================================================
     // PASS 2: SYNTHESIS (Generate Ion)
@@ -269,10 +271,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 2d. Document data fragment ($538) - contains document settings
     fragments.push(build_document_data_fragment(&ctx));
 
-    // 2e. Book navigation fragment (uses ctx.position_map for TOC links)
-    fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
-
-    // 2f. Chapter entities - collect separately for proper grouping
+    // 2g. Chapter entities - collect separately for proper grouping
     // Note: This also collects styles during token generation
     let mut section_fragments = Vec::new();
     let mut storyline_fragments = Vec::new();
@@ -303,17 +302,25 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
+    // 2e. Book navigation fragment - built AFTER chapters so heading positions are available
+    fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
+
+    // Add chapter content in reference order: sections, then storylines, then content
+    fragments.extend(section_fragments);
+    fragments.extend(storyline_fragments);
+    fragments.extend(content_fragments);
+
     // 2g. Style entities ($157) - generated AFTER chapters since styles are collected during token generation
     // This includes the default style plus any unique styles found in the content
     let style_fragments = build_style_fragments(&mut ctx);
     fragments.extend(style_fragments);
 
-    // Add chapter content in grouped order: sections, then storylines, then content
-    fragments.extend(section_fragments);
-    fragments.extend(storyline_fragments);
-    fragments.extend(content_fragments);
+    // 2h. Anchor fragments - must come after sections/storylines/content/styles
+    // This matches the reference KFX entity ordering
+    let (anchor_frags, anchor_ids_by_fragment) = build_anchor_fragments(&mut ctx);
+    fragments.extend(anchor_frags);
 
-    // 2f2. Auxiliary data fragments - mark sections as navigation targets
+    // 2i. Auxiliary data fragments - mark sections as navigation targets
     // Generate one auxiliary_data entity per section
     if standalone_cover_path.is_some() {
         fragments.push(build_auxiliary_data_fragment(COVER_SECTION_NAME));
@@ -322,7 +329,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         fragments.push(build_auxiliary_data_fragment(section_name));
     }
 
-    // 2f. Resource fragments (images, fonts, etc.)
+    // 2j. Resource fragments (images, fonts, etc.)
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
@@ -336,12 +343,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // 2g. Anchor fragments (for internal link targets)
-    // Also collect fragment_id → anchor symbol IDs for position_map
-    let (anchor_frags, anchor_ids_by_fragment) = build_anchor_fragments(&mut ctx);
-    fragments.extend(anchor_frags);
-
-    // 2h. Navigation maps for reader functionality
+    // 2k. Navigation maps for reader functionality
     fragments.push(build_position_map_fragment(&ctx, &anchor_ids_by_fragment));
     fragments.push(build_position_id_map_fragment(&ctx));
     fragments.push(build_location_map_fragment(&ctx));
@@ -410,36 +412,32 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     // Record position for this node (for link targets)
     ctx.record_position(node_id);
 
-    // Track heading positions for headings navigation
-    if let Role::Heading(level) = node.role {
-        ctx.record_heading(level);
-    }
+    // Note: Heading positions are recorded during Pass 2 in tokens_to_ion()
+    // where actual content fragment IDs are available.
 
     // If node has an anchor ID, record it for link resolution
     if let Some(anchor_id) = chapter.semantics.id(node_id) {
         ctx.record_anchor(anchor_id, node_id);
 
-        // Also resolve in AnchorRegistry if this anchor is a link target
-        if ctx.anchor_registry.is_anchor_needed(anchor_id) {
-            ctx.anchor_registry.resolve_anchor(
-                anchor_id,
+        // Create anchor entity if this ID is a TOC/link target
+        if ctx.is_anchor_needed(anchor_id) {
+            // Use full key (e.g., "chapter.xhtml#section1") to avoid collisions
+            let full_key = ctx.build_anchor_key(anchor_id);
+            if let Some(symbol) = ctx.anchor_registry.create_content_anchor(
+                &full_key,
                 ctx.current_fragment_id(),
                 ctx.current_text_offset(),
-            );
+            ) {
+                // Intern symbol immediately so entity IDs are known for TOC
+                ctx.intern(&symbol);
+            }
         }
     }
 
-    // Intern semantic attributes
-    if let Some(href) = chapter.semantics.href(node_id) {
-        ctx.intern(href);
-    }
+    // Register resources (src attributes) - creates short names like "e0"
+    // Note: href and alt are used as string values, not symbols
     if let Some(src) = chapter.semantics.src(node_id) {
-        ctx.intern(src);
-        // Also register as resource
         ctx.resource_registry.register(src, &mut ctx.symbols);
-    }
-    if let Some(alt) = chapter.semantics.alt(node_id) {
-        ctx.intern(alt);
     }
 
     // Track text content and advance offset
@@ -452,17 +450,6 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     // Recurse into children
     for child in chapter.children(node_id) {
         survey_node(chapter, child, ctx);
-    }
-}
-
-/// Register TOC strings in the symbol table.
-fn register_toc_symbols(entries: &[crate::book::TocEntry], ctx: &mut ExportContext) {
-    for entry in entries {
-        ctx.intern(&entry.title);
-        ctx.intern(&entry.href);
-        if !entry.children.is_empty() {
-            register_toc_symbols(&entry.children, ctx);
-        }
     }
 }
 
@@ -493,22 +480,6 @@ fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx
     // Recurse into children
     for child in chapter.children(node_id) {
         collect_needed_anchors_from_chapter(chapter, child, ctx);
-    }
-}
-
-/// Collect needed anchors from TOC entries.
-fn collect_needed_anchors_from_toc(entries: &[crate::book::TocEntry], ctx: &mut ExportContext) {
-    for entry in entries {
-        // Extract anchor from href (e.g., "chapter1.xhtml#section2" -> "section2")
-        if let Some(hash_pos) = entry.href.find('#') {
-            let anchor = &entry.href[hash_pos + 1..];
-            if !anchor.is_empty() {
-                ctx.register_needed_anchor(anchor);
-            }
-        }
-        if !entry.children.is_empty() {
-            collect_needed_anchors_from_toc(&entry.children, ctx);
-        }
     }
 }
 
@@ -1019,7 +990,10 @@ fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<IonValue> {
     entries
 }
 
-/// Build TOC entries recursively with resolved positions.
+/// Build TOC entries recursively with anchor entity IDs.
+///
+/// TOC entries point to anchor entity IDs (with offset 0) rather than
+/// directly to content fragment IDs. This matches the reference KFX format.
 fn build_toc_entries_with_positions(
     entries: &[crate::book::TocEntry],
     ctx: &ExportContext,
@@ -1036,13 +1010,22 @@ fn build_toc_entries_with_positions(
             )]);
             fields.push((KfxSymbol::Representation as u64, representation));
 
-            // Resolve target position from href
-            // The href might be "chapter1.xhtml#anchor" or just "chapter1.xhtml"
-            let (fragment_id, offset) = resolve_toc_position(&entry.href, ctx);
+            // Look up the pre-assigned anchor entity ID for this TOC entry
+            // TOC points to anchor entities, which then point to content positions
+            let anchor_entity_id = ctx
+                .toc_anchor_entity_ids
+                .get(&entry.href)
+                .copied()
+                .unwrap_or_else(|| {
+                    // Fallback to direct position if no anchor (shouldn't happen)
+                    let (fid, _) = resolve_toc_position(&entry.href, ctx);
+                    fid
+                });
 
+            // Target position points to anchor entity with offset 0
             let target = IonValue::Struct(vec![
-                (KfxSymbol::Id as u64, IonValue::Int(fragment_id as i64)),
-                (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
+                (KfxSymbol::Id as u64, IonValue::Int(anchor_entity_id as i64)),
+                (KfxSymbol::Offset as u64, IonValue::Int(0)),
             ]);
             fields.push((KfxSymbol::TargetPosition as u64, target));
 
