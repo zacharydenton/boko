@@ -11,8 +11,9 @@ use selectors::parser::Selector;
 
 use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
-    Color, ComputedStyle, Display, FontStyle, FontWeight, Length, ListStyleType, StylePool,
-    TextAlign,
+    BorderStyle, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float, FontStyle,
+    FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, StylePool, TextAlign,
+    TextTransform, Visibility,
 };
 
 /// A parsed CSS stylesheet.
@@ -50,6 +51,16 @@ pub enum PropertyValue {
     String(String),
     Keyword(String),
     None,
+    // Phase 1-7 additions
+    TextTransform(TextTransform),
+    Hyphens(Hyphens),
+    BreakValue(BreakValue),
+    Float(Float),
+    BorderStyle(BorderStyle),
+    ListStylePosition(ListStylePosition),
+    Visibility(Visibility),
+    DecorationStyle(DecorationStyle),
+    Bool(bool),
 }
 
 /// CSS specificity for cascade ordering.
@@ -329,6 +340,58 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
             parse_font_variant(input).unwrap_or(PropertyValue::None)
         }
 
+        // Phase 1: Text properties
+        "letter-spacing" | "word-spacing" => parse_length(input).unwrap_or(PropertyValue::None),
+
+        "text-transform" => parse_text_transform(input).unwrap_or(PropertyValue::None),
+
+        "hyphens" => parse_hyphens(input).unwrap_or(PropertyValue::None),
+
+        "white-space" => parse_white_space(input).unwrap_or(PropertyValue::None),
+
+        // Phase 2: Text decoration extensions
+        "text-decoration-style" => {
+            parse_decoration_style(input).unwrap_or(PropertyValue::None)
+        }
+
+        "text-decoration-color" => parse_color(input).unwrap_or(PropertyValue::None),
+
+        // Phase 3: Layout properties
+        "width" | "height" | "max-width" | "min-height" => {
+            parse_length(input).unwrap_or(PropertyValue::None)
+        }
+
+        "float" => parse_float(input).unwrap_or(PropertyValue::None),
+
+        // Phase 4: Page break properties
+        "break-before" | "break-after" | "page-break-before" | "page-break-after" => {
+            parse_break_value(input).unwrap_or(PropertyValue::None)
+        }
+
+        "break-inside" | "page-break-inside" => {
+            parse_break_inside(input).unwrap_or(PropertyValue::None)
+        }
+
+        // Phase 5: Border properties
+        "border-style" | "border-top-style" | "border-right-style" | "border-bottom-style"
+        | "border-left-style" => parse_border_style(input).unwrap_or(PropertyValue::None),
+
+        "border-width" | "border-top-width" | "border-right-width" | "border-bottom-width"
+        | "border-left-width" | "border-radius" | "border-top-left-radius"
+        | "border-top-right-radius" | "border-bottom-left-radius"
+        | "border-bottom-right-radius" => parse_length(input).unwrap_or(PropertyValue::None),
+
+        "border-color" | "border-top-color" | "border-right-color" | "border-bottom-color"
+        | "border-left-color" => parse_color(input).unwrap_or(PropertyValue::None),
+
+        // Phase 6: List properties
+        "list-style-position" => {
+            parse_list_style_position(input).unwrap_or(PropertyValue::None)
+        }
+
+        // Phase 7: Amazon properties
+        "visibility" => parse_visibility(input).unwrap_or(PropertyValue::None),
+
         _ => {
             // Consume remaining tokens for unknown properties
             while input.next().is_ok() {}
@@ -597,6 +660,137 @@ fn parse_font_variant(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     }
 }
 
+// ============================================================================
+// Phase 1-7: New property parsing functions
+// ============================================================================
+
+fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let transform = match token.as_ref() {
+        "none" => TextTransform::None,
+        "uppercase" => TextTransform::Uppercase,
+        "lowercase" => TextTransform::Lowercase,
+        "capitalize" => TextTransform::Capitalize,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::TextTransform(transform))
+}
+
+fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let hyphens = match token.as_ref() {
+        "auto" => Hyphens::Auto,
+        "manual" => Hyphens::Manual,
+        "none" => Hyphens::None,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::Hyphens(hyphens))
+}
+
+fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "nowrap" | "pre" => Some(PropertyValue::Bool(true)),
+        "normal" | "pre-wrap" | "pre-line" => Some(PropertyValue::Bool(false)),
+        "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(token.to_string())),
+        _ => None,
+    }
+}
+
+fn parse_decoration_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let style = match token.as_ref() {
+        "solid" => DecorationStyle::Solid,
+        "dotted" => DecorationStyle::Dotted,
+        "dashed" => DecorationStyle::Dashed,
+        "double" => DecorationStyle::Double,
+        "none" => DecorationStyle::None,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::DecorationStyle(style))
+}
+
+fn parse_float(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let float = match token.as_ref() {
+        "left" => Float::Left,
+        "right" => Float::Right,
+        "none" => Float::None,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::Float(float))
+}
+
+fn parse_break_value(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let value = match token.as_ref() {
+        "auto" => BreakValue::Auto,
+        "always" | "page" | "left" | "right" | "recto" | "verso" => BreakValue::Always,
+        "avoid" | "avoid-page" => BreakValue::Avoid,
+        "column" | "avoid-column" => BreakValue::Column,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::BreakValue(value))
+}
+
+fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let value = match token.as_ref() {
+        "auto" => BreakValue::Auto,
+        "avoid" | "avoid-page" | "avoid-column" => BreakValue::Avoid,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::BreakValue(value))
+}
+
+fn parse_border_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let style = match token.as_ref() {
+        "none" => BorderStyle::None,
+        "solid" => BorderStyle::Solid,
+        "dotted" => BorderStyle::Dotted,
+        "dashed" => BorderStyle::Dashed,
+        "double" => BorderStyle::Double,
+        "groove" => BorderStyle::Groove,
+        "ridge" => BorderStyle::Ridge,
+        "inset" => BorderStyle::Inset,
+        "outset" => BorderStyle::Outset,
+        "hidden" => BorderStyle::None,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::BorderStyle(style))
+}
+
+fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let position = match token.as_ref() {
+        "inside" => ListStylePosition::Inside,
+        "outside" => ListStylePosition::Outside,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::ListStylePosition(position))
+}
+
+fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let visibility = match token.as_ref() {
+        "visible" => Visibility::Visible,
+        "hidden" => Visibility::Hidden,
+        "collapse" => Visibility::Collapse,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::Visibility(visibility))
+}
+
 /// Compute styles for an element by applying the cascade.
 pub fn compute_styles(
     elem: ElementRef<'_>,
@@ -795,6 +989,219 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
                 };
             }
         }
+
+        // Phase 1: Text properties
+        "letter-spacing" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.letter_spacing = *l;
+            }
+        }
+        "word-spacing" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.word_spacing = *l;
+            }
+        }
+        "text-transform" => {
+            if let PropertyValue::TextTransform(t) = &decl.value {
+                style.text_transform = *t;
+            }
+        }
+        "hyphens" => {
+            if let PropertyValue::Hyphens(h) = &decl.value {
+                style.hyphens = *h;
+            }
+        }
+        "white-space" => {
+            if let PropertyValue::Bool(nowrap) = &decl.value {
+                style.no_break = *nowrap;
+            }
+        }
+
+        // Phase 2: Text decoration extensions
+        "text-decoration-style" => {
+            if let PropertyValue::DecorationStyle(s) = &decl.value {
+                style.underline_style = *s;
+            }
+        }
+        "text-decoration-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.underline_color = Some(*c);
+            }
+        }
+
+        // Phase 3: Layout properties
+        "width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.width = *l;
+            }
+        }
+        "height" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.height = *l;
+            }
+        }
+        "max-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.max_width = *l;
+            }
+        }
+        "min-height" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.min_height = *l;
+            }
+        }
+        "float" => {
+            if let PropertyValue::Float(f) = &decl.value {
+                style.float = *f;
+            }
+        }
+
+        // Phase 4: Page break properties
+        "break-before" | "page-break-before" => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_before = *b;
+            }
+        }
+        "break-after" | "page-break-after" => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_after = *b;
+            }
+        }
+        "break-inside" | "page-break-inside" => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_inside = *b;
+            }
+        }
+
+        // Phase 5: Border properties
+        "border-top-style" => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_top = *s;
+            }
+        }
+        "border-right-style" => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_right = *s;
+            }
+        }
+        "border-bottom-style" => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_bottom = *s;
+            }
+        }
+        "border-left-style" => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_left = *s;
+            }
+        }
+        "border-style" => {
+            // Shorthand: applies to all sides
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_top = *s;
+                style.border_style_right = *s;
+                style.border_style_bottom = *s;
+                style.border_style_left = *s;
+            }
+        }
+        "border-top-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_top = *l;
+            }
+        }
+        "border-right-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_right = *l;
+            }
+        }
+        "border-bottom-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_bottom = *l;
+            }
+        }
+        "border-left-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_left = *l;
+            }
+        }
+        "border-width" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_top = *l;
+                style.border_width_right = *l;
+                style.border_width_bottom = *l;
+                style.border_width_left = *l;
+            }
+        }
+        "border-top-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_top = Some(*c);
+            }
+        }
+        "border-right-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_right = Some(*c);
+            }
+        }
+        "border-bottom-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_bottom = Some(*c);
+            }
+        }
+        "border-left-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_left = Some(*c);
+            }
+        }
+        "border-color" => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_top = Some(*c);
+                style.border_color_right = Some(*c);
+                style.border_color_bottom = Some(*c);
+                style.border_color_left = Some(*c);
+            }
+        }
+        "border-top-left-radius" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_left = *l;
+            }
+        }
+        "border-top-right-radius" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_right = *l;
+            }
+        }
+        "border-bottom-left-radius" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_bottom_left = *l;
+            }
+        }
+        "border-bottom-right-radius" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_bottom_right = *l;
+            }
+        }
+        "border-radius" => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_left = *l;
+                style.border_radius_top_right = *l;
+                style.border_radius_bottom_left = *l;
+                style.border_radius_bottom_right = *l;
+            }
+        }
+
+        // Phase 6: List properties
+        "list-style-position" => {
+            if let PropertyValue::ListStylePosition(p) = &decl.value {
+                style.list_style_position = *p;
+            }
+        }
+
+        // Phase 7: Amazon properties
+        "visibility" => {
+            if let PropertyValue::Visibility(v) = &decl.value {
+                style.visibility = *v;
+            }
+        }
+
         _ => {}
     }
 }
