@@ -349,6 +349,11 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     // Record position for this node (for link targets)
     ctx.record_position(node_id);
 
+    // Track heading positions for headings navigation
+    if let Role::Heading(level) = node.role {
+        ctx.record_heading(level);
+    }
+
     // If node has an anchor ID, record it for link resolution
     if let Some(anchor_id) = chapter.semantics.id(node_id) {
         ctx.record_anchor(anchor_id, node_id);
@@ -802,13 +807,101 @@ fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContex
     KfxFragment::singleton(KfxSymbol::BookNavigation, book_nav)
 }
 
-/// Build headings navigation entries from position_map.
+/// Build headings navigation entries grouped by heading level.
+///
+/// Structure: Each heading level (h2, h3, etc.) gets a nav_unit with nested
+/// entries for all headings of that level.
 fn build_headings_entries(ctx: &ExportContext) -> Vec<IonValue> {
-    // For now, return empty - headings would require tracking heading text
-    // during the survey pass, which we don't currently do
-    // TODO: Track heading positions and labels during Pass 1
-    let _ = ctx;
-    Vec::new()
+    use std::collections::BTreeMap;
+
+    // Group headings by level
+    let mut by_level: BTreeMap<u8, Vec<&crate::kfx::context::HeadingPosition>> = BTreeMap::new();
+    for heading in &ctx.heading_positions {
+        by_level.entry(heading.level).or_default().push(heading);
+    }
+
+    // Convert heading level to KFX symbol
+    fn level_to_symbol(level: u8) -> Option<KfxSymbol> {
+        match level {
+            2 => Some(KfxSymbol::H2),
+            3 => Some(KfxSymbol::H3),
+            4 => Some(KfxSymbol::H4),
+            5 => Some(KfxSymbol::H5),
+            6 => Some(KfxSymbol::H6),
+            _ => None, // h1 not typically used in body
+        }
+    }
+
+    let mut entries = Vec::new();
+
+    for (level, headings) in by_level {
+        let Some(level_symbol) = level_to_symbol(level) else {
+            continue;
+        };
+
+        if headings.is_empty() {
+            continue;
+        }
+
+        // Build nested entries for each heading of this level
+        let nested_entries: Vec<IonValue> = headings
+            .iter()
+            .map(|h| {
+                IonValue::Annotated(
+                    vec![KfxSymbol::NavUnit as u64],
+                    Box::new(IonValue::Struct(vec![
+                        (
+                            KfxSymbol::Representation as u64,
+                            IonValue::Struct(vec![(
+                                KfxSymbol::Label as u64,
+                                IonValue::String("heading-nav-unit".to_string()),
+                            )]),
+                        ),
+                        (
+                            KfxSymbol::TargetPosition as u64,
+                            IonValue::Struct(vec![
+                                (KfxSymbol::Id as u64, IonValue::Int(h.fragment_id as i64)),
+                                (KfxSymbol::Offset as u64, IonValue::Int(h.offset as i64)),
+                            ]),
+                        ),
+                    ])),
+                )
+            })
+            .collect();
+
+        // Use first heading's position for the level entry
+        let first = headings[0];
+
+        // Build the level entry with nested headings
+        let level_entry = IonValue::Annotated(
+            vec![KfxSymbol::NavUnit as u64],
+            Box::new(IonValue::Struct(vec![
+                (
+                    KfxSymbol::LandmarkType as u64,
+                    IonValue::Symbol(level_symbol as u64),
+                ),
+                (
+                    KfxSymbol::Representation as u64,
+                    IonValue::Struct(vec![(
+                        KfxSymbol::Label as u64,
+                        IonValue::String("heading-nav-unit".to_string()),
+                    )]),
+                ),
+                (
+                    KfxSymbol::TargetPosition as u64,
+                    IonValue::Struct(vec![
+                        (KfxSymbol::Id as u64, IonValue::Int(first.fragment_id as i64)),
+                        (KfxSymbol::Offset as u64, IonValue::Int(first.offset as i64)),
+                    ]),
+                ),
+                (KfxSymbol::Entries as u64, IonValue::List(nested_entries)),
+            ])),
+        );
+
+        entries.push(level_entry);
+    }
+
+    entries
 }
 
 /// Build landmarks navigation entries.
@@ -1972,6 +2065,193 @@ mod tests {
 
         // Singleton should use $348 (null) as ID
         assert_eq!(entities[0].id, KfxSymbol::Null as u32);
+    }
+
+    #[test]
+    fn test_build_headings_entries_empty() {
+        let ctx = ExportContext::new();
+        let entries = build_headings_entries(&ctx);
+        assert!(entries.is_empty(), "No headings should produce empty entries");
+    }
+
+    #[test]
+    fn test_build_headings_entries_single_level() {
+        use crate::kfx::context::HeadingPosition;
+
+        let mut ctx = ExportContext::new();
+
+        // Push h2 headings at different positions
+        ctx.heading_positions.push(HeadingPosition {
+            level: 2,
+            fragment_id: 100,
+            offset: 0,
+        });
+        ctx.heading_positions.push(HeadingPosition {
+            level: 2,
+            fragment_id: 100,
+            offset: 50,
+        });
+        ctx.heading_positions.push(HeadingPosition {
+            level: 2,
+            fragment_id: 101,
+            offset: 0,
+        });
+
+        let entries = build_headings_entries(&ctx);
+
+        // Should have 1 level entry (h2)
+        assert_eq!(entries.len(), 1, "Should have one level group for h2");
+
+        // Verify it's a nav_unit with h2 landmark_type
+        if let IonValue::Annotated(annotations, inner) = &entries[0] {
+            assert_eq!(annotations[0], KfxSymbol::NavUnit as u64);
+            if let IonValue::Struct(fields) = inner.as_ref() {
+                // Should have landmark_type = h2
+                let landmark = fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::LandmarkType as u64);
+                assert!(landmark.is_some(), "Should have landmark_type");
+                if let Some((_, IonValue::Symbol(sym))) = landmark {
+                    assert_eq!(*sym, KfxSymbol::H2 as u64);
+                }
+
+                // Should have nested entries
+                let nested = fields.iter().find(|(id, _)| *id == KfxSymbol::Entries as u64);
+                assert!(nested.is_some(), "Should have nested entries");
+                if let Some((_, IonValue::List(list))) = nested {
+                    assert_eq!(list.len(), 3, "Should have 3 nested h2 entries");
+                }
+            }
+        } else {
+            panic!("Expected annotated nav_unit");
+        }
+    }
+
+    #[test]
+    fn test_build_headings_entries_multiple_levels() {
+        use crate::kfx::context::HeadingPosition;
+
+        let mut ctx = ExportContext::new();
+
+        // Push h2, h3, h4 headings
+        ctx.heading_positions.push(HeadingPosition {
+            level: 2,
+            fragment_id: 100,
+            offset: 0,
+        });
+        ctx.heading_positions.push(HeadingPosition {
+            level: 3,
+            fragment_id: 100,
+            offset: 20,
+        });
+        ctx.heading_positions.push(HeadingPosition {
+            level: 4,
+            fragment_id: 101,
+            offset: 0,
+        });
+        ctx.heading_positions.push(HeadingPosition {
+            level: 3,
+            fragment_id: 101,
+            offset: 30,
+        });
+
+        let entries = build_headings_entries(&ctx);
+
+        // Should have 3 level entries (h2, h3, h4)
+        assert_eq!(entries.len(), 3, "Should have three level groups");
+
+        // Verify ordering is by level (BTreeMap ensures h2 < h3 < h4)
+        let levels: Vec<u64> = entries
+            .iter()
+            .filter_map(|e| {
+                if let IonValue::Annotated(_, inner) = e {
+                    if let IonValue::Struct(fields) = inner.as_ref() {
+                        fields
+                            .iter()
+                            .find(|(id, _)| *id == KfxSymbol::LandmarkType as u64)
+                            .and_then(|(_, v)| {
+                                if let IonValue::Symbol(sym) = v {
+                                    Some(*sym)
+                                } else {
+                                    None
+                                }
+                            })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(
+            levels,
+            vec![
+                KfxSymbol::H2 as u64,
+                KfxSymbol::H3 as u64,
+                KfxSymbol::H4 as u64
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_headings_entries_ignores_h1() {
+        use crate::kfx::context::HeadingPosition;
+
+        let mut ctx = ExportContext::new();
+
+        ctx.heading_positions.push(HeadingPosition {
+            level: 1,
+            fragment_id: 100,
+            offset: 0,
+        });
+
+        let entries = build_headings_entries(&ctx);
+        assert!(entries.is_empty(), "h1 should be ignored");
+    }
+
+    #[test]
+    fn test_build_headings_entries_target_position() {
+        use crate::kfx::context::HeadingPosition;
+
+        let mut ctx = ExportContext::new();
+
+        ctx.heading_positions.push(HeadingPosition {
+            level: 2,
+            fragment_id: 12345,
+            offset: 99,
+        });
+
+        let entries = build_headings_entries(&ctx);
+        assert_eq!(entries.len(), 1);
+
+        // Verify target_position has correct id and offset
+        if let IonValue::Annotated(_, inner) = &entries[0] {
+            if let IonValue::Struct(fields) = inner.as_ref() {
+                let target = fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::TargetPosition as u64);
+                if let Some((_, IonValue::Struct(pos_fields))) = target {
+                    let id_field = pos_fields.iter().find(|(id, _)| *id == KfxSymbol::Id as u64);
+                    let offset_field = pos_fields
+                        .iter()
+                        .find(|(id, _)| *id == KfxSymbol::Offset as u64);
+
+                    if let Some((_, IonValue::Int(id))) = id_field {
+                        assert_eq!(*id, 12345);
+                    } else {
+                        panic!("Expected Int id");
+                    }
+
+                    if let Some((_, IonValue::Int(offset))) = offset_field {
+                        assert_eq!(*offset, 99);
+                    } else {
+                        panic!("Expected Int offset");
+                    }
+                }
+            }
+        }
     }
 }
 

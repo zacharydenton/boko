@@ -484,6 +484,21 @@ pub struct ExportContext {
 
     /// Nav container name symbols (registered during Pass 1).
     pub nav_container_symbols: NavContainerSymbols,
+
+    /// Heading positions tracked during survey for headings navigation.
+    /// Grouped by heading level (2-6, h1 is typically not used in body).
+    pub heading_positions: Vec<HeadingPosition>,
+}
+
+/// Position of a heading element for navigation.
+#[derive(Debug, Clone)]
+pub struct HeadingPosition {
+    /// Heading level (1-6).
+    pub level: u8,
+    /// Fragment ID containing the heading.
+    pub fragment_id: u64,
+    /// Byte offset within the fragment.
+    pub offset: usize,
 }
 
 /// Target position for a landmark.
@@ -532,6 +547,7 @@ impl ExportContext {
             anchor_registry: AnchorRegistry::new(),
             landmark_fragments: HashMap::new(),
             nav_container_symbols: NavContainerSymbols::default(),
+            heading_positions: Vec::new(),
         }
     }
 
@@ -657,6 +673,16 @@ impl ExportContext {
                 },
             );
         }
+    }
+
+    /// Record a heading position for headings navigation.
+    /// Call this when encountering a heading node during Pass 1.
+    pub fn record_heading(&mut self, level: u8) {
+        self.heading_positions.push(HeadingPosition {
+            level,
+            fragment_id: self.current_fragment_id,
+            offset: self.current_text_offset,
+        });
     }
 
     /// Register an anchor as needed (it's a link target or TOC destination).
