@@ -11,6 +11,7 @@ use crate::export::Exporter;
 use crate::import::ChapterId;
 use crate::ir::{IRChapter, NodeId, Role};
 use crate::kfx::context::{ExportContext, LandmarkTarget};
+use crate::kfx::cover::{build_cover_section, is_image_only_chapter, needs_standalone_cover, normalize_cover_path};
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::serialization::{
@@ -80,7 +81,30 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // NO ION GENERATION HERE!
     // ========================================================================
 
-    // Collect spine info first to avoid borrow conflicts
+    // Check if we need a standalone cover section
+    // This happens when the EPUB cover image differs from the first spine chapter's image
+    let asset_paths: Vec<_> = book.list_assets();
+    let cover_image = book.metadata().cover_image.clone();
+    let first_chapter_id = book.spine().first().map(|e| e.id);
+
+    let standalone_cover_path: Option<String> = match (cover_image, first_chapter_id) {
+        (Some(cover_img), Some(first_id)) => {
+            let normalized = normalize_cover_path(&cover_img, &asset_paths);
+            book.load_chapter(first_id).ok().and_then(|first_chapter| {
+                if needs_standalone_cover(&normalized, &first_chapter) {
+                    Some(normalized)
+                } else {
+                    None
+                }
+            })
+        }
+        _ => None,
+    };
+
+    // If standalone cover needed, section offset starts at 1 (c0 reserved for cover)
+    let section_offset = if standalone_cover_path.is_some() { 1 } else { 0 };
+
+    // Collect spine info with appropriate offset
     // Generate clean short section names (like 'c0', 'c1', etc.)
     let spine_info: Vec<_> = book
         .spine()
@@ -88,10 +112,28 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         .enumerate()
         .map(|(idx, entry)| {
             // Use short identifiers like the reference KFX files do
-            let section_name = format!("c{}", idx);
+            let section_name = format!("c{}", idx + section_offset);
             (entry.id, section_name)
         })
         .collect();
+
+    // Register cover section (c0) in Pass 1 if standalone cover is needed
+    // This ensures it appears in reading_orders.sections and landmarks point to it
+    if standalone_cover_path.is_some() {
+        ctx.register_section("c0");
+        // Assign fragment ID for cover section now (used by landmarks)
+        let cover_section_id = ctx.next_fragment_id();
+        ctx.cover_fragment_id = Some(cover_section_id);
+        // Register Cover landmark pointing to the standalone cover section
+        ctx.landmark_fragments.insert(
+            LandmarkType::Cover,
+            LandmarkTarget {
+                fragment_id: cover_section_id,
+                offset: 0,
+                label: "cover-nav-unit".to_string(),
+            },
+        );
+    }
 
     // 1a. Collect needed anchors FIRST (before survey)
     // Only IDs that are link targets or TOC destinations need anchor entities.
@@ -234,6 +276,15 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     let mut section_fragments = Vec::new();
     let mut storyline_fragments = Vec::new();
     let mut content_fragments = Vec::new();
+
+    // Generate standalone cover section if needed (c0)
+    // Note: cover_fragment_id was assigned in Pass 1 for landmark resolution
+    if let Some(ref cover_path) = standalone_cover_path {
+        let section_id = ctx.cover_fragment_id.expect("cover_fragment_id should be set in Pass 1");
+        let (section, storyline) = build_cover_section(cover_path, section_id, &mut ctx);
+        section_fragments.push(section);
+        storyline_fragments.push(storyline);
+    }
 
     for (chapter_id, section_name) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
@@ -1712,45 +1763,6 @@ fn resolve_landmarks_from_ir(
             }
         }
     }
-}
-
-/// Check if a chapter contains only an image and no text content.
-///
-/// Returns true if the chapter has:
-/// - Exactly one Image node
-/// - No text content (or whitespace-only text)
-///
-/// This is used to detect cover pages that need special KFX formatting.
-fn is_image_only_chapter(chapter: &IRChapter) -> bool {
-    use crate::ir::Role;
-
-    let mut image_count = 0;
-    let mut has_text = false;
-
-    for node_id in chapter.iter_dfs() {
-        let node = match chapter.node(node_id) {
-            Some(n) => n,
-            None => continue,
-        };
-
-        match node.role {
-            Role::Image => {
-                image_count += 1;
-            }
-            Role::Text => {
-                // Check if there's actual text content (not just whitespace)
-                if !node.text.is_empty() {
-                    let text = chapter.text(node.text);
-                    if !text.trim().is_empty() {
-                        has_text = true;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    image_count == 1 && !has_text
 }
 
 /// Serialize fragments to entities.

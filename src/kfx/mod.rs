@@ -18,9 +18,11 @@
 //! - `context` - Export context for central state management
 //! - `style_schema` - Declarative style property mapping
 //! - `style_registry` - Style deduplication and ID assignment
+//! - `cover` - Cover section detection and generation
 
 pub mod container;
 pub mod context;
+pub mod cover;
 pub mod fragment;
 pub mod ion;
 pub mod metadata;

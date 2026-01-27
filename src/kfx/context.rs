@@ -488,6 +488,10 @@ pub struct ExportContext {
     /// Heading positions tracked during survey for headings navigation.
     /// Grouped by heading level (2-6, h1 is typically not used in body).
     pub heading_positions: Vec<HeadingPosition>,
+
+    /// Fragment ID for standalone cover section (if EPUB has cover image not in spine).
+    /// When Some, c0 is reserved for the cover and spine chapters start at c1.
+    pub cover_fragment_id: Option<u64>,
 }
 
 /// Position of a heading element for navigation.
@@ -548,6 +552,7 @@ impl ExportContext {
             landmark_fragments: HashMap::new(),
             nav_container_symbols: NavContainerSymbols::default(),
             heading_positions: Vec::new(),
+            cover_fragment_id: None,
         }
     }
 
