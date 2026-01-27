@@ -312,8 +312,10 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
     match property {
         "color" | "background-color" => parse_color(input).unwrap_or(PropertyValue::None),
 
-        "font-size" | "margin" | "margin-top" | "margin-bottom" | "margin-left"
-        | "margin-right" | "padding" | "padding-top" | "padding-bottom" | "padding-left"
+        "font-size" => parse_font_size(input).unwrap_or(PropertyValue::None),
+
+        "margin" | "margin-top" | "margin-bottom" | "margin-left" | "margin-right"
+        | "padding" | "padding-top" | "padding-bottom" | "padding-left"
         | "padding-right" | "text-indent" | "line-height" => {
             parse_length(input).unwrap_or(PropertyValue::None)
         }
@@ -517,6 +519,35 @@ fn parse_length(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
         },
         _ => None,
     }
+}
+
+/// Parse font-size, including keywords like 'smaller' and 'larger'.
+fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    // First try to parse as a keyword
+    if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
+        let length = match token.as_ref() {
+            // Relative sizes: smaller = 0.833em, larger = 1.2em
+            "smaller" => Length::Em(0.833333),
+            "larger" => Length::Em(1.2),
+            // Absolute sizes (approximate em values)
+            "xx-small" => Length::Em(0.5625),
+            "x-small" => Length::Em(0.625),
+            "small" => Length::Em(0.833333),
+            "medium" => Length::Em(1.0),
+            "large" => Length::Em(1.125),
+            "x-large" => Length::Em(1.5),
+            "xx-large" => Length::Em(2.0),
+            "xxx-large" => Length::Em(3.0),
+            "inherit" | "initial" | "unset" => {
+                return Some(PropertyValue::Keyword(token.to_string()))
+            }
+            _ => return None,
+        };
+        return Some(PropertyValue::Length(length));
+    }
+
+    // Fall back to parsing as a length
+    parse_length(input)
 }
 
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
