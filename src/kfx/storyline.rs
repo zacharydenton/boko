@@ -405,9 +405,10 @@ fn build_text_with_spans(
     let mut pos = 0;
 
     for span in sorted_spans {
-        // Snap byte offsets to valid UTF-8 char boundaries
-        let span_start = snap_to_char_boundary(text, span.offset);
-        let span_end = snap_to_char_boundary(text, span.offset + span.length);
+        // KFX style_events use character offsets, not byte offsets
+        // Convert char offset to byte offset for string slicing
+        let span_start = char_to_byte_offset(text, span.offset);
+        let span_end = char_to_byte_offset(text, span.offset + span.length);
 
         // Add text before this span
         if span_start > pos {
@@ -448,22 +449,15 @@ fn build_text_with_spans(
     }
 }
 
-/// Snap a byte offset to the nearest valid UTF-8 char boundary.
-fn snap_to_char_boundary(text: &str, byte_offset: usize) -> usize {
-    if byte_offset >= text.len() {
-        return text.len();
-    }
-
-    if text.is_char_boundary(byte_offset) {
-        return byte_offset;
-    }
-
-    // Search backwards for a valid boundary
-    let mut pos = byte_offset;
-    while pos > 0 && !text.is_char_boundary(pos) {
-        pos -= 1;
-    }
-    pos
+/// Convert a character (code point) offset to a byte offset.
+///
+/// KFX style_events use character offsets, not byte offsets. This function
+/// converts the char offset to a byte offset for string slicing.
+fn char_to_byte_offset(text: &str, char_offset: usize) -> usize {
+    text.char_indices()
+        .nth(char_offset)
+        .map(|(byte_idx, _)| byte_idx)
+        .unwrap_or(text.len())
 }
 
 // ============================================================================
@@ -1117,19 +1111,25 @@ mod tests {
     }
 
     #[test]
-    fn test_snap_to_char_boundary() {
+    fn test_char_to_byte_offset() {
         let text = "Hello ὑπόληψις world";
 
-        // Valid boundary
-        assert_eq!(snap_to_char_boundary(text, 0), 0);
-        assert_eq!(snap_to_char_boundary(text, 5), 5);
+        // ASCII chars: byte offset = char offset
+        assert_eq!(char_to_byte_offset(text, 0), 0); // 'H'
+        assert_eq!(char_to_byte_offset(text, 5), 5); // ' '
 
-        // Past end
-        assert_eq!(snap_to_char_boundary(text, 100), text.len());
+        // Greek chars start at char 6, byte 6
+        // Each Greek char is 3 bytes (extended Greek), so:
+        // char 6 = byte 6 (ὑ)
+        // char 7 = byte 9 (π)
+        // char 13 = byte 21 (ς)
+        // char 14 = byte 23 (' ')
+        assert_eq!(char_to_byte_offset(text, 6), 6); // 'ὑ'
+        assert_eq!(char_to_byte_offset(text, 7), 9); // 'π'
+        assert_eq!(char_to_byte_offset(text, 14), 23); // ' ' after Greek
 
-        // Inside multi-byte char - should snap back
-        let greek_start = text.find('ὑ').unwrap();
-        assert_eq!(snap_to_char_boundary(text, greek_start + 1), greek_start);
+        // Past end returns text.len()
+        assert_eq!(char_to_byte_offset(text, 100), text.len());
     }
 
     #[test]
