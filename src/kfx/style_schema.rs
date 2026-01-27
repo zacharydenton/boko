@@ -2993,12 +2993,12 @@ mod tests {
     }
 
     #[test]
-    fn test_hyphens_default_is_auto() {
+    fn test_hyphens_default_is_manual() {
         use crate::ir::{ComputedStyle, Hyphens};
 
-        // Default is auto for better Kindle reading experience
+        // Default is Manual so explicit hyphens: auto is emitted in KFX output
         let default = ComputedStyle::default();
-        assert_eq!(default.hyphens, Hyphens::Auto);
+        assert_eq!(default.hyphens, Hyphens::Manual);
     }
 
     #[test]

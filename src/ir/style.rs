@@ -94,11 +94,11 @@ impl ToCss for TextTransform {
 }
 
 /// Hyphenation mode.
-/// Default is `auto` for better reading experience on Kindle devices.
+/// Default is `Manual` so that explicit `hyphens: auto` is emitted in KFX output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Hyphens {
-    #[default]
     Auto,
+    #[default]
     Manual,
     None,
 }

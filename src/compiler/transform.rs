@@ -246,8 +246,14 @@ impl<'a> TransformContext<'a> {
         // Find the body element, or use document root
         let body = self.dom.find_by_tag("body").unwrap_or(self.dom.document());
 
-        // Process body's children as children of IR root
-        self.process_children(body, NodeId::ROOT, None);
+        // Compute body's style so its properties (like hyphens: auto) are inherited
+        let body_style = {
+            let elem_ref = ElementRef::new(self.dom, body);
+            compute_styles(elem_ref, self.stylesheets, None, &mut self.chapter.styles)
+        };
+
+        // Process body's children as children of IR root, inheriting body's style
+        self.process_children(body, NodeId::ROOT, Some(&body_style));
 
         self.chapter
     }
