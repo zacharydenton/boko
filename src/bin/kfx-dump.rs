@@ -1,9 +1,17 @@
 use boko::kfx::symbols::KFX_SYMBOL_TABLE;
 use ion_rs::{AnyEncoding, Decoder, ElementReader, IonResult, MapCatalog, Reader, SharedSymbolTable};
+use std::collections::HashMap;
 use std::{env, fs};
 
 /// Ion 1.0 Binary Version Marker
 const ION_BVM: [u8; 4] = [0xE0, 0x01, 0x00, 0xEA];
+
+/// Resolved entity information for better output
+#[derive(Debug, Clone)]
+struct EntityInfo {
+    entity_type: String,
+    name: Option<String>,
+}
 
 /// Build an Ion binary preamble that imports our KFX symbol table.
 /// This allows parsing Ion data that uses KFX symbols without an embedded import.
@@ -37,22 +45,36 @@ fn build_symbol_table_preamble_with_max_id(max_id: i64) -> Vec<u8> {
 
 fn main() -> IonResult<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: kfx-dump <file>");
+
+    let mut resolve = false;
+    let mut path = None;
+
+    for arg in args.iter().skip(1) {
+        if arg == "--resolve" || arg == "-r" {
+            resolve = true;
+        } else if !arg.starts_with('-') {
+            path = Some(arg.clone());
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("Usage: kfx-dump [--resolve] <file>");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  --resolve, -r  Resolve entity ID references to show names");
         eprintln!();
         eprintln!("Dumps KFX/KDF/Ion files. Supports:");
         eprintln!("  - KFX container files (.kfx) - CONT format");
         eprintln!("  - Raw Ion binary files (.kdf, .ion)");
         std::process::exit(1);
-    }
+    };
 
-    let path = &args[1];
-    let data = fs::read(path).expect("Failed to read file");
+    let data = fs::read(&path).expect("Failed to read file");
 
     // Check for KFX container format (starts with "CONT")
     if data.len() >= 4 && &data[0..4] == b"CONT" {
         eprintln!("Detected KFX container format");
-        dump_kfx_container(&data)?;
+        dump_kfx_container(&data, resolve)?;
     } else if data.len() >= 4 && data[0..4] == ION_BVM {
         eprintln!("Detected raw Ion binary format");
         dump_ion_data(&data)?;
@@ -93,7 +115,7 @@ fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
 }
 
 /// Parse and dump a KFX container file
-fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
+fn dump_kfx_container(data: &[u8], resolve: bool) -> IonResult<()> {
     if data.len() < 18 {
         eprintln!("Container too short: {} bytes", data.len());
         return Ok(());
@@ -157,6 +179,17 @@ fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
             eprintln!("Number of entities: {}", num_entries);
             eprintln!();
 
+            // First pass: build resolution maps if resolving
+            let maps = if resolve {
+                build_maps(data, header_len, index_offset, num_entries, &extended_symbols)
+            } else {
+                ResolutionMaps {
+                    entity_map: HashMap::new(),
+                    fragment_map: HashMap::new(),
+                }
+            };
+
+            // Second pass: dump entities
             for i in 0..num_entries {
                 let entry_offset = index_offset + i * entry_size;
                 if entry_offset + entry_size > data.len() {
@@ -184,7 +217,16 @@ fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
                 };
 
                 eprintln!("=== Entity {} ===", i);
-                eprintln!("  ID: ${} ({})", id_idnum, id_name);
+                // Show resolved info if available
+                if let Some(info) = maps.entity_map.get(&(id_idnum as u64)) {
+                    if let Some(name) = &info.name {
+                        eprintln!("  ID: ${} ({}) [{}:{}]", id_idnum, id_name, info.entity_type, name);
+                    } else {
+                        eprintln!("  ID: ${} ({}) [{}]", id_idnum, id_name, info.entity_type);
+                    }
+                } else {
+                    eprintln!("  ID: ${} ({})", id_idnum, id_name);
+                }
                 eprintln!("  Type: ${} ({})", type_idnum, type_name);
                 eprintln!("  Offset: {} (absolute: {})", entity_offset, header_len + entity_offset);
                 eprintln!("  Length: {}", entity_len);
@@ -193,7 +235,7 @@ fn dump_kfx_container(data: &[u8]) -> IonResult<()> {
                 let abs_offset = header_len + entity_offset;
                 if abs_offset + entity_len <= data.len() {
                     let entity_data = &data[abs_offset..abs_offset + entity_len];
-                    dump_entity(entity_data, &extended_symbols)?;
+                    dump_entity(entity_data, &extended_symbols, &maps, resolve)?;
                 }
                 eprintln!();
             }
@@ -306,6 +348,188 @@ fn parse_container_info_for_doc_symbols(data: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
+/// Build entity map for resolving entity ID references.
+/// First pass through all entities to extract type and name info.
+/// Maps for resolving references in KFX files
+struct ResolutionMaps {
+    /// Entity symbol ID → EntityInfo (for entity header display)
+    entity_map: HashMap<u64, EntityInfo>,
+    /// Content fragment ID → storyline name (for target_position resolution)
+    fragment_map: HashMap<u64, String>,
+}
+
+fn build_maps(
+    data: &[u8],
+    header_len: usize,
+    index_offset: usize,
+    num_entries: usize,
+    extended_symbols: &[String],
+) -> ResolutionMaps {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let mut entity_map = HashMap::new();
+    let mut fragment_map = HashMap::new();
+    let entry_size = 24;
+    let base_symbol_count = KFX_SYMBOL_TABLE.len();
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(id_idnum) = read_u32_le(data, entry_offset) else { continue };
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        // Get entity type name
+        let entity_type = if (type_idnum as usize) < KFX_SYMBOL_TABLE.len() {
+            KFX_SYMBOL_TABLE[type_idnum as usize].to_string()
+        } else {
+            format!("${}", type_idnum)
+        };
+
+        // Parse entity to extract name field and fragment IDs
+        let abs_offset = header_len + entity_offset;
+        let mut name: Option<String> = None;
+
+        if abs_offset + entity_len <= data.len() {
+            let entity_data = &data[abs_offset..abs_offset + entity_len];
+
+            // Check for ENTY format
+            if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY" {
+                if let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) {
+                    if entity_header_len < entity_data.len() {
+                        let ion_data = &entity_data[entity_header_len..];
+
+                        let mut parser = IonParser::new(ion_data);
+                        if let Ok(value) = parser.parse() {
+                            name = extract_name_from_ion(&value, extended_symbols, base_symbol_count);
+
+                            // For storyline entities, extract fragment IDs from content_list
+                            if type_idnum == KfxSymbol::Storyline as u32 {
+                                if let Some(story_name) = &name {
+                                    extract_fragment_ids(&value, story_name, &mut fragment_map);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        entity_map.insert(id_idnum as u64, EntityInfo { entity_type, name });
+    }
+
+    ResolutionMaps { entity_map, fragment_map }
+}
+
+/// Extract fragment IDs from storyline content_list and map them to the story name
+fn extract_fragment_ids(value: &boko::kfx::ion::IonValue, story_name: &str, fragment_map: &mut HashMap<u64, String>) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    if let IonValue::Struct(fields) = inner {
+        // Look for content_list field (KfxSymbol::ContentList = 146)
+        for (field_id, field_value) in fields {
+            if *field_id == KfxSymbol::ContentList as u64 {
+                extract_fragment_ids_from_list(field_value, story_name, fragment_map);
+            }
+        }
+    }
+}
+
+/// Recursively extract fragment IDs from a content_list
+fn extract_fragment_ids_from_list(value: &boko::kfx::ion::IonValue, story_name: &str, fragment_map: &mut HashMap<u64, String>) {
+    use boko::kfx::ion::IonValue;
+
+    if let IonValue::List(items) = value {
+        for item in items {
+            extract_id_from_content_item(item, story_name, fragment_map);
+        }
+    }
+}
+
+/// Extract id field from a content_list item struct, and recurse into nested content_lists
+fn extract_id_from_content_item(value: &boko::kfx::ion::IonValue, story_name: &str, fragment_map: &mut HashMap<u64, String>) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    if let IonValue::Struct(fields) = inner {
+        for (field_id, field_value) in fields {
+            if *field_id == KfxSymbol::Id as u64 {
+                if let IonValue::Int(id) = field_value {
+                    fragment_map.insert(*id as u64, story_name.to_string());
+                }
+            }
+            // Recurse into nested content_lists
+            if *field_id == KfxSymbol::ContentList as u64 {
+                extract_fragment_ids_from_list(field_value, story_name, fragment_map);
+            }
+        }
+    }
+}
+
+/// Extract a name field from an Ion value for entity identification
+fn extract_name_from_ion(value: &boko::kfx::ion::IonValue, extended_symbols: &[String], base_symbol_count: usize) -> Option<String> {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    if let IonValue::Struct(fields) = inner {
+        // Look for common name fields
+        for (field_id, field_value) in fields {
+            let field_id = *field_id;
+            if field_id == KfxSymbol::Id as u64
+                || field_id == KfxSymbol::SectionName as u64
+                || field_id == KfxSymbol::StoryName as u64
+                || field_id == KfxSymbol::AnchorName as u64
+            {
+                return ion_value_to_string(field_value, extended_symbols, base_symbol_count);
+            }
+        }
+    }
+
+    None
+}
+
+/// Convert an Ion value to a string representation for display
+fn ion_value_to_string(value: &boko::kfx::ion::IonValue, extended_symbols: &[String], base_symbol_count: usize) -> Option<String> {
+    use boko::kfx::ion::IonValue;
+
+    match value {
+        IonValue::String(s) => Some(s.clone()),
+        IonValue::Symbol(id) => {
+            let id = *id as usize;
+            if id < KFX_SYMBOL_TABLE.len() {
+                Some(KFX_SYMBOL_TABLE[id].to_string())
+            } else if id >= base_symbol_count && id - base_symbol_count < extended_symbols.len() {
+                Some(extended_symbols[id - base_symbol_count].clone())
+            } else {
+                Some(format!("${}", id))
+            }
+        }
+        IonValue::Int(i) => Some(i.to_string()),
+        _ => None,
+    }
+}
+
 /// Extract document-specific symbols from the doc symbols section.
 /// The doc symbols section is Ion binary containing a $ion_symbol_table struct.
 /// We extract the "symbols" list which contains the local symbol names.
@@ -352,7 +576,12 @@ fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
 }
 
 /// Parse and dump an entity (ENTY format)
-fn dump_entity(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
+fn dump_entity(
+    data: &[u8],
+    extended_symbols: &[String],
+    maps: &ResolutionMaps,
+    resolve: bool,
+) -> IonResult<()> {
     if data.len() < 10 {
         eprintln!("  Entity too short");
         return Ok(());
@@ -364,7 +593,7 @@ fn dump_entity(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
         // Maybe it's raw Ion?
         if data[0..4] == ION_BVM {
             eprintln!("  Raw Ion data:");
-            return dump_ion_data_extended(data, extended_symbols);
+            return dump_ion_data_extended(data, extended_symbols, maps, resolve);
         }
         return Ok(());
     }
@@ -387,7 +616,7 @@ fn dump_entity(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
     if entity_header_len < data.len() {
         let ion_data = &data[entity_header_len..];
         eprintln!("  Ion data ({} bytes):", ion_data.len());
-        dump_ion_data_extended(ion_data, extended_symbols)?;
+        dump_ion_data_extended(ion_data, extended_symbols, maps, resolve)?;
     }
 
     Ok(())
@@ -395,11 +624,20 @@ fn dump_entity(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
 
 /// Dump Ion data using the KFX symbol table
 fn dump_ion_data(data: &[u8]) -> IonResult<()> {
-    dump_ion_data_extended(data, &[])
+    let empty_maps = ResolutionMaps {
+        entity_map: HashMap::new(),
+        fragment_map: HashMap::new(),
+    };
+    dump_ion_data_extended(data, &[], &empty_maps, false)
 }
 
 /// Dump Ion data using the KFX symbol table plus extended document symbols
-fn dump_ion_data_extended(data: &[u8], extended_symbols: &[String]) -> IonResult<()> {
+fn dump_ion_data_extended(
+    data: &[u8],
+    extended_symbols: &[String],
+    maps: &ResolutionMaps,
+    resolve: bool,
+) -> IonResult<()> {
     // Build combined symbol table: base KFX symbols + extended doc symbols
     //
     // Our KFX_SYMBOL_TABLE includes Ion system symbols at indices 0-9 which Amazon's
@@ -445,7 +683,7 @@ fn dump_ion_data_extended(data: &[u8], extended_symbols: &[String]) -> IonResult
         match element {
             Ok(elem) => {
                 // Convert to Ion text format
-                let text = element_to_ion_text(&elem, &all_symbols);
+                let text = element_to_ion_text(&elem, &all_symbols, maps, resolve);
                 println!("{}", text);
                 count += 1;
             }
@@ -465,11 +703,37 @@ fn dump_ion_data_extended(data: &[u8], extended_symbols: &[String]) -> IonResult
 }
 
 /// Convert an Element to Ion text format, using $NNN for unknown symbols
-fn element_to_ion_text(elem: &ion_rs::Element, _symbols: &[&str]) -> String {
-    element_to_ion_text_indented(elem, _symbols, 0)
+fn element_to_ion_text(
+    elem: &ion_rs::Element,
+    symbols: &[&str],
+    maps: &ResolutionMaps,
+    resolve: bool,
+) -> String {
+    element_to_ion_text_inner(elem, symbols, maps, resolve, 0, None)
 }
 
-fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], indent: usize) -> String {
+/// Check if a field name is an entity reference field (for entity symbol IDs)
+fn is_entity_ref_field(field_name: &str) -> bool {
+    matches!(field_name,
+        "target" | "anchor" | "section" |
+        "story_name" | "section_name" | "resource_name" | "kfx_id" |
+        "reading_order_start" | "reading_order_end"
+    )
+}
+
+/// Check if a field name contains content fragment IDs (for target_position.id)
+fn is_fragment_id_field(field_name: &str) -> bool {
+    matches!(field_name, "id")
+}
+
+fn element_to_ion_text_inner(
+    elem: &ion_rs::Element,
+    symbols: &[&str],
+    maps: &ResolutionMaps,
+    resolve: bool,
+    indent: usize,
+    context_field: Option<&str>,
+) -> String {
     use ion_rs::IonType;
 
     let indent_str = "  ".repeat(indent);
@@ -498,6 +762,26 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], inden
         IonType::Int => {
             if let Some(i) = elem.as_i64() {
                 result.push_str(&i.to_string());
+                // Try to resolve references
+                if resolve {
+                    let field = context_field.unwrap_or("");
+                    // First check fragment_map for content fragment IDs (e.g., target_position.id)
+                    if is_fragment_id_field(field) {
+                        if let Some(story_name) = maps.fragment_map.get(&(i as u64)) {
+                            result.push_str(&format!(" /* {} */", story_name));
+                        }
+                    }
+                    // Then check maps for entity symbol IDs
+                    else if is_entity_ref_field(field) {
+                        if let Some(info) = maps.entity_map.get(&(i as u64)) {
+                            if let Some(name) = &info.name {
+                                result.push_str(&format!(" /* {}:{} */", info.entity_type, name));
+                            } else {
+                                result.push_str(&format!(" /* {} */", info.entity_type));
+                            }
+                        }
+                    }
+                }
             } else if let Some(i) = elem.as_int() {
                 result.push_str(&format!("{}", i));
             } else {
@@ -574,14 +858,14 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], inden
                     result.push_str("[]");
                 } else if items.len() == 1 && !matches!(items[0].ion_type(), IonType::Struct | IonType::List) {
                     result.push('[');
-                    result.push_str(&element_to_ion_text_indented(items[0], _symbols, 0));
+                    result.push_str(&element_to_ion_text_inner(items[0], symbols, maps, resolve, 0, context_field));
                     result.push(']');
                 } else {
                     result.push_str("[\n");
                     let inner_indent = "  ".repeat(indent + 1);
                     for (i, item) in items.iter().enumerate() {
                         result.push_str(&inner_indent);
-                        result.push_str(&element_to_ion_text_indented(item, _symbols, indent + 1));
+                        result.push_str(&element_to_ion_text_inner(item, symbols, maps, resolve, indent + 1, context_field));
                         if i < items.len() - 1 {
                             result.push(',');
                         }
@@ -597,7 +881,7 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], inden
         IonType::SExp => {
             if let Some(sexp) = elem.as_sexp() {
                 result.push('(');
-                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_indented(e, _symbols, 0)).collect();
+                let items: Vec<_> = sexp.iter().map(|e| element_to_ion_text_inner(e, symbols, maps, resolve, 0, None)).collect();
                 result.push_str(&items.join(" "));
                 result.push(')');
             } else {
@@ -625,7 +909,9 @@ fn element_to_ion_text_indented(elem: &ion_rs::Element, _symbols: &[&str], inden
                         result.push_str(&inner_indent);
                         result.push_str(&field_name);
                         result.push_str(": ");
-                        result.push_str(&element_to_ion_text_indented(value, _symbols, indent + 1));
+                        // Pass field name as context for entity resolution
+                        let field_text = name.text();
+                        result.push_str(&element_to_ion_text_inner(value, symbols, maps, resolve, indent + 1, field_text));
                         if i < fields.len() - 1 {
                             result.push(',');
                         }
