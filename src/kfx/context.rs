@@ -271,7 +271,7 @@ pub struct Position {
     pub offset: usize,
 }
 
-/// Resolved anchor with position information.
+/// Resolved anchor with position information (for internal links).
 #[derive(Debug, Clone)]
 pub struct AnchorPosition {
     /// The anchor symbol name (e.g., "a0", "a1")
@@ -284,6 +284,15 @@ pub struct AnchorPosition {
     pub section_id: u64,
     /// Byte offset within the fragment (0 if at start)
     pub offset: usize,
+}
+
+/// External anchor with URI (for external links like http/https URLs).
+#[derive(Debug, Clone)]
+pub struct ExternalAnchor {
+    /// The anchor symbol name (e.g., "a0", "a1")
+    pub symbol: String,
+    /// The external URI (e.g., "https://standardebooks.org/")
+    pub uri: String,
 }
 
 /// Anchor registry for link resolution in KFX export.
@@ -310,8 +319,11 @@ pub struct AnchorRegistry {
     /// Symbols that have already been resolved (for deduplication)
     resolved_symbols: HashSet<String>,
 
-    /// Resolved anchors ready for entity emission
+    /// Resolved internal anchors ready for entity emission
     resolved: Vec<AnchorPosition>,
+
+    /// External anchors (http/https URLs) ready for entity emission
+    external_anchors: Vec<ExternalAnchor>,
 
     /// Counter for generating unique anchor symbols
     next_anchor_id: usize,
@@ -333,6 +345,7 @@ impl AnchorRegistry {
     /// to use in the `link_to` field of style_events.
     ///
     /// The href can be:
+    /// - External URL: "https://example.com/" (creates uri-based anchor immediately)
     /// - Full path: "chapter2.xhtml#note-1"
     /// - Fragment only: "#note-1"
     /// - Path without fragment: "chapter2.xhtml"
@@ -349,9 +362,18 @@ impl AnchorRegistry {
         // Store href → symbol mapping
         self.link_to_symbol.insert(href.to_string(), symbol.clone());
 
-        // Extract anchor name (fragment) if present and store reverse mapping
-        if let Some(fragment) = extract_fragment(href) {
-            self.anchor_to_symbol.insert(fragment.to_string(), symbol.clone());
+        // Check if this is an external link (http/https URL)
+        if href.starts_with("http://") || href.starts_with("https://") {
+            // External links are resolved immediately with uri
+            self.external_anchors.push(ExternalAnchor {
+                symbol: symbol.clone(),
+                uri: href.to_string(),
+            });
+        } else {
+            // Internal link - extract anchor name (fragment) if present and store reverse mapping
+            if let Some(fragment) = extract_fragment(href) {
+                self.anchor_to_symbol.insert(fragment.to_string(), symbol.clone());
+            }
         }
 
         symbol
@@ -463,9 +485,14 @@ impl AnchorRegistry {
         self.anchor_positions.get(anchor_name).copied()
     }
 
-    /// Drain all resolved anchors for entity emission.
+    /// Drain all resolved internal anchors for entity emission.
     pub fn drain_anchors(&mut self) -> Vec<AnchorPosition> {
         std::mem::take(&mut self.resolved)
+    }
+
+    /// Drain all external anchors for entity emission.
+    pub fn drain_external_anchors(&mut self) -> Vec<ExternalAnchor> {
+        std::mem::take(&mut self.external_anchors)
     }
 
     /// Get the number of registered link targets.

@@ -1502,7 +1502,7 @@ fn build_anchor_fragments(
     let mut fragments = Vec::new();
     let mut anchor_ids_by_fragment: HashMap<u64, Vec<u64>> = HashMap::new();
 
-    // Get resolved anchors from the AnchorRegistry
+    // Get resolved internal anchors from the AnchorRegistry
     let resolved_anchors = ctx.anchor_registry.drain_anchors();
 
     for anchor in resolved_anchors {
@@ -1525,6 +1525,22 @@ fn build_anchor_fragments(
         let ion = IonValue::Struct(vec![
             (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
             (KfxSymbol::Position as u64, IonValue::Struct(pos_fields)),
+        ]);
+
+        fragments.push(KfxFragment::new(KfxSymbol::Anchor, &anchor.symbol, ion));
+    }
+
+    // Get external anchors (http/https links) from the AnchorRegistry
+    let external_anchors = ctx.anchor_registry.drain_external_anchors();
+
+    for anchor in external_anchors {
+        // Intern the anchor symbol to get its ID
+        let anchor_symbol_id = ctx.symbols.get_or_intern(&anchor.symbol);
+
+        // External anchors use uri instead of position
+        let ion = IonValue::Struct(vec![
+            (KfxSymbol::Uri as u64, IonValue::String(anchor.uri.clone())),
+            (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
         ]);
 
         fragments.push(KfxFragment::new(KfxSymbol::Anchor, &anchor.symbol, ion));
