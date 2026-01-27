@@ -1,10 +1,28 @@
 use boko::kfx::symbols::KFX_SYMBOL_TABLE;
+use clap::Parser;
 use ion_rs::{AnyEncoding, Decoder, ElementReader, IonResult, MapCatalog, Reader, SharedSymbolTable};
 use std::collections::HashMap;
-use std::{env, fs};
+use std::fs;
 
 /// Ion 1.0 Binary Version Marker
 const ION_BVM: [u8; 4] = [0xE0, 0x01, 0x00, 0xEA];
+
+/// Dump KFX/KDF/Ion files for debugging
+#[derive(Parser, Debug)]
+#[command(name = "kfx-dump")]
+#[command(about = "Dumps KFX/KDF/Ion files. Supports KFX container files (.kfx) and raw Ion binary files (.kdf, .ion)")]
+struct Args {
+    /// KFX file to dump
+    file: String,
+
+    /// Resolve entity ID references to show names
+    #[arg(short, long)]
+    resolve: bool,
+
+    /// Show statistics (entity counts by type)
+    #[arg(short, long)]
+    stat: bool,
+}
 
 /// Resolved entity information for better output
 #[derive(Debug, Clone)]
@@ -44,38 +62,23 @@ fn build_symbol_table_preamble_with_max_id(max_id: i64) -> Vec<u8> {
 }
 
 fn main() -> IonResult<()> {
-    let args: Vec<String> = env::args().collect();
+    let args = Args::parse();
 
-    let mut resolve = false;
-    let mut path = None;
-
-    for arg in args.iter().skip(1) {
-        if arg == "--resolve" || arg == "-r" {
-            resolve = true;
-        } else if !arg.starts_with('-') {
-            path = Some(arg.clone());
-        }
-    }
-
-    let Some(path) = path else {
-        eprintln!("Usage: kfx-dump [--resolve] <file>");
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  --resolve, -r  Resolve entity ID references to show names");
-        eprintln!();
-        eprintln!("Dumps KFX/KDF/Ion files. Supports:");
-        eprintln!("  - KFX container files (.kfx) - CONT format");
-        eprintln!("  - Raw Ion binary files (.kdf, .ion)");
-        std::process::exit(1);
-    };
-
-    let data = fs::read(&path).expect("Failed to read file");
+    let data = fs::read(&args.file).expect("Failed to read file");
 
     // Check for KFX container format (starts with "CONT")
     if data.len() >= 4 && &data[0..4] == b"CONT" {
-        eprintln!("Detected KFX container format");
-        dump_kfx_container(&data, resolve)?;
+        if args.stat {
+            dump_kfx_stats(&data)?;
+        } else {
+            eprintln!("Detected KFX container format");
+            dump_kfx_container(&data, args.resolve)?;
+        }
     } else if data.len() >= 4 && data[0..4] == ION_BVM {
+        if args.stat {
+            eprintln!("Stats not supported for raw Ion files");
+            std::process::exit(1);
+        }
         eprintln!("Detected raw Ion binary format");
         dump_ion_data(&data)?;
     } else {
@@ -243,6 +246,297 @@ fn dump_kfx_container(data: &[u8], resolve: bool) -> IonResult<()> {
     }
 
     Ok(())
+}
+
+/// Dump statistics for a KFX container (entity counts by type)
+fn dump_kfx_stats(data: &[u8]) -> IonResult<()> {
+    if data.len() < 18 {
+        eprintln!("Container too short: {} bytes", data.len());
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    // Parse container info to get index table location
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data = &data[container_info_offset..container_info_offset + container_info_length];
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data) else {
+        eprintln!("Could not find index table in container info");
+        return Ok(());
+    };
+
+    // Count entities by type and track singleton entity data for detailed stats
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+    let mut type_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_size_by_type: HashMap<String, usize> = HashMap::new();
+    // For singletons: type_name -> (abs_offset, entity_len)
+    let mut singleton_data: HashMap<String, (usize, usize)> = HashMap::new();
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        // Get type name
+        let type_name = if (type_idnum as usize) < KFX_SYMBOL_TABLE.len() {
+            KFX_SYMBOL_TABLE[type_idnum as usize].to_string()
+        } else {
+            format!("${}", type_idnum)
+        };
+
+        let count = type_counts.entry(type_name.clone()).or_insert(0);
+        *count += 1;
+        *total_size_by_type.entry(type_name.clone()).or_insert(0) += entity_len;
+
+        // Track singleton entity locations for detailed parsing
+        if *count == 1 {
+            singleton_data.insert(type_name, (header_len + entity_offset, entity_len));
+        } else {
+            // No longer a singleton
+            singleton_data.remove(&type_name.clone());
+        }
+    }
+
+    // Parse singleton entities to extract list counts
+    let mut singleton_details: HashMap<String, String> = HashMap::new();
+    for (type_name, (abs_offset, entity_len)) in &singleton_data {
+        if abs_offset + entity_len <= data.len() {
+            let entity_data = &data[*abs_offset..*abs_offset + *entity_len];
+            if let Some(detail) = extract_singleton_details(entity_data, type_name) {
+                singleton_details.insert(type_name.clone(), detail);
+            }
+        }
+    }
+
+    // Sort by count (descending), then by name
+    let mut sorted: Vec<_> = type_counts.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+
+    // Calculate totals
+    let total_entities: usize = type_counts.values().sum();
+    let total_size: usize = total_size_by_type.values().sum();
+
+    // Print header
+    println!("{:<25} {:>8} {:>12}  {}", "Type", "Count", "Size", "Details");
+    println!("{}", "-".repeat(70));
+
+    // Print each type
+    for (type_name, count) in sorted {
+        let size = total_size_by_type.get(type_name).unwrap_or(&0);
+        let details = singleton_details.get(type_name).map(|s| s.as_str()).unwrap_or("");
+        println!("{:<25} {:>8} {:>12}  {}", type_name, count, format_size(*size), details);
+    }
+
+    // Print totals
+    println!("{}", "-".repeat(70));
+    println!("{:<25} {:>8} {:>12}", "TOTAL", total_entities, format_size(total_size));
+    println!();
+    println!("Container size: {}", format_size(data.len()));
+
+    Ok(())
+}
+
+/// Extract details from a singleton entity (list counts, etc.)
+fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<String> {
+    use boko::kfx::ion::{IonParser, IonValue};
+    use boko::kfx::symbols::KfxSymbol;
+
+    // Check for ENTY format
+    if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+        return None;
+    }
+
+    let entity_header_len = read_u32_le(entity_data, 6)? as usize;
+    if entity_header_len >= entity_data.len() {
+        return None;
+    }
+
+    let ion_data = &entity_data[entity_header_len..];
+    let mut parser = IonParser::new(ion_data);
+    let value = parser.parse().ok()?;
+
+    // Unwrap annotations
+    let inner = match &value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => &value,
+    };
+
+    match type_name {
+        "location_map" => {
+            // locations list inside a wrapper struct
+            if let IonValue::List(items) = inner {
+                if let Some(IonValue::Struct(fields)) = items.first() {
+                    for (fid, fval) in fields {
+                        if *fid == KfxSymbol::Locations as u64 {
+                            if let IonValue::List(locations) = fval {
+                                return Some(format!("{} locations", locations.len()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "position_id_map" => {
+            // List of {pid, eid} structs
+            if let IonValue::List(items) = inner {
+                return Some(format!("{} entries", items.len()));
+            }
+        }
+        "position_map" => {
+            // List of section entries with contains arrays
+            if let IonValue::List(items) = inner {
+                let mut total_contains = 0;
+                for item in items {
+                    if let IonValue::Struct(fields) = item {
+                        for (fid, fval) in fields {
+                            if *fid == KfxSymbol::Contains as u64 {
+                                if let IonValue::List(contains) = fval {
+                                    total_contains += contains.len();
+                                }
+                            }
+                        }
+                    }
+                }
+                return Some(format!("{} sections, {} refs", items.len(), total_contains));
+            }
+        }
+        "book_navigation" => {
+            // book_navigation is a list containing a struct
+            // First unwrap the list to get the struct
+            let nav_struct = match inner {
+                IonValue::List(items) if !items.is_empty() => {
+                    match &items[0] {
+                        IonValue::Annotated(_, inner) => inner.as_ref(),
+                        other => other,
+                    }
+                }
+                _ => inner,
+            };
+            if let IonValue::Struct(fields) = nav_struct {
+                for (fid, fval) in fields {
+                    // NavContainers = 392
+                    if *fid == 392 {
+                        if let IonValue::List(containers) = fval {
+                            let mut details = Vec::new();
+                            for container in containers {
+                                // Unwrap annotation (nav_container::)
+                                let container_inner = match container {
+                                    IonValue::Annotated(_, inner) => inner.as_ref(),
+                                    _ => container,
+                                };
+                                if let IonValue::Struct(cfields) = container_inner {
+                                    let mut nav_type = None;
+                                    let mut entry_count = 0;
+                                    for (cfid, cfval) in cfields {
+                                        if *cfid == KfxSymbol::NavType as u64 {
+                                            if let IonValue::Symbol(sym) = cfval {
+                                                nav_type = Some(match *sym as u32 {
+                                                    s if s == KfxSymbol::Toc as u32 => "toc",
+                                                    s if s == KfxSymbol::Landmarks as u32 => "landmarks",
+                                                    s if s == KfxSymbol::PageList as u32 => "pagelist",
+                                                    s if s == KfxSymbol::Headings as u32 => "headings",
+                                                    _ => "other",
+                                                });
+                                            }
+                                        }
+                                        if *cfid == KfxSymbol::Entries as u64 {
+                                            if let IonValue::List(entries) = cfval {
+                                                entry_count = count_nav_entries(entries);
+                                            }
+                                        }
+                                    }
+                                    if let Some(nt) = nav_type {
+                                        details.push(format!("{}:{}", nt, entry_count));
+                                    }
+                                }
+                            }
+                            return Some(details.join(", "));
+                        }
+                    }
+                }
+            }
+        }
+        "container_entity_map" => {
+            // container_list with entity name lists (uses Contains field)
+            if let IonValue::Struct(fields) = inner {
+                for (fid, fval) in fields {
+                    if *fid == KfxSymbol::ContainerList as u64 {
+                        if let IonValue::List(containers) = fval {
+                            let mut total_entities = 0;
+                            for container in containers {
+                                if let IonValue::Struct(cfields) = container {
+                                    for (cfid, cfval) in cfields {
+                                        if *cfid == KfxSymbol::Contains as u64 {
+                                            if let IonValue::List(names) = cfval {
+                                                total_entities += names.len();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return Some(format!("{} entity refs", total_entities));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    None
+}
+
+/// Count navigation entries recursively (including nested children)
+fn count_nav_entries(entries: &[boko::kfx::ion::IonValue]) -> usize {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let mut count = entries.len();
+    for entry in entries {
+        if let IonValue::Struct(fields) = entry {
+            for (fid, fval) in fields {
+                if *fid == KfxSymbol::Entries as u64 {
+                    if let IonValue::List(children) = fval {
+                        count += count_nav_entries(children);
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Format a size in bytes with appropriate units
+fn format_size(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Parse container info Ion struct to extract index table offset/length
