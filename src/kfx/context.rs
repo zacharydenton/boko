@@ -370,10 +370,9 @@ impl AnchorRegistry {
                 uri: href.to_string(),
             });
         } else {
-            // Internal link - extract anchor name (fragment) if present and store reverse mapping
-            if let Some(fragment) = extract_fragment(href) {
-                self.anchor_to_symbol.insert(fragment.to_string(), symbol.clone());
-            }
+            // Internal link - store full href for reverse mapping
+            // This allows create_content_anchor to find the symbol using the full path
+            self.anchor_to_symbol.insert(href.to_string(), symbol.clone());
         }
 
         symbol
@@ -446,7 +445,7 @@ impl AnchorRegistry {
         section_id: u64,
         offset: usize,
     ) -> Option<String> {
-        // Check if already registered via a link
+        // Check if already registered via a link (using full path)
         let symbol = if let Some(existing) = self.anchor_to_symbol.get(anchor_name) {
             existing.clone()
         } else {
