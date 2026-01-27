@@ -105,8 +105,8 @@ pub struct IdGenerator {
 }
 
 impl IdGenerator {
-    /// Fragment IDs start here (0-199 reserved for system).
-    pub const FRAGMENT_MIN_ID: u64 = 200;
+    /// Fragment IDs start here (matching reference KFX format).
+    pub const FRAGMENT_MIN_ID: u64 = 866;
 
     /// Create a new ID generator.
     pub fn new() -> Self {
@@ -750,9 +750,9 @@ mod tests {
     fn test_id_generator() {
         let mut id_gen = IdGenerator::new();
 
-        assert_eq!(id_gen.next(), 200);
-        assert_eq!(id_gen.next(), 201);
-        assert_eq!(id_gen.next(), 202);
+        assert_eq!(id_gen.next(), 866);
+        assert_eq!(id_gen.next(), 867);
+        assert_eq!(id_gen.next(), 868);
     }
 
     #[test]
@@ -817,8 +817,8 @@ mod tests {
         // Test fragment ID generation
         let fid1 = ctx.next_fragment_id();
         let fid2 = ctx.next_fragment_id();
-        assert_eq!(fid1, 200);
-        assert_eq!(fid2, 201);
+        assert_eq!(fid1, 866);
+        assert_eq!(fid2, 867);
 
         // Test text accumulation
         let (idx, offset) = ctx.append_text("Hello");
