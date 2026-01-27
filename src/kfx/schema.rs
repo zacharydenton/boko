@@ -160,6 +160,8 @@ pub enum SemanticTarget {
     Alt,
     /// `semantics.id` (for anchors)
     Id,
+    /// `semantics.epub_type` (for EPUB semantic types like noteref)
+    EpubType,
 }
 
 // ============================================================================
@@ -230,6 +232,25 @@ pub struct SpanRule {
     pub strategy: Strategy,
     /// Attribute rules for this span.
     pub attr_rules: Vec<AttrRule>,
+    /// Conditional export rules (export-only, based on semantic values).
+    pub conditional_export_rules: Vec<ConditionalExportRule>,
+}
+
+/// Rule for conditional attribute emission during export.
+///
+/// When the source semantic contains the trigger value, emit the target
+/// KFX field with the specified symbol value. Used for mappings like
+/// `epub:type="noteref"` → `YjDisplay: YjNote`.
+#[derive(Clone, Debug)]
+pub struct ConditionalExportRule {
+    /// Semantic target to check (e.g., EpubType).
+    pub source: SemanticTarget,
+    /// Value that triggers this rule (uses `contains` matching).
+    pub trigger_value: &'static str,
+    /// KFX field to emit when triggered.
+    pub kfx_field: KfxSymbol,
+    /// KFX symbol value to emit.
+    pub kfx_value: KfxSymbol,
 }
 
 impl KfxSchema {
@@ -410,6 +431,13 @@ impl KfxSchema {
                 SemanticTarget::Href,
                 Box::new(KfxLinkTransform),
             )],
+            // Conditional export: noteref links get YjDisplay: YjNote for popup behavior
+            conditional_export_rules: vec![ConditionalExportRule {
+                source: SemanticTarget::EpubType,
+                trigger_value: "noteref",
+                kfx_field: KfxSymbol::YjDisplay,
+                kfx_value: KfxSymbol::YjNote,
+            }],
         });
 
         // Note: Additional span rules (emphasis, strong) would check style
@@ -714,6 +742,20 @@ impl KfxSchema {
                         attrs.push((attr_rule.kfx_field as u64, kfx_value));
                     }
                 }
+
+                // Apply conditional export rules (e.g., noteref → YjDisplay)
+                for cond_rule in &span_rule.conditional_export_rules {
+                    if let Some(value) = get_semantic(cond_rule.source) {
+                        if value.contains(cond_rule.trigger_value) {
+                            // Emit KFX symbol ID as string (will be parsed in tokens_to_ion)
+                            attrs.push((
+                                cond_rule.kfx_field as u64,
+                                (cond_rule.kfx_value as u64).to_string(),
+                            ));
+                        }
+                    }
+                }
+
                 break;
             }
         }

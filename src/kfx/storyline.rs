@@ -379,6 +379,7 @@ fn apply_semantics_to_node(
             }
             SemanticTarget::Alt => chapter.semantics.set_alt(node_id, value.clone()),
             SemanticTarget::Id => chapter.semantics.set_id(node_id, value.clone()),
+            SemanticTarget::EpubType => chapter.semantics.set_epub_type(node_id, value.clone()),
         }
     }
 }
@@ -597,6 +598,7 @@ fn walk_node_for_export(
             SemanticTarget::Src => chapter.semantics.src(node_id).map(|s| s.to_string()),
             SemanticTarget::Alt => chapter.semantics.alt(node_id).map(|s| s.to_string()),
             SemanticTarget::Id => chapter.semantics.id(node_id).map(|s| s.to_string()),
+            SemanticTarget::EpubType => chapter.semantics.epub_type(node_id).map(|s| s.to_string()),
         },
         &export_ctx,
     );
@@ -659,6 +661,7 @@ fn emit_span_for_export(
     span.style_symbol = Some(style_symbol);
 
     // SCHEMA-DRIVEN attribute export for spans
+    // Includes conditional rules (e.g., noteref → YjDisplay: YjNote)
     let export_ctx = crate::kfx::transforms::ExportContext {
         spine_map: None,
         resource_registry: Some(&ctx.resource_registry),
@@ -670,6 +673,7 @@ fn emit_span_for_export(
             SemanticTarget::Src => chapter.semantics.src(node_id).map(|s| s.to_string()),
             SemanticTarget::Alt => chapter.semantics.alt(node_id).map(|s| s.to_string()),
             SemanticTarget::Id => chapter.semantics.id(node_id).map(|s| s.to_string()),
+            SemanticTarget::EpubType => chapter.semantics.epub_type(node_id).map(|s| s.to_string()),
         },
         &export_ctx,
     );
@@ -925,12 +929,17 @@ impl IonBuilder {
             event_fields.push((sym!(Style), IonValue::Symbol(ctx.default_style_symbol)));
         }
 
-        // Add span-specific attributes (e.g., link_to for links)
+        // Add span-specific attributes (e.g., link_to for links, yj.display for noterefs)
         for (field_id, value_str) in &span.kfx_attrs {
-            // LinkTo is always a symbol reference
             if *field_id == sym!(LinkTo) {
+                // LinkTo is always a symbol reference (anchor symbol)
                 let sym_id = ctx.symbols.get_or_intern(value_str);
                 event_fields.push((*field_id, IonValue::Symbol(sym_id)));
+            } else if *field_id == sym!(YjDisplay) {
+                // YjDisplay value is a symbol ID (e.g., YjNote = 617)
+                if let Ok(sym_id) = value_str.parse::<u64>() {
+                    event_fields.push((*field_id, IonValue::Symbol(sym_id)));
+                }
             } else {
                 event_fields.push((*field_id, IonValue::String(value_str.clone())));
             }
