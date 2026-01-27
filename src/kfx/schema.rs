@@ -313,11 +313,13 @@ impl KfxSchema {
             ],
         );
 
-        // List (unordered by default)
+        // List: UnorderedList by default, OrderedList if list_style: numeric
         self.register_element(
             KfxSymbol::List,
-            Strategy::Structure {
-                role: Role::UnorderedList,
+            Strategy::StructureWithModifier {
+                default_role: Role::UnorderedList,
+                modifier_attr: KfxSymbol::ListStyle,
+                modifier_effect: ModifierEffect::ListOrdered,
                 kfx_type: KfxSymbol::List,
             },
             vec![],
@@ -326,8 +328,10 @@ impl KfxSchema {
         // Also register OrderedList for export (same KFX type, but with list_style)
         self.export_strategy_table.insert(
             Role::OrderedList,
-            Strategy::Structure {
-                role: Role::OrderedList,
+            Strategy::StructureWithModifier {
+                default_role: Role::UnorderedList,
+                modifier_attr: KfxSymbol::ListStyle,
+                modifier_effect: ModifierEffect::ListOrdered,
                 kfx_type: KfxSymbol::List,
             },
         );
@@ -541,7 +545,8 @@ impl KfxSchema {
                     match modifier_effect {
                         ModifierEffect::HeadingLevel => Role::Heading(value as u8),
                         ModifierEffect::ListOrdered => {
-                            if value != 0 {
+                            // list_style is a symbol; check for numeric (343)
+                            if value == KfxSymbol::Numeric as i64 {
                                 Role::OrderedList
                             } else {
                                 *default_role

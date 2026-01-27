@@ -107,8 +107,11 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         .unwrap_or(sym!(Container)) as u32;
 
     // Use schema to resolve role with attribute lookup closure
+    // Return int values directly, or symbol IDs cast to i64 for symbol-based attributes
     let role = schema().resolve_element_role(kfx_type_id, |symbol| {
-        get_field(fields, symbol as u64).and_then(|v| v.as_int())
+        get_field(fields, symbol as u64).and_then(|v| {
+            v.as_int().or_else(|| v.as_symbol().map(|s| s as i64))
+        })
     });
 
     // Get element ID
