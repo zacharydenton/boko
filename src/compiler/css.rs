@@ -1338,4 +1338,32 @@ mod tests {
         let first_decl = &stylesheet.rules[0].declarations[0];
         assert!(first_decl.important);
     }
+
+    #[test]
+    fn test_inherit_from_parent_only_inherited_properties() {
+        use crate::ir::Length;
+
+        // Create a parent style with both inherited and non-inherited properties
+        let mut parent = ComputedStyle::default();
+        parent.color = Some(Color::rgb(255, 0, 0)); // inherited
+        parent.font_size = Length::Px(20.0); // inherited
+        parent.text_align = TextAlign::Center; // inherited
+        parent.width = Length::Percent(75.0); // NOT inherited
+        parent.margin_top = Length::Em(2.0); // NOT inherited
+        parent.display = Display::Block; // NOT inherited
+
+        // Inherit from parent
+        let child = inherit_from_parent(&parent);
+
+        // Inherited properties should be copied
+        assert_eq!(child.color, Some(Color::rgb(255, 0, 0)));
+        assert_eq!(child.font_size, Length::Px(20.0));
+        assert_eq!(child.text_align, TextAlign::Center);
+
+        // Non-inherited properties should be at default values
+        let default = ComputedStyle::default();
+        assert_eq!(child.width, default.width, "width should not be inherited");
+        assert_eq!(child.margin_top, default.margin_top, "margin-top should not be inherited");
+        assert_eq!(child.display, default.display, "display should not be inherited");
+    }
 }
