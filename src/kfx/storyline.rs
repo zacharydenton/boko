@@ -798,7 +798,7 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     }
                 }
 
-                stack.push(IonBuilder::with_fields(fields));
+                stack.push(IonBuilder::with_fields(fields, container_id));
             }
             KfxToken::EndElement => {
                 if let Some(completed) = stack.pop() {
@@ -856,6 +856,8 @@ struct IonBuilder {
     accumulated_text: String,
     /// Collected style events for this element (inline spans)
     style_events: Vec<IonValue>,
+    /// Container ID for this element (set during StartElement, used for length tracking)
+    container_id: Option<u64>,
 }
 
 impl IonBuilder {
@@ -865,15 +867,17 @@ impl IonBuilder {
             children: Vec::new(),
             accumulated_text: String::new(),
             style_events: Vec::new(),
+            container_id: None,
         }
     }
 
-    fn with_fields(fields: Vec<(u64, IonValue)>) -> Self {
+    fn with_fields(fields: Vec<(u64, IonValue)>, container_id: u64) -> Self {
         Self {
             fields,
             children: Vec::new(),
             accumulated_text: String::new(),
             style_events: Vec::new(),
+            container_id: Some(container_id),
         }
     }
 
@@ -932,6 +936,11 @@ impl IonBuilder {
         // KFX storylines are flat lists of elements, not nested structs
         // Each element is a struct with type, content reference, and possibly nested content_list
         if !self.fields.is_empty() {
+            // Record text length for this content ID (used by location_map)
+            if let Some(container_id) = self.container_id {
+                ctx.record_content_length(container_id, self.accumulated_text.len());
+            }
+
             // If this element has accumulated text, create ONE content reference
             if !self.accumulated_text.is_empty() {
                 let (content_idx, _offset) = ctx.append_text(&self.accumulated_text);

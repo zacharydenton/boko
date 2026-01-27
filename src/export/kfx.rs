@@ -1657,34 +1657,57 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
 /// Maps location numbers to positions. Locations are synthetic page-like
 /// markers every ~110 characters (Kindle's standard).
 fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
-    const CHARS_PER_LOCATION: i64 = 110;
+    const CHARS_PER_LOCATION: usize = 110;
 
     let mut location_entries = Vec::new();
 
-    // Collect chapter fragment IDs in order
+    // Build a list of (content_id, start_offset, end_offset) for all content fragments
+    // This allows us to map each location to the content fragment that contains it
+    let mut content_ranges: Vec<(u64, usize, usize)> = Vec::new();
+    let mut cumulative_offset: usize = 0;
+
+    // Collect chapter fragment IDs in order (sorted by page_template ID)
     let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
-    for (chapter_id, fragment_id) in &chapter_entries {
-        // Find max text offset for this chapter
-        let chapter_length = ctx
-            .position_map
-            .iter()
-            .filter(|((cid, _), _)| cid == *chapter_id)
-            .map(|(_, pos)| pos.offset)
-            .max()
-            .unwrap_or(0) as i64;
-
-        // Generate location entries for this chapter
-        let mut pos_in_chapter = 0i64;
-        while pos_in_chapter < chapter_length {
-            let entry = IonValue::Struct(vec![
-                (KfxSymbol::Id as u64, IonValue::Int(**fragment_id as i64)),
-                (KfxSymbol::Offset as u64, IonValue::Int(pos_in_chapter)),
-            ]);
-            location_entries.push(entry);
-            pos_in_chapter += CHARS_PER_LOCATION;
+    for (chapter_id, _) in &chapter_entries {
+        // Get content IDs for this chapter
+        if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
+            for &content_id in content_ids {
+                let text_len = ctx.content_id_lengths.get(&content_id).copied().unwrap_or(0);
+                if text_len > 0 {
+                    let start = cumulative_offset;
+                    let end = cumulative_offset + text_len;
+                    content_ranges.push((content_id, start, end));
+                    cumulative_offset = end;
+                }
+            }
         }
+    }
+
+    // Generate location entries
+    // Each location covers CHARS_PER_LOCATION characters
+    // Reference KFX uses offset: 0 for all entries, pointing to the content fragment that starts at that location
+    let total_chars = cumulative_offset;
+    let mut location_char_pos: usize = 0;
+
+    while location_char_pos < total_chars {
+        // Find the content fragment that contains this character position
+        let content_id = content_ranges
+            .iter()
+            .find(|(_, start, end)| location_char_pos >= *start && location_char_pos < *end)
+            .map(|(id, _, _)| *id)
+            .unwrap_or_else(|| {
+                // Fallback to last content fragment if somehow out of range
+                content_ranges.last().map(|(id, _, _)| *id).unwrap_or(0)
+            });
+
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
+            (KfxSymbol::Offset as u64, IonValue::Int(0)),
+        ]);
+        location_entries.push(entry);
+        location_char_pos += CHARS_PER_LOCATION;
     }
 
     // Wrap in locations list structure

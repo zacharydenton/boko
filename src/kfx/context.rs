@@ -607,6 +607,10 @@ pub struct ExportContext {
     /// Maps ChapterId -> list of content fragment IDs generated for that chapter.
     pub content_ids_by_chapter: HashMap<ChapterId, Vec<u64>>,
 
+    /// Text length for each content fragment ID.
+    /// Used by location_map to distribute locations across content fragments.
+    pub content_id_lengths: HashMap<u64, usize>,
+
     /// Current chapter source path during Pass 2 (for tracking first content ID).
     current_export_path: Option<String>,
 }
@@ -677,6 +681,7 @@ impl ExportContext {
             first_content_ids: HashMap::new(),
             content_ids_by_path: HashMap::new(),
             content_ids_by_chapter: HashMap::new(),
+            content_id_lengths: HashMap::new(),
             current_export_path: None,
         }
     }
@@ -927,6 +932,14 @@ impl ExportContext {
                 .or_default()
                 .push(content_id);
         }
+    }
+
+    /// Record text length for a content fragment ID.
+    ///
+    /// Call this when finalizing a content element to track how much text it contains.
+    /// Used by location_map to map locations to the correct content fragment.
+    pub fn record_content_length(&mut self, content_id: u64, text_len: usize) {
+        self.content_id_lengths.insert(content_id, text_len);
     }
 
     /// Register an anchor as needed (it's a link target or TOC destination).
