@@ -323,12 +323,21 @@ impl<'a> TransformContext<'a> {
             ArenaNodeData::Element { name, attrs, .. } => {
                 // Compute style for this element
                 let elem_ref = ElementRef::new(self.dom, dom_id);
-                let computed = compute_styles(
+                let mut computed = compute_styles(
                     elem_ref,
                     self.stylesheets,
                     parent_style,
                     &mut self.chapter.styles,
                 );
+
+                // Merge lang attribute into style (for KFX language property)
+                // This must happen before interning so the style includes the language
+                for attr in attrs {
+                    if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
+                        computed.language = Some(attr.value.to_string());
+                        break;
+                    }
+                }
 
                 // Map to role first (needed for Break check)
                 let role = map_element_to_role(&name.local);
