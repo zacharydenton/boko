@@ -11,8 +11,8 @@ use selectors::parser::Selector;
 
 use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
-    BorderStyle, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float, FontStyle,
-    FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, StylePool, TextAlign,
+    BorderStyle, BoxSizing, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float,
+    FontStyle, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, StylePool, TextAlign,
     TextTransform, Visibility,
 };
 
@@ -61,6 +61,7 @@ pub enum PropertyValue {
     Visibility(Visibility),
     DecorationStyle(DecorationStyle),
     Bool(bool),
+    BoxSizing(BoxSizing),
 }
 
 /// CSS specificity for cascade ordering.
@@ -285,6 +286,36 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         _start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         let property = name.to_string();
+
+        // Handle margin/padding shorthand expansion
+        if property == "margin" || property == "padding" {
+            if let Some((top, right, bottom, left)) = parse_box_shorthand(input) {
+                let important = input.try_parse(cssparser::parse_important).is_ok();
+                let prefix = &property;
+                self.declarations.push(Declaration {
+                    property: format!("{}-top", prefix),
+                    value: PropertyValue::Length(top),
+                    important,
+                });
+                self.declarations.push(Declaration {
+                    property: format!("{}-right", prefix),
+                    value: PropertyValue::Length(right),
+                    important,
+                });
+                self.declarations.push(Declaration {
+                    property: format!("{}-bottom", prefix),
+                    value: PropertyValue::Length(bottom),
+                    important,
+                });
+                self.declarations.push(Declaration {
+                    property: format!("{}-left", prefix),
+                    value: PropertyValue::Length(left),
+                    important,
+                });
+                return Ok(());
+            }
+        }
+
         let value = parse_property_value(&property, input);
         let important = input.try_parse(cssparser::parse_important).is_ok();
 
@@ -316,9 +347,11 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
 
         "margin" | "margin-top" | "margin-bottom" | "margin-left" | "margin-right"
         | "padding" | "padding-top" | "padding-bottom" | "padding-left"
-        | "padding-right" | "text-indent" | "line-height" => {
+        | "padding-right" | "text-indent" => {
             parse_length(input).unwrap_or(PropertyValue::None)
         }
+
+        "line-height" => parse_line_height(input).unwrap_or(PropertyValue::None),
 
         "font-weight" => parse_font_weight(input).unwrap_or(PropertyValue::None),
 
@@ -393,6 +426,8 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
 
         // Phase 7: Amazon properties
         "visibility" => parse_visibility(input).unwrap_or(PropertyValue::None),
+
+        "box-sizing" => parse_box_sizing(input).unwrap_or(PropertyValue::None),
 
         _ => {
             // Consume remaining tokens for unknown properties
@@ -521,6 +556,66 @@ fn parse_length(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     }
 }
 
+/// Parse a single length value, returning Length directly.
+fn parse_length_value(input: &mut Parser<'_, '_>) -> Option<Length> {
+    match input.next().ok()? {
+        Token::Dimension { value, unit, .. } => {
+            let length = match unit.as_ref() {
+                "px" => Length::Px(*value),
+                "em" => Length::Em(*value),
+                "rem" => Length::Rem(*value),
+                "%" => Length::Percent(*value),
+                _ => return None,
+            };
+            Some(length)
+        }
+        Token::Percentage { unit_value, .. } => Some(Length::Percent(*unit_value * 100.0)),
+        Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
+        Token::Ident(ident) => match ident.as_ref() {
+            "auto" => Some(Length::Auto),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Parse margin/padding shorthand with 1-4 values.
+/// Returns (top, right, bottom, left) following CSS box model rules.
+fn parse_box_shorthand(input: &mut Parser<'_, '_>) -> Option<(Length, Length, Length, Length)> {
+    let mut values = Vec::with_capacity(4);
+
+    // Parse up to 4 length values
+    while values.len() < 4 {
+        if let Some(len) = parse_length_value(input) {
+            values.push(len);
+        } else {
+            break;
+        }
+    }
+
+    // Expand according to CSS shorthand rules:
+    // 1 value: all sides
+    // 2 values: top/bottom, left/right
+    // 3 values: top, left/right, bottom
+    // 4 values: top, right, bottom, left
+    match values.len() {
+        1 => {
+            let v = values[0];
+            Some((v, v, v, v))
+        }
+        2 => {
+            let (tb, lr) = (values[0], values[1]);
+            Some((tb, lr, tb, lr))
+        }
+        3 => {
+            let (t, lr, b) = (values[0], values[1], values[2]);
+            Some((t, lr, b, lr))
+        }
+        4 => Some((values[0], values[1], values[2], values[3])),
+        _ => None,
+    }
+}
+
 /// Parse font-size, including keywords like 'smaller' and 'larger'.
 fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     // First try to parse as a keyword
@@ -588,6 +683,34 @@ fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
         _ => return None,
     };
     Some(PropertyValue::FontStyle(style))
+}
+
+/// Parse line-height, which can be a length OR a unitless number (multiplier).
+/// Unitless numbers like `1.5` are converted to em values for KFX compatibility.
+fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    match input.next().ok()? {
+        Token::Dimension { value, unit, .. } => {
+            let length = match unit.as_ref() {
+                "px" => Length::Px(*value),
+                "em" => Length::Em(*value),
+                "rem" => Length::Rem(*value),
+                "%" => Length::Percent(*value),
+                _ => return None,
+            };
+            Some(PropertyValue::Length(length))
+        }
+        Token::Percentage { unit_value, .. } => {
+            Some(PropertyValue::Length(Length::Percent(*unit_value * 100.0)))
+        }
+        // Unitless number (like 1.5) - treat as em multiplier
+        Token::Number { value, .. } => Some(PropertyValue::Length(Length::Em(*value))),
+        Token::Ident(ident) => match ident.as_ref() {
+            "normal" => Some(PropertyValue::Length(Length::Auto)),
+            "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(ident.to_string())),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
@@ -820,6 +943,17 @@ fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
         _ => return None,
     };
     Some(PropertyValue::Visibility(visibility))
+}
+
+fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    let box_sizing = match token.as_ref() {
+        "content-box" => BoxSizing::ContentBox,
+        "border-box" => BoxSizing::BorderBox,
+        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
+        _ => return None,
+    };
+    Some(PropertyValue::BoxSizing(box_sizing))
 }
 
 /// Create a new style with only CSS-inherited properties from parent.
@@ -1282,6 +1416,11 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
                 style.visibility = *v;
             }
         }
+        "box-sizing" => {
+            if let PropertyValue::BoxSizing(bs) = &decl.value {
+                style.box_sizing = *bs;
+            }
+        }
 
         _ => {}
     }
@@ -1396,5 +1535,119 @@ mod tests {
         assert_eq!(child.width, default.width, "width should not be inherited");
         assert_eq!(child.margin_top, default.margin_top, "margin-top should not be inherited");
         assert_eq!(child.display, default.display, "display should not be inherited");
+    }
+
+    #[test]
+    fn test_margin_shorthand_expansion() {
+        // Test margin: 0 auto (common centering pattern)
+        let css = "p { margin: 0 auto; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.rules.len(), 1);
+        let decls = &stylesheet.rules[0].declarations;
+        // Should expand to 4 declarations
+        assert_eq!(decls.len(), 4);
+
+        // Find margin-left and margin-right
+        let margin_left = decls.iter().find(|d| d.property == "margin-left");
+        let margin_right = decls.iter().find(|d| d.property == "margin-right");
+        let margin_top = decls.iter().find(|d| d.property == "margin-top");
+
+        assert!(margin_left.is_some(), "margin-left should exist");
+        assert!(margin_right.is_some(), "margin-right should exist");
+        assert!(margin_top.is_some(), "margin-top should exist");
+
+        // Verify auto values for left/right
+        if let PropertyValue::Length(len) = &margin_left.unwrap().value {
+            assert_eq!(*len, Length::Auto, "margin-left should be auto");
+        } else {
+            panic!("margin-left should be a length");
+        }
+
+        if let PropertyValue::Length(len) = &margin_right.unwrap().value {
+            assert_eq!(*len, Length::Auto, "margin-right should be auto");
+        } else {
+            panic!("margin-right should be a length");
+        }
+
+        // Verify 0 for top/bottom
+        if let PropertyValue::Length(len) = &margin_top.unwrap().value {
+            assert_eq!(*len, Length::Px(0.0), "margin-top should be 0");
+        } else {
+            panic!("margin-top should be a length");
+        }
+    }
+
+    #[test]
+    fn test_line_height_unitless_number() {
+        // CSS line-height can be a unitless number (multiplier)
+        let css = "p { line-height: 1.5; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.rules.len(), 1);
+        let decl = &stylesheet.rules[0].declarations[0];
+        assert_eq!(decl.property, "line-height");
+
+        // Unitless 1.5 should be converted to 1.5em
+        if let PropertyValue::Length(len) = &decl.value {
+            assert_eq!(*len, Length::Em(1.5), "unitless line-height should become em");
+        } else {
+            panic!("line-height should be a length");
+        }
+    }
+
+    #[test]
+    fn test_line_height_with_unit() {
+        // line-height with explicit unit
+        let css = "p { line-height: 24px; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        if let PropertyValue::Length(len) = &decl.value {
+            assert_eq!(*len, Length::Px(24.0));
+        } else {
+            panic!("line-height should be a length");
+        }
+    }
+
+    #[test]
+    fn test_line_height_normal() {
+        // line-height: normal should become Auto
+        let css = "p { line-height: normal; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        if let PropertyValue::Length(len) = &decl.value {
+            assert_eq!(*len, Length::Auto, "line-height: normal should be Auto");
+        } else {
+            panic!("line-height should be a length");
+        }
+    }
+
+    #[test]
+    fn test_box_sizing_parsing() {
+        let css = "div { box-sizing: border-box; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        assert_eq!(decl.property, "box-sizing");
+        if let PropertyValue::BoxSizing(bs) = &decl.value {
+            assert_eq!(*bs, BoxSizing::BorderBox);
+        } else {
+            panic!("box-sizing should be a BoxSizing value");
+        }
+    }
+
+    #[test]
+    fn test_box_sizing_content_box() {
+        let css = "div { box-sizing: content-box; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        if let PropertyValue::BoxSizing(bs) = &decl.value {
+            assert_eq!(*bs, BoxSizing::ContentBox);
+        } else {
+            panic!("box-sizing should be a BoxSizing value");
+        }
     }
 }

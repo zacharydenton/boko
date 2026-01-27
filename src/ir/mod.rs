@@ -28,9 +28,9 @@ pub use links::{InternalLocation, Link, LinkTarget};
 pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 pub use style::{
-    BorderStyle, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float, FontStyle,
-    FontVariant, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, StyleId,
-    StylePool, TextAlign, TextTransform, ToCss, Visibility,
+    BorderStyle, BoxSizing, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float,
+    FontStyle, FontVariant, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType,
+    StyleId, StylePool, TextAlign, TextTransform, ToCss, Visibility,
 };
 
 /// A chapter's content in normalized IR form.

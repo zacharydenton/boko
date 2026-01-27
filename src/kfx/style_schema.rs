@@ -213,6 +213,8 @@ pub enum IrField {
     MaxWidth,
     MinHeight,
     Float,
+    /// Derived from margin-left: auto + margin-right: auto
+    BoxAlign,
     // Phase 4: Page break properties
     BreakBefore,
     BreakAfter,
@@ -239,6 +241,8 @@ pub enum IrField {
     // Phase 7: Amazon properties
     Language,
     Visibility,
+    /// Maps CSS box-sizing to KFX sizing_bounds
+    SizingBounds,
 }
 
 /// Declarative definition for how a style property maps from IR to KFX.
@@ -737,6 +741,17 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
+        // box_align: derived from margin-left: auto + margin-right: auto
+        schema.register(StylePropertyRule {
+            ir_key: "box-align",
+            ir_field: Some(IrField::BoxAlign),
+            kfx_symbol: KfxSymbol::BoxAlign,
+            transform: ValueTransform::Map(vec![
+                ("center".into(), KfxValue::Symbol(KfxSymbol::Center)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
         // ====================================================================
         // Phase 4: Page Break Properties
         // ====================================================================
@@ -1008,6 +1023,19 @@ impl StyleSchema {
                 ("collapse".into(), KfxValue::Symbol(KfxSymbol::Hide)),
             ]),
             context: StyleContext::Any,
+        });
+
+        // Box-sizing → sizing_bounds
+        // Amazon auto-adds content-box when width/height is present
+        schema.register(StylePropertyRule {
+            ir_key: "box-sizing",
+            ir_field: Some(IrField::SizingBounds),
+            kfx_symbol: KfxSymbol::SizingBounds,
+            transform: ValueTransform::Map(vec![
+                ("content-box".into(), KfxValue::Symbol(KfxSymbol::ContentBounds)),
+                ("border-box".into(), KfxValue::Symbol(KfxSymbol::BorderBounds)),
+            ]),
+            context: StyleContext::BlockOnly,
         });
 
         schema
@@ -1750,6 +1778,28 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        // BoxAlign: derived from margin-left: auto + margin-right: auto
+        IrField::BoxAlign => {
+            if ir_style.margin_left == ir_style::Length::Auto
+                && ir_style.margin_right == ir_style::Length::Auto
+            {
+                Some("center".to_string())
+            } else {
+                None
+            }
+        }
+        // SizingBounds: Amazon auto-adds content-box when width/height is present
+        IrField::SizingBounds => {
+            // If explicitly border-box, emit it
+            if ir_style.box_sizing == ir_style::BoxSizing::BorderBox {
+                Some("border-box".to_string())
+            // Otherwise, if width or height is set, emit content-box (CSS default)
+            } else if ir_style.width != default.width || ir_style.height != default.height {
+                Some("content-box".to_string())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -2164,6 +2214,20 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             ir_style.visibility = match css_value {
                 "hidden" | "collapse" => ir_style::Visibility::Hidden,
                 _ => ir_style::Visibility::Visible,
+            };
+        }
+        // BoxAlign: reverse of export - set both margins to auto
+        IrField::BoxAlign => {
+            if css_value == "center" {
+                ir_style.margin_left = ir_style::Length::Auto;
+                ir_style.margin_right = ir_style::Length::Auto;
+            }
+        }
+        // SizingBounds: CSS box-sizing
+        IrField::SizingBounds => {
+            ir_style.box_sizing = match css_value {
+                "border-box" => ir_style::BoxSizing::BorderBox,
+                _ => ir_style::BoxSizing::ContentBox,
             };
         }
     }
@@ -3017,5 +3081,68 @@ mod tests {
         // Count rules with IR field mappings (should be ~50+ now with all phases)
         let mapped_count = schema.ir_mapped_rules().count();
         assert!(mapped_count >= 40, "Expected >=40 IR-mapped rules, got {}", mapped_count);
+    }
+
+    #[test]
+    fn test_sizing_bounds_auto_emit_with_width() {
+        use crate::ir::{ComputedStyle, Length};
+
+        // When width is set, sizing_bounds should emit content-box (the CSS default)
+        // This matches Amazon's converter behavior
+        let mut style = ComputedStyle::default();
+        style.width = Length::Percent(75.0);
+
+        let result = extract_ir_field(&style, IrField::SizingBounds);
+        assert_eq!(result, Some("content-box".to_string()));
+    }
+
+    #[test]
+    fn test_sizing_bounds_border_box() {
+        use crate::ir::{BoxSizing, ComputedStyle, Length};
+
+        // Explicit border-box should emit border-box
+        let mut style = ComputedStyle::default();
+        style.box_sizing = BoxSizing::BorderBox;
+        style.width = Length::Percent(100.0);
+
+        let result = extract_ir_field(&style, IrField::SizingBounds);
+        assert_eq!(result, Some("border-box".to_string()));
+    }
+
+    #[test]
+    fn test_sizing_bounds_not_emitted_without_dimensions() {
+        use crate::ir::ComputedStyle;
+
+        // No width/height = no sizing_bounds
+        let style = ComputedStyle::default();
+
+        let result = extract_ir_field(&style, IrField::SizingBounds);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_box_align_from_margin_auto() {
+        use crate::ir::{ComputedStyle, Length};
+
+        // margin-left: auto + margin-right: auto → box_align: center
+        let mut style = ComputedStyle::default();
+        style.margin_left = Length::Auto;
+        style.margin_right = Length::Auto;
+
+        let result = extract_ir_field(&style, IrField::BoxAlign);
+        assert_eq!(result, Some("center".to_string()));
+    }
+
+    #[test]
+    fn test_box_align_not_emitted_without_both_auto() {
+        use crate::ir::{ComputedStyle, Length};
+
+        // Only margin-left: auto is not enough
+        let mut style = ComputedStyle::default();
+        style.margin_left = Length::Auto;
+        style.margin_right = Length::Px(0.0);
+
+        let result = extract_ir_field(&style, IrField::BoxAlign);
+        assert_eq!(result, None);
     }
 }

@@ -244,6 +244,25 @@ impl ToCss for Visibility {
     }
 }
 
+/// CSS box-sizing values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum BoxSizing {
+    /// Width/height include only content (CSS default)
+    #[default]
+    ContentBox,
+    /// Width/height include padding and border
+    BorderBox,
+}
+
+impl ToCss for BoxSizing {
+    fn to_css(&self, buf: &mut String) {
+        buf.push_str(match self {
+            BoxSizing::ContentBox => "content-box",
+            BoxSizing::BorderBox => "border-box",
+        });
+    }
+}
+
 impl ToCss for FontVariant {
     fn to_css(&self, buf: &mut String) {
         buf.push_str(match self {
@@ -534,6 +553,7 @@ pub struct ComputedStyle {
     // Phase 7: Amazon properties
     pub language: Option<String>,
     pub visibility: Visibility,
+    pub box_sizing: BoxSizing,
 }
 
 impl ComputedStyle {
