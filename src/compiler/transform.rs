@@ -330,13 +330,15 @@ impl<'a> TransformContext<'a> {
                     &mut self.chapter.styles,
                 );
 
-                // Skip hidden elements
-                if computed.display == Display::None {
+                // Map to role first (needed for Break check)
+                let role = map_element_to_role(&name.local);
+
+                // Skip hidden elements, but preserve Break nodes
+                // CSS may hide <br> (e.g., in verse: "span + br { display: none }") but
+                // we still need them for line breaks in text/markdown export
+                if computed.display == Display::None && role != Role::Break {
                     return;
                 }
-
-                // Map to role
-                let role = map_element_to_role(&name.local);
 
                 // Create IR node
                 let mut ir_node = Node::new(role);

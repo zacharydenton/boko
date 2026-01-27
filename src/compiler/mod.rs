@@ -443,4 +443,32 @@ mod tests {
             "data:image/png;base64,abc"
         );
     }
+
+    #[test]
+    fn test_br_survives_optimizer() {
+        // Verify Break nodes survive the full compile_html pipeline (including optimizer)
+        let chapter = compile_html(
+            r#"<html xmlns="http://www.w3.org/1999/xhtml">
+            <body>
+                <blockquote>
+                    <p>
+                        <span>Line 1</span>
+                        <br/>
+                        <span>Line 2</span>
+                    </p>
+                </blockquote>
+            </body></html>"#,
+            &[],
+        );
+
+        // Should have a Break node
+        let mut found_break = false;
+        for id in chapter.iter_dfs() {
+            if chapter.node(id).unwrap().role == Role::Break {
+                found_break = true;
+                break;
+            }
+        }
+        assert!(found_break, "Break node lost during optimization");
+    }
 }
