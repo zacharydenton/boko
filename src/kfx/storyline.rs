@@ -854,6 +854,9 @@ struct IonBuilder {
     children: Vec<IonValue>,
     /// Accumulated text content for this element (concatenated during build)
     accumulated_text: String,
+    /// Character count of accumulated text (for style event offsets)
+    /// KFX uses character offsets, not byte offsets
+    accumulated_char_count: usize,
     /// Collected style events for this element (inline spans)
     style_events: Vec<IonValue>,
     /// Container ID for this element (set during StartElement, used for length tracking)
@@ -866,6 +869,7 @@ impl IonBuilder {
             fields: Vec::new(),
             children: Vec::new(),
             accumulated_text: String::new(),
+            accumulated_char_count: 0,
             style_events: Vec::new(),
             container_id: None,
         }
@@ -876,6 +880,7 @@ impl IonBuilder {
             fields,
             children: Vec::new(),
             accumulated_text: String::new(),
+            accumulated_char_count: 0,
             style_events: Vec::new(),
             container_id: Some(container_id),
         }
@@ -886,16 +891,19 @@ impl IonBuilder {
     }
 
     /// Append text to this element's accumulated content.
-    /// Returns the byte offset where this text starts (for span tracking).
+    /// Returns the character offset where this text starts (for span tracking).
+    /// KFX style events use character offsets, not byte offsets.
     fn append_text(&mut self, text: &str) -> usize {
-        let offset = self.accumulated_text.len();
+        let offset = self.accumulated_char_count;
         self.accumulated_text.push_str(text);
+        self.accumulated_char_count += text.chars().count();
         offset
     }
 
-    /// Get the current accumulated text length.
+    /// Get the current accumulated text length in characters.
+    /// KFX style events use character offsets, not byte offsets.
     fn text_len(&self) -> usize {
-        self.accumulated_text.len()
+        self.accumulated_char_count
     }
 
     /// Add a style event (inline span) to this element.
@@ -1293,5 +1301,26 @@ mod tests {
             "Expected yj.semantics.heading_level = 2, got {:?}",
             heading_level
         );
+    }
+
+    #[test]
+    fn test_style_event_offsets_use_char_count() {
+        // KFX style events use character offsets, not byte offsets.
+        // Greek characters are multi-byte in UTF-8, so this verifies
+        // we count characters, not bytes.
+        let mut builder = IonBuilder::new();
+
+        // "Hello " = 6 chars, 6 bytes
+        builder.append_text("Hello ");
+        assert_eq!(builder.text_len(), 6);
+
+        // "ὑπόληψις" = 8 chars, 17 bytes in UTF-8
+        let greek_offset = builder.append_text("ὑπόληψις");
+        assert_eq!(greek_offset, 6, "Greek text should start at char offset 6");
+        assert_eq!(builder.text_len(), 14, "Total should be 14 chars (6 + 8)");
+
+        // Verify byte length differs from char count
+        assert_eq!(builder.accumulated_text.len(), 23); // 6 + 17 bytes
+        assert_eq!(builder.accumulated_char_count, 14); // 6 + 8 chars
     }
 }
