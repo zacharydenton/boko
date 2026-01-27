@@ -480,13 +480,8 @@ fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx
         // Register with AnchorRegistry to generate a symbol for this link target
         ctx.anchor_registry.register_link_target(href);
 
-        // Also register with the old system for backwards compatibility
-        if let Some(hash_pos) = href.find('#') {
-            let anchor = &href[hash_pos + 1..];
-            if !anchor.is_empty() {
-                ctx.register_needed_anchor(anchor);
-            }
-        }
+        // Register the full href as a needed anchor (for create_anchor_if_needed lookup)
+        ctx.register_needed_anchor(href);
     }
 
     // Recurse into children
