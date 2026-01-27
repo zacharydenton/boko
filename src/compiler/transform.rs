@@ -246,11 +246,32 @@ impl<'a> TransformContext<'a> {
         // Find the body element, or use document root
         let body = self.dom.find_by_tag("body").unwrap_or(self.dom.document());
 
+        // Get language from html element (if present) to propagate to all content
+        let html_lang = self.dom.find_by_tag("html").and_then(|html_id| {
+            if let Some(node) = self.dom.get(html_id) {
+                if let ArenaNodeData::Element { attrs, .. } = &node.data {
+                    for attr in attrs {
+                        if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
+                            return Some(attr.value.clone());
+                        }
+                    }
+                }
+            }
+            None
+        });
+
         // Compute body's style so its properties (like hyphens: auto) are inherited
-        let body_style = {
+        let mut body_style = {
             let elem_ref = ElementRef::new(self.dom, body);
             compute_styles(elem_ref, self.stylesheets, None, &mut self.chapter.styles)
         };
+
+        // Add html lang to body style if present (so it's inherited by all content)
+        if let Some(lang) = html_lang {
+            if body_style.language.is_none() {
+                body_style.language = Some(lang);
+            }
+        }
 
         // Process body's children as children of IR root, inheriting body's style
         self.process_children(body, NodeId::ROOT, Some(&body_style));
