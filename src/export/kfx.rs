@@ -200,6 +200,11 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.extend(storyline_fragments);
     fragments.extend(content_fragments);
 
+    // 2f-b. Auxiliary data for sections (marks them as navigation targets)
+    for (_, section_name) in &spine_info {
+        fragments.push(build_auxiliary_data_fragment(section_name, &mut ctx));
+    }
+
     // 2f. Resource fragments (images, fonts, etc.)
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
     for asset_path in &asset_paths {
@@ -1263,6 +1268,28 @@ fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
 // ============================================================================
 // Navigation Maps ($264, $265, $550)
 // ============================================================================
+
+/// Build auxiliary_data fragment ($597) for a section.
+///
+/// Marks the section as a navigation target with IS_TARGET_SECTION metadata.
+/// This is required for proper Kindle reader navigation performance.
+fn build_auxiliary_data_fragment(section_name: &str, ctx: &mut ExportContext) -> KfxFragment {
+    let aux_id = format!("aux-{}", section_name);
+    let section_sym = ctx.symbols.get_or_intern(section_name);
+
+    // Build metadata entry: { key: "IS_TARGET_SECTION", value: true }
+    let metadata_entry = IonValue::Struct(vec![
+        (KfxSymbol::Key as u64, IonValue::String("IS_TARGET_SECTION".to_string())),
+        (KfxSymbol::Value as u64, IonValue::Bool(true)),
+    ]);
+
+    let ion = IonValue::Struct(vec![
+        (KfxSymbol::KfxId as u64, IonValue::Symbol(section_sym)),
+        (KfxSymbol::Metadata as u64, IonValue::List(vec![metadata_entry])),
+    ]);
+
+    KfxFragment::new(KfxSymbol::AuxiliaryData, &aux_id, ion)
+}
 
 /// Build position_map fragment ($264).
 ///
