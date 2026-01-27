@@ -79,11 +79,13 @@ pub enum ValueTransform {
     /// 2. Converts to target unit using base_font_size
     /// 3. Outputs as { value: N, unit: $symbol }
     ///
-    /// Example: "20px" with base=16, target=Em → { value: 1.25, unit: em }
+    /// Percentages are preserved as-is with the `percent` unit:
+    /// - "75%" → { value: 75., unit: percent }
+    /// - "20px" with base=16, target=Em → { value: 1.25, unit: em }
     ConvertToDimensioned {
-        /// Base font size in pixels (for em/rem/% conversion)
+        /// Base font size in pixels (for em/rem conversion)
         base_pixels: f64,
-        /// Target KFX unit
+        /// Target KFX unit (used for non-percentage values)
         target_unit: KfxSymbol,
     },
 
@@ -1139,6 +1141,14 @@ impl ValueTransform {
                 target_unit,
             } => {
                 let (num, css_unit) = parse_css_length(raw)?;
+
+                // Preserve percentage values as-is (don't convert to em)
+                if css_unit == "%" {
+                    return Some(KfxValue::Dimensioned {
+                        value: num,
+                        unit: KfxSymbol::Percent,
+                    });
+                }
 
                 // Guard against zero base
                 if *base_pixels == 0.0 {
@@ -2768,13 +2778,12 @@ mod tests {
             _ => panic!("Expected Dimensioned, got {:?}", result),
         }
 
-        // Test: CSS "50%" with 16px base → 0.5em (50% of base font = 8px = 0.5em)
+        // Test: CSS "50%" → preserved as { value: 50, unit: percent }
         let result = transform.apply("50%").unwrap();
         match result {
             KfxValue::Dimensioned { value, unit } => {
-                // 50% of 16px = 8px, 8px / 16 = 0.5em
-                assert!((value - 0.5).abs() < 0.001, "50% should be 0.5em, got {}", value);
-                assert_eq!(unit, KfxSymbol::Em);
+                assert!((value - 50.0).abs() < 0.001, "50% should be preserved as 50, got {}", value);
+                assert_eq!(unit, KfxSymbol::Percent);
             }
             _ => panic!("Expected Dimensioned, got {:?}", result),
         }
