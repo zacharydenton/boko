@@ -12,6 +12,9 @@ use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
 
+/// Section name for the standalone cover (always index 0).
+pub const COVER_SECTION_NAME: &str = "c0";
+
 /// Check if a chapter contains only an image and no text content.
 ///
 /// Returns true if the chapter has:
@@ -124,7 +127,7 @@ pub fn build_cover_section(
     section_id: u64,
     ctx: &mut ExportContext,
 ) -> (KfxFragment, KfxFragment) {
-    let section_name = "c0";
+    let section_name = COVER_SECTION_NAME;
     let story_name = format!("story_{}", section_name);
 
     // Intern story name

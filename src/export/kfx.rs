@@ -11,7 +11,8 @@ use crate::export::Exporter;
 use crate::import::ChapterId;
 use crate::ir::{IRChapter, NodeId, Role};
 use crate::kfx::context::{ExportContext, LandmarkTarget};
-use crate::kfx::cover::{build_cover_section, is_image_only_chapter, needs_standalone_cover, normalize_cover_path};
+use crate::kfx::auxiliary::build_auxiliary_data_fragment;
+use crate::kfx::cover::{build_cover_section, is_image_only_chapter, needs_standalone_cover, normalize_cover_path, COVER_SECTION_NAME};
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::serialization::{
@@ -117,10 +118,10 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         })
         .collect();
 
-    // Register cover section (c0) in Pass 1 if standalone cover is needed
+    // Register cover section in Pass 1 if standalone cover is needed
     // This ensures it appears in reading_orders.sections and landmarks point to it
     if standalone_cover_path.is_some() {
-        ctx.register_section("c0");
+        ctx.register_section(COVER_SECTION_NAME);
         // Assign fragment ID for cover section now (used by landmarks)
         let cover_section_id = ctx.next_fragment_id();
         ctx.cover_fragment_id = Some(cover_section_id);
@@ -311,6 +312,15 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     fragments.extend(section_fragments);
     fragments.extend(storyline_fragments);
     fragments.extend(content_fragments);
+
+    // 2f2. Auxiliary data fragments - mark sections as navigation targets
+    // Generate one auxiliary_data entity per section
+    if standalone_cover_path.is_some() {
+        fragments.push(build_auxiliary_data_fragment(COVER_SECTION_NAME));
+    }
+    for (_, section_name) in &spine_info {
+        fragments.push(build_auxiliary_data_fragment(section_name));
+    }
 
     // 2f. Resource fragments (images, fonts, etc.)
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)

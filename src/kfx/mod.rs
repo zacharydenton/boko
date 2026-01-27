@@ -19,7 +19,9 @@
 //! - `style_schema` - Declarative style property mapping
 //! - `style_registry` - Style deduplication and ID assignment
 //! - `cover` - Cover section detection and generation
+//! - `auxiliary` - Auxiliary data generation for navigation targets
 
+pub mod auxiliary;
 pub mod container;
 pub mod context;
 pub mod cover;
