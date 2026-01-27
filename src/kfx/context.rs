@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::book::LandmarkType;
 use crate::import::ChapterId;
 use crate::ir::{NodeId, StyleId};
 
@@ -476,6 +477,32 @@ pub struct ExportContext {
     /// Anchor registry for link target resolution.
     /// Maps link hrefs to anchor symbols and tracks positions for entity emission.
     pub anchor_registry: AnchorRegistry,
+
+    /// Resolved landmarks mapping LandmarkType to (fragment ID, offset, label).
+    /// Populated during survey from IR landmarks and heuristics.
+    pub landmark_fragments: HashMap<LandmarkType, LandmarkTarget>,
+
+    /// Nav container name symbols (registered during Pass 1).
+    pub nav_container_symbols: NavContainerSymbols,
+}
+
+/// Target position for a landmark.
+#[derive(Debug, Clone)]
+pub struct LandmarkTarget {
+    /// Fragment ID containing the landmark target.
+    pub fragment_id: u64,
+    /// Byte offset within the fragment (0 for chapter start).
+    pub offset: u64,
+    /// Display label for the landmark.
+    pub label: String,
+}
+
+/// Pre-registered symbol IDs for nav container names.
+#[derive(Debug, Clone, Default)]
+pub struct NavContainerSymbols {
+    pub toc: u64,
+    pub headings: u64,
+    pub landmarks: u64,
 }
 
 impl ExportContext {
@@ -503,6 +530,8 @@ impl ExportContext {
             default_style_symbol,
             style_registry: StyleRegistry::new(default_style_symbol),
             anchor_registry: AnchorRegistry::new(),
+            landmark_fragments: HashMap::new(),
+            nav_container_symbols: NavContainerSymbols::default(),
         }
     }
 

@@ -28,6 +28,7 @@
 //! 3. **Bidirectional**: Every import rule has export metadata
 //! 4. **Transformers**: Complex value conversions are encapsulated in traits
 
+use crate::book::LandmarkType;
 use crate::ir::{ComputedStyle, FontStyle, FontWeight, Role};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::{
@@ -216,6 +217,8 @@ pub struct KfxSchema {
     export_strategy_table: HashMap<Role, Strategy>,
     /// Span rules: for style_events (checked in order)
     span_rules: Vec<SpanRule>,
+    /// Bidirectional landmark mapping: (IR LandmarkType, KFX symbol)
+    landmark_mapping: Vec<(LandmarkType, KfxSymbol)>,
 }
 
 /// Rule for interpreting style_event spans.
@@ -238,9 +241,11 @@ impl KfxSchema {
             export_role_table: HashMap::new(),
             export_strategy_table: HashMap::new(),
             span_rules: Vec::new(),
+            landmark_mapping: Vec::new(),
         };
         schema.register_element_rules();
         schema.register_span_rules();
+        schema.register_landmark_rules();
         schema
     }
 
@@ -406,6 +411,27 @@ impl KfxSchema {
 
         // Note: Additional span rules (emphasis, strong) would check style
         // definitions. For now, anything without link_to becomes Inline.
+    }
+
+    /// Register landmark type mappings.
+    fn register_landmark_rules(&mut self) {
+        self.landmark_mapping = vec![
+            (LandmarkType::Cover, KfxSymbol::CoverPage),
+            (LandmarkType::StartReading, KfxSymbol::Srl),
+            (LandmarkType::TitlePage, KfxSymbol::Titlepage),
+            (LandmarkType::Toc, KfxSymbol::Toc),
+            (LandmarkType::BodyMatter, KfxSymbol::Bodymatter),
+            (LandmarkType::FrontMatter, KfxSymbol::Frontmatter),
+            (LandmarkType::BackMatter, KfxSymbol::Backmatter),
+            (LandmarkType::Acknowledgements, KfxSymbol::Acknowledgements),
+            (LandmarkType::Preface, KfxSymbol::Preface),
+            (LandmarkType::Bibliography, KfxSymbol::Bibliography),
+            (LandmarkType::Glossary, KfxSymbol::Glossary),
+            (LandmarkType::Index, KfxSymbol::Index),
+            (LandmarkType::Loi, KfxSymbol::Loi),
+            (LandmarkType::Lot, KfxSymbol::Lot),
+            // Note: LandmarkType::Endnotes has no direct KFX equivalent
+        ];
     }
 
     /// Register an element rule with attributes.
@@ -691,6 +717,26 @@ impl KfxSchema {
 
         attrs
     }
+
+    // =========================================================================
+    // Landmark API
+    // =========================================================================
+
+    /// Convert a KFX landmark symbol ID to IR LandmarkType.
+    pub fn landmark_from_kfx(&self, symbol_id: u64) -> Option<LandmarkType> {
+        self.landmark_mapping
+            .iter()
+            .find(|(_, kfx)| *kfx as u64 == symbol_id)
+            .map(|(ir, _)| *ir)
+    }
+
+    /// Convert an IR LandmarkType to KFX symbol.
+    pub fn landmark_to_kfx(&self, landmark_type: LandmarkType) -> Option<KfxSymbol> {
+        self.landmark_mapping
+            .iter()
+            .find(|(ir, _)| *ir == landmark_type)
+            .map(|(_, kfx)| *kfx)
+    }
 }
 
 impl Default for KfxSchema {
@@ -833,5 +879,53 @@ mod tests {
         let mut style = ComputedStyle::default();
         StyleModifier::Italic.apply(&mut style);
         assert!(style.is_italic());
+    }
+
+    #[test]
+    fn test_landmark_from_kfx() {
+        let s = schema();
+        assert_eq!(
+            s.landmark_from_kfx(KfxSymbol::CoverPage as u64),
+            Some(LandmarkType::Cover)
+        );
+        assert_eq!(
+            s.landmark_from_kfx(KfxSymbol::Srl as u64),
+            Some(LandmarkType::StartReading)
+        );
+        assert_eq!(
+            s.landmark_from_kfx(KfxSymbol::Bodymatter as u64),
+            Some(LandmarkType::BodyMatter)
+        );
+        assert_eq!(s.landmark_from_kfx(9999), None);
+    }
+
+    #[test]
+    fn test_landmark_to_kfx() {
+        let s = schema();
+        assert_eq!(
+            s.landmark_to_kfx(LandmarkType::Cover),
+            Some(KfxSymbol::CoverPage)
+        );
+        assert_eq!(
+            s.landmark_to_kfx(LandmarkType::StartReading),
+            Some(KfxSymbol::Srl)
+        );
+        assert_eq!(
+            s.landmark_to_kfx(LandmarkType::BodyMatter),
+            Some(KfxSymbol::Bodymatter)
+        );
+        // Endnotes has no KFX equivalent
+        assert_eq!(s.landmark_to_kfx(LandmarkType::Endnotes), None);
+    }
+
+    #[test]
+    fn test_landmark_roundtrip() {
+        let s = schema();
+        // All mapped landmark types should roundtrip correctly
+        for (ir_type, kfx_sym) in &s.landmark_mapping {
+            let kfx_id = *kfx_sym as u64;
+            assert_eq!(s.landmark_from_kfx(kfx_id), Some(*ir_type));
+            assert_eq!(s.landmark_to_kfx(*ir_type), Some(*kfx_sym));
+        }
     }
 }

@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 
-use crate::book::Book;
+use crate::book::{Book, LandmarkType};
 use crate::export::Exporter;
 use crate::import::ChapterId;
 use crate::ir::{IRChapter, NodeId, Role};
-use crate::kfx::context::ExportContext;
+use crate::kfx::context::{ExportContext, LandmarkTarget};
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::serialization::{
@@ -104,6 +104,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // 1b. Survey each chapter: assign fragment IDs, build position map
+    // Also build a map from source paths to chapter IDs for landmark resolution
+    let mut source_to_chapter: HashMap<String, ChapterId> = HashMap::new();
+
     for (chapter_id, section_name) in &spine_info {
         // Register section name as symbol
         let _section_id = ctx.register_section(section_name);
@@ -111,16 +114,74 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         // Get the source path for this chapter (for TOC resolution)
         let source_path = book.source_id(*chapter_id).unwrap_or("").to_string();
 
+        // Map source path to chapter ID for landmark resolution
+        if !source_path.is_empty() {
+            source_to_chapter.insert(source_path.clone(), *chapter_id);
+        }
+
         // Load and survey chapter
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
             survey_chapter(&chapter, *chapter_id, &source_path, &mut ctx);
         }
     }
 
+    // 1b2. Resolve landmarks to fragment IDs
+    // First try IR landmarks, then fall back to heuristics for Cover/StartReading
+    resolve_landmarks_from_ir(book, &source_to_chapter, &mut ctx);
+
+    // Fall back to heuristics if IR didn't provide Cover or StartReading
+    let has_cover = ctx.landmark_fragments.contains_key(&LandmarkType::Cover);
+    let has_srl = ctx.landmark_fragments.contains_key(&LandmarkType::StartReading);
+
+    if !has_cover || !has_srl {
+        for (chapter_id, _section_name) in &spine_info {
+            if let Ok(chapter) = book.load_chapter(*chapter_id) {
+                let is_cover = is_image_only_chapter(&chapter);
+                let fragment_id = ctx.chapter_fragments.get(chapter_id).copied();
+
+                if let Some(fid) = fragment_id {
+                    if is_cover && !ctx.landmark_fragments.contains_key(&LandmarkType::Cover) {
+                        ctx.landmark_fragments.insert(
+                            LandmarkType::Cover,
+                            LandmarkTarget {
+                                fragment_id: fid,
+                                offset: 0,
+                                label: "cover-nav-unit".to_string(),
+                            },
+                        );
+                    } else if !is_cover
+                        && !ctx.landmark_fragments.contains_key(&LandmarkType::StartReading)
+                    {
+                        ctx.landmark_fragments.insert(
+                            LandmarkType::StartReading,
+                            LandmarkTarget {
+                                fragment_id: fid,
+                                offset: 0,
+                                label: book.metadata().title.clone(),
+                            },
+                        );
+                    }
+                }
+
+                // Stop once we have both
+                if ctx.landmark_fragments.contains_key(&LandmarkType::Cover)
+                    && ctx.landmark_fragments.contains_key(&LandmarkType::StartReading)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
     // 1c. Register TOC strings
     register_toc_symbols(book.toc(), &mut ctx);
 
-    // 1d. Register resource paths and create short names
+    // 1d. Register nav container names as symbols
+    ctx.nav_container_symbols.toc = ctx.symbols.get_or_intern("toc");
+    ctx.nav_container_symbols.headings = ctx.symbols.get_or_intern("headings");
+    ctx.nav_container_symbols.landmarks = ctx.symbols.get_or_intern("landmarks");
+
+    // 1e. Register resource paths and create short names
     // IMPORTANT: Short names must be interned during Pass 1 to ensure
     // consistent symbol IDs when they're referenced later in storylines
     let asset_paths: Vec<_> = book.list_assets();
@@ -659,10 +720,30 @@ fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
 ///
 /// Uses ctx.position_map to generate correct fid:off positions for TOC entries.
 /// Structure: [{reading_order_name: default, nav_containers: [nav_container::{...}, ...]}]
+/// Order matches reference KFX: headings, toc, landmarks
 fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContext) -> KfxFragment {
     let mut nav_containers = Vec::new();
 
-    // Add TOC nav container if there are TOC entries
+    // 1. Add headings nav container (first, per reference KFX order)
+    let headings_entries = build_headings_entries(ctx);
+    let headings_container = IonValue::Struct(vec![
+        (
+            KfxSymbol::NavType as u64,
+            IonValue::Symbol(KfxSymbol::Headings as u64),
+        ),
+        (
+            KfxSymbol::NavContainerName as u64,
+            IonValue::Symbol(ctx.nav_container_symbols.headings),
+        ),
+        (KfxSymbol::Entries as u64, IonValue::List(headings_entries)),
+    ]);
+    let annotated = IonValue::Annotated(
+        vec![KfxSymbol::NavContainer as u64],
+        Box::new(headings_container),
+    );
+    nav_containers.push(annotated);
+
+    // 2. Add TOC nav container if there are TOC entries
     if !book.toc().is_empty() {
         let toc_entries = build_toc_entries_with_positions(book.toc(), ctx);
         let toc_container = IonValue::Struct(vec![
@@ -672,11 +753,10 @@ fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContex
             ),
             (
                 KfxSymbol::NavContainerName as u64,
-                IonValue::String("toc".to_string()),
+                IonValue::Symbol(ctx.nav_container_symbols.toc),
             ),
             (KfxSymbol::Entries as u64, IonValue::List(toc_entries)),
         ]);
-        // Annotate with nav_container::
         let annotated = IonValue::Annotated(
             vec![KfxSymbol::NavContainer as u64],
             Box::new(toc_container),
@@ -684,25 +764,26 @@ fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContex
         nav_containers.push(annotated);
     }
 
-    // Add headings nav container
-    let headings_entries = build_headings_entries(ctx);
-    let headings_container = IonValue::Struct(vec![
-        (
-            KfxSymbol::NavType as u64,
-            IonValue::Symbol(KfxSymbol::Headings as u64),
-        ),
-        (
-            KfxSymbol::NavContainerName as u64,
-            IonValue::String("headings".to_string()),
-        ),
-        (KfxSymbol::Entries as u64, IonValue::List(headings_entries)),
-    ]);
-    // Annotate with nav_container::
-    let annotated = IonValue::Annotated(
-        vec![KfxSymbol::NavContainer as u64],
-        Box::new(headings_container),
-    );
-    nav_containers.push(annotated);
+    // 3. Add landmarks nav container (cover_page and start reading location)
+    let landmarks_entries = build_landmarks_entries(book, ctx);
+    if !landmarks_entries.is_empty() {
+        let landmarks_container = IonValue::Struct(vec![
+            (
+                KfxSymbol::NavType as u64,
+                IonValue::Symbol(KfxSymbol::Landmarks as u64),
+            ),
+            (
+                KfxSymbol::NavContainerName as u64,
+                IonValue::Symbol(ctx.nav_container_symbols.landmarks),
+            ),
+            (KfxSymbol::Entries as u64, IonValue::List(landmarks_entries)),
+        ]);
+        let annotated = IonValue::Annotated(
+            vec![KfxSymbol::NavContainer as u64],
+            Box::new(landmarks_container),
+        );
+        nav_containers.push(annotated);
+    }
 
     // Wrap in reading order structure: [{reading_order_name, nav_containers}]
     let reading_order = IonValue::Struct(vec![
@@ -728,6 +809,60 @@ fn build_headings_entries(ctx: &ExportContext) -> Vec<IonValue> {
     // TODO: Track heading positions and labels during Pass 1
     let _ = ctx;
     Vec::new()
+}
+
+/// Build landmarks navigation entries.
+///
+/// Build landmark entries from resolved landmarks using schema mapping.
+///
+/// Iterates over all landmarks in ctx.landmark_fragments and converts each
+/// to a KFX nav_unit using the schema for type conversion.
+fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<IonValue> {
+    use crate::kfx::schema::schema;
+
+    let mut entries = Vec::new();
+
+    // Sort landmarks for consistent output (Cover first, then StartReading, then others)
+    let mut landmarks: Vec<_> = ctx.landmark_fragments.iter().collect();
+    landmarks.sort_by_key(|(lt, _)| match lt {
+        LandmarkType::Cover => 0,
+        LandmarkType::StartReading => 1,
+        _ => 2,
+    });
+
+    for (landmark_type, target) in landmarks {
+        // Convert IR landmark type to KFX symbol via schema
+        let Some(kfx_symbol) = schema().landmark_to_kfx(*landmark_type) else {
+            continue; // Skip landmarks with no KFX equivalent
+        };
+
+        let entry = IonValue::Annotated(
+            vec![KfxSymbol::NavUnit as u64],
+            Box::new(IonValue::Struct(vec![
+                (
+                    KfxSymbol::LandmarkType as u64,
+                    IonValue::Symbol(kfx_symbol as u64),
+                ),
+                (
+                    KfxSymbol::Representation as u64,
+                    IonValue::Struct(vec![(
+                        KfxSymbol::Label as u64,
+                        IonValue::String(target.label.clone()),
+                    )]),
+                ),
+                (
+                    KfxSymbol::TargetPosition as u64,
+                    IonValue::Struct(vec![
+                        (KfxSymbol::Id as u64, IonValue::Int(target.fragment_id as i64)),
+                        (KfxSymbol::Offset as u64, IonValue::Int(target.offset as i64)),
+                    ]),
+                ),
+            ])),
+        );
+        entries.push(entry);
+    }
+
+    entries
 }
 
 /// Build TOC entries recursively with resolved positions.
@@ -1408,6 +1543,82 @@ fn is_media_asset(path: &std::path::Path) -> bool {
         ext.to_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "svg" | "webp" | "ttf" | "otf" | "woff" | "woff2"
     )
+}
+
+/// Resolve landmarks from the Book's IR to fragment IDs.
+///
+/// This uses the parsed landmarks from the source format (EPUB, KFX, etc.)
+/// to populate landmark_fragments in the context.
+///
+/// Handles both chapter-level targets (e.g., `chapter.xhtml`) and anchor-level
+/// targets (e.g., `chapter.xhtml#section1`) by looking up positions via anchor_map.
+fn resolve_landmarks_from_ir(
+    book: &Book,
+    source_to_chapter: &HashMap<String, ChapterId>,
+    ctx: &mut ExportContext,
+) {
+    for landmark in book.landmarks() {
+        // Split href into file path and optional anchor
+        let (href_path, anchor) = match landmark.href.split_once('#') {
+            Some((path, anchor)) => (path, Some(anchor)),
+            None => (landmark.href.as_str(), None),
+        };
+
+        // Try to find the chapter ID for this href
+        let chapter_id = source_to_chapter.get(href_path).copied();
+
+        if let Some(cid) = chapter_id {
+            // Try to resolve target position
+            let target = if let Some(anchor_id) = anchor {
+                // Look up anchor in anchor_map to get (ChapterId, NodeId)
+                // Then use position_map to get the exact position
+                let full_href = format!("{}#{}", href_path, anchor_id);
+                if let Some(&(_, node_id)) = ctx.anchor_map.get(&full_href) {
+                    if let Some(pos) = ctx.position_map.get(&(cid, node_id)) {
+                        Some(LandmarkTarget {
+                            fragment_id: pos.fragment_id,
+                            offset: pos.offset as u64,
+                            label: landmark.label.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                } else if let Some(frag_id) = ctx.chapter_fragments.get(&cid).copied() {
+                    // Fall back to chapter start if anchor not found
+                    Some(LandmarkTarget {
+                        fragment_id: frag_id,
+                        offset: 0,
+                        label: landmark.label.clone(),
+                    })
+                } else {
+                    None
+                }
+            } else if let Some(frag_id) = ctx.chapter_fragments.get(&cid).copied() {
+                // No anchor, use chapter start
+                Some(LandmarkTarget {
+                    fragment_id: frag_id,
+                    offset: 0,
+                    label: landmark.label.clone(),
+                })
+            } else {
+                None
+            };
+
+            if let Some(target) = target {
+                // Only add if not already present (first wins)
+                ctx.landmark_fragments
+                    .entry(landmark.landmark_type)
+                    .or_insert(target.clone());
+
+                // BodyMatter can serve as StartReading if no explicit SRL
+                if landmark.landmark_type == LandmarkType::BodyMatter {
+                    ctx.landmark_fragments
+                        .entry(LandmarkType::StartReading)
+                        .or_insert(target);
+                }
+            }
+        }
+    }
 }
 
 /// Check if a chapter contains only an image and no text content.

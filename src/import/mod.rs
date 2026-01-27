@@ -16,7 +16,7 @@ pub use mobi::MobiImporter;
 
 use std::path::{Path, PathBuf};
 
-use crate::book::{Metadata, TocEntry};
+use crate::book::{Landmark, Metadata, TocEntry};
 use crate::compiler::{compile_html_bytes, extract_stylesheets, Origin, Stylesheet};
 use crate::ir::IRChapter;
 
@@ -51,6 +51,9 @@ pub trait Importer: Send + Sync {
 
     /// Table of contents.
     fn toc(&self) -> &[TocEntry];
+
+    /// Landmarks (structural navigation points like cover, start reading location).
+    fn landmarks(&self) -> &[Landmark];
 
     /// Reading order (spine).
     fn spine(&self) -> &[SpineEntry];

@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::book::{Metadata, TocEntry};
+use crate::book::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
@@ -39,6 +39,9 @@ pub struct MobiImporter {
     /// Table of contents (single entry for MOBI6).
     toc: Vec<TocEntry>,
 
+    /// Landmarks (structural navigation points).
+    landmarks: Vec<Landmark>,
+
     /// Reading order (single entry for MOBI6).
     spine: Vec<SpineEntry>,
 
@@ -59,6 +62,10 @@ impl Importer for MobiImporter {
 
     fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
     }
 
     fn spine(&self) -> &[SpineEntry] {
@@ -216,6 +223,7 @@ impl MobiImporter {
             file_len,
             metadata,
             toc,
+            landmarks: Vec::new(), // MOBI6 format doesn't have landmarks
             spine,
             content_cache: None,
         })

@@ -6,7 +6,7 @@ use std::io;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::book::{Metadata, TocEntry};
+use crate::book::{Landmark, LandmarkType, Metadata, TocEntry};
 
 /// Parsed OPF package data.
 pub struct OpfData {
@@ -15,6 +15,8 @@ pub struct OpfData {
     pub manifest: HashMap<String, (String, String)>,
     pub spine_ids: Vec<String>,
     pub ncx_href: Option<String>,
+    /// EPUB 3 nav document href (has properties="nav")
+    pub nav_href: Option<String>,
 }
 
 /// Parse META-INF/container.xml to find the OPF path.
@@ -228,6 +230,16 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
             metadata.cover_image = Some(item.href.clone());
         }
 
+    // Detect EPUB3 nav document (properties="nav")
+    let nav_href = manifest
+        .values()
+        .find(|item| {
+            item.properties
+                .as_ref()
+                .is_some_and(|props| props.split_ascii_whitespace().any(|p| p == "nav"))
+        })
+        .map(|item| item.href.clone());
+
     // Convert manifest to simple map
     let manifest_simple: HashMap<String, (String, String)> = manifest
         .into_iter()
@@ -242,6 +254,7 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
         manifest: manifest_simple,
         spine_ids,
         ncx_href,
+        nav_href,
     })
 }
 
@@ -354,6 +367,144 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
     }
 
     Ok(stack.pop().map(|s| s.children).unwrap_or_default())
+}
+
+/// Parse EPUB 3 nav document landmarks.
+///
+/// Landmarks are in a `<nav epub:type="landmarks">` element containing
+/// an ordered list of anchor elements with epub:type attributes.
+pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    let mut landmarks = Vec::new();
+    let mut in_landmarks_nav = false;
+    let mut current_href: Option<String> = None;
+    let mut current_epub_type: Option<String> = None;
+    let mut current_label = String::new();
+    let mut in_anchor = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let name = e.name();
+                let local = local_name(name.as_ref());
+
+                match local {
+                    b"nav" => {
+                        // Check for epub:type="landmarks"
+                        for attr in e.attributes().flatten() {
+                            let key = attr.key.as_ref();
+                            let key_local = local_name(key);
+                            if key_local == b"type" {
+                                let value = String::from_utf8_lossy(&attr.value);
+                                if value.split_ascii_whitespace().any(|v| v == "landmarks") {
+                                    in_landmarks_nav = true;
+                                }
+                            }
+                        }
+                    }
+                    b"a" if in_landmarks_nav => {
+                        in_anchor = true;
+                        current_label.clear();
+
+                        for attr in e.attributes().flatten() {
+                            let key = attr.key.as_ref();
+                            let key_local = local_name(key);
+
+                            match key_local {
+                                b"href" => {
+                                    current_href = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                b"type" => {
+                                    current_epub_type = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_anchor {
+                    current_label.push_str(&String::from_utf8_lossy(e.as_ref()));
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                if in_anchor {
+                    let entity = String::from_utf8_lossy(e.as_ref());
+                    if let Some(resolved) = resolve_entity(&entity) {
+                        current_label.push_str(&resolved);
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = e.name();
+                let local = local_name(name.as_ref());
+
+                match local {
+                    b"nav" => {
+                        in_landmarks_nav = false;
+                    }
+                    b"a" if in_anchor => {
+                        in_anchor = false;
+
+                        // Create landmark if we have the required data
+                        if let (Some(href), Some(epub_type)) =
+                            (current_href.take(), current_epub_type.take())
+                        {
+                            if let Some(landmark_type) = epub_type_to_landmark(&epub_type) {
+                                landmarks.push(Landmark {
+                                    landmark_type,
+                                    href,
+                                    label: current_label.clone(),
+                                });
+                            }
+                        }
+                        current_label.clear();
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(io::Error::other(e)),
+            _ => {}
+        }
+    }
+
+    Ok(landmarks)
+}
+
+/// Map EPUB epub:type value to LandmarkType.
+fn epub_type_to_landmark(epub_type: &str) -> Option<LandmarkType> {
+    // epub:type can have multiple space-separated values; check each
+    for value in epub_type.split_ascii_whitespace() {
+        match value {
+            "cover" => return Some(LandmarkType::Cover),
+            "bodymatter" => return Some(LandmarkType::BodyMatter),
+            "frontmatter" => return Some(LandmarkType::FrontMatter),
+            "backmatter" => return Some(LandmarkType::BackMatter),
+            "toc" => return Some(LandmarkType::Toc),
+            "titlepage" | "title-page" => return Some(LandmarkType::TitlePage),
+            "acknowledgments" | "acknowledgements" => return Some(LandmarkType::Acknowledgements),
+            "bibliography" => return Some(LandmarkType::Bibliography),
+            "glossary" => return Some(LandmarkType::Glossary),
+            "index" => return Some(LandmarkType::Index),
+            "preface" => return Some(LandmarkType::Preface),
+            "endnotes" | "footnotes" | "notes" | "rearnotes" => return Some(LandmarkType::Endnotes),
+            "loi" => return Some(LandmarkType::Loi),
+            "lot" => return Some(LandmarkType::Lot),
+            _ => {}
+        }
+    }
+    None
 }
 
 // ----------------------------------------------------------------------------
@@ -620,5 +771,198 @@ mod tests {
         assert_eq!(result[0].children.len(), 2);
         assert_eq!(result[0].children[0].title, "Chapter 1");
         assert_eq!(result[0].children[1].title, "Chapter 2");
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_basic() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav id="landmarks" epub:type="landmarks">
+      <ol>
+        <li><a href="text/cover.xhtml" epub:type="cover">Cover</a></li>
+        <li><a href="text/chapter1.xhtml" epub:type="bodymatter">Start Reading</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].landmark_type, LandmarkType::Cover);
+        assert_eq!(result[0].href, "text/cover.xhtml");
+        assert_eq!(result[0].label, "Cover");
+        assert_eq!(result[1].landmark_type, LandmarkType::BodyMatter);
+        assert_eq!(result[1].href, "text/chapter1.xhtml");
+        assert_eq!(result[1].label, "Start Reading");
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_all_types() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a href="cover.xhtml" epub:type="cover">Cover</a></li>
+        <li><a href="title.xhtml" epub:type="titlepage">Title Page</a></li>
+        <li><a href="toc.xhtml" epub:type="toc">Table of Contents</a></li>
+        <li><a href="front.xhtml" epub:type="frontmatter">Front Matter</a></li>
+        <li><a href="body.xhtml" epub:type="bodymatter">Body</a></li>
+        <li><a href="back.xhtml" epub:type="backmatter">Back Matter</a></li>
+        <li><a href="ack.xhtml" epub:type="acknowledgments">Acknowledgments</a></li>
+        <li><a href="bib.xhtml" epub:type="bibliography">Bibliography</a></li>
+        <li><a href="gloss.xhtml" epub:type="glossary">Glossary</a></li>
+        <li><a href="index.xhtml" epub:type="index">Index</a></li>
+        <li><a href="preface.xhtml" epub:type="preface">Preface</a></li>
+        <li><a href="notes.xhtml" epub:type="endnotes">Endnotes</a></li>
+        <li><a href="loi.xhtml" epub:type="loi">List of Illustrations</a></li>
+        <li><a href="lot.xhtml" epub:type="lot">List of Tables</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        assert_eq!(result.len(), 14);
+        assert_eq!(result[0].landmark_type, LandmarkType::Cover);
+        assert_eq!(result[1].landmark_type, LandmarkType::TitlePage);
+        assert_eq!(result[2].landmark_type, LandmarkType::Toc);
+        assert_eq!(result[3].landmark_type, LandmarkType::FrontMatter);
+        assert_eq!(result[4].landmark_type, LandmarkType::BodyMatter);
+        assert_eq!(result[5].landmark_type, LandmarkType::BackMatter);
+        assert_eq!(result[6].landmark_type, LandmarkType::Acknowledgements);
+        assert_eq!(result[7].landmark_type, LandmarkType::Bibliography);
+        assert_eq!(result[8].landmark_type, LandmarkType::Glossary);
+        assert_eq!(result[9].landmark_type, LandmarkType::Index);
+        assert_eq!(result[10].landmark_type, LandmarkType::Preface);
+        assert_eq!(result[11].landmark_type, LandmarkType::Endnotes);
+        assert_eq!(result[12].landmark_type, LandmarkType::Loi);
+        assert_eq!(result[13].landmark_type, LandmarkType::Lot);
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_ignores_toc_nav() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="ch1.xhtml">Chapter 1</a></li>
+      </ol>
+    </nav>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a href="cover.xhtml" epub:type="cover">Cover</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        // Should only get the landmark, not the TOC entry
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].landmark_type, LandmarkType::Cover);
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_footnotes_variants() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a href="fn.xhtml" epub:type="footnotes">Footnotes</a></li>
+        <li><a href="notes.xhtml" epub:type="notes">Notes</a></li>
+        <li><a href="rn.xhtml" epub:type="rearnotes">Rear Notes</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        // All variants should map to Endnotes
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].landmark_type, LandmarkType::Endnotes);
+        assert_eq!(result[1].landmark_type, LandmarkType::Endnotes);
+        assert_eq!(result[2].landmark_type, LandmarkType::Endnotes);
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_unknown_type_skipped() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="landmarks">
+      <ol>
+        <li><a href="cover.xhtml" epub:type="cover">Cover</a></li>
+        <li><a href="unknown.xhtml" epub:type="custom-type">Custom</a></li>
+        <li><a href="body.xhtml" epub:type="bodymatter">Body</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        // Unknown types should be skipped
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].landmark_type, LandmarkType::Cover);
+        assert_eq!(result[1].landmark_type, LandmarkType::BodyMatter);
+    }
+
+    #[test]
+    fn test_parse_nav_landmarks_empty() {
+        let nav = r#"<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc">
+      <ol>
+        <li><a href="ch1.xhtml">Chapter 1</a></li>
+      </ol>
+    </nav>
+  </body>
+</html>"#;
+
+        let result = parse_nav_landmarks(nav).unwrap();
+
+        // No landmarks nav, should return empty
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_opf_nav_href() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Book</dc:title></metadata>
+  <manifest>
+    <item id="nav" href="toc.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.nav_href, Some("toc.xhtml".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_no_nav() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Book</dc:title></metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="ch1"/></spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.nav_href, None);
     }
 }

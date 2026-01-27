@@ -79,6 +79,55 @@ impl PartialOrd for TocEntry {
     }
 }
 
+/// Type of landmark in a book's navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LandmarkType {
+    /// Cover page (image)
+    Cover,
+    /// Title page
+    TitlePage,
+    /// Table of contents
+    Toc,
+    /// Start reading location (where the book opens)
+    StartReading,
+    /// Beginning of body/main content
+    BodyMatter,
+    /// Front matter (preface, introduction, etc.)
+    FrontMatter,
+    /// Back matter (appendix, index, etc.)
+    BackMatter,
+    /// Acknowledgements
+    Acknowledgements,
+    /// Bibliography
+    Bibliography,
+    /// Glossary
+    Glossary,
+    /// Index
+    Index,
+    /// Preface
+    Preface,
+    /// Endnotes/Footnotes
+    Endnotes,
+    /// List of illustrations
+    Loi,
+    /// List of tables
+    Lot,
+}
+
+/// A landmark navigation entry.
+///
+/// Landmarks identify structural locations in a book (cover, start of content,
+/// endnotes, etc.) used for navigation and reader features.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Landmark {
+    /// Type of landmark
+    pub landmark_type: LandmarkType,
+    /// Target href (file path with optional fragment)
+    pub href: String,
+    /// Display label
+    pub label: String,
+}
+
 // ============================================================================
 // Book Runtime Handle
 // ============================================================================
@@ -203,6 +252,11 @@ impl Book {
     /// Table of contents.
     pub fn toc(&self) -> &[TocEntry] {
         self.backend.toc()
+    }
+
+    /// Landmarks (structural navigation points).
+    pub fn landmarks(&self) -> &[Landmark] {
+        self.backend.landmarks()
     }
 
     /// Reading order (spine).

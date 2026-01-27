@@ -134,6 +134,8 @@ struct BookInfo {
     metadata: MetadataInfo,
     spine: Vec<SpineInfo>,
     toc: Vec<TocInfo>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    landmarks: Vec<LandmarkInfo>,
     assets: Vec<AssetInfo>,
 }
 
@@ -176,6 +178,13 @@ struct TocInfo {
     href: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     children: Vec<TocInfo>,
+}
+
+#[derive(Serialize)]
+struct LandmarkInfo {
+    landmark_type: String,
+    href: String,
+    label: String,
 }
 
 fn show_info(path: &str, json: bool) -> Result<(), String> {
@@ -227,6 +236,15 @@ fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
             })
             .collect(),
         toc: book.toc().iter().map(toc_to_info).collect(),
+        landmarks: book
+            .landmarks()
+            .iter()
+            .map(|l| LandmarkInfo {
+                landmark_type: format!("{:?}", l.landmark_type),
+                href: l.href.clone(),
+                label: l.label.clone(),
+            })
+            .collect(),
         assets,
     };
 
@@ -290,6 +308,18 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     // Table of contents
     println!("\nTable of Contents ({} entries):", book.toc().len());
     print_toc_human(book.toc(), 1);
+
+    // Landmarks
+    let landmarks = book.landmarks();
+    if !landmarks.is_empty() {
+        println!("\nLandmarks ({}):", landmarks.len());
+        for landmark in landmarks {
+            println!(
+                "  {:?} -> {} ({})",
+                landmark.landmark_type, landmark.href, landmark.label
+            );
+        }
+    }
 
     // Assets
     let assets = book.list_assets();

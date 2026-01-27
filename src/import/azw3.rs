@@ -10,7 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::book::{Metadata, TocEntry};
+use crate::book::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
@@ -45,6 +45,9 @@ pub struct Azw3Importer {
 
     /// Table of contents.
     toc: Vec<TocEntry>,
+
+    /// Landmarks (structural navigation points).
+    landmarks: Vec<Landmark>,
 
     /// Reading order (spine).
     spine: Vec<SpineEntry>,
@@ -85,6 +88,10 @@ impl Importer for Azw3Importer {
 
     fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
     }
 
     fn spine(&self) -> &[SpineEntry] {
@@ -289,6 +296,7 @@ impl Azw3Importer {
             file_len,
             metadata,
             toc,
+            landmarks: Vec::new(), // AZW3 format doesn't have landmarks
             spine,
             chapter_paths,
             kf8: Kf8Structure { flow_table, files, elems },

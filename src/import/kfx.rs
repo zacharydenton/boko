@@ -10,7 +10,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::book::{Metadata, TocEntry};
+use crate::book::{Landmark, Metadata, TocEntry};
+use crate::kfx::schema::schema;
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::ir::IRChapter;
@@ -49,6 +50,9 @@ pub struct KfxImporter {
 
     /// Table of contents.
     toc: Vec<TocEntry>,
+
+    /// Landmarks (structural navigation points).
+    landmarks: Vec<Landmark>,
 
     /// Reading order (spine).
     spine: Vec<SpineEntry>,
@@ -99,6 +103,10 @@ impl Importer for KfxImporter {
 
     fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
     }
 
     fn spine(&self) -> &[SpineEntry] {
@@ -237,6 +245,7 @@ impl KfxImporter {
             doc_symbols,
             metadata: Metadata::default(),
             toc: Vec::new(),
+            landmarks: Vec::new(), // TODO: Parse from KFX landmarks nav_container
             spine: Vec::new(),
             section_names: Vec::new(),
             section_storylines: HashMap::new(),
@@ -374,7 +383,7 @@ impl KfxImporter {
         Ok(())
     }
 
-    /// Parse book navigation (TOC).
+    /// Parse book navigation (TOC and landmarks).
     fn parse_navigation(&mut self) -> io::Result<()> {
         // Find book_navigation entity
         let loc = self
@@ -398,13 +407,19 @@ impl KfxImporter {
                                 // Unwrap annotation if present
                                 let inner = container.unwrap_annotated();
                                 if let Some(container_fields) = inner.as_struct() {
-                                    // Check nav_type - we want "toc"
+                                    // Check nav_type
                                     let nav_type = get_field(container_fields, sym!(NavType))
                                         .and_then(|v| self.get_symbol_text(v));
 
-                                    if nav_type == Some("toc") {
-                                        self.toc = self.parse_nav_entries(container_fields);
-                                        return Ok(());
+                                    match nav_type {
+                                        Some("toc") => {
+                                            self.toc = self.parse_nav_entries(container_fields);
+                                        }
+                                        Some("landmarks") => {
+                                            self.landmarks =
+                                                self.parse_landmark_entries(container_fields);
+                                        }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -415,6 +430,62 @@ impl KfxImporter {
         }
 
         Ok(())
+    }
+
+    /// Parse landmark entries from a landmarks nav_container.
+    fn parse_landmark_entries(&self, container: &[(u64, IonValue)]) -> Vec<Landmark> {
+        let mut landmarks = Vec::new();
+
+        if let Some(entry_list) = get_field(container, sym!(Entries)).and_then(|v| v.as_list()) {
+            for entry in entry_list {
+                // Unwrap annotation if present
+                let inner = entry.unwrap_annotated();
+                if let Some(entry_fields) = inner.as_struct() {
+                    // Get landmark_type symbol and convert via schema
+                    let landmark_type = get_field(entry_fields, sym!(LandmarkType))
+                        .and_then(|v| match v {
+                            IonValue::Symbol(id) => schema().landmark_from_kfx(*id),
+                            _ => None,
+                        });
+
+                    // Skip unknown landmark types
+                    let Some(landmark_type) = landmark_type else {
+                        continue;
+                    };
+
+                    // Get label from representation.label
+                    let label = get_field(entry_fields, sym!(Representation))
+                        .and_then(|v| v.as_struct())
+                        .and_then(|s| get_field(s, sym!(Label)))
+                        .and_then(|v| v.as_string())
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Get target position (id and offset)
+                    let target_pos =
+                        get_field(entry_fields, sym!(TargetPosition)).and_then(|v| v.as_struct());
+                    let href = if let Some(pos) = target_pos {
+                        let id = get_field(pos, sym!(Id)).and_then(|v| v.as_int());
+                        let offset = get_field(pos, sym!(Offset)).and_then(|v| v.as_int());
+                        match (id, offset) {
+                            (Some(id), Some(off)) if off > 0 => format!("#{}:{}", id, off),
+                            (Some(id), _) => format!("#{}", id),
+                            _ => String::new(),
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    landmarks.push(Landmark {
+                        landmark_type,
+                        href,
+                        label,
+                    });
+                }
+            }
+        }
+
+        landmarks
     }
 
     /// Recursively parse nav entries into a tree structure.

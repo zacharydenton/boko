@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use zip::ZipArchive;
 
-use crate::book::{Metadata, TocEntry};
-use crate::epub::{parse_container_xml, parse_ncx, parse_opf};
+use crate::book::{Landmark, Metadata, TocEntry};
+use crate::epub::{parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, ByteSourceCursor, FileSource};
 
@@ -25,6 +25,9 @@ pub struct EpubImporter {
 
     /// Table of contents.
     toc: Vec<TocEntry>,
+
+    /// Landmarks (structural navigation points).
+    landmarks: Vec<Landmark>,
 
     /// Reading order (spine).
     spine: Vec<SpineEntry>,
@@ -56,6 +59,10 @@ impl Importer for EpubImporter {
 
     fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    fn landmarks(&self) -> &[Landmark] {
+        &self.landmarks
     }
 
     fn spine(&self) -> &[SpineEntry] {
@@ -168,11 +175,33 @@ impl EpubImporter {
             Vec::new()
         };
 
+        // 6. Parse landmarks from EPUB 3 nav document
+        let landmarks = if let Some(nav_href) = &opf.nav_href {
+            let nav_path = format!("{}{}", opf_base, nav_href);
+            if let Ok(nav_bytes) = read_entry(&source, &zip_index, &nav_path) {
+                let hint_encoding = crate::util::extract_xml_encoding(&nav_bytes);
+                let nav_str = crate::util::decode_text(&nav_bytes, hint_encoding);
+                let mut parsed = parse_nav_landmarks(&nav_str)?;
+                // Prepend base path to hrefs (nav uses relative paths)
+                for landmark in &mut parsed {
+                    if !landmark.href.starts_with('#') && !landmark.href.is_empty() {
+                        landmark.href = format!("{}{}", opf_base, landmark.href);
+                    }
+                }
+                parsed
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             source,
             zip_index,
             metadata: opf.metadata,
             toc,
+            landmarks,
             spine,
             spine_paths,
             assets,
