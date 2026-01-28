@@ -805,6 +805,7 @@ struct TocEntryInfo {
     target_id: Option<i64>,
     target_offset: Option<i64>,
     target_text: Option<String>,  // Preview of text at target
+    target_type: Option<String>,  // Entity type name (e.g., "storyline", "section")
     depth: usize,
 }
 
@@ -865,17 +866,24 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
     let mut content_map: HashMap<String, Vec<String>> = HashMap::new();
     // Map fragment ID → (content_name, content_index) for resolving target positions
     let mut fragment_content_map: HashMap<i64, (String, i64)> = HashMap::new();
+    // Map entity ID → type name for showing what kind of entity each TOC entry points to
+    let mut entity_type_map: HashMap<i64, String> = HashMap::new();
 
-    // First pass: collect content and storyline data
+    // First pass: collect content, storyline data, and entity types
     for i in 0..num_entries {
         let entry_offset = index_offset + i * entry_size;
         if entry_offset + entry_size > data.len() {
             break;
         }
 
+        let Some(id_idnum) = read_u32_le(data, entry_offset) else { continue };
         let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
         let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
         let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        // Record entity type for ID resolution
+        let type_name = resolve_symbol(type_idnum as u64, &extended_symbols, base_symbol_count);
+        entity_type_map.insert(id_idnum as i64, type_name);
 
         let abs_offset = header_len + entity_offset;
         if abs_offset + entity_len > data.len() {
@@ -956,7 +964,7 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
         };
 
         // Extract and print TOC
-        extract_and_print_toc(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map);
+        extract_and_print_toc(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map, &entity_type_map);
     }
 
     Ok(())
@@ -969,6 +977,7 @@ fn extract_and_print_toc(
     base_symbol_count: usize,
     content_map: &HashMap<String, Vec<String>>,
     fragment_content_map: &HashMap<i64, (String, i64)>,
+    entity_type_map: &HashMap<i64, String>,
 ) {
     use boko::kfx::ion::IonValue;
     use boko::kfx::symbols::KfxSymbol;
@@ -1048,7 +1057,7 @@ fn extract_and_print_toc(
 
                 if let Some(entry_list) = entries {
                     let mut toc_entries = Vec::new();
-                    extract_toc_entries(entry_list, extended_symbols, base_symbol_count, content_map, fragment_content_map, 0, &mut toc_entries);
+                    extract_toc_entries(entry_list, extended_symbols, base_symbol_count, content_map, fragment_content_map, entity_type_map, 0, &mut toc_entries);
 
                     for entry in &toc_entries {
                         let indent = "  ".repeat(entry.depth);
@@ -1058,12 +1067,21 @@ fn extract_and_print_toc(
                             _ => String::new(),
                         };
 
+                        // Show entity type if known, otherwise show whether we found content
+                        let type_info = if let Some(t) = &entry.target_type {
+                            format!(" ({})", t)
+                        } else if entry.target_text.is_some() {
+                            String::new()  // Has content, no need to annotate
+                        } else {
+                            " (no content)".to_string()
+                        };
+
                         if let Some(text) = &entry.target_text {
                             let preview: String = text.chars().take(50).collect();
                             let ellipsis = if text.chars().count() > 50 { "..." } else { "" };
-                            println!("{}{:<40} {:>12}  \"{}{}\"", indent, entry.label, position, preview, ellipsis);
+                            println!("{}{:<35} {:>12}{}  \"{}{}\"", indent, entry.label, position, type_info, preview, ellipsis);
                         } else {
-                            println!("{}{:<40} {:>12}", indent, entry.label, position);
+                            println!("{}{:<35} {:>12}{}", indent, entry.label, position, type_info);
                         }
                     }
 
@@ -1081,6 +1099,7 @@ fn extract_toc_entries(
     base_symbol_count: usize,
     content_map: &HashMap<String, Vec<String>>,
     fragment_content_map: &HashMap<i64, (String, i64)>,
+    entity_type_map: &HashMap<i64, String>,
     depth: usize,
     result: &mut Vec<TocEntryInfo>,
 ) {
@@ -1159,19 +1178,23 @@ fn extract_toc_entries(
             })
         });
 
+        // Get entity type for target ID
+        let target_type = target_id.and_then(|id| entity_type_map.get(&id).cloned());
+
         if !label.is_empty() || target_id.is_some() {
             result.push(TocEntryInfo {
                 label: if label.is_empty() { "(untitled)".to_string() } else { label },
                 target_id,
                 target_offset,
                 target_text,
+                target_type,
                 depth,
             });
         }
 
         // Recurse into children
         if let Some(child_entries) = children {
-            extract_toc_entries(child_entries, extended_symbols, base_symbol_count, content_map, fragment_content_map, depth + 1, result);
+            extract_toc_entries(child_entries, extended_symbols, base_symbol_count, content_map, fragment_content_map, entity_type_map, depth + 1, result);
         }
     }
 }
