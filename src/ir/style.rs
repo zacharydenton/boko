@@ -49,6 +49,15 @@ macro_rules! enum_property {
                     $($name::$variant => $css,)*
                 }
             }
+
+            /// Parse a CSS keyword into this enum.
+            #[inline]
+            pub fn from_css(s: &str) -> Option<Self> {
+                match s {
+                    $($css => Some($name::$variant),)*
+                    _ => None,
+                }
+            }
         }
 
         impl ToCss for $name {
@@ -217,6 +226,38 @@ enum_property! {
         ContentBox => "content-box",
         /// Width/height include padding and border
         BorderBox => "border-box",
+    }
+}
+
+enum_property! {
+    /// CSS clear values for float clearing.
+    pub enum Clear {
+        #[default]
+        None => "none",
+        Left => "left",
+        Right => "right",
+        Both => "both",
+    }
+}
+
+enum_property! {
+    /// CSS word-break values.
+    pub enum WordBreak {
+        #[default]
+        Normal => "normal",
+        BreakAll => "break-all",
+        KeepAll => "keep-all",
+        BreakWord => "break-word",
+    }
+}
+
+enum_property! {
+    /// CSS overflow-wrap values.
+    pub enum OverflowWrap {
+        #[default]
+        Normal => "normal",
+        BreakWord => "break-word",
+        Anywhere => "anywhere",
     }
 }
 
@@ -478,6 +519,19 @@ pub struct ComputedStyle {
     pub language: Option<String>,
     pub visibility: Visibility,
     pub box_sizing: BoxSizing,
+
+    // Phase 8: Additional layout properties
+    pub max_height: Length,
+    pub min_width: Length,
+    pub clear: Clear,
+
+    // Phase 9: Pagination control
+    pub orphans: u32,
+    pub widows: u32,
+
+    // Phase 10: Text wrapping
+    pub word_break: WordBreak,
+    pub overflow_wrap: OverflowWrap,
 }
 
 impl ComputedStyle {

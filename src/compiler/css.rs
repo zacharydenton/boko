@@ -1,4 +1,9 @@
 //! CSS parsing and cascade implementation.
+//!
+//! This module uses a "fat enum" approach where each `Property` variant contains
+//! both the property identity and its parsed value. This trades memory efficiency
+//! for simpler code - adding a new property requires changes in only two places:
+//! the `Property` enum and `Property::parse()`.
 
 use std::cmp::Ordering;
 
@@ -11,148 +16,295 @@ use selectors::parser::Selector;
 
 use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
-    BorderStyle, BoxSizing, BreakValue, Color, ComputedStyle, DecorationStyle, Display, Float,
-    FontStyle, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, StylePool, TextAlign,
-    TextTransform, Visibility,
+    BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle, DecorationStyle, Display,
+    Float, FontStyle, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, OverflowWrap,
+    StylePool, TextAlign, TextTransform, Visibility, WordBreak,
 };
 
 // ============================================================================
-// PropertyId - Interned CSS property names for zero-allocation parsing
+// Declaration - A CSS property-value pair
 // ============================================================================
 
-/// Macro to define CSS properties with bidirectional string mapping.
-/// Each entry maps a CSS property name to an enum variant.
-macro_rules! define_properties {
-    ($($css_name:literal => $variant:ident),* $(,)?) => {
-        /// CSS property identifier.
-        ///
-        /// Using an enum instead of String eliminates heap allocations during parsing
-        /// and enables faster matching via enum dispatch instead of string comparison.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        #[repr(u8)]
-        pub enum PropertyId {
-            $($variant,)*
-            /// Unknown property (rare - only for truly unrecognized properties)
-            Unknown,
-        }
-
-        impl PropertyId {
-            /// Parse a property name string into a PropertyId.
-            #[inline]
-            pub fn from_str(name: &str) -> Self {
-                match name {
-                    $($css_name => PropertyId::$variant,)*
-                    _ => PropertyId::Unknown,
-                }
-            }
-
-            /// Get the CSS property name as a string.
-            #[inline]
-            pub fn name(&self) -> &'static str {
-                match self {
-                    $(PropertyId::$variant => $css_name,)*
-                    PropertyId::Unknown => "<unknown>",
-                }
-            }
-        }
-    };
-}
-
-define_properties! {
+/// A parsed CSS declaration (property: value).
+///
+/// This "fat enum" combines property identity and value in one type.
+/// Each variant corresponds to a CSS property and contains its parsed value.
+#[derive(Debug, Clone)]
+pub enum Declaration {
     // Colors
-    "color" => Color,
-    "background-color" => BackgroundColor,
+    Color(Color),
+    BackgroundColor(Color),
 
     // Font properties
-    "font-family" => FontFamily,
-    "font-size" => FontSize,
-    "font-weight" => FontWeight,
-    "font-style" => FontStyle,
-    "font-variant" => FontVariant,
-    "font-variant-caps" => FontVariantCaps,
+    FontFamily(String),
+    FontSize(Length),
+    FontWeight(FontWeight),
+    FontStyle(FontStyle),
+    FontVariant(crate::ir::FontVariant),
 
     // Text properties
-    "text-align" => TextAlign,
-    "text-indent" => TextIndent,
-    "line-height" => LineHeight,
-    "letter-spacing" => LetterSpacing,
-    "word-spacing" => WordSpacing,
-    "text-transform" => TextTransform,
-    "hyphens" => Hyphens,
-    "white-space" => WhiteSpace,
-    "vertical-align" => VerticalAlign,
+    TextAlign(TextAlign),
+    TextIndent(Length),
+    LineHeight(Length),
+    LetterSpacing(Length),
+    WordSpacing(Length),
+    TextTransform(TextTransform),
+    Hyphens(Hyphens),
+    WhiteSpace(bool), // true = nowrap
+    VerticalAlign(VerticalAlignValue),
 
     // Text decoration
-    "text-decoration" => TextDecoration,
-    "text-decoration-line" => TextDecorationLine,
-    "text-decoration-style" => TextDecorationStyle,
-    "text-decoration-color" => TextDecorationColor,
+    TextDecoration(TextDecorationValue),
+    TextDecorationStyle(DecorationStyle),
+    TextDecorationColor(Color),
 
     // Box model - margins
-    "margin" => Margin,
-    "margin-top" => MarginTop,
-    "margin-right" => MarginRight,
-    "margin-bottom" => MarginBottom,
-    "margin-left" => MarginLeft,
+    Margin(Length),
+    MarginTop(Length),
+    MarginRight(Length),
+    MarginBottom(Length),
+    MarginLeft(Length),
 
     // Box model - padding
-    "padding" => Padding,
-    "padding-top" => PaddingTop,
-    "padding-right" => PaddingRight,
-    "padding-bottom" => PaddingBottom,
-    "padding-left" => PaddingLeft,
+    Padding(Length),
+    PaddingTop(Length),
+    PaddingRight(Length),
+    PaddingBottom(Length),
+    PaddingLeft(Length),
 
     // Dimensions
-    "width" => Width,
-    "height" => Height,
-    "max-width" => MaxWidth,
-    "min-height" => MinHeight,
+    Width(Length),
+    Height(Length),
+    MaxWidth(Length),
+    MaxHeight(Length),
+    MinWidth(Length),
+    MinHeight(Length),
 
     // Display & positioning
-    "display" => Display,
-    "float" => Float,
-    "visibility" => Visibility,
-    "box-sizing" => BoxSizing,
+    Display(Display),
+    Float(Float),
+    Clear(Clear),
+    Visibility(Visibility),
+    BoxSizing(BoxSizing),
+
+    // Pagination control
+    Orphans(u32),
+    Widows(u32),
+
+    // Text wrapping
+    WordBreak(WordBreak),
+    OverflowWrap(OverflowWrap),
 
     // Page breaks
-    "break-before" => BreakBefore,
-    "break-after" => BreakAfter,
-    "break-inside" => BreakInside,
-    "page-break-before" => PageBreakBefore,
-    "page-break-after" => PageBreakAfter,
-    "page-break-inside" => PageBreakInside,
+    BreakBefore(BreakValue),
+    BreakAfter(BreakValue),
+    BreakInside(BreakValue),
 
     // Border style
-    "border-style" => BorderStyle,
-    "border-top-style" => BorderTopStyle,
-    "border-right-style" => BorderRightStyle,
-    "border-bottom-style" => BorderBottomStyle,
-    "border-left-style" => BorderLeftStyle,
+    BorderStyle(BorderStyle),
+    BorderTopStyle(BorderStyle),
+    BorderRightStyle(BorderStyle),
+    BorderBottomStyle(BorderStyle),
+    BorderLeftStyle(BorderStyle),
 
     // Border width
-    "border-width" => BorderWidth,
-    "border-top-width" => BorderTopWidth,
-    "border-right-width" => BorderRightWidth,
-    "border-bottom-width" => BorderBottomWidth,
-    "border-left-width" => BorderLeftWidth,
+    BorderWidth(Length),
+    BorderTopWidth(Length),
+    BorderRightWidth(Length),
+    BorderBottomWidth(Length),
+    BorderLeftWidth(Length),
 
     // Border color
-    "border-color" => BorderColor,
-    "border-top-color" => BorderTopColor,
-    "border-right-color" => BorderRightColor,
-    "border-bottom-color" => BorderBottomColor,
-    "border-left-color" => BorderLeftColor,
+    BorderColor(Color),
+    BorderTopColor(Color),
+    BorderRightColor(Color),
+    BorderBottomColor(Color),
+    BorderLeftColor(Color),
 
     // Border radius
-    "border-radius" => BorderRadius,
-    "border-top-left-radius" => BorderTopLeftRadius,
-    "border-top-right-radius" => BorderTopRightRadius,
-    "border-bottom-left-radius" => BorderBottomLeftRadius,
-    "border-bottom-right-radius" => BorderBottomRightRadius,
+    BorderRadius(Length),
+    BorderTopLeftRadius(Length),
+    BorderTopRightRadius(Length),
+    BorderBottomLeftRadius(Length),
+    BorderBottomRightRadius(Length),
 
     // List properties
-    "list-style-type" => ListStyleType,
-    "list-style-position" => ListStylePosition,
+    ListStyleType(ListStyleType),
+    ListStylePosition(ListStylePosition),
+}
+
+/// Vertical alignment value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlignValue {
+    Baseline,
+    Super,
+    Sub,
+}
+
+/// Text decoration value (can combine underline and line-through).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextDecorationValue {
+    pub underline: bool,
+    pub line_through: bool,
+}
+
+impl Declaration {
+    /// Parse a CSS declaration from a property name and value parser.
+    ///
+    /// Returns `None` if the property is unknown or the value fails to parse.
+    pub fn parse(name: &str, input: &mut Parser<'_, '_>) -> Option<Self> {
+        match name {
+            // Colors
+            "color" => parse_color(input).map(Declaration::Color),
+            "background-color" => parse_color(input).map(Declaration::BackgroundColor),
+
+            // Font properties
+            "font-family" => parse_font_family(input).map(Declaration::FontFamily),
+            "font-size" => parse_length(input).map(Declaration::FontSize),
+            "font-weight" => parse_font_weight(input).map(Declaration::FontWeight),
+            "font-style" => parse_font_style(input).map(Declaration::FontStyle),
+            "font-variant" | "font-variant-caps" => {
+                parse_font_variant(input).map(Declaration::FontVariant)
+            }
+
+            // Text properties
+            "text-align" => parse_text_align(input).map(Declaration::TextAlign),
+            "text-indent" => parse_length(input).map(Declaration::TextIndent),
+            "line-height" => parse_line_height(input).map(Declaration::LineHeight),
+            "letter-spacing" => parse_length(input).map(Declaration::LetterSpacing),
+            "word-spacing" => parse_length(input).map(Declaration::WordSpacing),
+            "text-transform" => parse_text_transform(input).map(Declaration::TextTransform),
+            "hyphens" => parse_hyphens(input).map(Declaration::Hyphens),
+            "white-space" => parse_white_space(input).map(Declaration::WhiteSpace),
+            "vertical-align" => parse_vertical_align(input).map(Declaration::VerticalAlign),
+
+            // Text decoration
+            "text-decoration" | "text-decoration-line" => {
+                parse_text_decoration(input).map(Declaration::TextDecoration)
+            }
+            "text-decoration-style" => {
+                parse_decoration_style(input).map(Declaration::TextDecorationStyle)
+            }
+            "text-decoration-color" => parse_color(input).map(Declaration::TextDecorationColor),
+
+            // Box model - margins (individual)
+            "margin-top" => parse_length(input).map(Declaration::MarginTop),
+            "margin-right" => parse_length(input).map(Declaration::MarginRight),
+            "margin-bottom" => parse_length(input).map(Declaration::MarginBottom),
+            "margin-left" => parse_length(input).map(Declaration::MarginLeft),
+
+            // Box model - padding (individual)
+            "padding-top" => parse_length(input).map(Declaration::PaddingTop),
+            "padding-right" => parse_length(input).map(Declaration::PaddingRight),
+            "padding-bottom" => parse_length(input).map(Declaration::PaddingBottom),
+            "padding-left" => parse_length(input).map(Declaration::PaddingLeft),
+
+            // Dimensions
+            "width" => parse_length(input).map(Declaration::Width),
+            "height" => parse_length(input).map(Declaration::Height),
+            "max-width" => parse_length(input).map(Declaration::MaxWidth),
+            "max-height" => parse_length(input).map(Declaration::MaxHeight),
+            "min-width" => parse_length(input).map(Declaration::MinWidth),
+            "min-height" => parse_length(input).map(Declaration::MinHeight),
+
+            // Display & positioning
+            "display" => parse_display(input).map(Declaration::Display),
+            "float" => parse_float(input).map(Declaration::Float),
+            "clear" => parse_clear(input).map(Declaration::Clear),
+            "visibility" => parse_visibility(input).map(Declaration::Visibility),
+            "box-sizing" => parse_box_sizing(input).map(Declaration::BoxSizing),
+
+            // Pagination control
+            "orphans" => parse_integer(input).map(Declaration::Orphans),
+            "widows" => parse_integer(input).map(Declaration::Widows),
+
+            // Text wrapping
+            "word-break" => parse_word_break(input).map(Declaration::WordBreak),
+            "overflow-wrap" => parse_overflow_wrap(input).map(Declaration::OverflowWrap),
+
+            // Page breaks
+            "break-before" | "page-break-before" => {
+                parse_break_value(input).map(Declaration::BreakBefore)
+            }
+            "break-after" | "page-break-after" => {
+                parse_break_value(input).map(Declaration::BreakAfter)
+            }
+            "break-inside" | "page-break-inside" => {
+                parse_break_inside(input).map(Declaration::BreakInside)
+            }
+
+            // Border style
+            "border-style" => parse_border_style(input).map(Declaration::BorderStyle),
+            "border-top-style" => parse_border_style(input).map(Declaration::BorderTopStyle),
+            "border-right-style" => parse_border_style(input).map(Declaration::BorderRightStyle),
+            "border-bottom-style" => parse_border_style(input).map(Declaration::BorderBottomStyle),
+            "border-left-style" => parse_border_style(input).map(Declaration::BorderLeftStyle),
+
+            // Border width
+            "border-width" => parse_length(input).map(Declaration::BorderWidth),
+            "border-top-width" => parse_length(input).map(Declaration::BorderTopWidth),
+            "border-right-width" => parse_length(input).map(Declaration::BorderRightWidth),
+            "border-bottom-width" => parse_length(input).map(Declaration::BorderBottomWidth),
+            "border-left-width" => parse_length(input).map(Declaration::BorderLeftWidth),
+
+            // Border color
+            "border-color" => parse_color(input).map(Declaration::BorderColor),
+            "border-top-color" => parse_color(input).map(Declaration::BorderTopColor),
+            "border-right-color" => parse_color(input).map(Declaration::BorderRightColor),
+            "border-bottom-color" => parse_color(input).map(Declaration::BorderBottomColor),
+            "border-left-color" => parse_color(input).map(Declaration::BorderLeftColor),
+
+            // Border radius
+            "border-radius" => parse_length(input).map(Declaration::BorderRadius),
+            "border-top-left-radius" => parse_length(input).map(Declaration::BorderTopLeftRadius),
+            "border-top-right-radius" => parse_length(input).map(Declaration::BorderTopRightRadius),
+            "border-bottom-left-radius" => {
+                parse_length(input).map(Declaration::BorderBottomLeftRadius)
+            }
+            "border-bottom-right-radius" => {
+                parse_length(input).map(Declaration::BorderBottomRightRadius)
+            }
+
+            // List properties
+            "list-style-type" => parse_list_style_type(input).map(Declaration::ListStyleType),
+            "list-style-position" => {
+                parse_list_style_position(input).map(Declaration::ListStylePosition)
+            }
+
+            // Shorthands (margin/padding) are handled separately
+            "margin" | "padding" => None,
+
+            // Unknown properties
+            _ => {
+                // Consume remaining tokens for unknown properties
+                while input.next().is_ok() {}
+                None
+            }
+        }
+    }
+
+    /// Parse margin/padding shorthand, returning expanded declarations.
+    pub fn parse_box_shorthand(
+        name: &str,
+        input: &mut Parser<'_, '_>,
+    ) -> Option<[Declaration; 4]> {
+        let (top, right, bottom, left) = parse_box_shorthand_values(input)?;
+        match name {
+            "margin" => Some([
+                Declaration::MarginTop(top),
+                Declaration::MarginRight(right),
+                Declaration::MarginBottom(bottom),
+                Declaration::MarginLeft(left),
+            ]),
+            "padding" => Some([
+                Declaration::PaddingTop(top),
+                Declaration::PaddingRight(right),
+                Declaration::PaddingBottom(bottom),
+                Declaration::PaddingLeft(left),
+            ]),
+            _ => None,
+        }
+    }
 }
 
 // ============================================================================
@@ -177,42 +329,6 @@ pub struct CssRule {
     /// Important declarations (those with !important).
     pub important_declarations: Vec<Declaration>,
     pub specificity: Specificity,
-}
-
-/// A CSS declaration (property: value).
-///
-/// Note: The `important` flag is no longer stored here - declarations are
-/// separated into normal and important vectors in CssRule.
-#[derive(Debug, Clone)]
-pub struct Declaration {
-    pub property: PropertyId,
-    pub value: PropertyValue,
-}
-
-/// Parsed CSS property value.
-#[derive(Debug, Clone)]
-pub enum PropertyValue {
-    Color(Color),
-    Length(Length),
-    FontWeight(FontWeight),
-    FontStyle(FontStyle),
-    TextAlign(TextAlign),
-    Display(Display),
-    ListStyleType(ListStyleType),
-    String(String),
-    Keyword(String),
-    None,
-    // Phase 1-7 additions
-    TextTransform(TextTransform),
-    Hyphens(Hyphens),
-    BreakValue(BreakValue),
-    Float(Float),
-    BorderStyle(BorderStyle),
-    ListStylePosition(ListStylePosition),
-    Visibility(Visibility),
-    DecorationStyle(DecorationStyle),
-    Bool(bool),
-    BoxSizing(BoxSizing),
 }
 
 /// CSS specificity for cascade ordering.
@@ -441,67 +557,30 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         input: &mut Parser<'i, 't>,
         _start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-        let property_id = PropertyId::from_str(&name);
-
         // Handle margin/padding shorthand expansion
-        if (property_id == PropertyId::Margin || property_id == PropertyId::Padding)
-            && let Some((top, right, bottom, left)) = parse_box_shorthand(input)
-        {
+        if name.as_ref() == "margin" || name.as_ref() == "padding" {
+            if let Some(decls) = Declaration::parse_box_shorthand(&name, input) {
+                let important = input.try_parse(cssparser::parse_important).is_ok();
+                let target = if important {
+                    &mut *self.important_declarations
+                } else {
+                    &mut *self.declarations
+                };
+                target.extend(decls);
+                return Ok(());
+            }
+        }
+
+        // Parse regular declarations
+        if let Some(decl) = Declaration::parse(&name, input) {
             let important = input.try_parse(cssparser::parse_important).is_ok();
             let target = if important {
                 &mut *self.important_declarations
             } else {
                 &mut *self.declarations
             };
-
-            let (top_id, right_id, bottom_id, left_id) = if property_id == PropertyId::Margin {
-                (
-                    PropertyId::MarginTop,
-                    PropertyId::MarginRight,
-                    PropertyId::MarginBottom,
-                    PropertyId::MarginLeft,
-                )
-            } else {
-                (
-                    PropertyId::PaddingTop,
-                    PropertyId::PaddingRight,
-                    PropertyId::PaddingBottom,
-                    PropertyId::PaddingLeft,
-                )
-            };
-
-            target.push(Declaration {
-                property: top_id,
-                value: PropertyValue::Length(top),
-            });
-            target.push(Declaration {
-                property: right_id,
-                value: PropertyValue::Length(right),
-            });
-            target.push(Declaration {
-                property: bottom_id,
-                value: PropertyValue::Length(bottom),
-            });
-            target.push(Declaration {
-                property: left_id,
-                value: PropertyValue::Length(left),
-            });
-            return Ok(());
+            target.push(decl);
         }
-
-        let value = parse_property_value(property_id, input);
-        let important = input.try_parse(cssparser::parse_important).is_ok();
-
-        let target = if important {
-            &mut *self.important_declarations
-        } else {
-            &mut *self.declarations
-        };
-
-        target.push(Declaration {
-            property: property_id,
-            value,
-        });
 
         Ok(())
     }
@@ -516,116 +595,11 @@ impl<'i> RuleBodyItemParser<'i, (), ()> for DeclarationListParser<'_> {
     }
 }
 
-/// Parse a property value based on the property ID.
-fn parse_property_value(property: PropertyId, input: &mut Parser<'_, '_>) -> PropertyValue {
-    match property {
-        // Colors
-        PropertyId::Color | PropertyId::BackgroundColor => {
-            parse_color(input).unwrap_or(PropertyValue::None)
-        }
+// ============================================================================
+// Value Parsing Functions
+// ============================================================================
 
-        // Font properties
-        PropertyId::FontSize => parse_font_size(input).unwrap_or(PropertyValue::None),
-        PropertyId::FontWeight => parse_font_weight(input).unwrap_or(PropertyValue::None),
-        PropertyId::FontStyle => parse_font_style(input).unwrap_or(PropertyValue::None),
-        PropertyId::FontFamily => parse_font_family(input).unwrap_or(PropertyValue::None),
-        PropertyId::FontVariant | PropertyId::FontVariantCaps => {
-            parse_font_variant(input).unwrap_or(PropertyValue::None)
-        }
-
-        // Text properties
-        PropertyId::TextAlign => parse_text_align(input).unwrap_or(PropertyValue::None),
-        PropertyId::LineHeight => parse_line_height(input).unwrap_or(PropertyValue::None),
-        PropertyId::TextTransform => parse_text_transform(input).unwrap_or(PropertyValue::None),
-        PropertyId::Hyphens => parse_hyphens(input).unwrap_or(PropertyValue::None),
-        PropertyId::WhiteSpace => parse_white_space(input).unwrap_or(PropertyValue::None),
-        PropertyId::VerticalAlign => parse_vertical_align(input).unwrap_or(PropertyValue::None),
-
-        // Text decoration
-        PropertyId::TextDecoration | PropertyId::TextDecorationLine => {
-            parse_text_decoration(input).unwrap_or(PropertyValue::None)
-        }
-        PropertyId::TextDecorationStyle => {
-            parse_decoration_style(input).unwrap_or(PropertyValue::None)
-        }
-        PropertyId::TextDecorationColor => parse_color(input).unwrap_or(PropertyValue::None),
-
-        // Length-based properties
-        PropertyId::TextIndent
-        | PropertyId::LetterSpacing
-        | PropertyId::WordSpacing
-        | PropertyId::Margin
-        | PropertyId::MarginTop
-        | PropertyId::MarginRight
-        | PropertyId::MarginBottom
-        | PropertyId::MarginLeft
-        | PropertyId::Padding
-        | PropertyId::PaddingTop
-        | PropertyId::PaddingRight
-        | PropertyId::PaddingBottom
-        | PropertyId::PaddingLeft
-        | PropertyId::Width
-        | PropertyId::Height
-        | PropertyId::MaxWidth
-        | PropertyId::MinHeight
-        | PropertyId::BorderWidth
-        | PropertyId::BorderTopWidth
-        | PropertyId::BorderRightWidth
-        | PropertyId::BorderBottomWidth
-        | PropertyId::BorderLeftWidth
-        | PropertyId::BorderRadius
-        | PropertyId::BorderTopLeftRadius
-        | PropertyId::BorderTopRightRadius
-        | PropertyId::BorderBottomLeftRadius
-        | PropertyId::BorderBottomRightRadius => {
-            parse_length(input).unwrap_or(PropertyValue::None)
-        }
-
-        // Display & positioning
-        PropertyId::Display => parse_display(input).unwrap_or(PropertyValue::None),
-        PropertyId::Float => parse_float(input).unwrap_or(PropertyValue::None),
-        PropertyId::Visibility => parse_visibility(input).unwrap_or(PropertyValue::None),
-        PropertyId::BoxSizing => parse_box_sizing(input).unwrap_or(PropertyValue::None),
-
-        // Page break properties
-        PropertyId::BreakBefore
-        | PropertyId::BreakAfter
-        | PropertyId::PageBreakBefore
-        | PropertyId::PageBreakAfter => parse_break_value(input).unwrap_or(PropertyValue::None),
-        PropertyId::BreakInside | PropertyId::PageBreakInside => {
-            parse_break_inside(input).unwrap_or(PropertyValue::None)
-        }
-
-        // Border style
-        PropertyId::BorderStyle
-        | PropertyId::BorderTopStyle
-        | PropertyId::BorderRightStyle
-        | PropertyId::BorderBottomStyle
-        | PropertyId::BorderLeftStyle => parse_border_style(input).unwrap_or(PropertyValue::None),
-
-        // Border color
-        PropertyId::BorderColor
-        | PropertyId::BorderTopColor
-        | PropertyId::BorderRightColor
-        | PropertyId::BorderBottomColor
-        | PropertyId::BorderLeftColor => parse_color(input).unwrap_or(PropertyValue::None),
-
-        // List properties
-        PropertyId::ListStyleType => parse_list_style_type(input).unwrap_or(PropertyValue::None),
-        PropertyId::ListStylePosition => {
-            parse_list_style_position(input).unwrap_or(PropertyValue::None)
-        }
-
-        // Unknown properties
-        PropertyId::Unknown => {
-            // Consume remaining tokens for unknown properties
-            while input.next().is_ok() {}
-            PropertyValue::None
-        }
-    }
-}
-
-fn parse_color(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
     // Try named colors first
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         let color = match token.as_ref() {
@@ -639,31 +613,29 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
             "magenta" => Color::rgb(255, 0, 255),
             "gray" | "grey" => Color::rgb(128, 128, 128),
             "transparent" => Color::TRANSPARENT,
-            "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()));
-            }
+            // Skip inherit/initial/unset for now
             _ => return None,
         };
-        return Some(PropertyValue::Color(color));
+        return Some(color);
     }
 
     // Try ID token (which is how cssparser parses hex colors like #ff0000)
     if let Ok(Token::IDHash(hash)) = input.try_parse(|i| i.next().cloned())
         && let Some(color) = parse_hex_color(hash.as_ref())
     {
-        return Some(PropertyValue::Color(color));
+        return Some(color);
     }
 
     // Try hash token
     if let Ok(Token::Hash(hash)) = input.try_parse(|i| i.next().cloned())
         && let Some(color) = parse_hex_color(hash.as_ref())
     {
-        return Some(PropertyValue::Color(color));
+        return Some(color);
     }
 
     // Try rgb() or rgba()
     if let Ok(color) = input.try_parse(parse_rgb_function) {
-        return Some(PropertyValue::Color(color));
+        return Some(color);
     }
 
     None
@@ -719,35 +691,7 @@ fn parse_color_component<'i, 't>(input: &mut Parser<'i, 't>) -> Result<u8, Parse
     }
 }
 
-fn parse_length(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    match input.next().ok()? {
-        Token::Dimension { value, unit, .. } => {
-            let length = match unit.as_ref() {
-                "px" => Length::Px(*value),
-                "em" => Length::Em(*value),
-                "rem" => Length::Rem(*value),
-                "%" => Length::Percent(*value),
-                _ => return None,
-            };
-            Some(PropertyValue::Length(length))
-        }
-        Token::Percentage { unit_value, .. } => {
-            Some(PropertyValue::Length(Length::Percent(*unit_value * 100.0)))
-        }
-        Token::Number { value, .. } if *value == 0.0 => {
-            Some(PropertyValue::Length(Length::Px(0.0)))
-        }
-        Token::Ident(ident) => match ident.as_ref() {
-            "auto" => Some(PropertyValue::Length(Length::Auto)),
-            "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(ident.to_string())),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Parse a single length value, returning Length directly.
-fn parse_length_value(input: &mut Parser<'_, '_>) -> Option<Length> {
+fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => {
             let length = match unit.as_ref() {
@@ -769,14 +713,38 @@ fn parse_length_value(input: &mut Parser<'_, '_>) -> Option<Length> {
     }
 }
 
+/// Parse line-height value (handles unitless numbers and "normal" keyword).
+fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<Length> {
+    match input.next().ok()? {
+        Token::Dimension { value, unit, .. } => {
+            let length = match unit.as_ref() {
+                "px" => Length::Px(*value),
+                "em" => Length::Em(*value),
+                "rem" => Length::Rem(*value),
+                "%" => Length::Percent(*value),
+                _ => return None,
+            };
+            Some(length)
+        }
+        Token::Percentage { unit_value, .. } => Some(Length::Percent(*unit_value * 100.0)),
+        // Unitless number becomes em multiplier
+        Token::Number { value, .. } => Some(Length::Em(*value)),
+        Token::Ident(ident) => match ident.as_ref() {
+            "normal" => Some(Length::Auto),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Parse margin/padding shorthand with 1-4 values.
 /// Returns (top, right, bottom, left) following CSS box model rules.
-fn parse_box_shorthand(input: &mut Parser<'_, '_>) -> Option<(Length, Length, Length, Length)> {
+fn parse_box_shorthand_values(input: &mut Parser<'_, '_>) -> Option<(Length, Length, Length, Length)> {
     let mut values = Vec::with_capacity(4);
 
     // Parse up to 4 length values
     while values.len() < 4 {
-        if let Some(len) = parse_length_value(input) {
+        if let Some(len) = parse_length(input) {
             values.push(len);
         } else {
             break;
@@ -806,48 +774,16 @@ fn parse_box_shorthand(input: &mut Parser<'_, '_>) -> Option<(Length, Length, Le
     }
 }
 
-/// Parse font-size, including keywords like 'smaller' and 'larger'.
-fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    // First try to parse as a keyword
-    if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
-        let length = match token.as_ref() {
-            // Relative sizes: smaller = 0.833em, larger = 1.2em
-            "smaller" => Length::Em(0.833333),
-            "larger" => Length::Em(1.2),
-            // Absolute sizes (approximate em values)
-            "xx-small" => Length::Em(0.5625),
-            "x-small" => Length::Em(0.625),
-            "small" => Length::Em(0.833333),
-            "medium" => Length::Em(1.0),
-            "large" => Length::Em(1.125),
-            "x-large" => Length::Em(1.5),
-            "xx-large" => Length::Em(2.0),
-            "xxx-large" => Length::Em(3.0),
-            "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()));
-            }
-            _ => return None,
-        };
-        return Some(PropertyValue::Length(length));
-    }
-
-    // Fall back to parsing as a length
-    parse_length(input)
-}
-
-fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight> {
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         let weight = match token.as_ref() {
             "normal" => FontWeight::NORMAL,
             "bold" => FontWeight::BOLD,
             "lighter" => FontWeight(300),
             "bolder" => FontWeight(700),
-            "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()));
-            }
             _ => return None,
         };
-        return Some(PropertyValue::FontWeight(weight));
+        return Some(weight);
     }
 
     if let Ok(Token::Number {
@@ -856,84 +792,50 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     {
         let v = *v;
         if (100..=900).contains(&v) && v % 100 == 0 {
-            return Some(PropertyValue::FontWeight(FontWeight(v as u16)));
+            return Some(FontWeight(v as u16));
         }
     }
 
     None
 }
 
-fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     let token = input.expect_ident_cloned().ok()?;
-    let style = match token.as_ref() {
-        "normal" => FontStyle::Normal,
-        "italic" => FontStyle::Italic,
-        "oblique" => FontStyle::Oblique,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::FontStyle(style))
-}
-
-/// Parse line-height, which can be a length OR a unitless number (multiplier).
-/// Unitless numbers like `1.5` are converted to em values for KFX compatibility.
-fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    match input.next().ok()? {
-        Token::Dimension { value, unit, .. } => {
-            let length = match unit.as_ref() {
-                "px" => Length::Px(*value),
-                "em" => Length::Em(*value),
-                "rem" => Length::Rem(*value),
-                "%" => Length::Percent(*value),
-                _ => return None,
-            };
-            Some(PropertyValue::Length(length))
-        }
-        Token::Percentage { unit_value, .. } => {
-            Some(PropertyValue::Length(Length::Percent(*unit_value * 100.0)))
-        }
-        // Unitless number (like 1.5) - treat as em multiplier
-        Token::Number { value, .. } => Some(PropertyValue::Length(Length::Em(*value))),
-        Token::Ident(ident) => match ident.as_ref() {
-            "normal" => Some(PropertyValue::Length(Length::Auto)),
-            "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(ident.to_string())),
-            _ => None,
-        },
+    match token.as_ref() {
+        "normal" => Some(FontStyle::Normal),
+        "italic" => Some(FontStyle::Italic),
+        "oblique" => Some(FontStyle::Oblique),
         _ => None,
     }
 }
 
-fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     let token = input.expect_ident_cloned().ok()?;
-    let align = match token.as_ref() {
-        "left" => TextAlign::Left,
-        "right" => TextAlign::Right,
-        "center" => TextAlign::Center,
-        "justify" => TextAlign::Justify,
-        "start" => TextAlign::Start,
-        "end" => TextAlign::End,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::TextAlign(align))
+    match token.as_ref() {
+        "left" => Some(TextAlign::Left),
+        "right" => Some(TextAlign::Right),
+        "center" => Some(TextAlign::Center),
+        "justify" => Some(TextAlign::Justify),
+        "start" => Some(TextAlign::Start),
+        "end" => Some(TextAlign::End),
+        _ => None,
+    }
 }
 
-fn parse_display(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_display(input: &mut Parser<'_, '_>) -> Option<Display> {
     let token = input.expect_ident_cloned().ok()?;
-    let display = match token.as_ref() {
-        "block" => Display::Block,
-        "inline" => Display::Inline,
-        "none" => Display::None,
-        "list-item" => Display::ListItem,
-        "table-cell" => Display::TableCell,
-        "table-row" => Display::TableRow,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::Display(display))
+    match token.as_ref() {
+        "block" => Some(Display::Block),
+        "inline" => Some(Display::Inline),
+        "none" => Some(Display::None),
+        "list-item" => Some(Display::ListItem),
+        "table-cell" => Some(Display::TableCell),
+        "table-row" => Some(Display::TableRow),
+        _ => None,
+    }
 }
 
-fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<String> {
     let mut families = Vec::new();
 
     loop {
@@ -953,197 +855,213 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if families.is_empty() {
         None
     } else {
-        Some(PropertyValue::String(families.join(", ")))
+        Some(families.join(", "))
     }
 }
 
-fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let mut keywords = Vec::new();
+fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecorationValue> {
+    let mut result = TextDecorationValue::default();
+    let mut found = false;
     while let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
-        keywords.push(token.to_string());
+        match token.as_ref() {
+            "underline" => result.underline = true,
+            "line-through" => result.line_through = true,
+            "none" => {}
+            _ => continue,
+        }
+        found = true;
     }
-    if keywords.is_empty() {
-        None
+    if found {
+        Some(result)
     } else {
-        Some(PropertyValue::Keyword(keywords.join(" ")))
+        None
     }
 }
 
-fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
-        return Some(PropertyValue::Keyword(token.to_string()));
+fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlignValue> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "super" => Some(VerticalAlignValue::Super),
+        "sub" => Some(VerticalAlignValue::Sub),
+        "baseline" | "middle" | "top" | "bottom" => Some(VerticalAlignValue::Baseline),
+        _ => None,
+    }
+}
+
+fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<ListStyleType> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "none" => Some(ListStyleType::None),
+        "disc" => Some(ListStyleType::Disc),
+        "circle" => Some(ListStyleType::Circle),
+        "square" => Some(ListStyleType::Square),
+        "decimal" => Some(ListStyleType::Decimal),
+        "lower-alpha" | "lower-latin" => Some(ListStyleType::LowerAlpha),
+        "upper-alpha" | "upper-latin" => Some(ListStyleType::UpperAlpha),
+        "lower-roman" => Some(ListStyleType::LowerRoman),
+        "upper-roman" => Some(ListStyleType::UpperRoman),
+        _ => None,
+    }
+}
+
+fn parse_font_variant(input: &mut Parser<'_, '_>) -> Option<crate::ir::FontVariant> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "small-caps" => Some(crate::ir::FontVariant::SmallCaps),
+        "normal" | "none" => Some(crate::ir::FontVariant::Normal),
+        _ => None,
+    }
+}
+
+fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTransform> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "none" => Some(TextTransform::None),
+        "uppercase" => Some(TextTransform::Uppercase),
+        "lowercase" => Some(TextTransform::Lowercase),
+        "capitalize" => Some(TextTransform::Capitalize),
+        _ => None,
+    }
+}
+
+fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "auto" => Some(Hyphens::Auto),
+        "manual" => Some(Hyphens::Manual),
+        "none" => Some(Hyphens::None),
+        _ => None,
+    }
+}
+
+fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<bool> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "nowrap" | "pre" => Some(true),
+        "normal" | "pre-wrap" | "pre-line" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_decoration_style(input: &mut Parser<'_, '_>) -> Option<DecorationStyle> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "solid" => Some(DecorationStyle::Solid),
+        "dotted" => Some(DecorationStyle::Dotted),
+        "dashed" => Some(DecorationStyle::Dashed),
+        "double" => Some(DecorationStyle::Double),
+        "none" => Some(DecorationStyle::None),
+        _ => None,
+    }
+}
+
+fn parse_float(input: &mut Parser<'_, '_>) -> Option<Float> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "left" => Some(Float::Left),
+        "right" => Some(Float::Right),
+        "none" => Some(Float::None),
+        _ => None,
+    }
+}
+
+fn parse_clear(input: &mut Parser<'_, '_>) -> Option<Clear> {
+    let token = input.expect_ident_cloned().ok()?;
+    Clear::from_css(&token)
+}
+
+fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
+    if let Ok(Token::Number { int_value: Some(v), .. }) = input.next().cloned() {
+        if v >= 0 {
+            return Some(v as u32);
+        }
     }
     None
 }
 
-fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let token = input.expect_ident_cloned().ok()?;
-    let style = match token.as_ref() {
-        "none" => ListStyleType::None,
-        "disc" => ListStyleType::Disc,
-        "circle" => ListStyleType::Circle,
-        "square" => ListStyleType::Square,
-        "decimal" => ListStyleType::Decimal,
-        "lower-alpha" | "lower-latin" => ListStyleType::LowerAlpha,
-        "upper-alpha" | "upper-latin" => ListStyleType::UpperAlpha,
-        "lower-roman" => ListStyleType::LowerRoman,
-        "upper-roman" => ListStyleType::UpperRoman,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::ListStyleType(style))
-}
-
-fn parse_font_variant(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
-        "small-caps" => Some(PropertyValue::Keyword("small-caps".to_string())),
-        "normal" | "none" => Some(PropertyValue::Keyword("normal".to_string())),
-        "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(token.to_string())),
+        "normal" => Some(WordBreak::Normal),
+        "break-all" => Some(WordBreak::BreakAll),
+        "keep-all" => Some(WordBreak::KeepAll),
+        "break-word" => Some(WordBreak::BreakWord),
         _ => None,
     }
 }
 
-// ============================================================================
-// Phase 1-7: New property parsing functions
-// ============================================================================
-
-fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let token = input.expect_ident_cloned().ok()?;
-    let transform = match token.as_ref() {
-        "none" => TextTransform::None,
-        "uppercase" => TextTransform::Uppercase,
-        "lowercase" => TextTransform::Lowercase,
-        "capitalize" => TextTransform::Capitalize,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::TextTransform(transform))
-}
-
-fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let token = input.expect_ident_cloned().ok()?;
-    let hyphens = match token.as_ref() {
-        "auto" => Hyphens::Auto,
-        "manual" => Hyphens::Manual,
-        "none" => Hyphens::None,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::Hyphens(hyphens))
-}
-
-fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
-        "nowrap" | "pre" => Some(PropertyValue::Bool(true)),
-        "normal" | "pre-wrap" | "pre-line" => Some(PropertyValue::Bool(false)),
-        "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(token.to_string())),
+        "normal" => Some(OverflowWrap::Normal),
+        "break-word" => Some(OverflowWrap::BreakWord),
+        "anywhere" => Some(OverflowWrap::Anywhere),
         _ => None,
     }
 }
 
-fn parse_decoration_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_break_value(input: &mut Parser<'_, '_>) -> Option<BreakValue> {
     let token = input.expect_ident_cloned().ok()?;
-    let style = match token.as_ref() {
-        "solid" => DecorationStyle::Solid,
-        "dotted" => DecorationStyle::Dotted,
-        "dashed" => DecorationStyle::Dashed,
-        "double" => DecorationStyle::Double,
-        "none" => DecorationStyle::None,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::DecorationStyle(style))
+    match token.as_ref() {
+        "auto" => Some(BreakValue::Auto),
+        "always" | "page" | "left" | "right" | "recto" | "verso" => Some(BreakValue::Always),
+        "avoid" | "avoid-page" => Some(BreakValue::Avoid),
+        "column" | "avoid-column" => Some(BreakValue::Column),
+        _ => None,
+    }
 }
 
-fn parse_float(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakValue> {
     let token = input.expect_ident_cloned().ok()?;
-    let float = match token.as_ref() {
-        "left" => Float::Left,
-        "right" => Float::Right,
-        "none" => Float::None,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::Float(float))
+    match token.as_ref() {
+        "auto" => Some(BreakValue::Auto),
+        "avoid" | "avoid-page" | "avoid-column" => Some(BreakValue::Avoid),
+        _ => None,
+    }
 }
 
-fn parse_break_value(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_border_style(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
     let token = input.expect_ident_cloned().ok()?;
-    let value = match token.as_ref() {
-        "auto" => BreakValue::Auto,
-        "always" | "page" | "left" | "right" | "recto" | "verso" => BreakValue::Always,
-        "avoid" | "avoid-page" => BreakValue::Avoid,
-        "column" | "avoid-column" => BreakValue::Column,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::BreakValue(value))
+    match token.as_ref() {
+        "none" | "hidden" => Some(BorderStyle::None),
+        "solid" => Some(BorderStyle::Solid),
+        "dotted" => Some(BorderStyle::Dotted),
+        "dashed" => Some(BorderStyle::Dashed),
+        "double" => Some(BorderStyle::Double),
+        "groove" => Some(BorderStyle::Groove),
+        "ridge" => Some(BorderStyle::Ridge),
+        "inset" => Some(BorderStyle::Inset),
+        "outset" => Some(BorderStyle::Outset),
+        _ => None,
+    }
 }
 
-fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosition> {
     let token = input.expect_ident_cloned().ok()?;
-    let value = match token.as_ref() {
-        "auto" => BreakValue::Auto,
-        "avoid" | "avoid-page" | "avoid-column" => BreakValue::Avoid,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::BreakValue(value))
+    match token.as_ref() {
+        "inside" => Some(ListStylePosition::Inside),
+        "outside" => Some(ListStylePosition::Outside),
+        _ => None,
+    }
 }
 
-fn parse_border_style(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
     let token = input.expect_ident_cloned().ok()?;
-    let style = match token.as_ref() {
-        "none" => BorderStyle::None,
-        "solid" => BorderStyle::Solid,
-        "dotted" => BorderStyle::Dotted,
-        "dashed" => BorderStyle::Dashed,
-        "double" => BorderStyle::Double,
-        "groove" => BorderStyle::Groove,
-        "ridge" => BorderStyle::Ridge,
-        "inset" => BorderStyle::Inset,
-        "outset" => BorderStyle::Outset,
-        "hidden" => BorderStyle::None,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::BorderStyle(style))
+    match token.as_ref() {
+        "visible" => Some(Visibility::Visible),
+        "hidden" => Some(Visibility::Hidden),
+        "collapse" => Some(Visibility::Collapse),
+        _ => None,
+    }
 }
 
-fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
     let token = input.expect_ident_cloned().ok()?;
-    let position = match token.as_ref() {
-        "inside" => ListStylePosition::Inside,
-        "outside" => ListStylePosition::Outside,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::ListStylePosition(position))
-}
-
-fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let token = input.expect_ident_cloned().ok()?;
-    let visibility = match token.as_ref() {
-        "visible" => Visibility::Visible,
-        "hidden" => Visibility::Hidden,
-        "collapse" => Visibility::Collapse,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::Visibility(visibility))
-}
-
-fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
-    let token = input.expect_ident_cloned().ok()?;
-    let box_sizing = match token.as_ref() {
-        "content-box" => BoxSizing::ContentBox,
-        "border-box" => BoxSizing::BorderBox,
-        "inherit" | "initial" | "unset" => return Some(PropertyValue::Keyword(token.to_string())),
-        _ => return None,
-    };
-    Some(PropertyValue::BoxSizing(box_sizing))
+    match token.as_ref() {
+        "content-box" => Some(BoxSizing::ContentBox),
+        "border-box" => Some(BoxSizing::BorderBox),
+        _ => None,
+    }
 }
 
 /// Create a new style with only CSS-inherited properties from parent.
@@ -1294,372 +1212,143 @@ fn rule_matches_with_caches(
 
 /// Apply a declaration to a computed style.
 fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
-    match decl.property {
+    match decl {
         // Colors
-        PropertyId::Color => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.color = Some(*c);
-            }
-        }
-        PropertyId::BackgroundColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.background_color = Some(*c);
-            }
-        }
+        Declaration::Color(c) => style.color = Some(*c),
+        Declaration::BackgroundColor(c) => style.background_color = Some(*c),
 
         // Font properties
-        PropertyId::FontFamily => {
-            if let PropertyValue::String(s) = &decl.value {
-                style.font_family = Some(s.clone());
-            }
-        }
-        PropertyId::FontSize => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.font_size = *l;
-            }
-        }
-        PropertyId::FontWeight => {
-            if let PropertyValue::FontWeight(w) = &decl.value {
-                style.font_weight = *w;
-            }
-        }
-        PropertyId::FontStyle => {
-            if let PropertyValue::FontStyle(s) = &decl.value {
-                style.font_style = *s;
-            }
-        }
-        PropertyId::FontVariant | PropertyId::FontVariantCaps => {
-            if let PropertyValue::Keyword(k) = &decl.value {
-                style.font_variant = match k.as_str() {
-                    "small-caps" => crate::ir::FontVariant::SmallCaps,
-                    _ => crate::ir::FontVariant::Normal,
-                };
-            }
-        }
+        Declaration::FontFamily(s) => style.font_family = Some(s.clone()),
+        Declaration::FontSize(l) => style.font_size = *l,
+        Declaration::FontWeight(w) => style.font_weight = *w,
+        Declaration::FontStyle(s) => style.font_style = *s,
+        Declaration::FontVariant(v) => style.font_variant = *v,
 
         // Text properties
-        PropertyId::TextAlign => {
-            if let PropertyValue::TextAlign(a) = &decl.value {
-                style.text_align = *a;
-            }
-        }
-        PropertyId::TextIndent => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.text_indent = *l;
-            }
-        }
-        PropertyId::LineHeight => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.line_height = *l;
-            }
-        }
-        PropertyId::LetterSpacing => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.letter_spacing = *l;
-            }
-        }
-        PropertyId::WordSpacing => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.word_spacing = *l;
-            }
-        }
-        PropertyId::TextTransform => {
-            if let PropertyValue::TextTransform(t) = &decl.value {
-                style.text_transform = *t;
-            }
-        }
-        PropertyId::Hyphens => {
-            if let PropertyValue::Hyphens(h) = &decl.value {
-                style.hyphens = *h;
-            }
-        }
-        PropertyId::WhiteSpace => {
-            if let PropertyValue::Bool(nowrap) = &decl.value {
-                style.no_break = *nowrap;
-            }
-        }
-        PropertyId::VerticalAlign => {
-            if let PropertyValue::Keyword(k) = &decl.value {
-                style.vertical_align_super = k == "super";
-                style.vertical_align_sub = k == "sub";
-            }
+        Declaration::TextAlign(a) => style.text_align = *a,
+        Declaration::TextIndent(l) => style.text_indent = *l,
+        Declaration::LineHeight(l) => style.line_height = *l,
+        Declaration::LetterSpacing(l) => style.letter_spacing = *l,
+        Declaration::WordSpacing(l) => style.word_spacing = *l,
+        Declaration::TextTransform(t) => style.text_transform = *t,
+        Declaration::Hyphens(h) => style.hyphens = *h,
+        Declaration::WhiteSpace(nowrap) => style.no_break = *nowrap,
+        Declaration::VerticalAlign(v) => {
+            style.vertical_align_super = *v == VerticalAlignValue::Super;
+            style.vertical_align_sub = *v == VerticalAlignValue::Sub;
         }
 
         // Text decoration
-        PropertyId::TextDecoration | PropertyId::TextDecorationLine => {
-            if let PropertyValue::Keyword(k) = &decl.value {
-                style.text_decoration_underline = k.contains("underline");
-                style.text_decoration_line_through = k.contains("line-through");
-            }
+        Declaration::TextDecoration(d) => {
+            style.text_decoration_underline = d.underline;
+            style.text_decoration_line_through = d.line_through;
         }
-        PropertyId::TextDecorationStyle => {
-            if let PropertyValue::DecorationStyle(s) = &decl.value {
-                style.underline_style = *s;
-            }
-        }
-        PropertyId::TextDecorationColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.underline_color = Some(*c);
-            }
-        }
+        Declaration::TextDecorationStyle(s) => style.underline_style = *s,
+        Declaration::TextDecorationColor(c) => style.underline_color = Some(*c),
 
         // Margins
-        PropertyId::Margin => {
-            // Shorthand should have been expanded, but handle just in case
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_top = *l;
-                style.margin_right = *l;
-                style.margin_bottom = *l;
-                style.margin_left = *l;
-            }
+        Declaration::Margin(l) => {
+            style.margin_top = *l;
+            style.margin_right = *l;
+            style.margin_bottom = *l;
+            style.margin_left = *l;
         }
-        PropertyId::MarginTop => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_top = *l;
-            }
-        }
-        PropertyId::MarginRight => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_right = *l;
-            }
-        }
-        PropertyId::MarginBottom => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_bottom = *l;
-            }
-        }
-        PropertyId::MarginLeft => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_left = *l;
-            }
-        }
+        Declaration::MarginTop(l) => style.margin_top = *l,
+        Declaration::MarginRight(l) => style.margin_right = *l,
+        Declaration::MarginBottom(l) => style.margin_bottom = *l,
+        Declaration::MarginLeft(l) => style.margin_left = *l,
 
         // Padding
-        PropertyId::Padding => {
-            // Shorthand should have been expanded, but handle just in case
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_top = *l;
-                style.padding_right = *l;
-                style.padding_bottom = *l;
-                style.padding_left = *l;
-            }
+        Declaration::Padding(l) => {
+            style.padding_top = *l;
+            style.padding_right = *l;
+            style.padding_bottom = *l;
+            style.padding_left = *l;
         }
-        PropertyId::PaddingTop => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_top = *l;
-            }
-        }
-        PropertyId::PaddingRight => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_right = *l;
-            }
-        }
-        PropertyId::PaddingBottom => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_bottom = *l;
-            }
-        }
-        PropertyId::PaddingLeft => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_left = *l;
-            }
-        }
+        Declaration::PaddingTop(l) => style.padding_top = *l,
+        Declaration::PaddingRight(l) => style.padding_right = *l,
+        Declaration::PaddingBottom(l) => style.padding_bottom = *l,
+        Declaration::PaddingLeft(l) => style.padding_left = *l,
 
         // Dimensions
-        PropertyId::Width => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.width = *l;
-            }
-        }
-        PropertyId::Height => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.height = *l;
-            }
-        }
-        PropertyId::MaxWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.max_width = *l;
-            }
-        }
-        PropertyId::MinHeight => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.min_height = *l;
-            }
-        }
+        Declaration::Width(l) => style.width = *l,
+        Declaration::Height(l) => style.height = *l,
+        Declaration::MaxWidth(l) => style.max_width = *l,
+        Declaration::MaxHeight(l) => style.max_height = *l,
+        Declaration::MinWidth(l) => style.min_width = *l,
+        Declaration::MinHeight(l) => style.min_height = *l,
 
         // Display & positioning
-        PropertyId::Display => {
-            if let PropertyValue::Display(d) = &decl.value {
-                style.display = *d;
-            }
-        }
-        PropertyId::Float => {
-            if let PropertyValue::Float(f) = &decl.value {
-                style.float = *f;
-            }
-        }
-        PropertyId::Visibility => {
-            if let PropertyValue::Visibility(v) = &decl.value {
-                style.visibility = *v;
-            }
-        }
-        PropertyId::BoxSizing => {
-            if let PropertyValue::BoxSizing(bs) = &decl.value {
-                style.box_sizing = *bs;
-            }
-        }
+        Declaration::Display(d) => style.display = *d,
+        Declaration::Float(f) => style.float = *f,
+        Declaration::Clear(c) => style.clear = *c,
+        Declaration::Visibility(v) => style.visibility = *v,
+        Declaration::BoxSizing(bs) => style.box_sizing = *bs,
+
+        // Pagination control
+        Declaration::Orphans(n) => style.orphans = *n,
+        Declaration::Widows(n) => style.widows = *n,
+
+        // Text wrapping
+        Declaration::WordBreak(wb) => style.word_break = *wb,
+        Declaration::OverflowWrap(ow) => style.overflow_wrap = *ow,
 
         // Page breaks
-        PropertyId::BreakBefore | PropertyId::PageBreakBefore => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_before = *b;
-            }
-        }
-        PropertyId::BreakAfter | PropertyId::PageBreakAfter => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_after = *b;
-            }
-        }
-        PropertyId::BreakInside | PropertyId::PageBreakInside => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_inside = *b;
-            }
-        }
+        Declaration::BreakBefore(b) => style.break_before = *b,
+        Declaration::BreakAfter(b) => style.break_after = *b,
+        Declaration::BreakInside(b) => style.break_inside = *b,
 
         // Border style
-        PropertyId::BorderStyle => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_top = *s;
-                style.border_style_right = *s;
-                style.border_style_bottom = *s;
-                style.border_style_left = *s;
-            }
+        Declaration::BorderStyle(s) => {
+            style.border_style_top = *s;
+            style.border_style_right = *s;
+            style.border_style_bottom = *s;
+            style.border_style_left = *s;
         }
-        PropertyId::BorderTopStyle => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_top = *s;
-            }
-        }
-        PropertyId::BorderRightStyle => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_right = *s;
-            }
-        }
-        PropertyId::BorderBottomStyle => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_bottom = *s;
-            }
-        }
-        PropertyId::BorderLeftStyle => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_left = *s;
-            }
-        }
+        Declaration::BorderTopStyle(s) => style.border_style_top = *s,
+        Declaration::BorderRightStyle(s) => style.border_style_right = *s,
+        Declaration::BorderBottomStyle(s) => style.border_style_bottom = *s,
+        Declaration::BorderLeftStyle(s) => style.border_style_left = *s,
 
         // Border width
-        PropertyId::BorderWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_top = *l;
-                style.border_width_right = *l;
-                style.border_width_bottom = *l;
-                style.border_width_left = *l;
-            }
+        Declaration::BorderWidth(l) => {
+            style.border_width_top = *l;
+            style.border_width_right = *l;
+            style.border_width_bottom = *l;
+            style.border_width_left = *l;
         }
-        PropertyId::BorderTopWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_top = *l;
-            }
-        }
-        PropertyId::BorderRightWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_right = *l;
-            }
-        }
-        PropertyId::BorderBottomWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_bottom = *l;
-            }
-        }
-        PropertyId::BorderLeftWidth => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_left = *l;
-            }
-        }
+        Declaration::BorderTopWidth(l) => style.border_width_top = *l,
+        Declaration::BorderRightWidth(l) => style.border_width_right = *l,
+        Declaration::BorderBottomWidth(l) => style.border_width_bottom = *l,
+        Declaration::BorderLeftWidth(l) => style.border_width_left = *l,
 
         // Border color
-        PropertyId::BorderColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_top = Some(*c);
-                style.border_color_right = Some(*c);
-                style.border_color_bottom = Some(*c);
-                style.border_color_left = Some(*c);
-            }
+        Declaration::BorderColor(c) => {
+            style.border_color_top = Some(*c);
+            style.border_color_right = Some(*c);
+            style.border_color_bottom = Some(*c);
+            style.border_color_left = Some(*c);
         }
-        PropertyId::BorderTopColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_top = Some(*c);
-            }
-        }
-        PropertyId::BorderRightColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_right = Some(*c);
-            }
-        }
-        PropertyId::BorderBottomColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_bottom = Some(*c);
-            }
-        }
-        PropertyId::BorderLeftColor => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_left = Some(*c);
-            }
-        }
+        Declaration::BorderTopColor(c) => style.border_color_top = Some(*c),
+        Declaration::BorderRightColor(c) => style.border_color_right = Some(*c),
+        Declaration::BorderBottomColor(c) => style.border_color_bottom = Some(*c),
+        Declaration::BorderLeftColor(c) => style.border_color_left = Some(*c),
 
         // Border radius
-        PropertyId::BorderRadius => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_left = *l;
-                style.border_radius_top_right = *l;
-                style.border_radius_bottom_left = *l;
-                style.border_radius_bottom_right = *l;
-            }
+        Declaration::BorderRadius(l) => {
+            style.border_radius_top_left = *l;
+            style.border_radius_top_right = *l;
+            style.border_radius_bottom_left = *l;
+            style.border_radius_bottom_right = *l;
         }
-        PropertyId::BorderTopLeftRadius => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_left = *l;
-            }
-        }
-        PropertyId::BorderTopRightRadius => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_right = *l;
-            }
-        }
-        PropertyId::BorderBottomLeftRadius => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_bottom_left = *l;
-            }
-        }
-        PropertyId::BorderBottomRightRadius => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_bottom_right = *l;
-            }
-        }
+        Declaration::BorderTopLeftRadius(l) => style.border_radius_top_left = *l,
+        Declaration::BorderTopRightRadius(l) => style.border_radius_top_right = *l,
+        Declaration::BorderBottomLeftRadius(l) => style.border_radius_bottom_left = *l,
+        Declaration::BorderBottomRightRadius(l) => style.border_radius_bottom_right = *l,
 
         // List properties
-        PropertyId::ListStyleType => {
-            if let PropertyValue::ListStyleType(lst) = &decl.value {
-                style.list_style_type = *lst;
-            }
-        }
-        PropertyId::ListStylePosition => {
-            if let PropertyValue::ListStylePosition(p) = &decl.value {
-                style.list_style_position = *p;
-            }
-        }
-
-        // Unknown - nothing to do
-        PropertyId::Unknown => {}
+        Declaration::ListStyleType(lst) => style.list_style_type = *lst,
+        Declaration::ListStylePosition(p) => style.list_style_position = *p,
     }
 }
 
@@ -1677,7 +1366,7 @@ mod tests {
         let rule = &stylesheet.rules[0];
         assert_eq!(rule.selectors.len(), 1);
         assert_eq!(rule.declarations.len(), 1);
-        assert_eq!(rule.declarations[0].property, PropertyId::Color);
+        assert!(matches!(rule.declarations[0], Declaration::Color(_)));
     }
 
     #[test]
@@ -1695,7 +1384,7 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        if let PropertyValue::Color(c) = &decl.value {
+        if let Declaration::Color(c) = decl {
             assert_eq!(*c, Color::rgb(255, 0, 0));
         } else {
             panic!("Expected color");
@@ -1708,8 +1397,8 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        if let PropertyValue::Length(Length::Px(v)) = decl.value {
-            assert!((v - 16.0).abs() < 0.001);
+        if let Declaration::FontSize(Length::Px(v)) = decl {
+            assert!((*v - 16.0).abs() < 0.001);
         } else {
             panic!("Expected px length");
         }
@@ -1744,10 +1433,10 @@ mod tests {
 
         // The important declaration should be in important_declarations
         assert_eq!(stylesheet.rules[0].important_declarations.len(), 1);
-        assert_eq!(
-            stylesheet.rules[0].important_declarations[0].property,
-            PropertyId::Color
-        );
+        assert!(matches!(
+            stylesheet.rules[0].important_declarations[0],
+            Declaration::Color(_)
+        ));
         // The normal declaration should be in declarations
         assert_eq!(stylesheet.rules[1].declarations.len(), 1);
     }
@@ -1798,33 +1487,29 @@ mod tests {
         assert_eq!(decls.len(), 4);
 
         // Find margin-left and margin-right
-        let margin_left = decls
-            .iter()
-            .find(|d| d.property == PropertyId::MarginLeft);
-        let margin_right = decls
-            .iter()
-            .find(|d| d.property == PropertyId::MarginRight);
-        let margin_top = decls.iter().find(|d| d.property == PropertyId::MarginTop);
+        let margin_left = decls.iter().find(|d| matches!(d, Declaration::MarginLeft(_)));
+        let margin_right = decls.iter().find(|d| matches!(d, Declaration::MarginRight(_)));
+        let margin_top = decls.iter().find(|d| matches!(d, Declaration::MarginTop(_)));
 
         assert!(margin_left.is_some(), "margin-left should exist");
         assert!(margin_right.is_some(), "margin-right should exist");
         assert!(margin_top.is_some(), "margin-top should exist");
 
         // Verify auto values for left/right
-        if let PropertyValue::Length(len) = &margin_left.unwrap().value {
+        if let Declaration::MarginLeft(len) = margin_left.unwrap() {
             assert_eq!(*len, Length::Auto, "margin-left should be auto");
         } else {
             panic!("margin-left should be a length");
         }
 
-        if let PropertyValue::Length(len) = &margin_right.unwrap().value {
+        if let Declaration::MarginRight(len) = margin_right.unwrap() {
             assert_eq!(*len, Length::Auto, "margin-right should be auto");
         } else {
             panic!("margin-right should be a length");
         }
 
         // Verify 0 for top/bottom
-        if let PropertyValue::Length(len) = &margin_top.unwrap().value {
+        if let Declaration::MarginTop(len) = margin_top.unwrap() {
             assert_eq!(*len, Length::Px(0.0), "margin-top should be 0");
         } else {
             panic!("margin-top should be a length");
@@ -1839,10 +1524,9 @@ mod tests {
 
         assert_eq!(stylesheet.rules.len(), 1);
         let decl = &stylesheet.rules[0].declarations[0];
-        assert_eq!(decl.property, PropertyId::LineHeight);
 
         // Unitless 1.5 should be converted to 1.5em
-        if let PropertyValue::Length(len) = &decl.value {
+        if let Declaration::LineHeight(len) = decl {
             assert_eq!(
                 *len,
                 Length::Em(1.5),
@@ -1860,7 +1544,7 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        if let PropertyValue::Length(len) = &decl.value {
+        if let Declaration::LineHeight(len) = decl {
             assert_eq!(*len, Length::Px(24.0));
         } else {
             panic!("line-height should be a length");
@@ -1874,7 +1558,7 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        if let PropertyValue::Length(len) = &decl.value {
+        if let Declaration::LineHeight(len) = decl {
             assert_eq!(*len, Length::Auto, "line-height: normal should be Auto");
         } else {
             panic!("line-height should be a length");
@@ -1887,8 +1571,7 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        assert_eq!(decl.property, PropertyId::BoxSizing);
-        if let PropertyValue::BoxSizing(bs) = &decl.value {
+        if let Declaration::BoxSizing(bs) = decl {
             assert_eq!(*bs, BoxSizing::BorderBox);
         } else {
             panic!("box-sizing should be a BoxSizing value");
@@ -1901,27 +1584,134 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        if let PropertyValue::BoxSizing(bs) = &decl.value {
+        if let Declaration::BoxSizing(bs) = decl {
             assert_eq!(*bs, BoxSizing::ContentBox);
         } else {
             panic!("box-sizing should be a BoxSizing value");
         }
     }
 
+    // ========================================================================
+    // Tests for new CSS properties
+    // ========================================================================
+
     #[test]
-    fn test_property_id_roundtrip() {
-        // Test that PropertyId::from_str and name() are consistent
-        let properties = [
-            "color",
-            "background-color",
-            "font-size",
-            "margin-top",
-            "border-radius",
-        ];
-        for prop in properties {
-            let id = PropertyId::from_str(prop);
-            assert_ne!(id, PropertyId::Unknown, "{} should be recognized", prop);
-            assert_eq!(id.name(), prop, "name() should match input");
+    fn test_max_height() {
+        let css = "img { max-height: 100%; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        if let Declaration::MaxHeight(len) = decl {
+            assert_eq!(*len, Length::Percent(100.0));
+        } else {
+            panic!("max-height should be a Length");
+        }
+    }
+
+    #[test]
+    fn test_min_width() {
+        let css = "div { min-width: 200px; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decl = &stylesheet.rules[0].declarations[0];
+        if let Declaration::MinWidth(len) = decl {
+            assert_eq!(*len, Length::Px(200.0));
+        } else {
+            panic!("min-width should be a Length");
+        }
+    }
+
+    #[test]
+    fn test_clear() {
+        use crate::ir::Clear;
+
+        for (css_value, expected) in [
+            ("none", Clear::None),
+            ("left", Clear::Left),
+            ("right", Clear::Right),
+            ("both", Clear::Both),
+        ] {
+            let css = format!("div {{ clear: {}; }}", css_value);
+            let stylesheet = Stylesheet::parse(&css);
+
+            let decl = &stylesheet.rules[0].declarations[0];
+            if let Declaration::Clear(clear) = decl {
+                assert_eq!(*clear, expected, "clear: {} should parse correctly", css_value);
+            } else {
+                panic!("clear should be a Clear value");
+            }
+        }
+    }
+
+    #[test]
+    fn test_orphans_widows() {
+        let css = "p { orphans: 3; widows: 2; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let orphans_decl = stylesheet.rules[0]
+            .declarations
+            .iter()
+            .find(|d| matches!(d, Declaration::Orphans(_)))
+            .expect("orphans should exist");
+        let widows_decl = stylesheet.rules[0]
+            .declarations
+            .iter()
+            .find(|d| matches!(d, Declaration::Widows(_)))
+            .expect("widows should exist");
+
+        if let Declaration::Orphans(n) = orphans_decl {
+            assert_eq!(*n, 3);
+        } else {
+            panic!("orphans should be an Integer");
+        }
+
+        if let Declaration::Widows(n) = widows_decl {
+            assert_eq!(*n, 2);
+        } else {
+            panic!("widows should be an Integer");
+        }
+    }
+
+    #[test]
+    fn test_word_break() {
+        use crate::ir::WordBreak;
+
+        for (css_value, expected) in [
+            ("normal", WordBreak::Normal),
+            ("break-all", WordBreak::BreakAll),
+            ("keep-all", WordBreak::KeepAll),
+            ("break-word", WordBreak::BreakWord),
+        ] {
+            let css = format!("p {{ word-break: {}; }}", css_value);
+            let stylesheet = Stylesheet::parse(&css);
+
+            let decl = &stylesheet.rules[0].declarations[0];
+            if let Declaration::WordBreak(wb) = decl {
+                assert_eq!(*wb, expected, "word-break: {} should parse correctly", css_value);
+            } else {
+                panic!("word-break should be a WordBreak value");
+            }
+        }
+    }
+
+    #[test]
+    fn test_overflow_wrap() {
+        use crate::ir::OverflowWrap;
+
+        for (css_value, expected) in [
+            ("normal", OverflowWrap::Normal),
+            ("break-word", OverflowWrap::BreakWord),
+            ("anywhere", OverflowWrap::Anywhere),
+        ] {
+            let css = format!("p {{ overflow-wrap: {}; }}", css_value);
+            let stylesheet = Stylesheet::parse(&css);
+
+            let decl = &stylesheet.rules[0].declarations[0];
+            if let Declaration::OverflowWrap(ow) = decl {
+                assert_eq!(*ow, expected, "overflow-wrap: {} should parse correctly", css_value);
+            } else {
+                panic!("overflow-wrap should be an OverflowWrap value");
+            }
         }
     }
 }
