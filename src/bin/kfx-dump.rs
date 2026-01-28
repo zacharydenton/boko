@@ -92,11 +92,12 @@ fn main() -> IonResult<()> {
                 "features" => report_features(&data)?,
                 "document" => report_document(&data)?,
                 "metadata" => report_metadata(&data)?,
+                "navigation" => report_navigation(&data)?,
                 "reading_orders" => report_reading_orders(&data)?,
                 "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, reading_orders, toc",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, toc",
                         other
                     );
                     std::process::exit(1);
@@ -3485,4 +3486,218 @@ where
         }
         IonValue::Annotated(_, inner) => format_ion_value_simple(inner, resolve_sym),
     }
+}
+
+/// Report navigation (book_navigation entity) from a KFX file
+fn report_navigation(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find book_navigation entity (type 389)
+    let book_navigation_type = KfxSymbol::BookNavigation as u32;
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != book_navigation_type {
+            continue;
+        }
+
+        // Found book_navigation entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            // Helper to resolve symbol name
+            let resolve_sym = |id: u64| -> String {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or("?")
+                        .to_string()
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+
+            println!("=== Book Navigation ===\n");
+
+            // The navigation entity is a list of reading order navigation containers
+            if let boko::kfx::ion::IonValue::List(reading_orders) = &value {
+                for ro in reading_orders {
+                    if let boko::kfx::ion::IonValue::Struct(ro_fields) = ro {
+                        let mut ro_name = String::new();
+                        let mut containers: Vec<(String, String, usize)> = Vec::new();
+
+                        for (fid, fval) in ro_fields {
+                            let fname = resolve_sym(*fid);
+                            match fname.as_str() {
+                                "reading_order_name" => {
+                                    if let boko::kfx::ion::IonValue::Symbol(s) = fval {
+                                        ro_name = resolve_sym(*s);
+                                    }
+                                }
+                                "nav_containers" => {
+                                    if let boko::kfx::ion::IonValue::List(navcs) = fval {
+                                        for navc in navcs {
+                                            // Unwrap annotation (nav_container::)
+                                            let navc_inner = match navc {
+                                                boko::kfx::ion::IonValue::Annotated(_, inner) => {
+                                                    inner.as_ref()
+                                                }
+                                                _ => navc,
+                                            };
+                                            if let boko::kfx::ion::IonValue::Struct(nc_fields) =
+                                                navc_inner
+                                            {
+                                                let mut nav_type = String::new();
+                                                let mut nav_name = String::new();
+                                                let mut entry_count = 0usize;
+
+                                                for (ncid, ncval) in nc_fields {
+                                                    let ncname = resolve_sym(*ncid);
+                                                    match ncname.as_str() {
+                                                        "nav_type" => {
+                                                            if let boko::kfx::ion::IonValue::Symbol(
+                                                                s,
+                                                            ) = ncval
+                                                            {
+                                                                nav_type = resolve_sym(*s);
+                                                            }
+                                                        }
+                                                        "nav_container_name" => {
+                                                            if let boko::kfx::ion::IonValue::Symbol(
+                                                                s,
+                                                            ) = ncval
+                                                            {
+                                                                nav_name = resolve_sym(*s);
+                                                            }
+                                                        }
+                                                        "entries" => {
+                                                            if let boko::kfx::ion::IonValue::List(
+                                                                entries,
+                                                            ) = ncval
+                                                            {
+                                                                entry_count = count_nav_entries(entries);
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+
+                                                containers.push((nav_type, nav_name, entry_count));
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        println!("Reading Order: {}\n", ro_name);
+                        for (nav_type, nav_name, entry_count) in &containers {
+                            println!(
+                                "  {:<15} {} ({} entries)",
+                                format!("{}:", nav_type),
+                                nav_name,
+                                entry_count
+                            );
+                        }
+                        println!();
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No book_navigation entity found");
+    Ok(())
 }
