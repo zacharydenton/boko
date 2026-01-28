@@ -1077,6 +1077,7 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
         font_weight: parent.font_weight,
         font_style: parent.font_style,
         font_variant: parent.font_variant,
+        font_family: parent.font_family.clone(),
         // Text properties (inherited)
         color: parent.color,
         text_align: parent.text_align,

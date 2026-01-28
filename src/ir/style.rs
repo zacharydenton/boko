@@ -291,9 +291,9 @@ enum_property! {
     /// CSS list-style-type values.
     pub enum ListStyleType {
         /// No marker
-        #[default]
         None => "none",
-        /// Disc bullet (default for ul)
+        /// Disc bullet (CSS default)
+        #[default]
         Disc => "disc",
         /// Circle bullet
         Circle => "circle",
