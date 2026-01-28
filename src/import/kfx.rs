@@ -140,13 +140,16 @@ impl Importer for KfxImporter {
         let styles = self.styles.clone();
 
         // Parse storyline and build IR using schema-driven tokenization
-        let chapter = parse_storyline_to_ir(
+        let mut chapter = parse_storyline_to_ir(
             &storyline_ion,
             &doc_symbols,
             Some(&anchors),
             Some(&styles),
             |name, index| self.lookup_content_text(name, index),
         );
+
+        // Run optimization passes (KFX builds IR directly, not through compile_html)
+        crate::compiler::optimizer::optimize(&mut chapter);
 
         Ok(chapter)
     }

@@ -22,12 +22,14 @@ use crate::ir::{IRChapter, NodeId, Role};
 /// 2. Hoist dissolves redundant wrapper containers (enables span merge)
 /// 3. Span merge coalesces adjacent text with same style
 /// 4. List fuser repairs fragmented lists
-/// 5. Pruner removes any containers emptied by previous passes
+/// 5. Wrap mixed content normalizes inline/block siblings
+/// 6. Pruner removes any containers emptied by previous passes
 pub fn optimize(chapter: &mut IRChapter) {
     vacuum(chapter);
     hoist_nested_inlines(chapter);
     merge_adjacent_spans(chapter);
     fuse_lists(chapter);
+    wrap_mixed_content(chapter);
     prune_empty(chapter);
 }
 
@@ -510,7 +512,217 @@ fn fuse_list_pair(chapter: &mut IRChapter, left_id: NodeId, right_id: NodeId) {
 }
 
 // ============================================================================
-// Pass 5: Pruner (Empty Container Removal)
+// Pass 5: Wrap Mixed Content (Inline/Block Normalization)
+// ============================================================================
+
+/// Wrap consecutive inline children in a Container when they're siblings to block elements.
+///
+/// HTML allows mixed inline and block content in some containers:
+/// ```html
+/// <blockquote>
+///   <p>Some verse...</p>
+///   <cite>— Author</cite>
+/// </blockquote>
+/// ```
+///
+/// In this example, `<cite>` (mapped to `Inline`) is a sibling to `<p>` (a block element).
+/// During KFX export, inline children become spans on the parent container, which inverts
+/// the content order (inlines appear before blocks).
+///
+/// This pass detects block containers with mixed inline/block children and wraps
+/// consecutive inline runs in a Container node, normalizing the structure:
+///
+/// Before: BlockQuote > [Paragraph, Inline "cite"]
+/// After:  BlockQuote > [Paragraph, Container > [Inline "cite"]]
+fn wrap_mixed_content(chapter: &mut IRChapter) {
+    if chapter.node_count() > 0 {
+        wrap_mixed_children(chapter, NodeId::ROOT);
+    }
+}
+
+fn wrap_mixed_children(chapter: &mut IRChapter, parent_id: NodeId) {
+    // 1. Recurse into children first (bottom-up)
+    let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
+    while let Some(child_id) = child_opt {
+        wrap_mixed_children(chapter, child_id);
+        child_opt = chapter.node(child_id).and_then(|n| n.next_sibling);
+    }
+
+    // 2. Check if parent is a block container that might have mixed content
+    let parent_role = chapter.node(parent_id).map(|n| n.role);
+    if !is_block_container(parent_role) {
+        return;
+    }
+
+    // 3. Analyze children: do we have both inline and block children?
+    let (has_inline, has_block) = analyze_children(chapter, parent_id);
+    if !has_inline || !has_block {
+        return; // No mixed content
+    }
+
+    // 4. Find runs of consecutive inline children and wrap them
+    wrap_inline_runs(chapter, parent_id);
+}
+
+/// Check if a role is a block container that can have mixed content.
+fn is_block_container(role: Option<Role>) -> bool {
+    matches!(
+        role,
+        Some(
+            Role::Root
+                | Role::Container
+                | Role::BlockQuote
+                | Role::Figure
+                | Role::Sidebar
+                | Role::Footnote
+                | Role::ListItem
+                | Role::TableCell
+        )
+    )
+}
+
+/// Check if a role represents inline content.
+fn is_inline_role(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Text | Role::Inline | Role::Link | Role::Image | Role::Break
+    )
+}
+
+/// Analyze children to detect if we have mixed inline/block content.
+fn analyze_children(chapter: &IRChapter, parent_id: NodeId) -> (bool, bool) {
+    let mut has_inline = false;
+    let mut has_block = false;
+
+    let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
+    while let Some(child_id) = child_opt {
+        if let Some(child) = chapter.node(child_id) {
+            if is_inline_role(child.role) {
+                has_inline = true;
+            } else {
+                has_block = true;
+            }
+        }
+        child_opt = chapter.node(child_id).and_then(|n| n.next_sibling);
+    }
+
+    (has_inline, has_block)
+}
+
+/// Find and wrap consecutive runs of inline children.
+fn wrap_inline_runs(chapter: &mut IRChapter, parent_id: NodeId) {
+    // Collect child info to avoid borrow issues
+    let mut children_info: Vec<(NodeId, bool)> = Vec::new();
+    let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
+    while let Some(child_id) = child_opt {
+        let is_inline = chapter
+            .node(child_id)
+            .map(|n| is_inline_role(n.role))
+            .unwrap_or(false);
+        children_info.push((child_id, is_inline));
+        child_opt = chapter.node(child_id).and_then(|n| n.next_sibling);
+    }
+
+    // Find inline runs (consecutive inline children)
+    let mut runs: Vec<(usize, usize)> = Vec::new(); // (start_idx, end_idx) inclusive
+    let mut run_start: Option<usize> = None;
+
+    for (idx, &(_, is_inline)) in children_info.iter().enumerate() {
+        if is_inline {
+            if run_start.is_none() {
+                run_start = Some(idx);
+            }
+        } else if let Some(start) = run_start {
+            runs.push((start, idx - 1));
+            run_start = None;
+        }
+    }
+    // Handle trailing run
+    if let Some(start) = run_start {
+        runs.push((start, children_info.len() - 1));
+    }
+
+    // Wrap runs in reverse order to preserve indices
+    for (start_idx, end_idx) in runs.into_iter().rev() {
+        wrap_run(chapter, parent_id, &children_info, start_idx, end_idx);
+    }
+}
+
+/// Wrap a single run of inline children in a Container.
+fn wrap_run(
+    chapter: &mut IRChapter,
+    parent_id: NodeId,
+    children_info: &[(NodeId, bool)],
+    start_idx: usize,
+    end_idx: usize,
+) {
+    use crate::ir::Node;
+
+    // Create wrapper Container
+    let wrapper_id = chapter.alloc_node(Node::new(Role::Container));
+
+    // Set wrapper's parent
+    if let Some(wrapper) = chapter.node_mut(wrapper_id) {
+        wrapper.parent = Some(parent_id);
+    }
+
+    // Get the last node in this run
+    let last_inline_id = children_info[end_idx].0;
+
+    // Get next sibling after the run (if any)
+    let after_run = chapter.node(last_inline_id).and_then(|n| n.next_sibling);
+
+    // Reparent inline nodes to wrapper
+    let mut prev_in_wrapper: Option<NodeId> = None;
+    for idx in start_idx..=end_idx {
+        let child_id = children_info[idx].0;
+
+        // Set new parent
+        if let Some(child) = chapter.node_mut(child_id) {
+            child.parent = Some(wrapper_id);
+        }
+
+        // Link within wrapper
+        if let Some(prev_id) = prev_in_wrapper {
+            if let Some(prev) = chapter.node_mut(prev_id) {
+                prev.next_sibling = Some(child_id);
+            }
+        } else {
+            // First child of wrapper
+            if let Some(wrapper) = chapter.node_mut(wrapper_id) {
+                wrapper.first_child = Some(child_id);
+            }
+        }
+        prev_in_wrapper = Some(child_id);
+    }
+
+    // Clear next_sibling of last inline node
+    if let Some(last) = chapter.node_mut(last_inline_id) {
+        last.next_sibling = None;
+    }
+
+    // Set wrapper's next_sibling
+    if let Some(wrapper) = chapter.node_mut(wrapper_id) {
+        wrapper.next_sibling = after_run;
+    }
+
+    // Link wrapper into parent's child chain
+    if start_idx == 0 {
+        // Wrapper becomes first child
+        if let Some(parent) = chapter.node_mut(parent_id) {
+            parent.first_child = Some(wrapper_id);
+        }
+    } else {
+        // Link previous sibling to wrapper
+        let prev_sibling_id = children_info[start_idx - 1].0;
+        if let Some(prev) = chapter.node_mut(prev_sibling_id) {
+            prev.next_sibling = Some(wrapper_id);
+        }
+    }
+}
+
+// ============================================================================
+// Pass 6: Pruner (Empty Container Removal)
 // ============================================================================
 
 /// Remove empty containers in post-order (cascading).
@@ -651,14 +863,6 @@ fn has_semantic_attrs(chapter: &IRChapter, node_id: NodeId) -> bool {
 mod tests {
     use super::*;
     use crate::ir::Node;
-
-    /// Create a simple chapter for testing.
-    fn make_test_chapter() -> IRChapter {
-        let mut chapter = IRChapter::new();
-        let container = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, container);
-        chapter
-    }
 
     // ------------------------------------------------------------------------
     // Vacuum Tests
@@ -1124,6 +1328,113 @@ mod tests {
         // The fused list should have 2 items
         let list_items: Vec<_> = chapter.children(children[0]).collect();
         assert_eq!(list_items.len(), 2);
+    }
+
+    // ------------------------------------------------------------------------
+    // Mixed Content Wrapping Tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_wrap_mixed_content_in_blockquote() {
+        let mut chapter = IRChapter::new();
+
+        // Create: BlockQuote > [Paragraph "verse", Inline "cite"]
+        // This simulates: <blockquote><p>verse</p><cite>author</cite></blockquote>
+        let bq = chapter.alloc_node(Node::new(Role::BlockQuote));
+        chapter.append_child(NodeId::ROOT, bq);
+
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(bq, para);
+        let verse_range = chapter.append_text("Some verse...");
+        let verse = chapter.alloc_node(Node::text(verse_range));
+        chapter.append_child(para, verse);
+
+        let cite = chapter.alloc_node(Node::new(Role::Inline));
+        chapter.append_child(bq, cite);
+        let author_range = chapter.append_text("— Author");
+        let author = chapter.alloc_node(Node::text(author_range));
+        chapter.append_child(cite, author);
+
+        // Before: BlockQuote has 2 children (Paragraph, Inline)
+        assert_eq!(chapter.children(bq).count(), 2);
+
+        wrap_mixed_content(&mut chapter);
+
+        // After: BlockQuote > [Paragraph, Container > [Inline]]
+        // The Inline is wrapped in a Container
+        let children: Vec<_> = chapter.children(bq).collect();
+        assert_eq!(children.len(), 2);
+
+        // First child is still the Paragraph
+        assert_eq!(chapter.node(children[0]).unwrap().role, Role::Paragraph);
+
+        // Second child is now a Container (wrapper)
+        assert_eq!(chapter.node(children[1]).unwrap().role, Role::Container);
+
+        // The wrapper contains the Inline
+        let wrapper_children: Vec<_> = chapter.children(children[1]).collect();
+        assert_eq!(wrapper_children.len(), 1);
+        assert_eq!(
+            chapter.node(wrapper_children[0]).unwrap().role,
+            Role::Inline
+        );
+    }
+
+    #[test]
+    fn test_no_wrap_when_only_block_children() {
+        let mut chapter = IRChapter::new();
+
+        // Create: Container > [Paragraph, Paragraph]
+        // All children are blocks, no wrapping needed
+        let container = chapter.alloc_node(Node::new(Role::Container));
+        chapter.append_child(NodeId::ROOT, container);
+
+        let p1 = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(container, p1);
+
+        let p2 = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(container, p2);
+
+        // Before
+        assert_eq!(chapter.children(container).count(), 2);
+
+        wrap_mixed_content(&mut chapter);
+
+        // After: No change
+        let children: Vec<_> = chapter.children(container).collect();
+        assert_eq!(children.len(), 2);
+        assert_eq!(chapter.node(children[0]).unwrap().role, Role::Paragraph);
+        assert_eq!(chapter.node(children[1]).unwrap().role, Role::Paragraph);
+    }
+
+    #[test]
+    fn test_no_wrap_when_only_inline_children() {
+        let mut chapter = IRChapter::new();
+
+        // Create: Paragraph > [Text, Inline, Text]
+        // All children are inline, no wrapping needed
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(NodeId::ROOT, para);
+
+        let t1_range = chapter.append_text("Hello ");
+        let t1 = chapter.alloc_node(Node::text(t1_range));
+        chapter.append_child(para, t1);
+
+        let span = chapter.alloc_node(Node::new(Role::Inline));
+        chapter.append_child(para, span);
+
+        let t2_range = chapter.append_text(" World");
+        let t2 = chapter.alloc_node(Node::text(t2_range));
+        chapter.append_child(para, t2);
+
+        // Before
+        assert_eq!(chapter.children(para).count(), 3);
+
+        wrap_mixed_content(&mut chapter);
+
+        // After: No change (Paragraph is not a block container in is_block_container)
+        let children: Vec<_> = chapter.children(para).collect();
+        assert_eq!(children.len(), 3);
     }
 }
 

@@ -100,6 +100,21 @@ pub enum Strategy {
         /// KFX type symbol for export.
         kfx_type: KfxSymbol,
     },
+
+    /// Structure with semantic type annotation for bidirectional mapping.
+    ///
+    /// Usage: BlockQuote, which needs `yj.semantics.type: block_quote` for
+    /// round-trip fidelity. On import, the semantic_type value triggers
+    /// the role mapping; on export, it's emitted as a local symbol.
+    StructureWithSemanticType {
+        /// The IR Role to assign.
+        role: Role,
+        /// KFX type symbol for export.
+        kfx_type: KfxSymbol,
+        /// Semantic type value (e.g., "block_quote") emitted as local symbol.
+        /// Used for both import detection and export annotation.
+        semantic_type: &'static str,
+    },
 }
 
 impl Strategy {
@@ -111,6 +126,15 @@ impl Strategy {
             Strategy::Style { kfx_type, .. } => *kfx_type,
             Strategy::Dynamic { kfx_type, .. } => *kfx_type,
             Strategy::Transparent { kfx_type } => *kfx_type,
+            Strategy::StructureWithSemanticType { kfx_type, .. } => *kfx_type,
+        }
+    }
+
+    /// Get the semantic type annotation if this strategy has one.
+    pub fn semantic_type(&self) -> Option<&'static str> {
+        match self {
+            Strategy::StructureWithSemanticType { semantic_type, .. } => Some(semantic_type),
+            _ => None,
         }
     }
 }
@@ -412,6 +436,20 @@ impl KfxSchema {
             },
             vec![],
         );
+
+        // BlockQuote - maps to type: text with yj.semantics.type: block_quote
+        // KFX has no dedicated blockquote container. Instead it uses:
+        // 1. type: text (standard text container)
+        // 2. yj.semantics.type: block_quote (semantic annotation for round-trip)
+        // 3. Styling for visual appearance (margins, indentation)
+        self.export_strategy_table.insert(
+            Role::BlockQuote,
+            Strategy::StructureWithSemanticType {
+                role: Role::BlockQuote,
+                kfx_type: KfxSymbol::Text,
+                semantic_type: "block_quote",
+            },
+        );
     }
 
     /// Register span (inline) rules for style_events.
@@ -524,6 +562,24 @@ impl KfxSchema {
             .unwrap_or(&[])
     }
 
+    /// Look up the IR Role for a given semantic type annotation value.
+    ///
+    /// Searches the export strategy table for StructureWithSemanticType entries
+    /// that match the given semantic type string (e.g., "block_quote" → BlockQuote).
+    pub fn role_for_semantic_type(&self, semantic_type: &str) -> Option<Role> {
+        for (role, strategy) in &self.export_strategy_table {
+            if let Strategy::StructureWithSemanticType {
+                semantic_type: st, ..
+            } = strategy
+            {
+                if *st == semantic_type {
+                    return Some(*role);
+                }
+            }
+        }
+        None
+    }
+
     /// Resolve a KFX element to IR Role.
     ///
     /// # Arguments
@@ -631,6 +687,7 @@ impl KfxSchema {
 
             Strategy::Style { .. } => Role::Inline, // Style strategies don't create structure
             Strategy::Transparent { .. } => Role::Container,
+            Strategy::StructureWithSemanticType { role, .. } => *role,
         }
     }
 
@@ -729,6 +786,7 @@ impl KfxSchema {
                 Strategy::Dynamic { trigger_role, .. } => *trigger_role == role,
                 Strategy::Structure { role: r, .. } => *r == role,
                 Strategy::StructureWithModifier { default_role, .. } => *default_role == role,
+                Strategy::StructureWithSemanticType { role: r, .. } => *r == role,
                 Strategy::Style { .. } => role == Role::Inline,
                 Strategy::Transparent { .. } => false,
             };
@@ -906,6 +964,19 @@ mod tests {
             schema.kfx_symbol_for_role(Role::Image),
             Some(KfxSymbol::Image as u32)
         );
+    }
+
+    #[test]
+    fn test_export_blockquote_with_semantic_type() {
+        let schema = KfxSchema::new();
+        // BlockQuote should emit type: text with yj.semantics.type: block_quote
+        let strategy = schema.export_strategy(Role::BlockQuote).unwrap();
+        assert!(matches!(
+            strategy,
+            Strategy::StructureWithSemanticType { .. }
+        ));
+        assert_eq!(strategy.kfx_type(), KfxSymbol::Text);
+        assert_eq!(strategy.semantic_type(), Some("block_quote"));
     }
 
     #[test]

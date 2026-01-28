@@ -3,9 +3,7 @@
 //! This module contains pure functions for parsing KFX container structures.
 //! All functions operate on byte slices and do not perform I/O.
 
-use std::collections::HashSet;
-
-use super::ion::{IonParser, IonValue, ION_MAGIC};
+use super::ion::{IonParser, IonValue};
 use super::symbols::KFX_SYMBOL_TABLE;
 
 /// KFX container header (18 bytes).
@@ -220,65 +218,45 @@ pub fn skip_enty_header(data: &[u8]) -> &[u8] {
 ///
 /// These are local symbols that extend the base KFX symbol table.
 pub fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
-    let mut symbols = Vec::new();
-
-    // Skip Ion BVM if present
-    let start = if data.len() >= 4 && data[0..4] == ION_MAGIC {
-        4
-    } else {
-        0
+    // Parse the $ion_symbol_table entity using the Ion parser.
+    // The data is: BVM + $3::{ $6: [{ $4: "YJ_symbols", $5: 10, $8: 851 }], $7: [...] }
+    // We need the strings from the $7 (symbols) field.
+    let mut parser = IonParser::new(data);
+    let value = match parser.parse() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
     };
 
-    let mut i = start;
-    while i < data.len() {
-        let type_byte = data[i];
-        let type_code = (type_byte >> 4) & 0x0F;
+    // Unwrap annotation ($3 = $ion_symbol_table)
+    let inner = value.unwrap_annotated();
 
-        // Type 8 = string in Ion
-        if type_code == 8 {
-            let len_nibble = type_byte & 0x0F;
-            let (str_len, header_len) = if len_nibble == 14 {
-                // VarUInt length
-                if i + 1 < data.len() {
-                    let len = data[i + 1] as usize;
-                    if len & 0x80 == 0 {
-                        (len, 2)
-                    } else {
-                        (len & 0x7F, 2)
-                    }
-                } else {
-                    break;
-                }
-            } else if len_nibble == 15 {
-                // Null string
-                i += 1;
-                continue;
-            } else {
-                (len_nibble as usize, 1)
-            };
+    // Get the struct fields
+    let fields = match inner.as_struct() {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
 
-            if i + header_len + str_len <= data.len() {
-                let str_bytes = &data[i + header_len..i + header_len + str_len];
-                if let Ok(s) = std::str::from_utf8(str_bytes) {
-                    // Filter out metadata symbols
-                    if !s.starts_with("YJ_symbols") && !s.is_empty() && !s.contains("version") {
-                        symbols.push(s.to_string());
-                    }
-                }
-                i += header_len + str_len;
+    // Field $7 = "symbols" in Ion system symbols
+    let symbols_list = match get_field(fields, 7) {
+        Some(list) => list,
+        None => return Vec::new(),
+    };
+
+    let items = match symbols_list.as_list() {
+        Some(l) => l,
+        None => return Vec::new(),
+    };
+
+    items
+        .iter()
+        .filter_map(|v| {
+            if let IonValue::String(s) = v {
+                Some(s.clone())
             } else {
-                break;
+                None
             }
-        } else {
-            i += 1;
-        }
-    }
-
-    // Remove duplicates while preserving order
-    let mut seen = HashSet::new();
-    symbols.retain(|s| seen.insert(s.clone()));
-
-    symbols
+        })
+        .collect()
 }
 
 // --- Symbol resolution ---
@@ -438,47 +416,46 @@ mod tests {
 
     #[test]
     fn test_extract_doc_symbols() {
-        // Create a simple Ion string sequence
-        // Ion BVM + string "hello" + string "world"
-        let mut data = vec![];
-        data.extend_from_slice(&ION_MAGIC);
-        // String "hello" (type 8, length 5)
-        data.push(0x85); // type=8, len=5
-        data.extend_from_slice(b"hello");
-        // String "world" (type 8, length 5)
-        data.push(0x85);
-        data.extend_from_slice(b"world");
+        use crate::kfx::ion::IonWriter;
+
+        // Build a valid $ion_symbol_table: $3::{ $7: ["hello", "world"] }
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        let symtab = IonValue::Struct(vec![
+            (7, IonValue::List(vec![
+                IonValue::String("hello".into()),
+                IonValue::String("world".into()),
+            ])),
+        ]);
+        writer.write_annotated(&[3], &symtab);
+        let data = writer.into_bytes();
 
         let symbols = extract_doc_symbols(&data);
         assert_eq!(symbols, vec!["hello", "world"]);
     }
 
     #[test]
-    fn test_extract_doc_symbols_filters_metadata() {
-        let mut data = vec![];
-        data.extend_from_slice(&ION_MAGIC);
-        // "YJ_symbols_v1" should be filtered
-        data.push(0x8D); // type=8, len=13
-        data.extend_from_slice(b"YJ_symbols_v1");
-        // "valid_symbol" should be kept
-        data.push(0x8C); // type=8, len=12
-        data.extend_from_slice(b"valid_symbol");
+    fn test_extract_doc_symbols_with_imports() {
+        use crate::kfx::ion::IonWriter;
+
+        // Build $ion_symbol_table with imports and symbols
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        let import_entry = IonValue::Struct(vec![
+            (4, IonValue::String("YJ_symbols".into())),
+            (5, IonValue::Int(10)),
+            (8, IonValue::Int(851)),
+        ]);
+        let symtab = IonValue::Struct(vec![
+            (6, IonValue::List(vec![import_entry])),
+            (7, IonValue::List(vec![
+                IonValue::String("custom_sym".into()),
+            ])),
+        ]);
+        writer.write_annotated(&[3], &symtab);
+        let data = writer.into_bytes();
 
         let symbols = extract_doc_symbols(&data);
-        assert_eq!(symbols, vec!["valid_symbol"]);
-    }
-
-    #[test]
-    fn test_extract_doc_symbols_deduplicates() {
-        let mut data = vec![];
-        data.extend_from_slice(&ION_MAGIC);
-        // "same" twice
-        data.push(0x84);
-        data.extend_from_slice(b"same");
-        data.push(0x84);
-        data.extend_from_slice(b"same");
-
-        let symbols = extract_doc_symbols(&data);
-        assert_eq!(symbols, vec!["same"]);
+        assert_eq!(symbols, vec!["custom_sym"]);
     }
 }

@@ -21,13 +21,14 @@
 mod arena;
 mod css;
 mod element_ref;
-mod optimizer;
+pub mod optimizer;
 mod transform;
 mod tree_sink;
 
 pub use arena::{ArenaDom, ArenaNode, ArenaNodeData, ArenaNodeId};
 pub use css::{Declaration, Origin, PropertyValue, Specificity, Stylesheet};
 pub use element_ref::{BokoSelectors, ElementRef};
+pub use optimizer::optimize;
 pub use transform::user_agent_stylesheet;
 
 use html5ever::driver::ParseOpts;

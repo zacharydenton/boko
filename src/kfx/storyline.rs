@@ -108,11 +108,19 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
 
     // Use schema to resolve role with attribute lookup closure
     // Return int values directly, or symbol IDs cast to i64 for symbol-based attributes
-    let role = schema().resolve_element_role(kfx_type_id, |symbol| {
+    let mut role = schema().resolve_element_role(kfx_type_id, |symbol| {
         get_field(fields, symbol as u64).and_then(|v| {
             v.as_int().or_else(|| v.as_symbol().map(|s| s as i64))
         })
     });
+
+    // Check for semantic type annotation (yj.semantics.type) which uses local symbols.
+    // The schema's StructureWithSemanticType strategies define what values map to what roles.
+    if let Some(semantic_type) = get_semantic_type_annotation(fields, ctx.doc_symbols) {
+        if let Some(mapped_role) = schema().role_for_semantic_type(&semantic_type) {
+            role = mapped_role;
+        }
+    }
 
     // Get element ID
     let id = get_field(fields, sym!(Id)).and_then(|v| v.as_int());
@@ -166,6 +174,25 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
 
     // Emit EndElement token
     stream.push(KfxToken::EndElement);
+}
+
+/// Extract the semantic type annotation (yj.semantics.type) if present.
+///
+/// This looks for a field named "yj.semantics.type" (local symbol) and returns
+/// its value as a string. Used for bidirectional BlockQuote mapping.
+fn get_semantic_type_annotation(
+    fields: &[(u64, IonValue)],
+    doc_symbols: &[String],
+) -> Option<String> {
+    // Find the field ID for "yj.semantics.type" in local symbols.
+    // Local symbol IDs are offset by the base symbol table size.
+    let doc_idx = doc_symbols
+        .iter()
+        .position(|s| s == "yj.semantics.type")?;
+    let field_id = crate::kfx::symbols::KFX_SYMBOL_TABLE_SIZE + doc_idx;
+
+    // Get the value and resolve it to a string
+    get_field(fields, field_id as u64).and_then(|v| resolve_symbol_or_string(v, doc_symbols))
 }
 
 /// Extract ALL semantic attributes for an element using schema rules.
@@ -402,9 +429,28 @@ fn build_text_with_spans(
     text: &str,
     spans: &[SpanStart],
 ) {
-    // Sort spans by offset
+    // Sort spans by offset, then by length (shorter first for same offset)
     let mut sorted_spans: Vec<_> = spans.iter().collect();
-    sorted_spans.sort_by_key(|s| s.offset);
+    sorted_spans.sort_by_key(|s| (s.offset, s.length));
+
+    // Filter out spans that are completely contained within larger spans at the same offset.
+    // This handles the case of nested inlines where both outer and inner emit spans.
+    // We keep the shorter (more specific) spans and discard the longer encompassing ones.
+    let filtered_spans: Vec<_> = sorted_spans
+        .iter()
+        .filter(|span| {
+            // Check if any other span at the same offset is shorter (more specific)
+            // If so, this span is redundant
+            !sorted_spans.iter().any(|other| {
+                other.offset == span.offset
+                    && other.length < span.length
+                    && other.offset + other.length <= span.offset + span.length
+            })
+        })
+        .copied()
+        .collect();
+
+    let sorted_spans = filtered_spans;
 
     let mut pos = 0;
 
@@ -769,6 +815,17 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Type field (as symbol ID)
                 if let Some(kfx_type) = schema().kfx_type_for_role(elem.role) {
                     fields.push((sym!(Type), IonValue::Symbol(kfx_type as u64)));
+                }
+
+                // Add semantic type annotation if the strategy specifies one
+                // (e.g., BlockQuote → yj.semantics.type: block_quote)
+                if let Some(strategy) = schema().export_strategy(elem.role) {
+                    if let Some(semantic_type) = strategy.semantic_type() {
+                        // Both field name and value are local symbols
+                        let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
+                        let value_id = ctx.symbols.get_or_intern(semantic_type);
+                        fields.push((field_id, IonValue::Symbol(value_id)));
+                    }
                 }
 
                 // Add heading level if this is a heading
