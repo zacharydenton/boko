@@ -308,8 +308,15 @@ impl StyleSchema {
         self.rules.values().filter(|r| r.ir_field.is_some())
     }
 
-    /// Create the standard KFX style schema.
-    pub fn standard() -> Self {
+    /// Get the standard KFX style schema (cached).
+    pub fn standard() -> &'static Self {
+        use std::sync::LazyLock;
+        static STANDARD: LazyLock<StyleSchema> = LazyLock::new(|| StyleSchema::build_standard());
+        &STANDARD
+    }
+
+    /// Build the standard KFX style schema.
+    fn build_standard() -> Self {
         let mut schema = Self::new();
 
         // ====================================================================
@@ -1055,12 +1062,6 @@ impl StyleSchema {
         });
 
         schema
-    }
-}
-
-impl Default for StyleSchema {
-    fn default() -> Self {
-        Self::standard()
     }
 }
 
