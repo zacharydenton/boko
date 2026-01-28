@@ -700,7 +700,8 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
         // Collect link_to references and fragment content mappings from storylines
         if type_idnum == KfxSymbol::Storyline as u32 {
             extract_link_to_refs(&value, &extended_symbols, base_symbol_count, &mut link_to_refs);
-            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map);
+            let mut _unused_types = HashMap::new();
+            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map, &mut _unused_types);
         }
     }
 
@@ -866,8 +867,8 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
     let mut content_map: HashMap<String, Vec<String>> = HashMap::new();
     // Map fragment ID → (content_name, content_index) for resolving target positions
     let mut fragment_content_map: HashMap<i64, (String, i64)> = HashMap::new();
-    // Map entity ID → type name for showing what kind of entity each TOC entry points to
-    let mut entity_type_map: HashMap<i64, String> = HashMap::new();
+    // Map container ID → container type (from storyline content_list)
+    let mut container_type_map: HashMap<i64, String> = HashMap::new();
 
     // First pass: collect content, storyline data, and entity types
     for i in 0..num_entries {
@@ -876,14 +877,9 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
             break;
         }
 
-        let Some(id_idnum) = read_u32_le(data, entry_offset) else { continue };
         let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
         let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
         let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
-
-        // Record entity type for ID resolution
-        let type_name = resolve_symbol(type_idnum as u64, &extended_symbols, base_symbol_count);
-        entity_type_map.insert(id_idnum as i64, type_name);
 
         let abs_offset = header_len + entity_offset;
         if abs_offset + entity_len > data.len() {
@@ -916,9 +912,9 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
             }
         }
 
-        // Collect fragment content mappings from storylines
+        // Collect fragment content mappings and container types from storylines
         if type_idnum == KfxSymbol::Storyline as u32 {
-            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map);
+            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map, &mut container_type_map);
         }
     }
 
@@ -964,7 +960,7 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
         };
 
         // Extract and print TOC
-        extract_and_print_toc(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map, &entity_type_map);
+        extract_and_print_toc(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map, &container_type_map);
     }
 
     Ok(())
@@ -977,7 +973,7 @@ fn extract_and_print_toc(
     base_symbol_count: usize,
     content_map: &HashMap<String, Vec<String>>,
     fragment_content_map: &HashMap<i64, (String, i64)>,
-    entity_type_map: &HashMap<i64, String>,
+    container_type_map: &HashMap<i64, String>,
 ) {
     use boko::kfx::ion::IonValue;
     use boko::kfx::symbols::KfxSymbol;
@@ -1057,7 +1053,7 @@ fn extract_and_print_toc(
 
                 if let Some(entry_list) = entries {
                     let mut toc_entries = Vec::new();
-                    extract_toc_entries(entry_list, extended_symbols, base_symbol_count, content_map, fragment_content_map, entity_type_map, 0, &mut toc_entries);
+                    extract_toc_entries(entry_list, extended_symbols, base_symbol_count, content_map, fragment_content_map, container_type_map, 0, &mut toc_entries);
 
                     for entry in &toc_entries {
                         let indent = "  ".repeat(entry.depth);
@@ -1099,7 +1095,7 @@ fn extract_toc_entries(
     base_symbol_count: usize,
     content_map: &HashMap<String, Vec<String>>,
     fragment_content_map: &HashMap<i64, (String, i64)>,
-    entity_type_map: &HashMap<i64, String>,
+    container_type_map: &HashMap<i64, String>,
     depth: usize,
     result: &mut Vec<TocEntryInfo>,
 ) {
@@ -1178,8 +1174,8 @@ fn extract_toc_entries(
             })
         });
 
-        // Get entity type for target ID
-        let target_type = target_id.and_then(|id| entity_type_map.get(&id).cloned());
+        // Get container type for target ID (from storyline content_list)
+        let target_type = target_id.and_then(|id| container_type_map.get(&id).cloned());
 
         if !label.is_empty() || target_id.is_some() {
             result.push(TocEntryInfo {
@@ -1194,7 +1190,7 @@ fn extract_toc_entries(
 
         // Recurse into children
         if let Some(child_entries) = children {
-            extract_toc_entries(child_entries, extended_symbols, base_symbol_count, content_map, fragment_content_map, entity_type_map, depth + 1, result);
+            extract_toc_entries(child_entries, extended_symbols, base_symbol_count, content_map, fragment_content_map, container_type_map, depth + 1, result);
         }
     }
 }
@@ -1256,6 +1252,7 @@ fn extract_fragment_content_refs(
     extended_symbols: &[String],
     base_symbol_count: usize,
     refs: &mut HashMap<i64, (String, i64)>,
+    container_types: &mut HashMap<i64, String>,
 ) {
     use boko::kfx::ion::IonValue;
     use boko::kfx::symbols::KfxSymbol;
@@ -1272,17 +1269,18 @@ fn extract_fragment_content_refs(
 
     for (field_id, field_value) in fields {
         if *field_id == KfxSymbol::ContentList as u64 {
-            extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs);
+            extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs, container_types);
         }
     }
 }
 
-/// Recursively extract fragment ID → content refs from content_list
+/// Recursively extract fragment ID → content refs and container types from content_list
 fn extract_fragment_content_from_list(
     value: &boko::kfx::ion::IonValue,
     extended_symbols: &[String],
     base_symbol_count: usize,
     refs: &mut HashMap<i64, (String, i64)>,
+    container_types: &mut HashMap<i64, String>,
 ) {
     use boko::kfx::ion::IonValue;
     use boko::kfx::symbols::KfxSymbol;
@@ -1298,12 +1296,20 @@ fn extract_fragment_content_from_list(
                 let mut fragment_id: Option<i64> = None;
                 let mut content_name: Option<String> = None;
                 let mut content_index: Option<i64> = None;
+                let mut container_type: Option<String> = None;
 
                 for (field_id, field_value) in fields {
                     // Get fragment ID
                     if *field_id == KfxSymbol::Id as u64 {
                         if let IonValue::Int(i) = field_value {
                             fragment_id = Some(*i);
+                        }
+                    }
+
+                    // Get container type
+                    if *field_id == KfxSymbol::Type as u64 {
+                        if let IonValue::Symbol(sym_id) = field_value {
+                            container_type = Some(resolve_symbol(*sym_id, extended_symbols, base_symbol_count));
                         }
                     }
 
@@ -1325,11 +1331,16 @@ fn extract_fragment_content_from_list(
 
                     // Recurse into nested content_list
                     if *field_id == KfxSymbol::ContentList as u64 {
-                        extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs);
+                        extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs, container_types);
                     }
                 }
 
-                // If we found all info, add to map
+                // Record container type if we have an ID
+                if let (Some(fid), Some(ctype)) = (fragment_id, container_type) {
+                    container_types.insert(fid, ctype);
+                }
+
+                // If we found all content info, add to map
                 if let (Some(fid), Some(cname), Some(cindex)) = (fragment_id, content_name, content_index) {
                     refs.insert(fid, (cname, cindex));
                 }
