@@ -262,19 +262,22 @@ pub enum IrField {
     BorderRadiusBottomRight,
     // Phase 6: List properties
     ListStylePosition,
-    // Phase 7: Amazon properties
+    ListStyleType,
+    // Phase 7: Font family (string value)
+    FontFamily,
+    // Phase 8: Amazon properties
     Language,
     Visibility,
     /// Maps CSS box-sizing to KFX sizing_bounds
     SizingBounds,
-    // Phase 8: Additional layout properties
+    // Phase 9: Additional layout properties
     Clear,
     MinWidth,
     MaxHeight,
-    // Phase 9: Pagination control
+    // Phase 10: Pagination control
     Orphans,
     Widows,
-    // Phase 10: Text wrapping
+    // Phase 11: Text wrapping
     WordBreak,
 }
 
@@ -1071,8 +1074,42 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
+        // list-style-type → list_style (symbol values)
+        schema.register(StylePropertyRule {
+            ir_key: "list-style-type",
+            ir_field: Some(IrField::ListStyleType),
+            kfx_symbol: KfxSymbol::ListStyle,
+            transform: ValueTransform::Map(vec![
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("disc".into(), KfxValue::Symbol(KfxSymbol::Disc)),
+                ("circle".into(), KfxValue::Symbol(KfxSymbol::Circle)),
+                ("square".into(), KfxValue::Symbol(KfxSymbol::Square)),
+                ("decimal".into(), KfxValue::Symbol(KfxSymbol::Numeric)),
+                ("lower-roman".into(), KfxValue::Symbol(KfxSymbol::RomanLower)),
+                ("upper-roman".into(), KfxValue::Symbol(KfxSymbol::RomanUpper)),
+                ("lower-alpha".into(), KfxValue::Symbol(KfxSymbol::AlphaLower)),
+                ("upper-alpha".into(), KfxValue::Symbol(KfxSymbol::AlphaUpper)),
+                // CSS aliases
+                ("lower-latin".into(), KfxValue::Symbol(KfxSymbol::AlphaLower)),
+                ("upper-latin".into(), KfxValue::Symbol(KfxSymbol::AlphaUpper)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
         // ====================================================================
-        // Phase 7: Amazon Properties
+        // Phase 7: Font Family (string value, not symbol)
+        // ====================================================================
+
+        schema.register(StylePropertyRule {
+            ir_key: "font-family",
+            ir_field: Some(IrField::FontFamily),
+            kfx_symbol: KfxSymbol::FontFamily,
+            transform: ValueTransform::Identity, // String passthrough
+            context: StyleContext::InlineSafe,
+        });
+
+        // ====================================================================
+        // Phase 8: Amazon Properties
         // ====================================================================
 
         // Language (maps to HTML lang attribute in CSS, stored as string in KFX)
@@ -1933,13 +1970,28 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
         }
         // Phase 6: List properties
         IrField::ListStylePosition => {
-            if ir_style.list_style_position != default.list_style_position {
+            // Only applies to display: list-item
+            if ir_style.display == ir_style::Display::ListItem
+                && ir_style.list_style_position != default.list_style_position
+            {
                 Some(ir_style.list_style_position.to_css_string())
             } else {
                 None
             }
         }
-        // Phase 7: Amazon properties
+        IrField::ListStyleType => {
+            // Only applies to display: list-item
+            if ir_style.display == ir_style::Display::ListItem
+                && ir_style.list_style_type != default.list_style_type
+            {
+                Some(ir_style.list_style_type.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 7: Font family
+        IrField::FontFamily => ir_style.font_family.clone(),
+        // Phase 8: Amazon properties
         IrField::Language => ir_style.language.clone(),
         IrField::Visibility => {
             if ir_style.visibility != default.visibility {
@@ -2433,7 +2485,25 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 _ => ir_style::ListStylePosition::Outside,
             };
         }
-        // Phase 7: Amazon properties
+        IrField::ListStyleType => {
+            ir_style.list_style_type = match css_value {
+                "none" => ir_style::ListStyleType::None,
+                "disc" => ir_style::ListStyleType::Disc,
+                "circle" => ir_style::ListStyleType::Circle,
+                "square" => ir_style::ListStyleType::Square,
+                "decimal" => ir_style::ListStyleType::Decimal,
+                "lower-roman" => ir_style::ListStyleType::LowerRoman,
+                "upper-roman" => ir_style::ListStyleType::UpperRoman,
+                "lower-alpha" | "lower-latin" => ir_style::ListStyleType::LowerAlpha,
+                "upper-alpha" | "upper-latin" => ir_style::ListStyleType::UpperAlpha,
+                _ => ir_style::ListStyleType::Disc, // CSS default
+            };
+        }
+        // Phase 7: Font family
+        IrField::FontFamily => {
+            ir_style.font_family = Some(css_value.to_string());
+        }
+        // Phase 8: Amazon properties
         IrField::Language => {
             ir_style.language = Some(css_value.to_string());
         }

@@ -1092,7 +1092,7 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
         underline_style: parent.underline_style,
         underline_color: parent.underline_color,
         overline: parent.overline,
-        // List properties (inherited)
+        // List properties (inherited, but only apply to display:list-item)
         list_style_type: parent.list_style_type,
         list_style_position: parent.list_style_position,
         // Other inherited properties
