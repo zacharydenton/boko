@@ -1293,10 +1293,16 @@ impl ValueTransform {
             }
 
             ValueTransform::Dimensioned { unit } => {
-                let (num, _css_unit) = parse_css_length(raw)?;
+                let (num, css_unit) = parse_css_length(raw)?;
+                // Preserve percentage values (don't replace % with the rule's unit)
+                let actual_unit = if css_unit == "%" {
+                    KfxSymbol::Percent
+                } else {
+                    *unit
+                };
                 Some(KfxValue::Dimensioned {
                     value: num,
-                    unit: *unit,
+                    unit: actual_unit,
                 })
             }
 
