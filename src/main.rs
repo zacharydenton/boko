@@ -65,6 +65,10 @@ enum Command {
         #[arg(long)]
         no_styles: bool,
 
+        /// Expand styles to show CSS properties (default: show style ID only)
+        #[arg(long)]
+        styles: bool,
+
         /// Only dump a specific chapter by ID
         #[arg(short, long)]
         chapter: Option<u32>,
@@ -102,6 +106,7 @@ fn main() -> ExitCode {
             json,
             structure,
             no_styles,
+            styles,
             chapter,
             styles_only,
             depth,
@@ -111,6 +116,7 @@ fn main() -> ExitCode {
                 json,
                 structure,
                 no_styles,
+                styles,
                 chapter,
                 styles_only,
                 depth,
@@ -561,6 +567,7 @@ struct DumpOptions {
     json: bool,
     structure: bool,
     no_styles: bool,
+    styles: bool,
     chapter: Option<u32>,
     styles_only: bool,
     depth: Option<usize>,
@@ -791,7 +798,18 @@ fn dump_node_tree(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: us
 
     // Add style if not hidden and not default
     if !opts.no_styles && node.style.0 != 0 {
-        line.push_str(&format!(" [s{}]", node.style.0));
+        if opts.styles {
+            // Expand styles to show CSS properties
+            if let Some(style) = chapter.styles.get(node.style) {
+                let css = style.to_css_string();
+                if !css.is_empty() {
+                    line.push_str(&format!(" {{ {} }}", css.trim()));
+                }
+            }
+        } else {
+            // Just show style ID
+            line.push_str(&format!(" [s{}]", node.style.0));
+        }
     }
 
     // Add semantic attributes

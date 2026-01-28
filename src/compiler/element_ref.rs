@@ -561,4 +561,24 @@ mod tests {
             &parse_selector("span > p").unwrap()
         ));
     }
+
+    #[test]
+    fn test_class_descendant_selector() {
+        // Test class-based descendant selector like ".TOCChapter span"
+        let dom = parse_html(r##"<li class="TOCChapter"><a href="#"><span>Title</span></a></li>"##);
+        let span = dom.find_by_tag("span").unwrap();
+        let elem = ElementRef::new(&dom, span);
+
+        // Verify the span matches ".TOCChapter span"
+        assert!(
+            matches_selector(elem, &parse_selector(".TOCChapter span").unwrap()),
+            "span should match .TOCChapter span selector"
+        );
+
+        // Also verify it matches ".TOCChapter a span"
+        assert!(
+            matches_selector(elem, &parse_selector(".TOCChapter a span").unwrap()),
+            "span should match .TOCChapter a span selector"
+        );
+    }
 }
