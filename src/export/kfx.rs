@@ -2883,6 +2883,87 @@ mod anchor_resolution_tests {
     }
 
     #[test]
+    fn test_anchor_symbol_reuse() {
+        // Test that anchor symbols registered during Pass 0 are reused during Pass 2
+        // This is the root cause test for the link_to/anchor_name mismatch
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+
+        let mut ctx = ExportContext::new();
+
+        // Collect spine info
+        let spine_info: Vec<_> = book
+            .spine()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let section_name = format!("c{}", idx);
+                (entry.id, section_name)
+            })
+            .collect();
+
+        // Find endnotes chapter
+        let endnotes_id = spine_info.iter()
+            .find(|(id, _)| {
+                book.source_id(*id)
+                    .map(|p| p.contains("endnotes"))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| *id)
+            .expect("Should find endnotes chapter");
+
+        let endnotes_path = book.source_id(endnotes_id).unwrap().to_string();
+
+        // Pass 0: Collect needed anchors from ALL chapters
+        for (chapter_id, _) in &spine_info {
+            if let Ok(chapter) = book.load_chapter(*chapter_id) {
+                collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
+            }
+        }
+
+        // Get the symbol that was registered for endnotes note-1
+        let expected_key = format!("{}#note-1", endnotes_path);
+        let link_symbol = ctx.anchor_registry.get_symbol(&expected_key);
+
+        assert!(
+            link_symbol.is_some(),
+            "Link to '{}' should be registered in anchor_registry",
+            expected_key
+        );
+        let link_symbol = link_symbol.unwrap().to_string();
+
+        // Pass 2: Begin export for endnotes chapter and create anchor
+        ctx.begin_chapter_export(endnotes_id, &endnotes_path);
+
+        // Simulate finding an element with id="note-1"
+        // This should reuse the existing symbol, not create a new one
+        let content_id = 12345u64;
+        ctx.create_anchor_if_needed("note-1", content_id, 0);
+
+        // Drain and check the anchor
+        let anchors = ctx.anchor_registry.drain_anchors();
+
+        // Find the anchor for note-1
+        let note_anchor = anchors.iter()
+            .find(|a| a.anchor_name.ends_with("note-1"));
+
+        assert!(
+            note_anchor.is_some(),
+            "Should have created anchor for note-1. Keys checked: {}",
+            ctx.build_anchor_key("note-1")
+        );
+
+        let note_anchor = note_anchor.unwrap();
+
+        // THE KEY ASSERTION: The anchor symbol should match the link symbol
+        assert_eq!(
+            note_anchor.symbol, link_symbol,
+            "Anchor symbol '{}' should match link symbol '{}' for consistent link_to/anchor_name",
+            note_anchor.symbol, link_symbol
+        );
+    }
+
+
+    #[test]
     fn test_anchor_entities_created_in_full_export() {
         // Test that anchor entities are actually created during full export
         let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();

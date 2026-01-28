@@ -865,6 +865,18 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Push the span onto the stack with current text offset
                 // The offset is relative to the current element's accumulated text
                 let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
+
+                // Create anchor for inline elements with IDs (e.g., noteref links)
+                // Anchors point to the parent container's ID with the text offset
+                if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id) {
+                    // Get the parent container's ID from the stack
+                    if let Some(parent) = stack.last() {
+                        if let Some(container_id) = parent.container_id {
+                            ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
+                        }
+                    }
+                }
+
                 span_stack.push((current_offset, span.clone()));
             }
             KfxToken::EndSpan => {
