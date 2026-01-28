@@ -622,6 +622,9 @@ fn walk_node_for_export(
     if let Some(id) = chapter.semantics.id(node_id) {
         elem.set_semantic(SemanticTarget::Id, id.to_string());
     }
+    if let Some(epub_type) = chapter.semantics.epub_type(node_id) {
+        elem.set_semantic(SemanticTarget::EpubType, epub_type.to_string());
+    }
 
     stream.push(KfxToken::StartElement(elem));
 
@@ -822,6 +825,30 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                         sym!(LayoutHints),
                         IonValue::List(vec![IonValue::Symbol(hint as u64)]),
                     ));
+                }
+
+                // Add yj.classification for footnote/endnote popup support
+                // This marks the element so Kindle can show its content in a popup
+                // when a noteref link is tapped
+                // - footnote (within chapter) → yj.chapternote ($618)
+                // - endnote/rearnote (end of book) → yj.endnote ($619)
+                if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                    let types: Vec<&str> = epub_type.split_whitespace().collect();
+                    let is_footnote = types.iter().any(|&t| t == "footnote");
+                    let is_endnote = types.iter().any(|&t| t == "endnote" || t == "rearnote");
+
+                    // Prefer endnote classification if both are present (common in EPUBs)
+                    if is_endnote {
+                        fields.push((
+                            sym!(YjClassification),
+                            IonValue::Symbol(KfxSymbol::YjEndnote as u64),
+                        ));
+                    } else if is_footnote {
+                        fields.push((
+                            sym!(YjClassification),
+                            IonValue::Symbol(KfxSymbol::YjChapternote as u64),
+                        ));
+                    }
                 }
 
                 // Add schema-driven attributes from kfx_attrs
@@ -1518,6 +1545,71 @@ mod tests {
         assert!(
             hints.contains(&(KfxSymbol::Figure as u64)),
             "Figure layout_hints should contain figure"
+        );
+    }
+
+    #[test]
+    fn test_yj_classification_for_footnote_popup() {
+        // Elements with epub:type="endnote" or "footnote" should emit
+        // yj.classification: yj.endnote ($615: $619) for popup support
+        let mut chapter = IRChapter::new();
+
+        // Create a list item that represents an endnote
+        let text_range = chapter.append_text("This is footnote content");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+
+        let endnote = Node::new(Role::ListItem);
+        let endnote_id = chapter.alloc_node(endnote);
+        chapter.append_child(endnote_id, text_id);
+        chapter.append_child(chapter.root(), endnote_id);
+
+        // Set epub:type to indicate this is an endnote
+        chapter.semantics.set_epub_type(endnote_id, "endnote footnote".to_string());
+        chapter.semantics.set_id(endnote_id, "note-1".to_string());
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+        ctx.register_section("test_section");
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Find yj.classification in the generated Ion and check its value
+        fn find_classification(ion: &IonValue) -> Option<u64> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    for (key, value) in fields {
+                        if *key == sym!(YjClassification) {
+                            if let IonValue::Symbol(sym) = value {
+                                return Some(*sym);
+                            }
+                        }
+                        if let Some(found) = find_classification(value) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(found) = find_classification(item) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        let classification = find_classification(&ion);
+        assert!(
+            classification.is_some(),
+            "Endnote element should have yj.classification attribute"
+        );
+        assert_eq!(
+            classification.unwrap(),
+            KfxSymbol::YjEndnote as u64,
+            "yj.classification should be yj.endnote ($619) for endnote elements"
         );
     }
 }
