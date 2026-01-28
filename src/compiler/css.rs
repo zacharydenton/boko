@@ -291,29 +291,29 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         if (property == "margin" || property == "padding")
             && let Some((top, right, bottom, left)) = parse_box_shorthand(input)
         {
-                let important = input.try_parse(cssparser::parse_important).is_ok();
-                let prefix = &property;
-                self.declarations.push(Declaration {
-                    property: format!("{}-top", prefix),
-                    value: PropertyValue::Length(top),
-                    important,
-                });
-                self.declarations.push(Declaration {
-                    property: format!("{}-right", prefix),
-                    value: PropertyValue::Length(right),
-                    important,
-                });
-                self.declarations.push(Declaration {
-                    property: format!("{}-bottom", prefix),
-                    value: PropertyValue::Length(bottom),
-                    important,
-                });
-                self.declarations.push(Declaration {
-                    property: format!("{}-left", prefix),
-                    value: PropertyValue::Length(left),
-                    important,
-                });
-                return Ok(());
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            let prefix = &property;
+            self.declarations.push(Declaration {
+                property: format!("{}-top", prefix),
+                value: PropertyValue::Length(top),
+                important,
+            });
+            self.declarations.push(Declaration {
+                property: format!("{}-right", prefix),
+                value: PropertyValue::Length(right),
+                important,
+            });
+            self.declarations.push(Declaration {
+                property: format!("{}-bottom", prefix),
+                value: PropertyValue::Length(bottom),
+                important,
+            });
+            self.declarations.push(Declaration {
+                property: format!("{}-left", prefix),
+                value: PropertyValue::Length(left),
+                important,
+            });
+            return Ok(());
         }
 
         let value = parse_property_value(&property, input);

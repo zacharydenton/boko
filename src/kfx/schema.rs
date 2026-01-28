@@ -571,9 +571,10 @@ impl KfxSchema {
             if let Strategy::StructureWithSemanticType {
                 semantic_type: st, ..
             } = strategy
-                && *st == semantic_type {
-                    return Some(*role);
-                }
+                && *st == semantic_type
+            {
+                return Some(*role);
+            }
         }
         None
     }
@@ -800,13 +801,14 @@ impl KfxSchema {
                 // Apply conditional export rules (e.g., noteref → YjDisplay)
                 for cond_rule in &span_rule.conditional_export_rules {
                     if let Some(value) = get_semantic(cond_rule.source)
-                        && value.contains(cond_rule.trigger_value) {
-                            // Emit KFX symbol ID as string (will be parsed in tokens_to_ion)
-                            attrs.push((
-                                cond_rule.kfx_field as u64,
-                                (cond_rule.kfx_value as u64).to_string(),
-                            ));
-                        }
+                        && value.contains(cond_rule.trigger_value)
+                    {
+                        // Emit KFX symbol ID as string (will be parsed in tokens_to_ion)
+                        attrs.push((
+                            cond_rule.kfx_field as u64,
+                            (cond_rule.kfx_value as u64).to_string(),
+                        ));
+                    }
                 }
 
                 break;

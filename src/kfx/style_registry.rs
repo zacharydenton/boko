@@ -327,9 +327,10 @@ impl<'a> StyleBuilder<'a> {
     /// Apply a single (non-shorthand) property.
     fn apply_single(&mut self, property: &str, value: &str) {
         if let Some(rule) = self.schema.get(property)
-            && let Some(kfx_value) = rule.transform.apply(value) {
-                self.style.set(rule.kfx_symbol, kfx_value);
-            }
+            && let Some(kfx_value) = rule.transform.apply(value)
+        {
+            self.style.set(rule.kfx_symbol, kfx_value);
+        }
     }
 
     /// Ingest an IR ComputedStyle through the schema pipeline.

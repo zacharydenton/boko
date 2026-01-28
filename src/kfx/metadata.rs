@@ -377,9 +377,10 @@ pub fn build_category_entries(
 
     // Special case: add version to audit metadata
     if category == MetadataCategory::KindleAudit
-        && let Some(v) = ctx.version {
-            entries.push(("creator_version", v.to_string()));
-        }
+        && let Some(v) = ctx.version
+    {
+        entries.push(("creator_version", v.to_string()));
+    }
 
     entries
 }

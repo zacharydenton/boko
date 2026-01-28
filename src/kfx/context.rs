@@ -936,10 +936,10 @@ impl ExportContext {
             && let Some(symbol) =
                 self.anchor_registry
                     .create_content_anchor(&path, first_content_id, section_id, 0)
-            {
-                // Intern symbol so entity ID is assigned
-                self.symbols.get_or_intern(&symbol);
-            }
+        {
+            // Intern symbol so entity ID is assigned
+            self.symbols.get_or_intern(&symbol);
+        }
     }
 
     /// Process an element ID during storyline building.
@@ -968,10 +968,10 @@ impl ExportContext {
             && let Some(symbol) = self
                 .anchor_registry
                 .create_content_anchor(&full_key, content_id, section_id, offset)
-            {
-                // Intern symbol so entity ID is assigned
-                self.symbols.get_or_intern(&symbol);
-            }
+        {
+            // Intern symbol so entity ID is assigned
+            self.symbols.get_or_intern(&symbol);
+        }
     }
 
     /// Record a content fragment ID for the current chapter.
@@ -1163,17 +1163,19 @@ impl ExportContext {
             let mut found_source = None;
             for (cid, &fid) in &self.chapter_fragments {
                 if fid == target.fragment_id
-                    && let Some(path) = chapter_to_source.get(cid) {
-                        found_source = Some((*path).clone());
-                        break;
-                    }
+                    && let Some(path) = chapter_to_source.get(cid)
+                {
+                    found_source = Some((*path).clone());
+                    break;
+                }
             }
 
             // If we found the source path, look up the first content ID
             if let Some(source_path) = found_source
-                && let Some(&content_id) = self.first_content_ids.get(&source_path) {
-                    target.fragment_id = content_id;
-                }
+                && let Some(&content_id) = self.first_content_ids.get(&source_path)
+            {
+                target.fragment_id = content_id;
+            }
         }
     }
 }

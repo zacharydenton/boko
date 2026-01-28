@@ -362,13 +362,14 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
     for asset_path in &asset_paths {
         if is_media_asset(asset_path)
-            && let Ok(data) = book.load_asset(asset_path) {
-                let href = asset_path.to_string_lossy().to_string();
-                // external_resource ($164) - metadata about the resource
-                fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
-                // bcRawMedia ($417) - the actual bytes
-                fragments.push(build_resource_fragment(&href, &data, &mut ctx));
-            }
+            && let Ok(data) = book.load_asset(asset_path)
+        {
+            let href = asset_path.to_string_lossy().to_string();
+            // external_resource ($164) - metadata about the resource
+            fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
+            // bcRawMedia ($417) - the actual bytes
+            fragments.push(build_resource_fragment(&href, &data, &mut ctx));
+        }
     }
 
     // 2k. Navigation maps for reader functionality
@@ -1931,21 +1932,33 @@ fn resolve_landmarks_from_ir(
                 // Then use position_map to get the exact position
                 let full_href = format!("{}#{}", href_path, anchor_id);
                 if let Some(&(_, node_id)) = ctx.anchor_map.get(&full_href) {
-                    ctx.position_map.get(&(cid, node_id)).map(|pos| LandmarkTarget {
+                    ctx.position_map
+                        .get(&(cid, node_id))
+                        .map(|pos| LandmarkTarget {
                             fragment_id: pos.fragment_id,
                             offset: 0,
                             label: landmark.label.clone(),
                         })
-                } else { ctx.chapter_fragments.get(&cid).copied().map(|frag_id| LandmarkTarget {
+                } else {
+                    ctx.chapter_fragments
+                        .get(&cid)
+                        .copied()
+                        .map(|frag_id| LandmarkTarget {
+                            fragment_id: frag_id,
+                            offset: 0,
+                            label: landmark.label.clone(),
+                        })
+                }
+            } else {
+                ctx.chapter_fragments
+                    .get(&cid)
+                    .copied()
+                    .map(|frag_id| LandmarkTarget {
                         fragment_id: frag_id,
                         offset: 0,
                         label: landmark.label.clone(),
-                    }) }
-            } else { ctx.chapter_fragments.get(&cid).copied().map(|frag_id| LandmarkTarget {
-                    fragment_id: frag_id,
-                    offset: 0,
-                    label: landmark.label.clone(),
-                }) };
+                    })
+            };
 
             if let Some(target) = target {
                 // Only add if not already present (first wins)
@@ -2481,31 +2494,32 @@ mod tests {
 
         // Verify target_position has correct id and offset
         if let IonValue::Annotated(_, inner) = &entries[0]
-            && let IonValue::Struct(fields) = inner.as_ref() {
-                let target = fields
+            && let IonValue::Struct(fields) = inner.as_ref()
+        {
+            let target = fields
+                .iter()
+                .find(|(id, _)| *id == KfxSymbol::TargetPosition as u64);
+            if let Some((_, IonValue::Struct(pos_fields))) = target {
+                let id_field = pos_fields
                     .iter()
-                    .find(|(id, _)| *id == KfxSymbol::TargetPosition as u64);
-                if let Some((_, IonValue::Struct(pos_fields))) = target {
-                    let id_field = pos_fields
-                        .iter()
-                        .find(|(id, _)| *id == KfxSymbol::Id as u64);
-                    let offset_field = pos_fields
-                        .iter()
-                        .find(|(id, _)| *id == KfxSymbol::Offset as u64);
+                    .find(|(id, _)| *id == KfxSymbol::Id as u64);
+                let offset_field = pos_fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::Offset as u64);
 
-                    if let Some((_, IonValue::Int(id))) = id_field {
-                        assert_eq!(*id, 12345);
-                    } else {
-                        panic!("Expected Int id");
-                    }
+                if let Some((_, IonValue::Int(id))) = id_field {
+                    assert_eq!(*id, 12345);
+                } else {
+                    panic!("Expected Int id");
+                }
 
-                    if let Some((_, IonValue::Int(offset))) = offset_field {
-                        assert_eq!(*offset, 99);
-                    } else {
-                        panic!("Expected Int offset");
-                    }
+                if let Some((_, IonValue::Int(offset))) = offset_field {
+                    assert_eq!(*offset, 99);
+                } else {
+                    panic!("Expected Int offset");
                 }
             }
+        }
     }
 
     #[test]

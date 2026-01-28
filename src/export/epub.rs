@@ -350,7 +350,9 @@ fn generate_opf(
             escape_xml(author)
         ));
         // Add file-as for first author if available
-        if i == 0 && let Some(ref author_sort) = metadata.author_sort {
+        if i == 0
+            && let Some(ref author_sort) = metadata.author_sort
+        {
             opf.push_str(&format!(
                 "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
                 creator_id,

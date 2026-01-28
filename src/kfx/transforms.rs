@@ -27,15 +27,13 @@ pub struct ImportContext<'a> {
 }
 
 /// Context provided during export transformation.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ExportContext<'a> {
     /// Spine map for resolving chapter references to positions.
     pub spine_map: Option<&'a std::collections::HashMap<String, u32>>,
     /// Resource registry for looking up short resource names.
     pub resource_registry: Option<&'a ResourceRegistry>,
 }
-
 
 /// Result of parsing an attribute value.
 #[derive(Clone, Debug, PartialEq)]
@@ -175,9 +173,10 @@ impl AttributeTransform for KfxLinkTransform {
 fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkData {
     // Check for Kindle position format: kindle:pos:fid:XXXX:off:YYYYYYYY
     if raw.starts_with("kindle:pos:fid:")
-        && let Some(link) = parse_kindle_position(raw) {
-            return link;
-        }
+        && let Some(link) = parse_kindle_position(raw)
+    {
+        return link;
+    }
 
     // Check for external URLs (already resolved)
     if raw.starts_with("http://")
@@ -190,9 +189,10 @@ fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkD
 
     // Check anchor map for external URI resolution
     if let Some(anchor_map) = anchors
-        && let Some(uri) = anchor_map.get(raw) {
-            return LinkData::External(uri.clone());
-        }
+        && let Some(uri) = anchor_map.get(raw)
+    {
+        return LinkData::External(uri.clone());
+    }
 
     // Default: treat as internal anchor reference
     LinkData::Internal(raw.to_string())
@@ -298,9 +298,10 @@ impl AttributeTransform for ResourceTransform {
             ParsedAttribute::String(s) => {
                 // Look up the short resource name if we have a registry
                 if let Some(registry) = context.resource_registry
-                    && let Some(short_name) = registry.get_name(s) {
-                        return short_name.to_string();
-                    }
+                    && let Some(short_name) = registry.get_name(s)
+                {
+                    return short_name.to_string();
+                }
                 // Fallback: return as-is (shouldn't happen in normal export)
                 s.clone()
             }

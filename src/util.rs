@@ -77,10 +77,11 @@ pub fn decode_text<'a>(bytes: &'a [u8], hint_encoding: Option<&str>) -> Cow<'a, 
 
     // If UTF-8 failed, try the hint encoding
     if let Some(name) = hint_encoding
-        && let Some(encoding) = encoding_rs::Encoding::for_label(name.as_bytes()) {
-            let (result, _, _) = encoding.decode(bytes);
-            return result;
-        }
+        && let Some(encoding) = encoding_rs::Encoding::for_label(name.as_bytes())
+    {
+        let (result, _, _) = encoding.decode(bytes);
+        return result;
+    }
 
     // Fallback: Windows-1252 (common in old ebooks, superset of ISO-8859-1)
     let (result, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
@@ -158,12 +159,12 @@ fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
                 | 0xCD
                 | 0xCE
                 | 0xCF
-        )
-            && i + 9 < data.len() {
-                let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
-                let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
-                return Some((width, height));
-            }
+        ) && i + 9 < data.len()
+        {
+            let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
+            let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
+            return Some((width, height));
+        }
 
         // Skip to next marker
         if i + 3 < data.len() {

@@ -188,9 +188,10 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
     }
     // Emit start attribute for ordered lists
     if role == Role::OrderedList
-        && let Some(start) = ctx.ir.semantics.list_start(id) {
-            write!(attrs, " start=\"{}\"", start).unwrap();
-        }
+        && let Some(start) = ctx.ir.semantics.list_start(id)
+    {
+        write!(attrs, " start=\"{}\"", start).unwrap();
+    }
     // Emit rowspan/colspan for table cells
     if role == Role::TableCell {
         if let Some(rowspan) = ctx.ir.semantics.row_span(id) {

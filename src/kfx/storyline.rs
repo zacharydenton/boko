@@ -168,9 +168,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     }));
 
     // Recurse into children
-    if has_children
-        && let Some(children) = get_field(fields, sym!(ContentList))
-    {
+    if has_children && let Some(children) = get_field(fields, sym!(ContentList)) {
         tokenize_content_list(children, ctx, stream);
     }
 
@@ -1417,16 +1415,18 @@ mod tests {
                 IonValue::Struct(fields) => {
                     for (field_id, value) in fields {
                         if *field_id == KfxSymbol::YjSemanticsHeadingLevel as u64
-                            && let IonValue::Int(level) = value {
-                                return Some(*level);
-                            }
+                            && let IonValue::Int(level) = value
+                        {
+                            return Some(*level);
+                        }
                     }
                     // Check content_list (children in KFX)
                     for (field_id, value) in fields {
                         if *field_id == KfxSymbol::ContentList as u64
-                            && let Some(level) = find_heading_level(value) {
-                                return Some(level);
-                            }
+                            && let Some(level) = find_heading_level(value)
+                        {
+                            return Some(level);
+                        }
                     }
                 }
                 IonValue::List(items) => {
@@ -1495,20 +1495,21 @@ mod tests {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
                         if *key == sym!(LayoutHints)
-                            && let IonValue::List(items) = value {
-                                return Some(
-                                    items
-                                        .iter()
-                                        .filter_map(|v| {
-                                            if let IonValue::Symbol(s) = v {
-                                                Some(*s)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect(),
-                                );
-                            }
+                            && let IonValue::List(items) = value
+                        {
+                            return Some(
+                                items
+                                    .iter()
+                                    .filter_map(|v| {
+                                        if let IonValue::Symbol(s) = v {
+                                            Some(*s)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect(),
+                            );
+                        }
                         if let Some(hints) = find_layout_hints(value) {
                             return Some(hints);
                         }
@@ -1555,20 +1556,21 @@ mod tests {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
                         if *key == sym!(LayoutHints)
-                            && let IonValue::List(items) = value {
-                                return Some(
-                                    items
-                                        .iter()
-                                        .filter_map(|v| {
-                                            if let IonValue::Symbol(s) = v {
-                                                Some(*s)
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect(),
-                                );
-                            }
+                            && let IonValue::List(items) = value
+                        {
+                            return Some(
+                                items
+                                    .iter()
+                                    .filter_map(|v| {
+                                        if let IonValue::Symbol(s) = v {
+                                            Some(*s)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect(),
+                            );
+                        }
                         if let Some(hints) = find_layout_hints(value) {
                             return Some(hints);
                         }
@@ -1629,9 +1631,10 @@ mod tests {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
                         if *key == sym!(YjClassification)
-                            && let IonValue::Symbol(sym) = value {
-                                return Some(*sym);
-                            }
+                            && let IonValue::Symbol(sym) = value
+                        {
+                            return Some(*sym);
+                        }
                         if let Some(found) = find_classification(value) {
                             return Some(found);
                         }

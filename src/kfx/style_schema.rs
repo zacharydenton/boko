@@ -1848,25 +1848,28 @@ impl ValueTransform {
                 if let Some(sym_id) = value.as_symbol() {
                     for (css_val, kfx_val) in mappings {
                         if let KfxValue::Symbol(kfx_sym) = kfx_val
-                            && *kfx_sym as u64 == sym_id {
-                                return Some(css_val.clone());
-                            }
+                            && *kfx_sym as u64 == sym_id
+                        {
+                            return Some(css_val.clone());
+                        }
                     }
                 }
                 if let Some(i) = value.as_int() {
                     for (css_val, kfx_val) in mappings {
                         if let KfxValue::Integer(kfx_int) = kfx_val
-                            && *kfx_int == i {
-                                return Some(css_val.clone());
-                            }
+                            && *kfx_int == i
+                        {
+                            return Some(css_val.clone());
+                        }
                     }
                 }
                 if let Some(b) = value.as_bool() {
                     for (css_val, kfx_val) in mappings {
                         if let KfxValue::Bool(kfx_bool) = kfx_val
-                            && *kfx_bool == b {
-                                return Some(css_val.clone());
-                            }
+                            && *kfx_bool == b
+                        {
+                            return Some(css_val.clone());
+                        }
                     }
                 }
                 None

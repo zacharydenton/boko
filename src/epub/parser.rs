@@ -547,17 +547,18 @@ fn apply_refinements(
             // with an id, then refine that)
             if let Some(ref coll_id) = collection_id
                 && &refinement.refines == coll_id
-                    && let Some(ref mut coll) = metadata.collection {
-                        match prop_local {
-                            "collection-type" => {
-                                coll.collection_type = Some(refinement.value.clone());
-                            }
-                            "group-position" => {
-                                coll.position = refinement.value.parse().ok();
-                            }
-                            _ => {}
-                        }
+                && let Some(ref mut coll) = metadata.collection
+            {
+                match prop_local {
+                    "collection-type" => {
+                        coll.collection_type = Some(refinement.value.clone());
                     }
+                    "group-position" => {
+                        coll.position = refinement.value.parse().ok();
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -763,13 +764,14 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                         // Create landmark if we have the required data
                         if let (Some(href), Some(epub_type)) =
                             (current_href.take(), current_epub_type.take())
-                            && let Some(landmark_type) = epub_type_to_landmark(&epub_type) {
-                                landmarks.push(Landmark {
-                                    landmark_type,
-                                    href,
-                                    label: current_label.clone(),
-                                });
-                            }
+                            && let Some(landmark_type) = epub_type_to_landmark(&epub_type)
+                        {
+                            landmarks.push(Landmark {
+                                landmark_type,
+                                href,
+                                label: current_label.clone(),
+                            });
+                        }
                         current_label.clear();
                     }
                     _ => {}

@@ -62,12 +62,13 @@ pub fn get_chapter_image_path(chapter: &IRChapter) -> Option<String> {
 
     for node_id in chapter.iter_dfs() {
         if let Some(node) = chapter.node(node_id)
-            && node.role == Role::Image {
-                image_count += 1;
-                if let Some(src) = chapter.semantics.src(node_id) {
-                    image_path = Some(src.to_string());
-                }
+            && node.role == Role::Image
+        {
+            image_count += 1;
+            if let Some(src) = chapter.semantics.src(node_id) {
+                image_path = Some(src.to_string());
             }
+        }
     }
 
     if image_count == 1 { image_path } else { None }
@@ -214,9 +215,10 @@ pub fn normalize_cover_path(cover_path: &str, asset_paths: &[PathBuf]) -> String
 
     for asset in asset_paths {
         if let Some(asset_filename) = asset.file_name().and_then(|s| s.to_str())
-            && asset_filename == cover_filename {
-                return asset.to_string_lossy().to_string();
-            }
+            && asset_filename == cover_filename
+        {
+            return asset.to_string_lossy().to_string();
+        }
     }
 
     // Fall back to original path if no match found

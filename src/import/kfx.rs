@@ -320,8 +320,8 @@ impl KfxImporter {
             let elem = self.parse_entity_ion(loc)?;
 
             if let Some(fields) = elem.as_struct()
-                && let Some(list) = get_field(fields, sym!(CategorisedMetadata))
-                    .and_then(|m| m.as_list())
+                && let Some(list) =
+                    get_field(fields, sym!(CategorisedMetadata)).and_then(|m| m.as_list())
             {
                 for category_elem in list {
                     if let Some(cat_fields) = category_elem.as_struct() {
@@ -330,8 +330,8 @@ impl KfxImporter {
                             .unwrap_or("");
 
                         if category == "kindle_title_metadata"
-                            && let Some(metadata_list) = get_field(cat_fields, sym!(Metadata))
-                                .and_then(|v| v.as_list())
+                            && let Some(metadata_list) =
+                                get_field(cat_fields, sym!(Metadata)).and_then(|v| v.as_list())
                         {
                             for meta in metadata_list {
                                 let Some(meta_fields) = meta.as_struct() else {
@@ -355,9 +355,7 @@ impl KfxImporter {
                                         self.metadata.description = Some(value.to_string())
                                     }
                                     "book_id" => self.metadata.identifier = value.to_string(),
-                                    "issue_date" => {
-                                        self.metadata.date = Some(value.to_string())
-                                    }
+                                    "issue_date" => self.metadata.date = Some(value.to_string()),
                                     "cover_image" => {
                                         let value_elem = get_field(meta_fields, sym!(Value));
                                         if let Some(cover) = self.resolve_cover_value(value_elem) {
@@ -367,13 +365,11 @@ impl KfxImporter {
                                     "modified_date" => {
                                         self.metadata.modified_date = Some(value.to_string())
                                     }
-                                    "translator" => {
-                                        self.metadata.contributors.push(Contributor {
-                                            name: value.to_string(),
-                                            file_as: None,
-                                            role: Some("trl".to_string()),
-                                        })
-                                    }
+                                    "translator" => self.metadata.contributors.push(Contributor {
+                                        name: value.to_string(),
+                                        file_as: None,
+                                        role: Some("trl".to_string()),
+                                    }),
                                     "title_pronunciation" => {
                                         self.metadata.title_sort = Some(value.to_string())
                                     }
@@ -638,8 +634,8 @@ impl KfxImporter {
                 && let Ok(elem) = self.parse_entity_ion(*loc)
                 && let Some(fields) = elem.as_struct()
             {
-                let section_name = get_field(fields, sym!(SectionName))
-                    .and_then(|v| self.get_symbol_text(v));
+                let section_name =
+                    get_field(fields, sym!(SectionName)).and_then(|v| self.get_symbol_text(v));
 
                 let story_name = get_field(fields, sym!(PageTemplates))
                     .and_then(|v| v.as_list())
