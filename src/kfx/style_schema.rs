@@ -280,6 +280,12 @@ pub struct StyleSchema {
     rules: HashMap<&'static str, StylePropertyRule>,
 }
 
+impl Default for StyleSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StyleSchema {
     /// Create an empty schema.
     pub fn new() -> Self {
@@ -311,7 +317,7 @@ impl StyleSchema {
     /// Get the standard KFX style schema (cached).
     pub fn standard() -> &'static Self {
         use std::sync::LazyLock;
-        static STANDARD: LazyLock<StyleSchema> = LazyLock::new(|| StyleSchema::build_standard());
+        static STANDARD: LazyLock<StyleSchema> = LazyLock::new(StyleSchema::build_standard);
         &STANDARD
     }
 

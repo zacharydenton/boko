@@ -809,7 +809,7 @@ impl ExportContext {
     pub fn register_ir_style(&mut self, ir_style: &crate::ir::ComputedStyle) -> u64 {
         // Use the schema-driven pipeline (single source of truth)
         let schema = crate::kfx::style_schema::StyleSchema::standard();
-        let mut builder = crate::kfx::style_registry::StyleBuilder::new(&schema);
+        let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
         builder.ingest_ir_style(ir_style);
         let kfx_style = builder.build();
 

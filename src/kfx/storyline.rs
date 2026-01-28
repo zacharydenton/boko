@@ -416,7 +416,7 @@ fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
     use crate::kfx::style_schema::{StyleSchema, import_kfx_style};
 
     let schema = StyleSchema::standard();
-    import_kfx_style(&schema, props)
+    import_kfx_style(schema, props)
 }
 
 /// Build text nodes with inline spans applied.

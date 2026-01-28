@@ -16,6 +16,149 @@ use crate::ir::{
     TextTransform, Visibility,
 };
 
+// ============================================================================
+// PropertyId - Interned CSS property names for zero-allocation parsing
+// ============================================================================
+
+/// Macro to define CSS properties with bidirectional string mapping.
+/// Each entry maps a CSS property name to an enum variant.
+macro_rules! define_properties {
+    ($($css_name:literal => $variant:ident),* $(,)?) => {
+        /// CSS property identifier.
+        ///
+        /// Using an enum instead of String eliminates heap allocations during parsing
+        /// and enables faster matching via enum dispatch instead of string comparison.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[repr(u8)]
+        pub enum PropertyId {
+            $($variant,)*
+            /// Unknown property (rare - only for truly unrecognized properties)
+            Unknown,
+        }
+
+        impl PropertyId {
+            /// Parse a property name string into a PropertyId.
+            #[inline]
+            pub fn from_str(name: &str) -> Self {
+                match name {
+                    $($css_name => PropertyId::$variant,)*
+                    _ => PropertyId::Unknown,
+                }
+            }
+
+            /// Get the CSS property name as a string.
+            #[inline]
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(PropertyId::$variant => $css_name,)*
+                    PropertyId::Unknown => "<unknown>",
+                }
+            }
+        }
+    };
+}
+
+define_properties! {
+    // Colors
+    "color" => Color,
+    "background-color" => BackgroundColor,
+
+    // Font properties
+    "font-family" => FontFamily,
+    "font-size" => FontSize,
+    "font-weight" => FontWeight,
+    "font-style" => FontStyle,
+    "font-variant" => FontVariant,
+    "font-variant-caps" => FontVariantCaps,
+
+    // Text properties
+    "text-align" => TextAlign,
+    "text-indent" => TextIndent,
+    "line-height" => LineHeight,
+    "letter-spacing" => LetterSpacing,
+    "word-spacing" => WordSpacing,
+    "text-transform" => TextTransform,
+    "hyphens" => Hyphens,
+    "white-space" => WhiteSpace,
+    "vertical-align" => VerticalAlign,
+
+    // Text decoration
+    "text-decoration" => TextDecoration,
+    "text-decoration-line" => TextDecorationLine,
+    "text-decoration-style" => TextDecorationStyle,
+    "text-decoration-color" => TextDecorationColor,
+
+    // Box model - margins
+    "margin" => Margin,
+    "margin-top" => MarginTop,
+    "margin-right" => MarginRight,
+    "margin-bottom" => MarginBottom,
+    "margin-left" => MarginLeft,
+
+    // Box model - padding
+    "padding" => Padding,
+    "padding-top" => PaddingTop,
+    "padding-right" => PaddingRight,
+    "padding-bottom" => PaddingBottom,
+    "padding-left" => PaddingLeft,
+
+    // Dimensions
+    "width" => Width,
+    "height" => Height,
+    "max-width" => MaxWidth,
+    "min-height" => MinHeight,
+
+    // Display & positioning
+    "display" => Display,
+    "float" => Float,
+    "visibility" => Visibility,
+    "box-sizing" => BoxSizing,
+
+    // Page breaks
+    "break-before" => BreakBefore,
+    "break-after" => BreakAfter,
+    "break-inside" => BreakInside,
+    "page-break-before" => PageBreakBefore,
+    "page-break-after" => PageBreakAfter,
+    "page-break-inside" => PageBreakInside,
+
+    // Border style
+    "border-style" => BorderStyle,
+    "border-top-style" => BorderTopStyle,
+    "border-right-style" => BorderRightStyle,
+    "border-bottom-style" => BorderBottomStyle,
+    "border-left-style" => BorderLeftStyle,
+
+    // Border width
+    "border-width" => BorderWidth,
+    "border-top-width" => BorderTopWidth,
+    "border-right-width" => BorderRightWidth,
+    "border-bottom-width" => BorderBottomWidth,
+    "border-left-width" => BorderLeftWidth,
+
+    // Border color
+    "border-color" => BorderColor,
+    "border-top-color" => BorderTopColor,
+    "border-right-color" => BorderRightColor,
+    "border-bottom-color" => BorderBottomColor,
+    "border-left-color" => BorderLeftColor,
+
+    // Border radius
+    "border-radius" => BorderRadius,
+    "border-top-left-radius" => BorderTopLeftRadius,
+    "border-top-right-radius" => BorderTopRightRadius,
+    "border-bottom-left-radius" => BorderBottomLeftRadius,
+    "border-bottom-right-radius" => BorderBottomRightRadius,
+
+    // List properties
+    "list-style-type" => ListStyleType,
+    "list-style-position" => ListStylePosition,
+}
+
+// ============================================================================
+// Stylesheet and Rule Structures
+// ============================================================================
+
 /// A parsed CSS stylesheet.
 #[derive(Debug, Default, Clone)]
 pub struct Stylesheet {
@@ -23,19 +166,27 @@ pub struct Stylesheet {
 }
 
 /// A CSS rule with selectors and declarations.
+///
+/// Declarations are separated into normal and important vectors,
+/// following the lightningcss pattern for memory efficiency.
 #[derive(Debug, Clone)]
 pub struct CssRule {
     pub selectors: Vec<Selector<BokoSelectors>>,
+    /// Normal (non-important) declarations.
     pub declarations: Vec<Declaration>,
+    /// Important declarations (those with !important).
+    pub important_declarations: Vec<Declaration>,
     pub specificity: Specificity,
 }
 
 /// A CSS declaration (property: value).
+///
+/// Note: The `important` flag is no longer stored here - declarations are
+/// separated into normal and important vectors in CssRule.
 #[derive(Debug, Clone)]
 pub struct Declaration {
-    pub property: String,
+    pub property: PropertyId,
     pub value: PropertyValue,
-    pub important: bool,
 }
 
 /// Parsed CSS property value.
@@ -108,11 +259,12 @@ pub enum Origin {
 
 /// A matched rule with ordering information for the cascade.
 #[derive(Debug)]
-pub struct MatchedRule<'a> {
-    pub declaration: &'a Declaration,
-    pub origin: Origin,
-    pub specificity: Specificity,
-    pub order: usize,
+struct MatchedRule<'a> {
+    declaration: &'a Declaration,
+    origin: Origin,
+    specificity: Specificity,
+    order: usize,
+    important: bool,
 }
 
 impl Stylesheet {
@@ -192,8 +344,10 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelRuleParser<'_> {
             .unwrap_or_default();
 
         let mut declarations = Vec::new();
+        let mut important_declarations = Vec::new();
         let mut decl_parser = DeclarationListParser {
             declarations: &mut declarations,
+            important_declarations: &mut important_declarations,
         };
 
         for result in RuleBodyParser::new(input, &mut decl_parser) {
@@ -204,6 +358,7 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelRuleParser<'_> {
         self.rules.push(CssRule {
             selectors: prelude,
             declarations,
+            important_declarations,
             specificity,
         });
 
@@ -228,6 +383,7 @@ fn parse_selector_list<'i>(
 
 struct DeclarationListParser<'a> {
     declarations: &'a mut Vec<Declaration>,
+    important_declarations: &'a mut Vec<Declaration>,
 }
 
 impl<'i> cssparser::AtRuleParser<'i> for DeclarationListParser<'_> {
@@ -285,44 +441,66 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         input: &mut Parser<'i, 't>,
         _start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-        let property = name.to_string();
+        let property_id = PropertyId::from_str(&name);
 
         // Handle margin/padding shorthand expansion
-        if (property == "margin" || property == "padding")
+        if (property_id == PropertyId::Margin || property_id == PropertyId::Padding)
             && let Some((top, right, bottom, left)) = parse_box_shorthand(input)
         {
             let important = input.try_parse(cssparser::parse_important).is_ok();
-            let prefix = &property;
-            self.declarations.push(Declaration {
-                property: format!("{}-top", prefix),
+            let target = if important {
+                &mut *self.important_declarations
+            } else {
+                &mut *self.declarations
+            };
+
+            let (top_id, right_id, bottom_id, left_id) = if property_id == PropertyId::Margin {
+                (
+                    PropertyId::MarginTop,
+                    PropertyId::MarginRight,
+                    PropertyId::MarginBottom,
+                    PropertyId::MarginLeft,
+                )
+            } else {
+                (
+                    PropertyId::PaddingTop,
+                    PropertyId::PaddingRight,
+                    PropertyId::PaddingBottom,
+                    PropertyId::PaddingLeft,
+                )
+            };
+
+            target.push(Declaration {
+                property: top_id,
                 value: PropertyValue::Length(top),
-                important,
             });
-            self.declarations.push(Declaration {
-                property: format!("{}-right", prefix),
+            target.push(Declaration {
+                property: right_id,
                 value: PropertyValue::Length(right),
-                important,
             });
-            self.declarations.push(Declaration {
-                property: format!("{}-bottom", prefix),
+            target.push(Declaration {
+                property: bottom_id,
                 value: PropertyValue::Length(bottom),
-                important,
             });
-            self.declarations.push(Declaration {
-                property: format!("{}-left", prefix),
+            target.push(Declaration {
+                property: left_id,
                 value: PropertyValue::Length(left),
-                important,
             });
             return Ok(());
         }
 
-        let value = parse_property_value(&property, input);
+        let value = parse_property_value(property_id, input);
         let important = input.try_parse(cssparser::parse_important).is_ok();
 
-        self.declarations.push(Declaration {
-            property,
+        let target = if important {
+            &mut *self.important_declarations
+        } else {
+            &mut *self.declarations
+        };
+
+        target.push(Declaration {
+            property: property_id,
             value,
-            important,
         });
 
         Ok(())
@@ -338,105 +516,108 @@ impl<'i> RuleBodyItemParser<'i, (), ()> for DeclarationListParser<'_> {
     }
 }
 
-/// Parse a property value based on the property name.
-fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyValue {
+/// Parse a property value based on the property ID.
+fn parse_property_value(property: PropertyId, input: &mut Parser<'_, '_>) -> PropertyValue {
     match property {
-        "color" | "background-color" => parse_color(input).unwrap_or(PropertyValue::None),
-
-        "font-size" => parse_font_size(input).unwrap_or(PropertyValue::None),
-
-        "margin" | "margin-top" | "margin-bottom" | "margin-left" | "margin-right" | "padding"
-        | "padding-top" | "padding-bottom" | "padding-left" | "padding-right" | "text-indent" => {
-            parse_length(input).unwrap_or(PropertyValue::None)
+        // Colors
+        PropertyId::Color | PropertyId::BackgroundColor => {
+            parse_color(input).unwrap_or(PropertyValue::None)
         }
 
-        "line-height" => parse_line_height(input).unwrap_or(PropertyValue::None),
-
-        "font-weight" => parse_font_weight(input).unwrap_or(PropertyValue::None),
-
-        "font-style" => parse_font_style(input).unwrap_or(PropertyValue::None),
-
-        "text-align" => parse_text_align(input).unwrap_or(PropertyValue::None),
-
-        "display" => parse_display(input).unwrap_or(PropertyValue::None),
-
-        "font-family" => parse_font_family(input).unwrap_or(PropertyValue::None),
-
-        "text-decoration" | "text-decoration-line" => {
-            parse_text_decoration(input).unwrap_or(PropertyValue::None)
-        }
-
-        "vertical-align" => parse_vertical_align(input).unwrap_or(PropertyValue::None),
-
-        "list-style-type" => parse_list_style_type(input).unwrap_or(PropertyValue::None),
-
-        "font-variant" | "font-variant-caps" => {
+        // Font properties
+        PropertyId::FontSize => parse_font_size(input).unwrap_or(PropertyValue::None),
+        PropertyId::FontWeight => parse_font_weight(input).unwrap_or(PropertyValue::None),
+        PropertyId::FontStyle => parse_font_style(input).unwrap_or(PropertyValue::None),
+        PropertyId::FontFamily => parse_font_family(input).unwrap_or(PropertyValue::None),
+        PropertyId::FontVariant | PropertyId::FontVariantCaps => {
             parse_font_variant(input).unwrap_or(PropertyValue::None)
         }
 
-        // Phase 1: Text properties
-        "letter-spacing" | "word-spacing" => parse_length(input).unwrap_or(PropertyValue::None),
+        // Text properties
+        PropertyId::TextAlign => parse_text_align(input).unwrap_or(PropertyValue::None),
+        PropertyId::LineHeight => parse_line_height(input).unwrap_or(PropertyValue::None),
+        PropertyId::TextTransform => parse_text_transform(input).unwrap_or(PropertyValue::None),
+        PropertyId::Hyphens => parse_hyphens(input).unwrap_or(PropertyValue::None),
+        PropertyId::WhiteSpace => parse_white_space(input).unwrap_or(PropertyValue::None),
+        PropertyId::VerticalAlign => parse_vertical_align(input).unwrap_or(PropertyValue::None),
 
-        "text-transform" => parse_text_transform(input).unwrap_or(PropertyValue::None),
+        // Text decoration
+        PropertyId::TextDecoration | PropertyId::TextDecorationLine => {
+            parse_text_decoration(input).unwrap_or(PropertyValue::None)
+        }
+        PropertyId::TextDecorationStyle => {
+            parse_decoration_style(input).unwrap_or(PropertyValue::None)
+        }
+        PropertyId::TextDecorationColor => parse_color(input).unwrap_or(PropertyValue::None),
 
-        "hyphens" => parse_hyphens(input).unwrap_or(PropertyValue::None),
-
-        "white-space" => parse_white_space(input).unwrap_or(PropertyValue::None),
-
-        // Phase 2: Text decoration extensions
-        "text-decoration-style" => parse_decoration_style(input).unwrap_or(PropertyValue::None),
-
-        "text-decoration-color" => parse_color(input).unwrap_or(PropertyValue::None),
-
-        // Phase 3: Layout properties
-        "width" | "height" | "max-width" | "min-height" => {
+        // Length-based properties
+        PropertyId::TextIndent
+        | PropertyId::LetterSpacing
+        | PropertyId::WordSpacing
+        | PropertyId::Margin
+        | PropertyId::MarginTop
+        | PropertyId::MarginRight
+        | PropertyId::MarginBottom
+        | PropertyId::MarginLeft
+        | PropertyId::Padding
+        | PropertyId::PaddingTop
+        | PropertyId::PaddingRight
+        | PropertyId::PaddingBottom
+        | PropertyId::PaddingLeft
+        | PropertyId::Width
+        | PropertyId::Height
+        | PropertyId::MaxWidth
+        | PropertyId::MinHeight
+        | PropertyId::BorderWidth
+        | PropertyId::BorderTopWidth
+        | PropertyId::BorderRightWidth
+        | PropertyId::BorderBottomWidth
+        | PropertyId::BorderLeftWidth
+        | PropertyId::BorderRadius
+        | PropertyId::BorderTopLeftRadius
+        | PropertyId::BorderTopRightRadius
+        | PropertyId::BorderBottomLeftRadius
+        | PropertyId::BorderBottomRightRadius => {
             parse_length(input).unwrap_or(PropertyValue::None)
         }
 
-        "float" => parse_float(input).unwrap_or(PropertyValue::None),
+        // Display & positioning
+        PropertyId::Display => parse_display(input).unwrap_or(PropertyValue::None),
+        PropertyId::Float => parse_float(input).unwrap_or(PropertyValue::None),
+        PropertyId::Visibility => parse_visibility(input).unwrap_or(PropertyValue::None),
+        PropertyId::BoxSizing => parse_box_sizing(input).unwrap_or(PropertyValue::None),
 
-        // Phase 4: Page break properties
-        "break-before" | "break-after" | "page-break-before" | "page-break-after" => {
-            parse_break_value(input).unwrap_or(PropertyValue::None)
-        }
-
-        "break-inside" | "page-break-inside" => {
+        // Page break properties
+        PropertyId::BreakBefore
+        | PropertyId::BreakAfter
+        | PropertyId::PageBreakBefore
+        | PropertyId::PageBreakAfter => parse_break_value(input).unwrap_or(PropertyValue::None),
+        PropertyId::BreakInside | PropertyId::PageBreakInside => {
             parse_break_inside(input).unwrap_or(PropertyValue::None)
         }
 
-        // Phase 5: Border properties
-        "border-style"
-        | "border-top-style"
-        | "border-right-style"
-        | "border-bottom-style"
-        | "border-left-style" => parse_border_style(input).unwrap_or(PropertyValue::None),
+        // Border style
+        PropertyId::BorderStyle
+        | PropertyId::BorderTopStyle
+        | PropertyId::BorderRightStyle
+        | PropertyId::BorderBottomStyle
+        | PropertyId::BorderLeftStyle => parse_border_style(input).unwrap_or(PropertyValue::None),
 
-        "border-width"
-        | "border-top-width"
-        | "border-right-width"
-        | "border-bottom-width"
-        | "border-left-width"
-        | "border-radius"
-        | "border-top-left-radius"
-        | "border-top-right-radius"
-        | "border-bottom-left-radius"
-        | "border-bottom-right-radius" => parse_length(input).unwrap_or(PropertyValue::None),
+        // Border color
+        PropertyId::BorderColor
+        | PropertyId::BorderTopColor
+        | PropertyId::BorderRightColor
+        | PropertyId::BorderBottomColor
+        | PropertyId::BorderLeftColor => parse_color(input).unwrap_or(PropertyValue::None),
 
-        "border-color"
-        | "border-top-color"
-        | "border-right-color"
-        | "border-bottom-color"
-        | "border-left-color" => parse_color(input).unwrap_or(PropertyValue::None),
+        // List properties
+        PropertyId::ListStyleType => parse_list_style_type(input).unwrap_or(PropertyValue::None),
+        PropertyId::ListStylePosition => {
+            parse_list_style_position(input).unwrap_or(PropertyValue::None)
+        }
 
-        // Phase 6: List properties
-        "list-style-position" => parse_list_style_position(input).unwrap_or(PropertyValue::None),
-
-        // Phase 7: Amazon properties
-        "visibility" => parse_visibility(input).unwrap_or(PropertyValue::None),
-
-        "box-sizing" => parse_box_sizing(input).unwrap_or(PropertyValue::None),
-
-        _ => {
+        // Unknown properties
+        PropertyId::Unknown => {
             // Consume remaining tokens for unknown properties
             while input.next().is_ok() {}
             PropertyValue::None
@@ -1014,8 +1195,8 @@ pub fn compute_styles(
     parent_style: Option<&ComputedStyle>,
     _style_pool: &mut StylePool,
 ) -> ComputedStyle {
-    // Collect matching rules
-    let mut matched: Vec<MatchedRule> = Vec::new();
+    // Pre-allocate with typical capacity (most elements match 5-20 declarations)
+    let mut matched: Vec<MatchedRule> = Vec::with_capacity(16);
     let mut order = 0;
 
     // Reuse selector caches across all rule matching for this element
@@ -1024,12 +1205,25 @@ pub fn compute_styles(
     for (stylesheet, origin) in stylesheets {
         for rule in &stylesheet.rules {
             if rule_matches_with_caches(elem, rule, &mut caches) {
+                // Collect normal declarations
                 for decl in &rule.declarations {
                     matched.push(MatchedRule {
                         declaration: decl,
                         origin: *origin,
                         specificity: rule.specificity,
                         order,
+                        important: false,
+                    });
+                    order += 1;
+                }
+                // Collect important declarations
+                for decl in &rule.important_declarations {
+                    matched.push(MatchedRule {
+                        declaration: decl,
+                        origin: *origin,
+                        specificity: rule.specificity,
+                        order,
+                        important: true,
                     });
                     order += 1;
                 }
@@ -1037,30 +1231,31 @@ pub fn compute_styles(
         }
     }
 
-    // Sort by cascade order: origin, important, specificity, order
-    matched.sort_by(|a, b| {
-        // Important declarations win
-        let a_important = a.declaration.important;
-        let b_important = b.declaration.important;
-        if a_important != b_important {
-            return b_important.cmp(&a_important);
-        }
+    // Sort by cascade order (skip if 0-1 matches)
+    if matched.len() > 1 {
+        // Use unstable sort - faster and order of equal elements doesn't matter
+        matched.sort_unstable_by(|a, b| {
+            // Important declarations win
+            if a.important != b.important {
+                return b.important.cmp(&a.important);
+            }
 
-        // Then by origin (author > user-agent)
-        let origin_cmp = a.origin.cmp(&b.origin);
-        if origin_cmp != Ordering::Equal {
-            return origin_cmp;
-        }
+            // Then by origin (author > user-agent)
+            let origin_cmp = a.origin.cmp(&b.origin);
+            if origin_cmp != Ordering::Equal {
+                return origin_cmp;
+            }
 
-        // Then by specificity
-        let spec_cmp = a.specificity.cmp(&b.specificity);
-        if spec_cmp != Ordering::Equal {
-            return spec_cmp;
-        }
+            // Then by specificity
+            let spec_cmp = a.specificity.cmp(&b.specificity);
+            if spec_cmp != Ordering::Equal {
+                return spec_cmp;
+            }
 
-        // Finally by source order
-        a.order.cmp(&b.order)
-    });
+            // Finally by source order
+            a.order.cmp(&b.order)
+        });
+    }
 
     // Start with inherited values from parent (only CSS-inherited properties)
     let mut style = if let Some(parent) = parent_style {
@@ -1099,115 +1294,41 @@ fn rule_matches_with_caches(
 
 /// Apply a declaration to a computed style.
 fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
-    match decl.property.as_str() {
-        "color" => {
+    match decl.property {
+        // Colors
+        PropertyId::Color => {
             if let PropertyValue::Color(c) = &decl.value {
                 style.color = Some(*c);
             }
         }
-        "background-color" => {
+        PropertyId::BackgroundColor => {
             if let PropertyValue::Color(c) = &decl.value {
                 style.background_color = Some(*c);
             }
         }
-        "font-family" => {
+
+        // Font properties
+        PropertyId::FontFamily => {
             if let PropertyValue::String(s) = &decl.value {
                 style.font_family = Some(s.clone());
             }
         }
-        "font-size" => {
+        PropertyId::FontSize => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.font_size = *l;
             }
         }
-        "font-weight" => {
+        PropertyId::FontWeight => {
             if let PropertyValue::FontWeight(w) = &decl.value {
                 style.font_weight = *w;
             }
         }
-        "font-style" => {
+        PropertyId::FontStyle => {
             if let PropertyValue::FontStyle(s) = &decl.value {
                 style.font_style = *s;
             }
         }
-        "text-align" => {
-            if let PropertyValue::TextAlign(a) = &decl.value {
-                style.text_align = *a;
-            }
-        }
-        "text-indent" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.text_indent = *l;
-            }
-        }
-        "line-height" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.line_height = *l;
-            }
-        }
-        "display" => {
-            if let PropertyValue::Display(d) = &decl.value {
-                style.display = *d;
-            }
-        }
-        "margin-top" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_top = *l;
-            }
-        }
-        "margin-bottom" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_bottom = *l;
-            }
-        }
-        "margin-left" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_left = *l;
-            }
-        }
-        "margin-right" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.margin_right = *l;
-            }
-        }
-        "padding-top" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_top = *l;
-            }
-        }
-        "padding-bottom" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_bottom = *l;
-            }
-        }
-        "padding-left" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_left = *l;
-            }
-        }
-        "padding-right" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.padding_right = *l;
-            }
-        }
-        "text-decoration" | "text-decoration-line" => {
-            if let PropertyValue::Keyword(k) = &decl.value {
-                style.text_decoration_underline = k.contains("underline");
-                style.text_decoration_line_through = k.contains("line-through");
-            }
-        }
-        "vertical-align" => {
-            if let PropertyValue::Keyword(k) = &decl.value {
-                style.vertical_align_super = k == "super";
-                style.vertical_align_sub = k == "sub";
-            }
-        }
-        "list-style-type" => {
-            if let PropertyValue::ListStyleType(lst) = &decl.value {
-                style.list_style_type = *lst;
-            }
-        }
-        "font-variant" | "font-variant-caps" => {
+        PropertyId::FontVariant | PropertyId::FontVariantCaps => {
             if let PropertyValue::Keyword(k) = &decl.value {
                 style.font_variant = match k.as_str() {
                     "small-caps" => crate::ir::FontVariant::SmallCaps,
@@ -1216,224 +1337,329 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
             }
         }
 
-        // Phase 1: Text properties
-        "letter-spacing" => {
+        // Text properties
+        PropertyId::TextAlign => {
+            if let PropertyValue::TextAlign(a) = &decl.value {
+                style.text_align = *a;
+            }
+        }
+        PropertyId::TextIndent => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.text_indent = *l;
+            }
+        }
+        PropertyId::LineHeight => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.line_height = *l;
+            }
+        }
+        PropertyId::LetterSpacing => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.letter_spacing = *l;
             }
         }
-        "word-spacing" => {
+        PropertyId::WordSpacing => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.word_spacing = *l;
             }
         }
-        "text-transform" => {
+        PropertyId::TextTransform => {
             if let PropertyValue::TextTransform(t) = &decl.value {
                 style.text_transform = *t;
             }
         }
-        "hyphens" => {
+        PropertyId::Hyphens => {
             if let PropertyValue::Hyphens(h) = &decl.value {
                 style.hyphens = *h;
             }
         }
-        "white-space" => {
+        PropertyId::WhiteSpace => {
             if let PropertyValue::Bool(nowrap) = &decl.value {
                 style.no_break = *nowrap;
             }
         }
+        PropertyId::VerticalAlign => {
+            if let PropertyValue::Keyword(k) = &decl.value {
+                style.vertical_align_super = k == "super";
+                style.vertical_align_sub = k == "sub";
+            }
+        }
 
-        // Phase 2: Text decoration extensions
-        "text-decoration-style" => {
+        // Text decoration
+        PropertyId::TextDecoration | PropertyId::TextDecorationLine => {
+            if let PropertyValue::Keyword(k) = &decl.value {
+                style.text_decoration_underline = k.contains("underline");
+                style.text_decoration_line_through = k.contains("line-through");
+            }
+        }
+        PropertyId::TextDecorationStyle => {
             if let PropertyValue::DecorationStyle(s) = &decl.value {
                 style.underline_style = *s;
             }
         }
-        "text-decoration-color" => {
+        PropertyId::TextDecorationColor => {
             if let PropertyValue::Color(c) = &decl.value {
                 style.underline_color = Some(*c);
             }
         }
 
-        // Phase 3: Layout properties
-        "width" => {
+        // Margins
+        PropertyId::Margin => {
+            // Shorthand should have been expanded, but handle just in case
+            if let PropertyValue::Length(l) = &decl.value {
+                style.margin_top = *l;
+                style.margin_right = *l;
+                style.margin_bottom = *l;
+                style.margin_left = *l;
+            }
+        }
+        PropertyId::MarginTop => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.margin_top = *l;
+            }
+        }
+        PropertyId::MarginRight => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.margin_right = *l;
+            }
+        }
+        PropertyId::MarginBottom => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.margin_bottom = *l;
+            }
+        }
+        PropertyId::MarginLeft => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.margin_left = *l;
+            }
+        }
+
+        // Padding
+        PropertyId::Padding => {
+            // Shorthand should have been expanded, but handle just in case
+            if let PropertyValue::Length(l) = &decl.value {
+                style.padding_top = *l;
+                style.padding_right = *l;
+                style.padding_bottom = *l;
+                style.padding_left = *l;
+            }
+        }
+        PropertyId::PaddingTop => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.padding_top = *l;
+            }
+        }
+        PropertyId::PaddingRight => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.padding_right = *l;
+            }
+        }
+        PropertyId::PaddingBottom => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.padding_bottom = *l;
+            }
+        }
+        PropertyId::PaddingLeft => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.padding_left = *l;
+            }
+        }
+
+        // Dimensions
+        PropertyId::Width => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.width = *l;
             }
         }
-        "height" => {
+        PropertyId::Height => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.height = *l;
             }
         }
-        "max-width" => {
+        PropertyId::MaxWidth => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.max_width = *l;
             }
         }
-        "min-height" => {
+        PropertyId::MinHeight => {
             if let PropertyValue::Length(l) = &decl.value {
                 style.min_height = *l;
             }
         }
-        "float" => {
+
+        // Display & positioning
+        PropertyId::Display => {
+            if let PropertyValue::Display(d) = &decl.value {
+                style.display = *d;
+            }
+        }
+        PropertyId::Float => {
             if let PropertyValue::Float(f) = &decl.value {
                 style.float = *f;
             }
         }
-
-        // Phase 4: Page break properties
-        "break-before" | "page-break-before" => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_before = *b;
-            }
-        }
-        "break-after" | "page-break-after" => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_after = *b;
-            }
-        }
-        "break-inside" | "page-break-inside" => {
-            if let PropertyValue::BreakValue(b) = &decl.value {
-                style.break_inside = *b;
-            }
-        }
-
-        // Phase 5: Border properties
-        "border-top-style" => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_top = *s;
-            }
-        }
-        "border-right-style" => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_right = *s;
-            }
-        }
-        "border-bottom-style" => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_bottom = *s;
-            }
-        }
-        "border-left-style" => {
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_left = *s;
-            }
-        }
-        "border-style" => {
-            // Shorthand: applies to all sides
-            if let PropertyValue::BorderStyle(s) = &decl.value {
-                style.border_style_top = *s;
-                style.border_style_right = *s;
-                style.border_style_bottom = *s;
-                style.border_style_left = *s;
-            }
-        }
-        "border-top-width" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_top = *l;
-            }
-        }
-        "border-right-width" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_right = *l;
-            }
-        }
-        "border-bottom-width" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_bottom = *l;
-            }
-        }
-        "border-left-width" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_left = *l;
-            }
-        }
-        "border-width" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_width_top = *l;
-                style.border_width_right = *l;
-                style.border_width_bottom = *l;
-                style.border_width_left = *l;
-            }
-        }
-        "border-top-color" => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_top = Some(*c);
-            }
-        }
-        "border-right-color" => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_right = Some(*c);
-            }
-        }
-        "border-bottom-color" => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_bottom = Some(*c);
-            }
-        }
-        "border-left-color" => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_left = Some(*c);
-            }
-        }
-        "border-color" => {
-            if let PropertyValue::Color(c) = &decl.value {
-                style.border_color_top = Some(*c);
-                style.border_color_right = Some(*c);
-                style.border_color_bottom = Some(*c);
-                style.border_color_left = Some(*c);
-            }
-        }
-        "border-top-left-radius" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_left = *l;
-            }
-        }
-        "border-top-right-radius" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_right = *l;
-            }
-        }
-        "border-bottom-left-radius" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_bottom_left = *l;
-            }
-        }
-        "border-bottom-right-radius" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_bottom_right = *l;
-            }
-        }
-        "border-radius" => {
-            if let PropertyValue::Length(l) = &decl.value {
-                style.border_radius_top_left = *l;
-                style.border_radius_top_right = *l;
-                style.border_radius_bottom_left = *l;
-                style.border_radius_bottom_right = *l;
-            }
-        }
-
-        // Phase 6: List properties
-        "list-style-position" => {
-            if let PropertyValue::ListStylePosition(p) = &decl.value {
-                style.list_style_position = *p;
-            }
-        }
-
-        // Phase 7: Amazon properties
-        "visibility" => {
+        PropertyId::Visibility => {
             if let PropertyValue::Visibility(v) = &decl.value {
                 style.visibility = *v;
             }
         }
-        "box-sizing" => {
+        PropertyId::BoxSizing => {
             if let PropertyValue::BoxSizing(bs) = &decl.value {
                 style.box_sizing = *bs;
             }
         }
 
-        _ => {}
+        // Page breaks
+        PropertyId::BreakBefore | PropertyId::PageBreakBefore => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_before = *b;
+            }
+        }
+        PropertyId::BreakAfter | PropertyId::PageBreakAfter => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_after = *b;
+            }
+        }
+        PropertyId::BreakInside | PropertyId::PageBreakInside => {
+            if let PropertyValue::BreakValue(b) = &decl.value {
+                style.break_inside = *b;
+            }
+        }
+
+        // Border style
+        PropertyId::BorderStyle => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_top = *s;
+                style.border_style_right = *s;
+                style.border_style_bottom = *s;
+                style.border_style_left = *s;
+            }
+        }
+        PropertyId::BorderTopStyle => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_top = *s;
+            }
+        }
+        PropertyId::BorderRightStyle => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_right = *s;
+            }
+        }
+        PropertyId::BorderBottomStyle => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_bottom = *s;
+            }
+        }
+        PropertyId::BorderLeftStyle => {
+            if let PropertyValue::BorderStyle(s) = &decl.value {
+                style.border_style_left = *s;
+            }
+        }
+
+        // Border width
+        PropertyId::BorderWidth => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_top = *l;
+                style.border_width_right = *l;
+                style.border_width_bottom = *l;
+                style.border_width_left = *l;
+            }
+        }
+        PropertyId::BorderTopWidth => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_top = *l;
+            }
+        }
+        PropertyId::BorderRightWidth => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_right = *l;
+            }
+        }
+        PropertyId::BorderBottomWidth => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_bottom = *l;
+            }
+        }
+        PropertyId::BorderLeftWidth => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_width_left = *l;
+            }
+        }
+
+        // Border color
+        PropertyId::BorderColor => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_top = Some(*c);
+                style.border_color_right = Some(*c);
+                style.border_color_bottom = Some(*c);
+                style.border_color_left = Some(*c);
+            }
+        }
+        PropertyId::BorderTopColor => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_top = Some(*c);
+            }
+        }
+        PropertyId::BorderRightColor => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_right = Some(*c);
+            }
+        }
+        PropertyId::BorderBottomColor => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_bottom = Some(*c);
+            }
+        }
+        PropertyId::BorderLeftColor => {
+            if let PropertyValue::Color(c) = &decl.value {
+                style.border_color_left = Some(*c);
+            }
+        }
+
+        // Border radius
+        PropertyId::BorderRadius => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_left = *l;
+                style.border_radius_top_right = *l;
+                style.border_radius_bottom_left = *l;
+                style.border_radius_bottom_right = *l;
+            }
+        }
+        PropertyId::BorderTopLeftRadius => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_left = *l;
+            }
+        }
+        PropertyId::BorderTopRightRadius => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_top_right = *l;
+            }
+        }
+        PropertyId::BorderBottomLeftRadius => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_bottom_left = *l;
+            }
+        }
+        PropertyId::BorderBottomRightRadius => {
+            if let PropertyValue::Length(l) = &decl.value {
+                style.border_radius_bottom_right = *l;
+            }
+        }
+
+        // List properties
+        PropertyId::ListStyleType => {
+            if let PropertyValue::ListStyleType(lst) = &decl.value {
+                style.list_style_type = *lst;
+            }
+        }
+        PropertyId::ListStylePosition => {
+            if let PropertyValue::ListStylePosition(p) = &decl.value {
+                style.list_style_position = *p;
+            }
+        }
+
+        // Unknown - nothing to do
+        PropertyId::Unknown => {}
     }
 }
 
@@ -1451,7 +1677,7 @@ mod tests {
         let rule = &stylesheet.rules[0];
         assert_eq!(rule.selectors.len(), 1);
         assert_eq!(rule.declarations.len(), 1);
-        assert_eq!(rule.declarations[0].property, "color");
+        assert_eq!(rule.declarations[0].property, PropertyId::Color);
     }
 
     #[test]
@@ -1516,9 +1742,14 @@ mod tests {
         let css = "p { color: red !important; } p { color: blue; }";
         let stylesheet = Stylesheet::parse(css);
 
-        // The important declaration should have important=true
-        let first_decl = &stylesheet.rules[0].declarations[0];
-        assert!(first_decl.important);
+        // The important declaration should be in important_declarations
+        assert_eq!(stylesheet.rules[0].important_declarations.len(), 1);
+        assert_eq!(
+            stylesheet.rules[0].important_declarations[0].property,
+            PropertyId::Color
+        );
+        // The normal declaration should be in declarations
+        assert_eq!(stylesheet.rules[1].declarations.len(), 1);
     }
 
     #[test]
@@ -1567,9 +1798,13 @@ mod tests {
         assert_eq!(decls.len(), 4);
 
         // Find margin-left and margin-right
-        let margin_left = decls.iter().find(|d| d.property == "margin-left");
-        let margin_right = decls.iter().find(|d| d.property == "margin-right");
-        let margin_top = decls.iter().find(|d| d.property == "margin-top");
+        let margin_left = decls
+            .iter()
+            .find(|d| d.property == PropertyId::MarginLeft);
+        let margin_right = decls
+            .iter()
+            .find(|d| d.property == PropertyId::MarginRight);
+        let margin_top = decls.iter().find(|d| d.property == PropertyId::MarginTop);
 
         assert!(margin_left.is_some(), "margin-left should exist");
         assert!(margin_right.is_some(), "margin-right should exist");
@@ -1604,7 +1839,7 @@ mod tests {
 
         assert_eq!(stylesheet.rules.len(), 1);
         let decl = &stylesheet.rules[0].declarations[0];
-        assert_eq!(decl.property, "line-height");
+        assert_eq!(decl.property, PropertyId::LineHeight);
 
         // Unitless 1.5 should be converted to 1.5em
         if let PropertyValue::Length(len) = &decl.value {
@@ -1652,7 +1887,7 @@ mod tests {
         let stylesheet = Stylesheet::parse(css);
 
         let decl = &stylesheet.rules[0].declarations[0];
-        assert_eq!(decl.property, "box-sizing");
+        assert_eq!(decl.property, PropertyId::BoxSizing);
         if let PropertyValue::BoxSizing(bs) = &decl.value {
             assert_eq!(*bs, BoxSizing::BorderBox);
         } else {
@@ -1670,6 +1905,23 @@ mod tests {
             assert_eq!(*bs, BoxSizing::ContentBox);
         } else {
             panic!("box-sizing should be a BoxSizing value");
+        }
+    }
+
+    #[test]
+    fn test_property_id_roundtrip() {
+        // Test that PropertyId::from_str and name() are consistent
+        let properties = [
+            "color",
+            "background-color",
+            "font-size",
+            "margin-top",
+            "border-radius",
+        ];
+        for prop in properties {
+            let id = PropertyId::from_str(prop);
+            assert_ne!(id, PropertyId::Unknown, "{} should be recognized", prop);
+            assert_eq!(id.name(), prop, "name() should match input");
         }
     }
 }
