@@ -104,3 +104,63 @@ pub fn mobi_to_azw3(data: &[u8]) -> Result<Vec<u8>, JsValue> {
 
     Ok(output.into_inner())
 }
+
+/// Convert EPUB to Markdown.
+///
+/// Takes raw EPUB bytes and returns Markdown text as UTF-8 bytes.
+#[wasm_bindgen]
+pub fn epub_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut book =
+        Book::from_bytes(data, Format::Epub).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Cursor::new(Vec::new());
+    book.export(Format::Markdown, &mut output)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output.into_inner())
+}
+
+/// Convert AZW3 to Markdown.
+///
+/// Takes raw AZW3 bytes and returns Markdown text as UTF-8 bytes.
+#[wasm_bindgen]
+pub fn azw3_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut book =
+        Book::from_bytes(data, Format::Azw3).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Cursor::new(Vec::new());
+    book.export(Format::Markdown, &mut output)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output.into_inner())
+}
+
+/// Convert KFX to Markdown.
+///
+/// Takes raw KFX bytes and returns Markdown text as UTF-8 bytes.
+#[wasm_bindgen]
+pub fn kfx_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut book =
+        Book::from_bytes(data, Format::Kfx).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Cursor::new(Vec::new());
+    book.export(Format::Markdown, &mut output)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output.into_inner())
+}
+
+/// Convert MOBI to Markdown.
+///
+/// Takes raw MOBI bytes and returns Markdown text as UTF-8 bytes.
+#[wasm_bindgen]
+pub fn mobi_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let mut book =
+        Book::from_bytes(data, Format::Mobi).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut output = Cursor::new(Vec::new());
+    book.export(Format::Markdown, &mut output)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    Ok(output.into_inner())
+}

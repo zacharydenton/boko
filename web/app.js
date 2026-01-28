@@ -1,4 +1,15 @@
-import init, { epub_to_azw3, mobi_to_epub, mobi_to_azw3 } from './pkg/boko.js';
+import init, {
+    epub_to_azw3,
+    epub_to_kfx,
+    epub_to_markdown,
+    azw3_to_epub,
+    azw3_to_markdown,
+    kfx_to_epub,
+    kfx_to_markdown,
+    mobi_to_epub,
+    mobi_to_azw3,
+    mobi_to_markdown
+} from './pkg/boko.js';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -45,7 +56,9 @@ function formatFileSize(bytes) {
 function getInputFormat(filename) {
     const ext = getFileExtension(filename);
     if (ext === 'epub') return 'epub';
-    if (ext === 'azw3' || ext === 'mobi') return 'mobi';
+    if (ext === 'azw3') return 'azw3';
+    if (ext === 'kfx') return 'kfx';
+    if (ext === 'mobi') return 'mobi';
     return null;
 }
 
@@ -55,11 +68,24 @@ function updateOutputOptions(inputFormat) {
     if (inputFormat === 'epub') {
         outputFormat.innerHTML = `
             <option value="azw3">AZW3</option>
+            <option value="kfx">KFX</option>
+            <option value="markdown">Markdown</option>
+        `;
+    } else if (inputFormat === 'azw3') {
+        outputFormat.innerHTML = `
+            <option value="epub">EPUB</option>
+            <option value="markdown">Markdown</option>
+        `;
+    } else if (inputFormat === 'kfx') {
+        outputFormat.innerHTML = `
+            <option value="epub">EPUB</option>
+            <option value="markdown">Markdown</option>
         `;
     } else if (inputFormat === 'mobi') {
         outputFormat.innerHTML = `
             <option value="epub">EPUB</option>
             <option value="azw3">AZW3</option>
+            <option value="markdown">Markdown</option>
         `;
     }
 }
@@ -123,6 +149,34 @@ function showResult(blob, filename) {
     result.classList.remove('hidden');
 }
 
+// Conversion functions map
+const converters = {
+    'epub_azw3': epub_to_azw3,
+    'epub_kfx': epub_to_kfx,
+    'epub_markdown': epub_to_markdown,
+    'azw3_epub': azw3_to_epub,
+    'azw3_markdown': azw3_to_markdown,
+    'kfx_epub': kfx_to_epub,
+    'kfx_markdown': kfx_to_markdown,
+    'mobi_epub': mobi_to_epub,
+    'mobi_azw3': mobi_to_azw3,
+    'mobi_markdown': mobi_to_markdown,
+};
+
+const mimeTypes = {
+    'epub': 'application/epub+zip',
+    'azw3': 'application/x-mobi8-ebook',
+    'kfx': 'application/x-kfx-ebook',
+    'markdown': 'text/markdown',
+};
+
+const extensions = {
+    'epub': '.epub',
+    'azw3': '.azw3',
+    'kfx': '.kfx',
+    'markdown': '.md',
+};
+
 async function convert() {
     if (!wasmReady) {
         showError('WASM module not ready. Please refresh the page.');
@@ -136,6 +190,13 @@ async function convert() {
 
     const inputFormat = getInputFormat(currentFile.name);
     const targetFormat = outputFormat.value;
+    const converterKey = `${inputFormat}_${targetFormat}`;
+    const converter = converters[converterKey];
+
+    if (!converter) {
+        showError('Unsupported conversion: ' + inputFormat + ' to ' + targetFormat);
+        return;
+    }
 
     showProgress('Reading file...');
 
@@ -145,27 +206,10 @@ async function convert() {
 
         showProgress('Converting...');
 
-        let outputData;
-        let outputFilename;
-        let mimeType;
-
+        const outputData = converter(inputData);
         const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
-
-        if (inputFormat === 'epub' && targetFormat === 'azw3') {
-            outputData = epub_to_azw3(inputData);
-            outputFilename = baseName + '.azw3';
-            mimeType = 'application/x-mobi8-ebook';
-        } else if (inputFormat === 'mobi' && targetFormat === 'epub') {
-            outputData = mobi_to_epub(inputData);
-            outputFilename = baseName + '.epub';
-            mimeType = 'application/epub+zip';
-        } else if (inputFormat === 'mobi' && targetFormat === 'azw3') {
-            outputData = mobi_to_azw3(inputData);
-            outputFilename = baseName + '.azw3';
-            mimeType = 'application/x-mobi8-ebook';
-        } else {
-            throw new Error('Unsupported conversion: ' + inputFormat + ' to ' + targetFormat);
-        }
+        const outputFilename = baseName + extensions[targetFormat];
+        const mimeType = mimeTypes[targetFormat];
 
         const blob = new Blob([outputData], { type: mimeType });
         showResult(blob, outputFilename);
