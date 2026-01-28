@@ -406,8 +406,14 @@ impl<'a> TransformContext<'a> {
                             }
                         }
                         // Semantic fidelity attributes
+                        // epub:type attribute - handle both namespaced and prefixed forms
+                        // html5ever parses "epub:type" as literal name with empty namespace
                         "type" if attr_ns == "http://www.idpf.org/2007/ops" => {
-                            // epub:type attribute
+                            self.chapter
+                                .semantics
+                                .set_epub_type(ir_id, attr.value.clone());
+                        }
+                        "epub:type" => {
                             self.chapter
                                 .semantics
                                 .set_epub_type(ir_id, attr.value.clone());

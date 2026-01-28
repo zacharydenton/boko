@@ -830,12 +830,16 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Add yj.classification for footnote/endnote popup support
                 // This marks the element so Kindle can show its content in a popup
                 // when a noteref link is tapped
-                // - footnote (within chapter) → yj.chapternote ($618)
-                // - endnote/rearnote (end of book) → yj.endnote ($619)
+                //
+                // Mapping:
+                // - epub:type="footnote" → yj.chapternote ($618)
+                // - epub:type="endnote" or "rearnote" → yj.endnote ($619)
+                // - epub:type="sidebar" or "marginalia" → yj.sidenote ($620)
                 if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
                     let types: Vec<&str> = epub_type.split_whitespace().collect();
                     let is_footnote = types.iter().any(|&t| t == "footnote");
                     let is_endnote = types.iter().any(|&t| t == "endnote" || t == "rearnote");
+                    let is_sidenote = types.iter().any(|&t| t == "sidebar" || t == "marginalia");
 
                     // Prefer endnote classification if both are present (common in EPUBs)
                     if is_endnote {
@@ -843,10 +847,15 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                             sym!(YjClassification),
                             IonValue::Symbol(KfxSymbol::YjEndnote as u64),
                         ));
+                    } else if is_sidenote {
+                        fields.push((
+                            sym!(YjClassification),
+                            IonValue::Symbol(KfxSymbol::YjSidenote as u64),
+                        ));
                     } else if is_footnote {
                         fields.push((
                             sym!(YjClassification),
-                            IonValue::Symbol(KfxSymbol::YjChapternote as u64),
+                            IonValue::Symbol(KfxSymbol::Footnote as u64),
                         ));
                     }
                 }
@@ -893,10 +902,9 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // The offset is relative to the current element's accumulated text
                 let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
 
-                // Create anchor for inline elements with IDs (e.g., noteref links)
-                // Anchors point to the parent container's ID with the text offset
+                // Create anchor for inline elements with IDs (e.g., noteref backlinks)
+                // Offset is relative to the current element's accumulated text
                 if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id) {
-                    // Get the parent container's ID from the stack
                     if let Some(parent) = stack.last() {
                         if let Some(container_id) = parent.container_id {
                             ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);

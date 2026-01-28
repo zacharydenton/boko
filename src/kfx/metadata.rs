@@ -154,6 +154,11 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
             category: MetadataCategory::KindleTitle,
             source: MetadataSource::Dynamic(MetadataField::BookId),
         },
+        MetadataRule {
+            key: "cde_content_type",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Static("EBOK"),
+        },
         // kindle_ebook_metadata category
         MetadataRule {
             key: "selection",
@@ -478,6 +483,22 @@ mod tests {
 
         // Different identifiers should produce different book_ids
         assert_ne!(id1, id2, "different identifiers should produce different book_ids");
+    }
+
+    #[test]
+    fn test_cde_content_type_is_ebok() {
+        let meta = Metadata {
+            title: "Test".to_string(),
+            language: "en".to_string(),
+            ..Default::default()
+        };
+
+        let ctx = MetadataContext::default();
+        let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
+
+        assert!(entries
+            .iter()
+            .any(|(k, v)| *k == "cde_content_type" && v == "EBOK"));
     }
 
     #[test]
