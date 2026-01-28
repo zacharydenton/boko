@@ -4873,27 +4873,28 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
 
             if is_position_map {
                 println!("--- position_map ---");
-                println!("Maps sections to the position IDs they contain.\n");
-                // position_map is a List of section structs with "contains" arrays
+                println!("Maps sections to the EIDs they contain.\n");
+                // position_map is a List of section structs: { section_name: symbol, contains: [eid, ...] }
                 if let boko::kfx::ion::IonValue::List(sections) = inner {
                     let mut total_refs = 0usize;
                     for section in sections.iter() {
                         if let boko::kfx::ion::IonValue::Struct(sec_fields) = section {
-                            let mut section_id = 0i64;
+                            let mut section_name = String::new();
                             let mut contains: Vec<i64> = Vec::new();
                             for (sid, sval) in sec_fields {
                                 let sname = resolve_sym_inner(*sid);
                                 match sname.as_str() {
-                                    "section" => {
-                                        if let boko::kfx::ion::IonValue::Int(id) = sval {
-                                            section_id = *id;
+                                    "section_name" => {
+                                        // section_name is a symbol reference
+                                        if let boko::kfx::ion::IonValue::Symbol(sym_id) = sval {
+                                            section_name = resolve_sym_inner(*sym_id);
                                         }
                                     }
                                     "contains" => {
                                         if let boko::kfx::ion::IonValue::List(refs) = sval {
                                             for r in refs {
-                                                if let boko::kfx::ion::IonValue::Int(pid) = r {
-                                                    contains.push(*pid);
+                                                if let boko::kfx::ion::IonValue::Int(eid) = r {
+                                                    contains.push(*eid);
                                                 }
                                             }
                                         }
@@ -4902,20 +4903,20 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
                                 }
                             }
                             total_refs += contains.len();
-                            // Show section with position range
+                            // Show section with EID range
                             if !contains.is_empty() {
-                                let min_pos = contains.iter().min().copied().unwrap_or(0);
-                                let max_pos = contains.iter().max().copied().unwrap_or(0);
+                                let min_eid = contains.iter().min().copied().unwrap_or(0);
+                                let max_eid = contains.iter().max().copied().unwrap_or(0);
                                 println!(
-                                    "Section {} ({} positions: {}..{})",
-                                    section_id,
+                                    "Section {} ({} EIDs: {}..{})",
+                                    section_name,
                                     contains.len(),
-                                    min_pos,
-                                    max_pos
+                                    min_eid,
+                                    max_eid
                                 );
-                                // Show first few and last few positions
+                                // Show first few and last few EIDs
                                 if contains.len() <= 10 {
-                                    println!("  positions: {:?}", contains);
+                                    println!("  EIDs: {:?}", contains);
                                 } else {
                                     println!("  first 5: {:?}", &contains[..5]);
                                     println!("  last 5:  {:?}", &contains[contains.len() - 5..]);
@@ -4925,7 +4926,7 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
                         }
                     }
                     println!("Total sections: {}", sections.len());
-                    println!("Total position refs: {}", total_refs);
+                    println!("Total EID refs: {}", total_refs);
                 }
                 println!();
             } else if is_position_id_map {
