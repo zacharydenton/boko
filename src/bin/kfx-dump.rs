@@ -4460,67 +4460,68 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
             }
         } else if type_idnum == storyline_type
             && let Ok(value) = parser.parse()
-                && let boko::kfx::ion::IonValue::Struct(fields) = &value {
-                    let mut story_name = String::new();
-                    let mut content_list: Option<&boko::kfx::ion::IonValue> = None;
+            && let boko::kfx::ion::IonValue::Struct(fields) = &value
+        {
+            let mut story_name = String::new();
+            let mut content_list: Option<&boko::kfx::ion::IonValue> = None;
 
-                    for (fid, fval) in fields {
-                        let fname = resolve_sym(*fid);
-                        match fname.as_str() {
-                            "story_name" => {
-                                if let boko::kfx::ion::IonValue::Symbol(s) = fval {
-                                    story_name = resolve_sym(*s);
-                                }
-                            }
-                            "content_list" => {
-                                content_list = Some(fval);
-                            }
-                            _ => {}
+            for (fid, fval) in fields {
+                let fname = resolve_sym(*fid);
+                match fname.as_str() {
+                    "story_name" => {
+                        if let boko::kfx::ion::IonValue::Symbol(s) = fval {
+                            story_name = resolve_sym(*s);
                         }
                     }
-
-                    if let Some(boko::kfx::ion::IonValue::List(items)) = content_list {
-                        for item in items {
-                            extract_content_items(
-                                item,
-                                &story_name,
-                                &resolve_sym,
-                                &mut position_to_content,
-                            );
-                        }
+                    "content_list" => {
+                        content_list = Some(fval);
                     }
+                    _ => {}
                 }
-        else if type_idnum == content_type_id
+            }
+
+            if let Some(boko::kfx::ion::IonValue::List(items)) = content_list {
+                for item in items {
+                    extract_content_items(
+                        item,
+                        &story_name,
+                        &resolve_sym,
+                        &mut position_to_content,
+                    );
+                }
+            }
+        } else if type_idnum == content_type_id
             && let Ok(value) = parser.parse()
-                && let boko::kfx::ion::IonValue::Struct(fields) = &value {
-                    let mut content_name = String::new();
-                    let mut texts: Vec<String> = Vec::new();
+            && let boko::kfx::ion::IonValue::Struct(fields) = &value
+        {
+            let mut content_name = String::new();
+            let mut texts: Vec<String> = Vec::new();
 
-                    for (fid, fval) in fields {
-                        let fname = resolve_sym(*fid);
-                        match fname.as_str() {
-                            "name" => {
-                                if let boko::kfx::ion::IonValue::Symbol(s) = fval {
-                                    content_name = resolve_sym(*s);
-                                }
-                            }
-                            "content_list" => {
-                                if let boko::kfx::ion::IonValue::List(items) = fval {
-                                    for item in items {
-                                        if let boko::kfx::ion::IonValue::String(s) = item {
-                                            texts.push(s.clone());
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
+            for (fid, fval) in fields {
+                let fname = resolve_sym(*fid);
+                match fname.as_str() {
+                    "name" => {
+                        if let boko::kfx::ion::IonValue::Symbol(s) = fval {
+                            content_name = resolve_sym(*s);
                         }
                     }
-
-                    if !content_name.is_empty() && !texts.is_empty() {
-                        content_texts.insert(content_name, texts);
+                    "content_list" => {
+                        if let boko::kfx::ion::IonValue::List(items) = fval {
+                            for item in items {
+                                if let boko::kfx::ion::IonValue::String(s) = item {
+                                    texts.push(s.clone());
+                                }
+                            }
+                        }
                     }
+                    _ => {}
                 }
+            }
+
+            if !content_name.is_empty() && !texts.is_empty() {
+                content_texts.insert(content_name, texts);
+            }
+        }
     }
 
     println!("=== Location Map ===\n");
@@ -4649,24 +4650,26 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                         result.push_str(&format!(" {}", info.content_type));
                         // Try to get text snippet
                         if let Some(ref content_ref) = info.content_ref
-                            && let Some(texts) = content_texts.get(content_ref) {
-                                let idx = info.content_index.unwrap_or(0) as usize;
-                                if let Some(text) = texts.get(idx) {
-                                    // Get snippet at offset
-                                    let offset = entry.offset as usize;
-                                    let snippet = if offset < text.len() {
-                                        let start = offset;
-                                        let end = (offset + 40).min(text.len());
-                                        let s: String = text.chars().skip(start).take(end - start).collect();
-                                        s.replace('\n', " ")
-                                    } else {
-                                        let end = 40.min(text.len());
-                                        let s: String = text.chars().take(end).collect();
-                                        s.replace('\n', " ")
-                                    };
-                                    result.push_str(&format!(" \"{}...\"", snippet.trim()));
-                                }
+                            && let Some(texts) = content_texts.get(content_ref)
+                        {
+                            let idx = info.content_index.unwrap_or(0) as usize;
+                            if let Some(text) = texts.get(idx) {
+                                // Get snippet at offset
+                                let offset = entry.offset as usize;
+                                let snippet = if offset < text.len() {
+                                    let start = offset;
+                                    let end = (offset + 40).min(text.len());
+                                    let s: String =
+                                        text.chars().skip(start).take(end - start).collect();
+                                    s.replace('\n', " ")
+                                } else {
+                                    let end = 40.min(text.len());
+                                    let s: String = text.chars().take(end).collect();
+                                    s.replace('\n', " ")
+                                };
+                                result.push_str(&format!(" \"{}...\"", snippet.trim()));
                             }
+                        }
                     }
                     result
                 };
@@ -4697,10 +4700,11 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                     .filter(|e| {
                         if let Some(info) = position_to_content.get(&e.id)
                             && let Some(ref content_ref) = info.content_ref
-                                && let Some(idx) = info.content_index
-                                    && let Some(texts) = content_texts.get(content_ref) {
-                                        return texts.get(idx as usize).is_some();
-                                    }
+                            && let Some(idx) = info.content_index
+                            && let Some(texts) = content_texts.get(content_ref)
+                        {
+                            return texts.get(idx as usize).is_some();
+                        }
                         false
                     })
                     .collect();

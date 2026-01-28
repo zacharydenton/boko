@@ -1085,13 +1085,31 @@ impl StyleSchema {
                 ("circle".into(), KfxValue::Symbol(KfxSymbol::Circle)),
                 ("square".into(), KfxValue::Symbol(KfxSymbol::Square)),
                 ("decimal".into(), KfxValue::Symbol(KfxSymbol::Numeric)),
-                ("lower-roman".into(), KfxValue::Symbol(KfxSymbol::RomanLower)),
-                ("upper-roman".into(), KfxValue::Symbol(KfxSymbol::RomanUpper)),
-                ("lower-alpha".into(), KfxValue::Symbol(KfxSymbol::AlphaLower)),
-                ("upper-alpha".into(), KfxValue::Symbol(KfxSymbol::AlphaUpper)),
+                (
+                    "lower-roman".into(),
+                    KfxValue::Symbol(KfxSymbol::RomanLower),
+                ),
+                (
+                    "upper-roman".into(),
+                    KfxValue::Symbol(KfxSymbol::RomanUpper),
+                ),
+                (
+                    "lower-alpha".into(),
+                    KfxValue::Symbol(KfxSymbol::AlphaLower),
+                ),
+                (
+                    "upper-alpha".into(),
+                    KfxValue::Symbol(KfxSymbol::AlphaUpper),
+                ),
                 // CSS aliases
-                ("lower-latin".into(), KfxValue::Symbol(KfxSymbol::AlphaLower)),
-                ("upper-latin".into(), KfxValue::Symbol(KfxSymbol::AlphaUpper)),
+                (
+                    "lower-latin".into(),
+                    KfxValue::Symbol(KfxSymbol::AlphaLower),
+                ),
+                (
+                    "upper-latin".into(),
+                    KfxValue::Symbol(KfxSymbol::AlphaUpper),
+                ),
             ]),
             context: StyleContext::BlockOnly,
         });
