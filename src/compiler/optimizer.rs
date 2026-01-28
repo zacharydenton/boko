@@ -231,10 +231,8 @@ fn hoist_pass(chapter: &mut IRChapter, parent_id: NodeId) -> bool {
                 if let Some(prev_node) = chapter.node_mut(prev_id) {
                     prev_node.next_sibling = Some(child_id);
                 }
-            } else {
-                if let Some(parent_node) = chapter.node_mut(parent_id) {
-                    parent_node.first_child = Some(child_id);
-                }
+            } else if let Some(parent_node) = chapter.node_mut(parent_id) {
+                parent_node.first_child = Some(child_id);
             }
 
             // 3. Detach the wrapper (leave it as a dead node)
@@ -771,10 +769,8 @@ fn prune_children(chapter: &mut IRChapter, parent_id: NodeId) {
                 if let Some(prev_node) = chapter.node_mut(prev_id) {
                     prev_node.next_sibling = next_opt;
                 }
-            } else {
-                if let Some(parent_node) = chapter.node_mut(parent_id) {
-                    parent_node.first_child = next_opt;
-                }
+            } else if let Some(parent_node) = chapter.node_mut(parent_id) {
+                parent_node.first_child = next_opt;
             }
             // Don't update prev_opt
         } else {
