@@ -781,6 +781,49 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric) as u64)));
                 }
 
+                // Add layout_hints based on element role and semantics
+                // This affects Kindle's rendering behavior for headings, figures, and captions
+                let layout_hint = match elem.role {
+                    // Headings (h1-h6) → treat_as_title
+                    Role::Heading(_) => Some(KfxSymbol::TreatAsTitle),
+                    // <figure> → figure
+                    Role::Figure => Some(KfxSymbol::Figure),
+                    // <figcaption>/<caption> → caption
+                    Role::Caption => Some(KfxSymbol::Caption),
+                    _ => {
+                        // Check epub:type for additional semantic hints
+                        if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                            // Check each epub:type value (space-separated)
+                            let has_title_type = epub_type.split_whitespace().any(|t| {
+                                matches!(
+                                    t,
+                                    "title" | "fulltitle" | "subtitle" | "covertitle" | "halftitle"
+                                )
+                            });
+                            let has_caption_type = epub_type
+                                .split_whitespace()
+                                .any(|t| matches!(t, "caption" | "figcaption"));
+
+                            if has_title_type {
+                                Some(KfxSymbol::TreatAsTitle)
+                            } else if has_caption_type {
+                                Some(KfxSymbol::Caption)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                };
+
+                if let Some(hint) = layout_hint {
+                    fields.push((
+                        sym!(LayoutHints),
+                        IonValue::List(vec![IonValue::Symbol(hint as u64)]),
+                    ));
+                }
+
                 // Add schema-driven attributes from kfx_attrs
                 // The schema handles Image src→resource_name, Link href→link_to, etc.
                 for (field_id, value_str) in &elem.kfx_attrs {
@@ -1331,5 +1374,138 @@ mod tests {
         // Verify byte length differs from char count
         assert_eq!(builder.accumulated_text.len(), 23); // 6 + 17 bytes
         assert_eq!(builder.accumulated_char_count, 14); // 6 + 8 chars
+    }
+
+    #[test]
+    fn test_layout_hints_for_heading() {
+        // Headings should emit layout_hints: [treat_as_title]
+        let mut chapter = IRChapter::new();
+        let text_range = chapter.append_text("Chapter 1");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+
+        let heading = Node::new(Role::Heading(1));
+        let heading_id = chapter.alloc_node(heading);
+        chapter.append_child(heading_id, text_id);
+        chapter.append_child(chapter.root(), heading_id);
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+        ctx.register_section("test_section");
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Find layout_hints in the generated Ion
+        fn find_layout_hints(ion: &IonValue) -> Option<Vec<u64>> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    for (key, value) in fields {
+                        if *key == sym!(LayoutHints) {
+                            if let IonValue::List(items) = value {
+                                return Some(
+                                    items
+                                        .iter()
+                                        .filter_map(|v| {
+                                            if let IonValue::Symbol(s) = v {
+                                                Some(*s)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect(),
+                                );
+                            }
+                        }
+                        if let Some(hints) = find_layout_hints(value) {
+                            return Some(hints);
+                        }
+                    }
+                    None
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(hints) = find_layout_hints(item) {
+                            return Some(hints);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        let hints = find_layout_hints(&ion);
+        assert!(
+            hints.is_some(),
+            "Heading should have layout_hints"
+        );
+        let hints = hints.unwrap();
+        assert!(
+            hints.contains(&(KfxSymbol::TreatAsTitle as u64)),
+            "Heading layout_hints should contain treat_as_title"
+        );
+    }
+
+    #[test]
+    fn test_layout_hints_for_figure() {
+        // Figure elements should emit layout_hints: [figure]
+        let mut chapter = IRChapter::new();
+
+        let figure = Node::new(Role::Figure);
+        let figure_id = chapter.alloc_node(figure);
+        chapter.append_child(chapter.root(), figure_id);
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+        ctx.register_section("test_section");
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Find layout_hints in the generated Ion
+        fn find_layout_hints(ion: &IonValue) -> Option<Vec<u64>> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    for (key, value) in fields {
+                        if *key == sym!(LayoutHints) {
+                            if let IonValue::List(items) = value {
+                                return Some(
+                                    items
+                                        .iter()
+                                        .filter_map(|v| {
+                                            if let IonValue::Symbol(s) = v {
+                                                Some(*s)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect(),
+                                );
+                            }
+                        }
+                        if let Some(hints) = find_layout_hints(value) {
+                            return Some(hints);
+                        }
+                    }
+                    None
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(hints) = find_layout_hints(item) {
+                            return Some(hints);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        let hints = find_layout_hints(&ion);
+        assert!(
+            hints.is_some(),
+            "Figure should have layout_hints"
+        );
+        let hints = hints.unwrap();
+        assert!(
+            hints.contains(&(KfxSymbol::Figure as u64)),
+            "Figure layout_hints should contain figure"
+        );
     }
 }
