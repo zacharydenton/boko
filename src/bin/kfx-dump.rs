@@ -88,11 +88,12 @@ fn main() -> IonResult<()> {
         for field in &args.field {
             match field.as_str() {
                 "anchors" => report_anchors(&data)?,
-                "toc" => report_toc(&data)?,
                 "container" => report_container(&data)?,
+                "features" => report_features(&data)?,
+                "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, toc",
+                        "Unknown field report: {}. Supported: anchors, container, features, toc",
                         other
                     );
                     std::process::exit(1);
@@ -2706,5 +2707,205 @@ fn report_container(data: &[u8]) -> IonResult<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Report features (content_features entity) from a KFX file
+fn report_features(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find content_features entity (type 585)
+    let content_features_type = KfxSymbol::ContentFeatures as u32;
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != content_features_type {
+            continue;
+        }
+
+        // Found content_features entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            println!("=== Content Features ===\n");
+
+            // Helper to resolve symbol name
+            let resolve_sym = |id: u64| -> &str {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE.get(id as usize).copied().unwrap_or("?")
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .map(|s| s.as_str())
+                        .unwrap_or("?")
+                }
+            };
+
+            // Extract and display features list
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+
+                    if field_name == "features" {
+                        if let boko::kfx::ion::IonValue::List(features) = field_value {
+                            for (idx, feature) in features.iter().enumerate() {
+                                if let boko::kfx::ion::IonValue::Struct(ffields) = feature {
+                                    let mut namespace = String::new();
+                                    let mut key = String::new();
+                                    let mut major = 0i64;
+                                    let mut minor = 0i64;
+
+                                    for (fid, fval) in ffields {
+                                        let fname = resolve_sym(*fid);
+
+                                        match fname {
+                                            "namespace" => {
+                                                if let boko::kfx::ion::IonValue::String(s) = fval {
+                                                    namespace = s.clone();
+                                                }
+                                            }
+                                            "key" => {
+                                                if let boko::kfx::ion::IonValue::String(s) = fval {
+                                                    key = s.clone();
+                                                }
+                                            }
+                                            "version_info" => {
+                                                // Extract version from nested struct
+                                                if let boko::kfx::ion::IonValue::Struct(vi) = fval {
+                                                    for (vid, vval) in vi {
+                                                        let vname = resolve_sym(*vid);
+                                                        if vname == "version" {
+                                                            if let boko::kfx::ion::IonValue::Struct(
+                                                                ver,
+                                                            ) = vval
+                                                            {
+                                                                for (verid, verval) in ver {
+                                                                    let vername =
+                                                                        resolve_sym(*verid);
+                                                                    if vername == "major_version" {
+                                                                        if let boko::kfx::ion::IonValue::Int(v) = verval {
+                                                                            major = *v;
+                                                                        }
+                                                                    }
+                                                                    if vername == "minor_version" {
+                                                                        if let boko::kfx::ion::IonValue::Int(v) = verval {
+                                                                            minor = *v;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+
+                                    println!(
+                                        "{:2}. {}.{} v{}.{}",
+                                        idx + 1,
+                                        namespace,
+                                        key,
+                                        major,
+                                        minor
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No content_features entity found");
     Ok(())
 }
