@@ -89,8 +89,12 @@ fn main() -> IonResult<()> {
             match field.as_str() {
                 "anchors" => report_anchors(&data)?,
                 "toc" => report_toc(&data)?,
+                "container" => report_container(&data)?,
                 other => {
-                    eprintln!("Unknown field report: {}. Supported: anchors, toc", other);
+                    eprintln!(
+                        "Unknown field report: {}. Supported: anchors, container, toc",
+                        other
+                    );
                     std::process::exit(1);
                 }
             }
@@ -2607,4 +2611,100 @@ fn element_to_ion_text_inner(
     }
 
     result
+}
+
+/// Report container header and info from a KFX file
+fn report_container(data: &[u8]) -> IonResult<()> {
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse binary header
+    let Some(version) = read_u16_le(data, 4) else {
+        eprintln!("Failed to read container version");
+        return Ok(());
+    };
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    println!("=== Container Header (Binary) ===\n");
+    println!("magic:                 CONT");
+    println!("version:               {}", version);
+    println!("header_len:            {}", header_len);
+    println!("container_info_offset: {}", container_info_offset);
+    println!("container_info_length: {}", container_info_length);
+    println!();
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Parse container info Ion struct
+    let mut catalog = MapCatalog::new();
+    if let Ok(table) =
+        SharedSymbolTable::new("YJ_symbols", 10, KFX_SYMBOL_TABLE[10..].iter().copied())
+    {
+        catalog.insert_table(table);
+    }
+
+    let preamble = build_symbol_table_preamble();
+    let mut full_data = preamble;
+    if container_info_data.len() >= 4 && container_info_data[0..4] == ION_BVM {
+        full_data.extend_from_slice(&container_info_data[4..]);
+    } else {
+        full_data.extend_from_slice(container_info_data);
+    }
+
+    let reader = Reader::new(AnyEncoding.with_catalog(catalog), &full_data[..]);
+    if reader.is_err() {
+        eprintln!("Failed to parse container info Ion");
+        return Ok(());
+    }
+    let mut reader = reader.unwrap();
+
+    println!("=== Container Info (Ion) ===\n");
+
+    for element in reader.elements() {
+        if let Ok(elem) = element
+            && let Some(strukt) = elem.as_struct()
+        {
+            for field in strukt.iter() {
+                let (name, value) = field;
+                let field_name = name.text().unwrap_or("?");
+
+                // Format value based on type
+                let value_str = if let Some(i) = value.as_i64() {
+                    format!("{}", i)
+                } else if let Some(s) = value.as_string() {
+                    format!("\"{}\"", s)
+                } else if let Some(b) = value.as_blob() {
+                    format!("<blob {} bytes>", b.len())
+                } else if value.is_null() {
+                    "null".to_string()
+                } else {
+                    format!("{:?}", value.ion_type())
+                };
+
+                // Pad field name for alignment
+                println!("{:<25} {}", format!("{}:", field_name), value_str);
+            }
+        }
+    }
+
+    Ok(())
 }
