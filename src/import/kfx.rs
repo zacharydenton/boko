@@ -319,123 +319,92 @@ impl KfxImporter {
         if let Some(loc) = loc {
             let elem = self.parse_entity_ion(loc)?;
 
-            if let Some(fields) = elem.as_struct() {
-                // Look for categorised_metadata
-                if let Some(cat_meta) = get_field(fields, sym!(CategorisedMetadata)) {
-                    if let Some(list) = cat_meta.as_list() {
-                        for category_elem in list {
-                            if let Some(cat_fields) = category_elem.as_struct() {
-                                let category = get_field(cat_fields, sym!(Category))
-                                    .and_then(|v| self.get_symbol_text(v))
+            if let Some(fields) = elem.as_struct()
+                && let Some(list) = get_field(fields, sym!(CategorisedMetadata))
+                    .and_then(|m| m.as_list())
+            {
+                for category_elem in list {
+                    if let Some(cat_fields) = category_elem.as_struct() {
+                        let category = get_field(cat_fields, sym!(Category))
+                            .and_then(|v| self.get_symbol_text(v))
+                            .unwrap_or("");
+
+                        if category == "kindle_title_metadata"
+                            && let Some(metadata_list) = get_field(cat_fields, sym!(Metadata))
+                                .and_then(|v| v.as_list())
+                        {
+                            for meta in metadata_list {
+                                let Some(meta_fields) = meta.as_struct() else {
+                                    continue;
+                                };
+                                let key = get_field(meta_fields, sym!(Key))
+                                    .and_then(|v| v.as_string())
+                                    .unwrap_or("");
+                                let value = get_field(meta_fields, sym!(Value))
+                                    .and_then(|v| v.as_string())
                                     .unwrap_or("");
 
-                                if category == "kindle_title_metadata" {
-                                    if let Some(metadata_list) =
-                                        get_field(cat_fields, sym!(Metadata))
-                                            .and_then(|v| v.as_list())
-                                    {
-                                        for meta in metadata_list {
-                                            if let Some(meta_fields) = meta.as_struct() {
-                                                let key = get_field(meta_fields, sym!(Key))
-                                                    .and_then(|v| v.as_string())
-                                                    .unwrap_or("");
-                                                let value = get_field(meta_fields, sym!(Value))
-                                                    .and_then(|v| v.as_string())
-                                                    .unwrap_or("");
-
-                                                match key {
-                                                    "title" => {
-                                                        self.metadata.title = value.to_string()
-                                                    }
-                                                    "author" => self
-                                                        .metadata
-                                                        .authors
-                                                        .push(value.to_string()),
-                                                    "publisher" => {
-                                                        self.metadata.publisher =
-                                                            Some(value.to_string())
-                                                    }
-                                                    "language" => {
-                                                        self.metadata.language = value.to_string()
-                                                    }
-                                                    "description" => {
-                                                        self.metadata.description =
-                                                            Some(value.to_string())
-                                                    }
-                                                    "book_id" => {
-                                                        self.metadata.identifier = value.to_string()
-                                                    }
-                                                    "issue_date" => {
-                                                        self.metadata.date = Some(value.to_string())
-                                                    }
-                                                    "cover_image" => {
-                                                        let value_elem =
-                                                            get_field(meta_fields, sym!(Value));
-                                                        if let Some(cover) =
-                                                            self.resolve_cover_value(value_elem)
-                                                        {
-                                                            self.metadata.cover_image = Some(cover);
-                                                        }
-                                                    }
-                                                    "modified_date" => {
-                                                        self.metadata.modified_date =
-                                                            Some(value.to_string())
-                                                    }
-                                                    "translator" => self
-                                                        .metadata
-                                                        .contributors
-                                                        .push(Contributor {
-                                                            name: value.to_string(),
-                                                            file_as: None,
-                                                            role: Some("trl".to_string()),
-                                                        }),
-                                                    "title_pronunciation" => {
-                                                        self.metadata.title_sort =
-                                                            Some(value.to_string())
-                                                    }
-                                                    "author_pronunciation" => {
-                                                        self.metadata.author_sort =
-                                                            Some(value.to_string())
-                                                    }
-                                                    "series_name" => {
-                                                        if self.metadata.collection.is_none() {
-                                                            self.metadata.collection =
-                                                                Some(CollectionInfo {
-                                                                    name: value.to_string(),
-                                                                    collection_type: Some(
-                                                                        "series".to_string(),
-                                                                    ),
-                                                                    position: None,
-                                                                });
-                                                        } else if let Some(ref mut coll) =
-                                                            self.metadata.collection
-                                                        {
-                                                            coll.name = value.to_string();
-                                                        }
-                                                    }
-                                                    "series_position" => {
-                                                        if let Ok(pos) = value.parse::<f64>() {
-                                                            if let Some(ref mut coll) =
-                                                                self.metadata.collection
-                                                            {
-                                                                coll.position = Some(pos);
-                                                            } else {
-                                                                self.metadata.collection =
-                                                                    Some(CollectionInfo {
-                                                                        name: String::new(),
-                                                                        collection_type: Some(
-                                                                            "series".to_string(),
-                                                                        ),
-                                                                        position: Some(pos),
-                                                                    });
-                                                            }
-                                                        }
-                                                    }
-                                                    _ => {}
-                                                }
+                                match key {
+                                    "title" => self.metadata.title = value.to_string(),
+                                    "author" => self.metadata.authors.push(value.to_string()),
+                                    "publisher" => {
+                                        self.metadata.publisher = Some(value.to_string())
+                                    }
+                                    "language" => self.metadata.language = value.to_string(),
+                                    "description" => {
+                                        self.metadata.description = Some(value.to_string())
+                                    }
+                                    "book_id" => self.metadata.identifier = value.to_string(),
+                                    "issue_date" => {
+                                        self.metadata.date = Some(value.to_string())
+                                    }
+                                    "cover_image" => {
+                                        let value_elem = get_field(meta_fields, sym!(Value));
+                                        if let Some(cover) = self.resolve_cover_value(value_elem) {
+                                            self.metadata.cover_image = Some(cover);
+                                        }
+                                    }
+                                    "modified_date" => {
+                                        self.metadata.modified_date = Some(value.to_string())
+                                    }
+                                    "translator" => {
+                                        self.metadata.contributors.push(Contributor {
+                                            name: value.to_string(),
+                                            file_as: None,
+                                            role: Some("trl".to_string()),
+                                        })
+                                    }
+                                    "title_pronunciation" => {
+                                        self.metadata.title_sort = Some(value.to_string())
+                                    }
+                                    "author_pronunciation" => {
+                                        self.metadata.author_sort = Some(value.to_string())
+                                    }
+                                    "series_name" => {
+                                        if let Some(ref mut coll) = self.metadata.collection {
+                                            coll.name = value.to_string();
+                                        } else {
+                                            self.metadata.collection = Some(CollectionInfo {
+                                                name: value.to_string(),
+                                                collection_type: Some("series".to_string()),
+                                                position: None,
+                                            });
+                                        }
+                                    }
+                                    "series_position" => {
+                                        if let Ok(pos) = value.parse::<f64>() {
+                                            if let Some(ref mut coll) = self.metadata.collection {
+                                                coll.position = Some(pos);
+                                            } else {
+                                                self.metadata.collection = Some(CollectionInfo {
+                                                    name: String::new(),
+                                                    collection_type: Some("series".to_string()),
+                                                    position: Some(pos),
+                                                });
                                             }
                                         }
                                     }
+                                    _ => {}
                                 }
                             }
                         }
@@ -653,41 +622,37 @@ impl KfxImporter {
         // First, build a map of story_name → storyline EntityLoc
         let mut storyline_map: HashMap<String, EntityLoc> = HashMap::new();
         for loc in &self.entities {
-            if loc.type_id == KfxSymbol::Storyline as u32 {
-                if let Ok(elem) = self.parse_entity_ion(*loc) {
-                    if let Some(fields) = elem.as_struct() {
-                        if let Some(name) =
-                            get_field(fields, sym!(StoryName)).and_then(|v| self.get_symbol_text(v))
-                        {
-                            storyline_map.insert(name.to_string(), *loc);
-                        }
-                    }
-                }
+            if loc.type_id == KfxSymbol::Storyline as u32
+                && let Ok(elem) = self.parse_entity_ion(*loc)
+                && let Some(fields) = elem.as_struct()
+                && let Some(name) =
+                    get_field(fields, sym!(StoryName)).and_then(|v| self.get_symbol_text(v))
+            {
+                storyline_map.insert(name.to_string(), *loc);
             }
         }
 
         // Then, map each section to its storyline
         for loc in &self.entities {
-            if loc.type_id == KfxSymbol::Section as u32 {
-                if let Ok(elem) = self.parse_entity_ion(*loc) {
-                    if let Some(fields) = elem.as_struct() {
-                        let section_name = get_field(fields, sym!(SectionName))
-                            .and_then(|v| self.get_symbol_text(v));
+            if loc.type_id == KfxSymbol::Section as u32
+                && let Ok(elem) = self.parse_entity_ion(*loc)
+                && let Some(fields) = elem.as_struct()
+            {
+                let section_name = get_field(fields, sym!(SectionName))
+                    .and_then(|v| self.get_symbol_text(v));
 
-                        let story_name = get_field(fields, sym!(PageTemplates))
-                            .and_then(|v| v.as_list())
-                            .and_then(|templates| templates.first())
-                            .and_then(|t| t.as_struct())
-                            .and_then(|f| get_field(f, sym!(StoryName)))
-                            .and_then(|v| self.get_symbol_text(v));
+                let story_name = get_field(fields, sym!(PageTemplates))
+                    .and_then(|v| v.as_list())
+                    .and_then(|templates| templates.first())
+                    .and_then(|t| t.as_struct())
+                    .and_then(|f| get_field(f, sym!(StoryName)))
+                    .and_then(|v| self.get_symbol_text(v));
 
-                        if let (Some(sec_name), Some(story_name)) = (section_name, story_name) {
-                            if let Some(storyline_loc) = storyline_map.get(story_name) {
-                                self.section_storylines
-                                    .insert(sec_name.to_string(), *storyline_loc);
-                            }
-                        }
-                    }
+                if let (Some(sec_name), Some(story_name)) = (section_name, story_name)
+                    && let Some(storyline_loc) = storyline_map.get(story_name)
+                {
+                    self.section_storylines
+                        .insert(sec_name.to_string(), *storyline_loc);
                 }
             }
         }
@@ -714,33 +679,31 @@ impl KfxImporter {
             .copied();
 
         for loc in [doc_data_loc, metadata_loc].into_iter().flatten() {
-            if let Ok(elem) = self.parse_entity_ion(loc) {
-                if let Some(fields) = elem.as_struct() {
-                    if let Some(orders) =
-                        get_field(fields, sym!(ReadingOrders)).and_then(|v| v.as_list())
+            if let Ok(elem) = self.parse_entity_ion(loc)
+                && let Some(fields) = elem.as_struct()
+                && let Some(orders) =
+                    get_field(fields, sym!(ReadingOrders)).and_then(|v| v.as_list())
+            {
+                // First pass: look for "default" reading order
+                for order in orders {
+                    if let Some(order_fields) = order.as_struct() {
+                        let order_name = get_field(order_fields, sym!(ReadingOrderName))
+                            .and_then(|v| self.get_symbol_text(v));
+
+                        if order_name == Some("default")
+                            && let Some(sections) = self.extract_sections(order_fields)
+                        {
+                            return Ok(sections);
+                        }
+                    }
+                }
+
+                // Second pass: take first reading order with sections
+                for order in orders {
+                    if let Some(order_fields) = order.as_struct()
+                        && let Some(sections) = self.extract_sections(order_fields)
                     {
-                        // First pass: look for "default" reading order
-                        for order in orders {
-                            if let Some(order_fields) = order.as_struct() {
-                                let order_name = get_field(order_fields, sym!(ReadingOrderName))
-                                    .and_then(|v| self.get_symbol_text(v));
-
-                                if order_name == Some("default") {
-                                    if let Some(sections) = self.extract_sections(order_fields) {
-                                        return Ok(sections);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Second pass: take first reading order with sections
-                        for order in orders {
-                            if let Some(order_fields) = order.as_struct() {
-                                if let Some(sections) = self.extract_sections(order_fields) {
-                                    return Ok(sections);
-                                }
-                            }
-                        }
+                        return Ok(sections);
                     }
                 }
             }
@@ -775,13 +738,11 @@ impl KfxImporter {
         }
 
         // Format 2: List containing a symbol or string reference
-        if let Some(list) = value.as_list() {
-            if let Some(first) = list.first() {
-                // Try as symbol first
-                if let Some(text) = self.get_symbol_text(first) {
-                    return Some(text.to_string());
-                }
-            }
+        if let Some(list) = value.as_list()
+            && let Some(first) = list.first()
+            && let Some(text) = self.get_symbol_text(first)
+        {
+            return Some(text.to_string());
         }
 
         None
@@ -810,26 +771,23 @@ impl KfxImporter {
     fn load_content_entity(&self, name: &str) -> Option<Vec<String>> {
         // Find content entity with matching name
         for loc in &self.entities {
-            if loc.type_id == KfxSymbol::Content as u32 {
-                if let Ok(elem) = self.parse_entity_ion(*loc) {
-                    if let Some(fields) = elem.as_struct() {
-                        // Check if name matches
-                        let entity_name =
-                            get_field(fields, sym!(Name)).and_then(|v| self.get_symbol_text(v));
+            if loc.type_id == KfxSymbol::Content as u32
+                && let Ok(elem) = self.parse_entity_ion(*loc)
+                && let Some(fields) = elem.as_struct()
+            {
+                // Check if name matches
+                let entity_name =
+                    get_field(fields, sym!(Name)).and_then(|v| self.get_symbol_text(v));
 
-                        if entity_name == Some(name) {
-                            // Extract content_list
-                            if let Some(list) =
-                                get_field(fields, sym!(ContentList)).and_then(|v| v.as_list())
-                            {
-                                return Some(
-                                    list.iter()
-                                        .filter_map(|v| v.as_string().map(|s| s.to_string()))
-                                        .collect(),
-                                );
-                            }
-                        }
-                    }
+                if entity_name == Some(name)
+                    && let Some(list) =
+                        get_field(fields, sym!(ContentList)).and_then(|v| v.as_list())
+                {
+                    return Some(
+                        list.iter()
+                            .filter_map(|v| v.as_string().map(|s| s.to_string()))
+                            .collect(),
+                    );
                 }
             }
         }
@@ -851,28 +809,29 @@ impl KfxImporter {
             .collect();
 
         for loc in locs {
-            if let Ok(elem) = self.parse_entity_ion(loc) {
-                if let Some(fields) = elem.as_struct() {
-                    // Use location as key (e.g., "resource/rsrc7")
-                    let location = get_field(fields, sym!(Location))
-                        .and_then(|v| v.as_string())
-                        .map(|s| s.to_string());
+            if let Ok(elem) = self.parse_entity_ion(loc)
+                && let Some(fields) = elem.as_struct()
+            {
+                // Use location as key (e.g., "resource/rsrc7")
+                let location = get_field(fields, sym!(Location))
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_string());
 
-                    // Also index by resource_name (e.g., "eF") for cover lookup
-                    let name = get_field(fields, sym!(ResourceName))
-                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
-                        .map(|s| s.to_string());
+                // Also index by resource_name (e.g., "eF") for cover lookup
+                let name = get_field(fields, sym!(ResourceName))
+                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .map(|s| s.to_string());
 
-                    if let Some(loc_str) = &location {
-                        if !loc_str.is_empty() {
-                            self.resources.insert(loc_str.clone(), loc);
-                        }
-                    }
-                    if let Some(name_str) = &name {
-                        if !name_str.is_empty() && Some(name_str) != location.as_ref() {
-                            self.resources.insert(name_str.clone(), loc);
-                        }
-                    }
+                if let Some(loc_str) = &location
+                    && !loc_str.is_empty()
+                {
+                    self.resources.insert(loc_str.clone(), loc);
+                }
+                if let Some(name_str) = &name
+                    && !name_str.is_empty()
+                    && Some(name_str) != location.as_ref()
+                {
+                    self.resources.insert(name_str.clone(), loc);
                 }
             }
         }
@@ -899,22 +858,22 @@ impl KfxImporter {
             .collect();
 
         for loc in locs {
-            if let Ok(elem) = self.parse_entity_ion(loc) {
-                if let Some(fields) = elem.as_struct() {
-                    // Get anchor_name
-                    let anchor_name = get_field(fields, sym!(AnchorName))
-                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
-                        .map(|s| s.to_string());
+            if let Ok(elem) = self.parse_entity_ion(loc)
+                && let Some(fields) = elem.as_struct()
+            {
+                // Get anchor_name
+                let anchor_name = get_field(fields, sym!(AnchorName))
+                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .map(|s| s.to_string());
 
-                    // Get uri (only present for external links)
-                    let uri = get_field(fields, sym!(Uri))
-                        .and_then(|v| v.as_string())
-                        .map(|s| s.to_string());
+                // Get uri (only present for external links)
+                let uri = get_field(fields, sym!(Uri))
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_string());
 
-                    // If we have both anchor_name and uri, add to map
-                    if let (Some(name), Some(uri)) = (anchor_name, uri) {
-                        self.anchors.insert(name, uri);
-                    }
+                // If we have both anchor_name and uri, add to map
+                if let (Some(name), Some(uri)) = (anchor_name, uri) {
+                    self.anchors.insert(name, uri);
                 }
             }
         }
@@ -941,22 +900,22 @@ impl KfxImporter {
             .collect();
 
         for loc in locs {
-            if let Ok(elem) = self.parse_entity_ion(loc) {
-                if let Some(fields) = elem.as_struct() {
-                    // Get style_name
-                    let style_name = get_field(fields, sym!(StyleName))
-                        .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
-                        .map(|s| s.to_string());
+            if let Ok(elem) = self.parse_entity_ion(loc)
+                && let Some(fields) = elem.as_struct()
+            {
+                // Get style_name
+                let style_name = get_field(fields, sym!(StyleName))
+                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .map(|s| s.to_string());
 
-                    if let Some(name) = style_name {
-                        // Store all fields (cloned) for later interpretation
-                        let props: Vec<(u64, IonValue)> = fields
-                            .iter()
-                            .filter(|(k, _)| *k != sym!(StyleName)) // Exclude the name itself
-                            .map(|(k, v)| (*k, v.clone()))
-                            .collect();
-                        self.styles.insert(name, props);
-                    }
+                if let Some(name) = style_name {
+                    // Store all fields (cloned) for later interpretation
+                    let props: Vec<(u64, IonValue)> = fields
+                        .iter()
+                        .filter(|(k, _)| *k != sym!(StyleName)) // Exclude the name itself
+                        .map(|(k, v)| (*k, v.clone()))
+                        .collect();
+                    self.styles.insert(name, props);
                 }
             }
         }

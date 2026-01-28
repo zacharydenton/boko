@@ -34,6 +34,7 @@ const ENTITY_MAGIC: &[u8; 4] = b"ENTY";
 /// - Container info ION
 /// - kfxgen_info JSON
 /// - Entity payloads (after header_len)
+#[allow(clippy::vec_init_then_push)]
 pub fn serialize_container(
     container_id: &str,
     entities: &[SerializedEntity],

@@ -820,10 +820,10 @@ impl Kf8Builder {
         }
 
         // Cover offset - find the index of the cover image in sorted image_hrefs
-        if let Some(ref cover_path) = self.ctx.metadata.cover_image {
-            if let Some(cover_idx) = self.image_hrefs.iter().position(|h| h == cover_path) {
-                records.push((201, (cover_idx as u32).to_be_bytes().to_vec()));
-            }
+        if let Some(ref cover_path) = self.ctx.metadata.cover_image
+            && let Some(cover_idx) = self.image_hrefs.iter().position(|h| h == cover_path)
+        {
+            records.push((201, (cover_idx as u32).to_be_bytes().to_vec()));
         }
 
         // Title
@@ -1004,6 +1004,7 @@ fn flatten_toc(
 
     let mut result: Vec<TempEntry> = Vec::new();
 
+    #[allow(clippy::too_many_arguments)]
     fn flatten_recursive(
         entries: &[TocEntry],
         depth: u32,

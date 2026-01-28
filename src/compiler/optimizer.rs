@@ -343,23 +343,23 @@ fn merge_children(chapter: &mut IRChapter, parent_id: NodeId) {
     while let Some(current_id) = cursor_opt {
         let next_opt = chapter.node(current_id).and_then(|n| n.next_sibling);
 
-        if let Some(next_id) = next_opt {
-            if can_merge_spans(chapter, current_id, next_id) {
-                // Merge: extend current's text range to include next's text
-                let next_len = chapter.node(next_id).map(|n| n.text.len).unwrap_or(0);
-                if let Some(current_node) = chapter.node_mut(current_id) {
-                    current_node.text.len += next_len;
-                }
-
-                // Unlink next: current.next_sibling = next.next_sibling
-                let new_next = chapter.node(next_id).and_then(|n| n.next_sibling);
-                if let Some(current_node) = chapter.node_mut(current_id) {
-                    current_node.next_sibling = new_next;
-                }
-
-                // Don't advance cursor - the new next might also be mergeable
-                continue;
+        if let Some(next_id) = next_opt
+            && can_merge_spans(chapter, current_id, next_id)
+        {
+            // Merge: extend current's text range to include next's text
+            let next_len = chapter.node(next_id).map(|n| n.text.len).unwrap_or(0);
+            if let Some(current_node) = chapter.node_mut(current_id) {
+                current_node.text.len += next_len;
             }
+
+            // Unlink next: current.next_sibling = next.next_sibling
+            let new_next = chapter.node(next_id).and_then(|n| n.next_sibling);
+            if let Some(current_node) = chapter.node_mut(current_id) {
+                current_node.next_sibling = new_next;
+            }
+
+            // Don't advance cursor - the new next might also be mergeable
+            continue;
         }
 
         cursor_opt = next_opt;
@@ -439,12 +439,12 @@ fn fuse_list_children(chapter: &mut IRChapter, parent_id: NodeId) {
     while let Some(current_id) = cursor_opt {
         let next_opt = chapter.node(current_id).and_then(|n| n.next_sibling);
 
-        if let Some(next_id) = next_opt {
-            if can_fuse_lists(chapter, current_id, next_id) {
-                fuse_list_pair(chapter, current_id, next_id);
-                // Don't advance - check if new next is also fuseable
-                continue;
-            }
+        if let Some(next_id) = next_opt
+            && can_fuse_lists(chapter, current_id, next_id)
+        {
+            fuse_list_pair(chapter, current_id, next_id);
+            // Don't advance - check if new next is also fuseable
+            continue;
         }
 
         cursor_opt = next_opt;
@@ -459,11 +459,10 @@ fn can_fuse_lists(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> boo
     };
 
     // Must be same list type
-    match (left.role, right.role) {
-        (Role::OrderedList, Role::OrderedList) => true,
-        (Role::UnorderedList, Role::UnorderedList) => true,
-        _ => false,
-    }
+    matches!(
+        (left.role, right.role),
+        (Role::OrderedList, Role::OrderedList) | (Role::UnorderedList, Role::UnorderedList)
+    )
 }
 
 /// Fuse two adjacent lists by moving children from right to left.
@@ -681,8 +680,8 @@ fn wrap_run(
 
     // Reparent inline nodes to wrapper
     let mut prev_in_wrapper: Option<NodeId> = None;
-    for idx in start_idx..=end_idx {
-        let child_id = children_info[idx].0;
+    for (child_id, _) in &children_info[start_idx..=end_idx] {
+        let child_id = *child_id;
 
         // Set new parent
         if let Some(child) = chapter.node_mut(child_id) {

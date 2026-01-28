@@ -344,7 +344,7 @@ pub fn build_category_entries(
                     }
                     MetadataField::Date => {
                         // KFX expects YYYY-MM-DD format, not full ISO timestamp
-                        field.extract(meta).map(|s| truncate_to_date(s))
+                        field.extract(meta).map(truncate_to_date)
                     }
                     MetadataField::AssetId => {
                         // Asset ID from context (same as container ID)
@@ -376,11 +376,10 @@ pub fn build_category_entries(
     }
 
     // Special case: add version to audit metadata
-    if category == MetadataCategory::KindleAudit {
-        if let Some(v) = ctx.version {
+    if category == MetadataCategory::KindleAudit
+        && let Some(v) = ctx.version {
             entries.push(("creator_version", v.to_string()));
         }
-    }
 
     entries
 }

@@ -118,37 +118,36 @@ pub fn extract_stylesheets(html: &str) -> (Vec<String>, Vec<String>) {
     // Find all link[rel=stylesheet] and style elements
     let mut stack = vec![dom.document()];
     while let Some(id) = stack.pop() {
-        if let Some(node) = dom.get(id) {
-            if let ArenaNodeData::Element { name, attrs, .. } = &node.data {
-                match name.local.as_ref() {
-                    "link" => {
-                        let is_stylesheet = attrs
+        if let Some(node) = dom.get(id)
+            && let ArenaNodeData::Element { name, attrs, .. } = &node.data
+        {
+            match name.local.as_ref() {
+                "link" => {
+                    let is_stylesheet = attrs
+                        .iter()
+                        .any(|a| a.name.local.as_ref() == "rel" && a.value == "stylesheet");
+                    if is_stylesheet
+                        && let Some(href) = attrs
                             .iter()
-                            .any(|a| a.name.local.as_ref() == "rel" && a.value == "stylesheet");
-                        if is_stylesheet {
-                            if let Some(href) = attrs
-                                .iter()
-                                .find(|a| a.name.local.as_ref() == "href")
-                                .map(|a| a.value.clone())
-                            {
-                                linked.push(href);
-                            }
-                        }
+                            .find(|a| a.name.local.as_ref() == "href")
+                            .map(|a| a.value.clone())
+                    {
+                        linked.push(href);
                     }
-                    "style" => {
-                        // Collect text content
-                        let mut text = String::new();
-                        for child in dom.children(id) {
-                            if let Some(t) = dom.text_content(child) {
-                                text.push_str(t);
-                            }
-                        }
-                        if !text.trim().is_empty() {
-                            inline.push(text);
-                        }
-                    }
-                    _ => {}
                 }
+                "style" => {
+                    // Collect text content
+                    let mut text = String::new();
+                    for child in dom.children(id) {
+                        if let Some(t) = dom.text_content(child) {
+                            text.push_str(t);
+                        }
+                    }
+                    if !text.trim().is_empty() {
+                        inline.push(text);
+                    }
+                }
+                _ => {}
             }
         }
 

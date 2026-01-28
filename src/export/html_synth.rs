@@ -98,9 +98,9 @@ pub fn synthesize_xhtml_document(
     doc.push_str("</title>\n");
 
     if let Some(href) = stylesheet_href {
-        write!(
+        writeln!(
             doc,
-            "  <link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>\n",
+            "  <link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>",
             escape_xml(href)
         )
         .unwrap();
@@ -187,11 +187,10 @@ fn walk_node(id: NodeId, ctx: &mut SynthesisContext) {
         write!(attrs, " xml:lang=\"{}\"", escape_xml(lang)).unwrap();
     }
     // Emit start attribute for ordered lists
-    if role == Role::OrderedList {
-        if let Some(start) = ctx.ir.semantics.list_start(id) {
+    if role == Role::OrderedList
+        && let Some(start) = ctx.ir.semantics.list_start(id) {
             write!(attrs, " start=\"{}\"", start).unwrap();
         }
-    }
     // Emit rowspan/colspan for table cells
     if role == Role::TableCell {
         if let Some(rowspan) = ctx.ir.semantics.row_span(id) {
@@ -314,6 +313,7 @@ pub fn escape_xml(s: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::ir::{ComputedStyle, FontWeight, Node};

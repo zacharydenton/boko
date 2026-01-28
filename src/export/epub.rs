@@ -231,8 +231,7 @@ impl EpubExporter {
         }
 
         // Add assets to manifest (from normalized content)
-        let mut asset_idx = 0;
-        for asset_path in &content.assets {
+        for (asset_idx, asset_path) in content.assets.iter().enumerate() {
             let media_type = guess_media_type(asset_path);
             let id = format!("asset_{}", asset_idx);
             let href = format!("OEBPS/{}", sanitize_path(asset_path));
@@ -242,7 +241,6 @@ impl EpubExporter {
                 href,
                 media_type,
             });
-            asset_idx += 1;
         }
 
         // 4. Write content.opf
@@ -352,14 +350,12 @@ fn generate_opf(
             escape_xml(author)
         ));
         // Add file-as for first author if available
-        if i == 0 {
-            if let Some(ref author_sort) = metadata.author_sort {
-                opf.push_str(&format!(
-                    "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
-                    creator_id,
-                    escape_xml(author_sort)
-                ));
-            }
+        if i == 0 && let Some(ref author_sort) = metadata.author_sort {
+            opf.push_str(&format!(
+                "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
+                creator_id,
+                escape_xml(author_sort)
+            ));
         }
     }
 

@@ -361,15 +361,14 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 2j. Resource fragments (images, fonts, etc.)
     // Each resource gets two entities: external_resource (metadata) + bcRawMedia (bytes)
     for asset_path in &asset_paths {
-        if is_media_asset(asset_path) {
-            if let Ok(data) = book.load_asset(asset_path) {
+        if is_media_asset(asset_path)
+            && let Ok(data) = book.load_asset(asset_path) {
                 let href = asset_path.to_string_lossy().to_string();
                 // external_resource ($164) - metadata about the resource
                 fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
                 // bcRawMedia ($417) - the actual bytes
                 fragments.push(build_resource_fragment(&href, &data, &mut ctx));
             }
-        }
     }
 
     // 2k. Navigation maps for reader functionality
@@ -1296,7 +1295,7 @@ fn build_cover_storyline(chapter: &IRChapter, ctx: &mut ExportContext) -> IonVal
                 let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
 
                 // Generate unique container ID
-                let container_id = ctx.fragment_ids.next();
+                let container_id = ctx.fragment_ids.next_id();
 
                 // Build the image struct directly (no container wrapper)
                 let image_struct = IonValue::Struct(vec![
@@ -1932,36 +1931,21 @@ fn resolve_landmarks_from_ir(
                 // Then use position_map to get the exact position
                 let full_href = format!("{}#{}", href_path, anchor_id);
                 if let Some(&(_, node_id)) = ctx.anchor_map.get(&full_href) {
-                    if let Some(pos) = ctx.position_map.get(&(cid, node_id)) {
-                        // Kindle expects offset: 0 for all navigation entries
-                        Some(LandmarkTarget {
+                    ctx.position_map.get(&(cid, node_id)).map(|pos| LandmarkTarget {
                             fragment_id: pos.fragment_id,
                             offset: 0,
                             label: landmark.label.clone(),
                         })
-                    } else {
-                        None
-                    }
-                } else if let Some(frag_id) = ctx.chapter_fragments.get(&cid).copied() {
-                    // Fall back to chapter start if anchor not found
-                    Some(LandmarkTarget {
+                } else { ctx.chapter_fragments.get(&cid).copied().map(|frag_id| LandmarkTarget {
                         fragment_id: frag_id,
                         offset: 0,
                         label: landmark.label.clone(),
-                    })
-                } else {
-                    None
-                }
-            } else if let Some(frag_id) = ctx.chapter_fragments.get(&cid).copied() {
-                // No anchor, use chapter start
-                Some(LandmarkTarget {
+                    }) }
+            } else { ctx.chapter_fragments.get(&cid).copied().map(|frag_id| LandmarkTarget {
                     fragment_id: frag_id,
                     offset: 0,
                     label: landmark.label.clone(),
-                })
-            } else {
-                None
-            };
+                }) };
 
             if let Some(target) = target {
                 // Only add if not already present (first wins)
@@ -2496,8 +2480,8 @@ mod tests {
         assert_eq!(entries.len(), 1);
 
         // Verify target_position has correct id and offset
-        if let IonValue::Annotated(_, inner) = &entries[0] {
-            if let IonValue::Struct(fields) = inner.as_ref() {
+        if let IonValue::Annotated(_, inner) = &entries[0]
+            && let IonValue::Struct(fields) = inner.as_ref() {
                 let target = fields
                     .iter()
                     .find(|(id, _)| *id == KfxSymbol::TargetPosition as u64);
@@ -2522,7 +2506,6 @@ mod tests {
                     }
                 }
             }
-        }
     }
 
     #[test]
@@ -2596,6 +2579,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::vec_init_then_push, clippy::needless_range_loop)]
 mod entity_structure_tests {
     use super::*;
     use crate::book::Book;

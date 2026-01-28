@@ -237,8 +237,8 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
 /// Extract a title from the first heading in a chapter.
 fn extract_chapter_title(ir: &IRChapter) -> Option<String> {
     for node_id in ir.iter_dfs() {
-        if let Some(node) = ir.node(node_id) {
-            if matches!(node.role, Role::Heading(_)) {
+        if let Some(node) = ir.node(node_id)
+            && matches!(node.role, Role::Heading(_)) {
                 // Collect text from heading's children
                 let mut title = String::new();
                 collect_text_recursive(ir, node_id, &mut title);
@@ -246,18 +246,16 @@ fn extract_chapter_title(ir: &IRChapter) -> Option<String> {
                     return Some(title.trim().to_string());
                 }
             }
-        }
     }
     None
 }
 
 /// Recursively collect text content from a node and its descendants.
 fn collect_text_recursive(ir: &IRChapter, node_id: NodeId, buf: &mut String) {
-    if let Some(node) = ir.node(node_id) {
-        if node.role == Role::Text {
+    if let Some(node) = ir.node(node_id)
+        && node.role == Role::Text {
             buf.push_str(ir.text(node.text));
         }
-    }
 
     for child_id in ir.children(node_id) {
         collect_text_recursive(ir, child_id, buf);
@@ -265,6 +263,7 @@ fn collect_text_recursive(ir: &IRChapter, node_id: NodeId, buf: &mut String) {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::ir::{ComputedStyle, FontWeight, Node};

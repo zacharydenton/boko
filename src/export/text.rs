@@ -269,12 +269,12 @@ impl<W: Write> ExportContext<'_, W> {
         if self.format != TextFormat::Markdown {
             return false;
         }
-        match (self.last_block_role, current_role) {
-            (Some(Role::OrderedList), Role::OrderedList) => true,
-            (Some(Role::UnorderedList), Role::UnorderedList) => true,
-            (Some(Role::DefinitionList), Role::DefinitionList) => true,
-            _ => false,
-        }
+        matches!(
+            (self.last_block_role, current_role),
+            (Some(Role::OrderedList), Role::OrderedList)
+                | (Some(Role::UnorderedList), Role::UnorderedList)
+                | (Some(Role::DefinitionList), Role::DefinitionList)
+        )
     }
 
     /// Write a list separator comment (for adjacent lists).
@@ -630,7 +630,7 @@ impl<W: Write> ExportContext<'_, W> {
                     self.ensure_line_started()?;
                     let content = self.collect_text(id);
                     let tick_count = calculate_inline_code_ticks(&content);
-                    let ticks: String = std::iter::repeat('`').take(tick_count).collect();
+                    let ticks: String = std::iter::repeat_n('`', tick_count).collect();
 
                     // Add space if content starts/ends with backtick
                     let spacer = if content.starts_with('`') || content.ends_with('`') {
@@ -721,7 +721,7 @@ impl<W: Write> ExportContext<'_, W> {
                     let lang = self.ir.semantics.language(id).unwrap_or("");
                     // Calculate fence length based on content
                     let fence_len = calculate_fence_length(&text, '`');
-                    let fence: String = std::iter::repeat('`').take(fence_len).collect();
+                    let fence: String = std::iter::repeat_n('`', fence_len).collect();
                     writeln!(self.writer, "{}{}", fence, lang)?;
                     self.at_line_start = true;
 
@@ -1006,6 +1006,7 @@ fn escape_markdown(text: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::ir::{IRChapter, Node};

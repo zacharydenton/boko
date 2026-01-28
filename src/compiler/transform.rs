@@ -168,12 +168,12 @@ impl<'a> TransformContext<'a> {
 
         // Get language from html element (if present) to propagate to all content
         let html_lang = self.dom.find_by_tag("html").and_then(|html_id| {
-            if let Some(node) = self.dom.get(html_id) {
-                if let ArenaNodeData::Element { attrs, .. } = &node.data {
-                    for attr in attrs {
-                        if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
-                            return Some(attr.value.clone());
-                        }
+            if let Some(node) = self.dom.get(html_id)
+                && let ArenaNodeData::Element { attrs, .. } = &node.data
+            {
+                for attr in attrs {
+                    if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
+                        return Some(attr.value.clone());
                     }
                 }
             }
@@ -187,10 +187,10 @@ impl<'a> TransformContext<'a> {
         };
 
         // Add html lang to body style if present (so it's inherited by all content)
-        if let Some(lang) = html_lang {
-            if body_style.language.is_none() {
-                body_style.language = Some(lang);
-            }
+        if let Some(lang) = html_lang
+            && body_style.language.is_none()
+        {
+            body_style.language = Some(lang);
         }
 
         // Process body's children as children of IR root, inheriting body's style

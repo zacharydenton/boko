@@ -28,6 +28,7 @@ pub struct ImportContext<'a> {
 
 /// Context provided during export transformation.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct ExportContext<'a> {
     /// Spine map for resolving chapter references to positions.
     pub spine_map: Option<&'a std::collections::HashMap<String, u32>>,
@@ -35,14 +36,6 @@ pub struct ExportContext<'a> {
     pub resource_registry: Option<&'a ResourceRegistry>,
 }
 
-impl<'a> Default for ExportContext<'a> {
-    fn default() -> Self {
-        Self {
-            spine_map: None,
-            resource_registry: None,
-        }
-    }
-}
 
 /// Result of parsing an attribute value.
 #[derive(Clone, Debug, PartialEq)]
@@ -181,11 +174,10 @@ impl AttributeTransform for KfxLinkTransform {
 /// If an anchor map is provided, anchor names are resolved to external URIs.
 fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkData {
     // Check for Kindle position format: kindle:pos:fid:XXXX:off:YYYYYYYY
-    if raw.starts_with("kindle:pos:fid:") {
-        if let Some(link) = parse_kindle_position(raw) {
+    if raw.starts_with("kindle:pos:fid:")
+        && let Some(link) = parse_kindle_position(raw) {
             return link;
         }
-    }
 
     // Check for external URLs (already resolved)
     if raw.starts_with("http://")
@@ -197,11 +189,10 @@ fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkD
     }
 
     // Check anchor map for external URI resolution
-    if let Some(anchor_map) = anchors {
-        if let Some(uri) = anchor_map.get(raw) {
+    if let Some(anchor_map) = anchors
+        && let Some(uri) = anchor_map.get(raw) {
             return LinkData::External(uri.clone());
         }
-    }
 
     // Default: treat as internal anchor reference
     LinkData::Internal(raw.to_string())
@@ -306,11 +297,10 @@ impl AttributeTransform for ResourceTransform {
         match data {
             ParsedAttribute::String(s) => {
                 // Look up the short resource name if we have a registry
-                if let Some(registry) = context.resource_registry {
-                    if let Some(short_name) = registry.get_name(s) {
+                if let Some(registry) = context.resource_registry
+                    && let Some(short_name) = registry.get_name(s) {
                         return short_name.to_string();
                     }
-                }
                 // Fallback: return as-is (shouldn't happen in normal export)
                 s.clone()
             }

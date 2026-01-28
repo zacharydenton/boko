@@ -144,19 +144,19 @@ impl TreeSink for ArenaSink {
     ) {
         // If element has parent, append there; otherwise use prev_element
         let parent = self.dom.borrow().get(element.0).map(|n| n.parent);
-        if let Some(parent) = parent {
-            if parent.is_some() {
-                let mut dom = self.dom.borrow_mut();
-                match child {
-                    NodeOrText::AppendNode(node) => {
-                        dom.append(parent, node.0);
-                    }
-                    NodeOrText::AppendText(text) => {
-                        dom.append_text(parent, &text);
-                    }
+        if let Some(parent) = parent
+            && parent.is_some()
+        {
+            let mut dom = self.dom.borrow_mut();
+            match child {
+                NodeOrText::AppendNode(node) => {
+                    dom.append(parent, node.0);
                 }
-                return;
+                NodeOrText::AppendText(text) => {
+                    dom.append_text(parent, &text);
+                }
             }
+            return;
         }
         self.append(prev_element, child);
     }
@@ -206,18 +206,17 @@ impl TreeSink for ArenaSink {
 
     fn add_attrs_if_missing(&self, target: &Self::Handle, attrs: Vec<Html5Attribute>) {
         let mut dom = self.dom.borrow_mut();
-        if let Some(node) = dom.get_mut(target.0) {
-            if let ArenaNodeData::Element {
+        if let Some(node) = dom.get_mut(target.0)
+            && let ArenaNodeData::Element {
                 attrs: existing, ..
             } = &mut node.data
-            {
-                for attr in attrs {
-                    if !existing.iter().any(|a| a.name == attr.name) {
-                        existing.push(Attribute {
-                            name: attr.name,
-                            value: attr.value.to_string(),
-                        });
-                    }
+        {
+            for attr in attrs {
+                if !existing.iter().any(|a| a.name == attr.name) {
+                    existing.push(Attribute {
+                        name: attr.name,
+                        value: attr.value.to_string(),
+                    });
                 }
             }
         }

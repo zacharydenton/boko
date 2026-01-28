@@ -874,6 +874,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_writer_roundtrip_float() {
         let mut writer = IonWriter::new();
         writer.write_bvm();

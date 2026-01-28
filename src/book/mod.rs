@@ -363,7 +363,7 @@ impl Book {
             let cache = self
                 .ir_cache
                 .read()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned"))?;
+                .map_err(|_| io::Error::other("IR cache lock poisoned"))?;
             if let Some(chapter) = cache.get(&id) {
                 return Ok(Arc::clone(chapter));
             }
@@ -378,7 +378,7 @@ impl Book {
             let mut cache = self
                 .ir_cache
                 .write()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned"))?;
+                .map_err(|_| io::Error::other("IR cache lock poisoned"))?;
             cache.insert(id, Arc::clone(&chapter_arc));
         }
 

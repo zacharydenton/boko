@@ -123,13 +123,17 @@ mod tests {
         let mut pool = StylePool::new();
 
         // Create a bold style
-        let mut bold_style = ComputedStyle::default();
-        bold_style.font_weight = FontWeight::BOLD;
+        let bold_style = ComputedStyle {
+            font_weight: FontWeight::BOLD,
+            ..Default::default()
+        };
         let bold_id = pool.intern(bold_style);
 
         // Create a centered style
-        let mut center_style = ComputedStyle::default();
-        center_style.text_align = TextAlign::Center;
+        let center_style = ComputedStyle {
+            text_align: TextAlign::Center,
+            ..Default::default()
+        };
         let center_id = pool.intern(center_style);
 
         let artifact = generate_css(&pool, &[bold_id, center_id]);
@@ -149,8 +153,10 @@ mod tests {
     fn test_generate_css_color() {
         let mut pool = StylePool::new();
 
-        let mut style = ComputedStyle::default();
-        style.color = Some(Color::rgb(255, 0, 0));
+        let style = ComputedStyle {
+            color: Some(Color::rgb(255, 0, 0)),
+            ..Default::default()
+        };
         let id = pool.intern(style);
 
         let artifact = generate_css(&pool, &[id]);
@@ -162,8 +168,10 @@ mod tests {
     fn test_generate_css_deduplicates() {
         let mut pool = StylePool::new();
 
-        let mut style = ComputedStyle::default();
-        style.font_weight = FontWeight::BOLD;
+        let style = ComputedStyle {
+            font_weight: FontWeight::BOLD,
+            ..Default::default()
+        };
         let id = pool.intern(style);
 
         // Use the same style multiple times
@@ -178,8 +186,10 @@ mod tests {
     fn test_generate_css_all() {
         let mut pool = StylePool::new();
 
-        let mut style = ComputedStyle::default();
-        style.font_weight = FontWeight::BOLD;
+        let style = ComputedStyle {
+            font_weight: FontWeight::BOLD,
+            ..Default::default()
+        };
         pool.intern(style);
 
         let artifact = generate_css_all(&pool);

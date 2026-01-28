@@ -417,10 +417,10 @@ impl<'a> selectors::Element for ElementRef<'a> {
     fn is_root(&self) -> bool {
         // Root is the html element (child of document)
         let parent = self.dom.get(self.id).map(|n| n.parent);
-        if let Some(parent) = parent {
-            if let Some(parent_node) = self.dom.get(parent) {
-                return matches!(parent_node.data, ArenaNodeData::Document);
-            }
+        if let Some(parent) = parent
+            && let Some(parent_node) = self.dom.get(parent)
+        {
+            return matches!(parent_node.data, ArenaNodeData::Document);
         }
         false
     }

@@ -58,11 +58,8 @@ impl Default for IRChapter {
 impl IRChapter {
     /// Create a new empty chapter with a root node.
     pub fn new() -> Self {
-        let mut nodes = Vec::new();
-        nodes.push(Node::new(Role::Root));
-
         Self {
-            nodes,
+            nodes: vec![Node::new(Role::Root)],
             styles: StylePool::new(),
             semantics: SemanticMap::new(),
             text: String::new(),

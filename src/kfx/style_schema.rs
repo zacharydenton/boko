@@ -1366,7 +1366,7 @@ fn parse_rgb_function(s: &str) -> Option<(u8, u8, u8)> {
 
     // Split by comma or space
     let parts: Vec<&str> = content
-        .split(|c| c == ',' || c == ' ')
+        .split([',', ' '])
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1847,29 +1847,26 @@ impl ValueTransform {
                 // Reverse map lookup: find CSS value for KFX value
                 if let Some(sym_id) = value.as_symbol() {
                     for (css_val, kfx_val) in mappings {
-                        if let KfxValue::Symbol(kfx_sym) = kfx_val {
-                            if *kfx_sym as u64 == sym_id {
+                        if let KfxValue::Symbol(kfx_sym) = kfx_val
+                            && *kfx_sym as u64 == sym_id {
                                 return Some(css_val.clone());
                             }
-                        }
                     }
                 }
                 if let Some(i) = value.as_int() {
                     for (css_val, kfx_val) in mappings {
-                        if let KfxValue::Integer(kfx_int) = kfx_val {
-                            if *kfx_int == i {
+                        if let KfxValue::Integer(kfx_int) = kfx_val
+                            && *kfx_int == i {
                                 return Some(css_val.clone());
                             }
-                        }
                     }
                 }
                 if let Some(b) = value.as_bool() {
                     for (css_val, kfx_val) in mappings {
-                        if let KfxValue::Bool(kfx_bool) = kfx_val {
-                            if *kfx_bool == b {
+                        if let KfxValue::Bool(kfx_bool) = kfx_val
+                            && *kfx_bool == b {
                                 return Some(css_val.clone());
                             }
-                        }
                     }
                 }
                 None
@@ -2319,6 +2316,7 @@ pub fn import_kfx_style(
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -2665,7 +2663,7 @@ mod tests {
 
     #[test]
     fn test_shorthand_out_of_bounds_uses_default() {
-        let parts = vec!["10px", "20px"];
+        let _parts = ["10px", "20px"];
         let default = Some(KfxValue::String("0px".to_string()));
 
         // Index 4 is out of bounds for 2 values, but our logic handles it

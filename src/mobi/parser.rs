@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_detect_format_kf8() {
-        let mut header = MobiHeader::parse(&vec![0u8; 0x6C]).unwrap();
+        let mut header = MobiHeader::parse(&[0u8; 0x6C]).unwrap();
         header.mobi_version = 8;
 
         let format = detect_format(&header, None);
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_detect_format_combo() {
-        let header = MobiHeader::parse(&vec![0u8; 32]).unwrap();
+        let header = MobiHeader::parse(&[0u8; 32]).unwrap();
         let exth = ExthHeader {
             kf8_boundary: Some(100),
             ..Default::default()
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_detect_format_mobi6() {
-        let header = MobiHeader::parse(&vec![0u8; 32]).unwrap();
+        let header = MobiHeader::parse(&[0u8; 32]).unwrap();
 
         let format = detect_format(&header, None);
         assert!(matches!(format, MobiFormat::Mobi6));

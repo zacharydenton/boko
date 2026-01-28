@@ -16,8 +16,10 @@ fn test_global_style_pool_merge_deduplicates() {
 
     // Create two chapters with identical bold styles
     let mut chapter1 = IRChapter::new();
-    let mut bold = ComputedStyle::default();
-    bold.font_weight = FontWeight::BOLD;
+    let bold = ComputedStyle {
+        font_weight: FontWeight::BOLD,
+        ..Default::default()
+    };
     let bold_id1 = chapter1.styles.intern(bold.clone());
 
     let mut chapter2 = IRChapter::new();
@@ -41,13 +43,17 @@ fn test_global_style_pool_different_styles_get_different_ids() {
     let mut global = GlobalStylePool::new();
 
     let mut chapter1 = IRChapter::new();
-    let mut bold = ComputedStyle::default();
-    bold.font_weight = FontWeight::BOLD;
+    let bold = ComputedStyle {
+        font_weight: FontWeight::BOLD,
+        ..Default::default()
+    };
     let bold_id = chapter1.styles.intern(bold);
 
     let mut chapter2 = IRChapter::new();
-    let mut italic = ComputedStyle::default();
-    italic.font_style = boko::ir::FontStyle::Italic;
+    let italic = ComputedStyle {
+        font_style: boko::ir::FontStyle::Italic,
+        ..Default::default()
+    };
     let italic_id = chapter2.styles.intern(italic);
 
     global.merge(0, &chapter1);
@@ -77,8 +83,10 @@ fn test_global_style_pool_used_styles() {
     let mut global = GlobalStylePool::new();
 
     let mut chapter = IRChapter::new();
-    let mut bold = ComputedStyle::default();
-    bold.font_weight = FontWeight::BOLD;
+    let bold = ComputedStyle {
+        font_weight: FontWeight::BOLD,
+        ..Default::default()
+    };
     chapter.styles.intern(bold);
 
     global.merge(0, &chapter);

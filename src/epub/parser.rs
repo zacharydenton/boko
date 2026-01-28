@@ -545,9 +545,9 @@ fn apply_refinements(
             // Check if this is a refinement for a collection that wasn't tracked
             // by belongs-to-collection (some EPUBs use meta property="belongs-to-collection"
             // with an id, then refine that)
-            if let Some(ref coll_id) = collection_id {
-                if &refinement.refines == coll_id {
-                    if let Some(ref mut coll) = metadata.collection {
+            if let Some(ref coll_id) = collection_id
+                && &refinement.refines == coll_id
+                    && let Some(ref mut coll) = metadata.collection {
                         match prop_local {
                             "collection-type" => {
                                 coll.collection_type = Some(refinement.value.clone());
@@ -558,8 +558,6 @@ fn apply_refinements(
                             _ => {}
                         }
                     }
-                }
-            }
         }
     }
 }
@@ -765,15 +763,13 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                         // Create landmark if we have the required data
                         if let (Some(href), Some(epub_type)) =
                             (current_href.take(), current_epub_type.take())
-                        {
-                            if let Some(landmark_type) = epub_type_to_landmark(&epub_type) {
+                            && let Some(landmark_type) = epub_type_to_landmark(&epub_type) {
                                 landmarks.push(Landmark {
                                     landmark_type,
                                     href,
                                     label: current_label.clone(),
                                 });
                             }
-                        }
                         current_label.clear();
                     }
                     _ => {}

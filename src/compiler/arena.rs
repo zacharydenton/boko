@@ -209,10 +209,10 @@ impl ArenaDom {
         }
 
         // Update old last child's next sibling
-        if last_child.is_some() {
-            if let Some(last_node) = self.get_mut(last_child) {
-                last_node.next_sibling = child;
-            }
+        if last_child.is_some()
+            && let Some(last_node) = self.get_mut(last_child)
+        {
+            last_node.next_sibling = child;
         }
 
         // Update parent
@@ -265,11 +265,11 @@ impl ArenaDom {
             .unwrap_or(ArenaNodeId::NONE);
 
         // Try to append to existing text node
-        if let Some(last) = self.get_mut(last_child) {
-            if let ArenaNodeData::Text(ref mut existing) = last.data {
-                existing.push_str(text);
-                return;
-            }
+        if let Some(last) = self.get_mut(last_child)
+            && let ArenaNodeData::Text(ref mut existing) = last.data
+        {
+            existing.push_str(text);
+            return;
         }
 
         // Create new text node

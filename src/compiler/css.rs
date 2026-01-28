@@ -288,8 +288,9 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         let property = name.to_string();
 
         // Handle margin/padding shorthand expansion
-        if property == "margin" || property == "padding" {
-            if let Some((top, right, bottom, left)) = parse_box_shorthand(input) {
+        if (property == "margin" || property == "padding")
+            && let Some((top, right, bottom, left)) = parse_box_shorthand(input)
+        {
                 let important = input.try_parse(cssparser::parse_important).is_ok();
                 let prefix = &property;
                 self.declarations.push(Declaration {
@@ -313,7 +314,6 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
                     important,
                 });
                 return Ok(());
-            }
         }
 
         let value = parse_property_value(&property, input);
@@ -467,17 +467,17 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     }
 
     // Try ID token (which is how cssparser parses hex colors like #ff0000)
-    if let Ok(Token::IDHash(hash)) = input.try_parse(|i| i.next().cloned()) {
-        if let Some(color) = parse_hex_color(hash.as_ref()) {
-            return Some(PropertyValue::Color(color));
-        }
+    if let Ok(Token::IDHash(hash)) = input.try_parse(|i| i.next().cloned())
+        && let Some(color) = parse_hex_color(hash.as_ref())
+    {
+        return Some(PropertyValue::Color(color));
     }
 
     // Try hash token
-    if let Ok(Token::Hash(hash)) = input.try_parse(|i| i.next().cloned()) {
-        if let Some(color) = parse_hex_color(hash.as_ref()) {
-            return Some(PropertyValue::Color(color));
-        }
+    if let Ok(Token::Hash(hash)) = input.try_parse(|i| i.next().cloned())
+        && let Some(color) = parse_hex_color(hash.as_ref())
+    {
+        return Some(PropertyValue::Color(color));
     }
 
     // Try rgb() or rgba()
@@ -975,40 +975,36 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
 /// Non-inherited properties (width, height, margin, padding, display, etc.)
 /// are NOT copied from the parent.
 fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
-    let mut style = ComputedStyle::default();
-
-    // Font properties (inherited)
-    style.font_size = parent.font_size;
-    style.font_weight = parent.font_weight;
-    style.font_style = parent.font_style;
-    style.font_variant = parent.font_variant;
-
-    // Text properties (inherited)
-    style.color = parent.color;
-    style.text_align = parent.text_align;
-    style.text_indent = parent.text_indent;
-    style.line_height = parent.line_height;
-    style.letter_spacing = parent.letter_spacing;
-    style.word_spacing = parent.word_spacing;
-    style.text_transform = parent.text_transform;
-    style.hyphens = parent.hyphens;
-
-    // Text decoration (inherited in some contexts)
-    style.text_decoration_underline = parent.text_decoration_underline;
-    style.text_decoration_line_through = parent.text_decoration_line_through;
-    style.underline_style = parent.underline_style;
-    style.underline_color = parent.underline_color;
-    style.overline = parent.overline;
-
-    // List properties (inherited)
-    style.list_style_type = parent.list_style_type;
-    style.list_style_position = parent.list_style_position;
-
-    // Other inherited properties
-    style.visibility = parent.visibility;
-    style.language = parent.language.clone();
-
-    style
+    ComputedStyle {
+        // Font properties (inherited)
+        font_size: parent.font_size,
+        font_weight: parent.font_weight,
+        font_style: parent.font_style,
+        font_variant: parent.font_variant,
+        // Text properties (inherited)
+        color: parent.color,
+        text_align: parent.text_align,
+        text_indent: parent.text_indent,
+        line_height: parent.line_height,
+        letter_spacing: parent.letter_spacing,
+        word_spacing: parent.word_spacing,
+        text_transform: parent.text_transform,
+        hyphens: parent.hyphens,
+        // Text decoration (inherited in some contexts)
+        text_decoration_underline: parent.text_decoration_underline,
+        text_decoration_line_through: parent.text_decoration_line_through,
+        underline_style: parent.underline_style,
+        underline_color: parent.underline_color,
+        overline: parent.overline,
+        // List properties (inherited)
+        list_style_type: parent.list_style_type,
+        list_style_position: parent.list_style_position,
+        // Other inherited properties
+        visibility: parent.visibility,
+        language: parent.language.clone(),
+        // Non-inherited properties use defaults
+        ..ComputedStyle::default()
+    }
 }
 
 /// Compute styles for an element by applying the cascade.
@@ -1436,6 +1432,7 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

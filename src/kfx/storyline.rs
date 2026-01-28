@@ -118,10 +118,10 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
 
     // Check for semantic type annotation (yj.semantics.type) which uses local symbols.
     // The schema's StructureWithSemanticType strategies define what values map to what roles.
-    if let Some(semantic_type) = get_semantic_type_annotation(fields, ctx.doc_symbols) {
-        if let Some(mapped_role) = schema().role_for_semantic_type(&semantic_type) {
-            role = mapped_role;
-        }
+    if let Some(semantic_type) = get_semantic_type_annotation(fields, ctx.doc_symbols)
+        && let Some(mapped_role) = schema().role_for_semantic_type(&semantic_type)
+    {
+        role = mapped_role;
     }
 
     // Get element ID
@@ -168,10 +168,10 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     }));
 
     // Recurse into children
-    if has_children {
-        if let Some(children) = get_field(fields, sym!(ContentList)) {
-            tokenize_content_list(children, ctx, stream);
-        }
+    if has_children
+        && let Some(children) = get_field(fields, sym!(ContentList))
+    {
+        tokenize_content_list(children, ctx, stream);
     }
 
     // Emit EndElement token
@@ -249,10 +249,10 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
             let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u64).is_some();
 
             // Use schema to determine role
-            let role = schema().resolve_span_role(&has_field);
+            let role = schema().resolve_span_role(has_field);
 
             // Extract ALL semantic attributes using schema rules (GENERIC!)
-            let semantics = extract_all_span_attrs(fields, &has_field, ctx);
+            let semantics = extract_all_span_attrs(fields, has_field, ctx);
 
             Some(SpanStart {
                 role,
@@ -336,15 +336,14 @@ where
                 chapter.append_child(parent, node_id);
 
                 // Apply style from the styles map (if present)
-                if let Some(style_name) = &elem.style_name {
-                    if let Some(styles_map) = styles {
-                        if let Some(kfx_props) = styles_map.get(style_name) {
-                            let ir_style = kfx_style_to_ir(kfx_props);
-                            let style_id = chapter.styles.intern(ir_style);
-                            if let Some(node) = chapter.node_mut(node_id) {
-                                node.style = style_id;
-                            }
-                        }
+                if let Some(style_name) = &elem.style_name
+                    && let Some(styles_map) = styles
+                    && let Some(kfx_props) = styles_map.get(style_name)
+                {
+                    let ir_style = kfx_style_to_ir(kfx_props);
+                    let style_id = chapter.styles.intern(ir_style);
+                    if let Some(node) = chapter.node_mut(node_id) {
+                        node.style = style_id;
                     }
                 }
 
@@ -352,17 +351,17 @@ where
                 apply_semantics_to_node(&mut chapter, node_id, &elem.semantics);
 
                 // Handle text content with style events
-                if let Some(ref content_ref) = elem.content_ref {
-                    if let Some(text) = content_lookup(&content_ref.name, content_ref.index) {
-                        if elem.style_events.is_empty() {
-                            // Simple case: no inline styles
-                            let range = chapter.append_text(&text);
-                            let text_node = chapter.alloc_node(Node::text(range));
-                            chapter.append_child(node_id, text_node);
-                        } else {
-                            // Complex case: apply style events as spans
-                            build_text_with_spans(&mut chapter, node_id, &text, &elem.style_events);
-                        }
+                if let Some(ref content_ref) = elem.content_ref
+                    && let Some(text) = content_lookup(&content_ref.name, content_ref.index)
+                {
+                    if elem.style_events.is_empty() {
+                        // Simple case: no inline styles
+                        let range = chapter.append_text(&text);
+                        let text_node = chapter.alloc_node(Node::text(range));
+                        chapter.append_child(node_id, text_node);
+                    } else {
+                        // Complex case: apply style events as spans
+                        build_text_with_spans(&mut chapter, node_id, &text, &elem.style_events);
                     }
                 }
 
@@ -561,7 +560,7 @@ pub fn ir_to_tokens(chapter: &IRChapter, ctx: &mut ExportContext) -> TokenStream
     let sch = schema();
     let mut stream = TokenStream::new();
 
-    walk_node_for_export(chapter, chapter.root(), &sch, ctx, &mut stream);
+    walk_node_for_export(chapter, chapter.root(), sch, ctx, &mut stream);
     stream
 }
 
@@ -787,7 +786,7 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 let mut fields = Vec::new();
 
                 // Unique container ID - use the global generator to avoid collisions
-                let container_id = ctx.fragment_ids.next();
+                let container_id = ctx.fragment_ids.next_id();
                 fields.push((sym!(Id), IonValue::Int(container_id as i64)));
 
                 // Record this content ID for position_map (so navigation targets are resolvable)
@@ -814,13 +813,13 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                 // Add semantic type annotation if the strategy specifies one
                 // (e.g., BlockQuote → yj.semantics.type: block_quote)
-                if let Some(strategy) = schema().export_strategy(elem.role) {
-                    if let Some(semantic_type) = strategy.semantic_type() {
-                        // Both field name and value are local symbols
-                        let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
-                        let value_id = ctx.symbols.get_or_intern(semantic_type);
-                        fields.push((field_id, IonValue::Symbol(value_id)));
-                    }
+                if let Some(strategy) = schema().export_strategy(elem.role)
+                    && let Some(semantic_type) = strategy.semantic_type()
+                {
+                    // Both field name and value are local symbols
+                    let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
+                    let value_id = ctx.symbols.get_or_intern(semantic_type);
+                    fields.push((field_id, IonValue::Symbol(value_id)));
                 }
 
                 // Add heading level if this is a heading
@@ -833,7 +832,7 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                 // Add list_style for ordered lists
                 if elem.role == Role::OrderedList {
-                    fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric) as u64)));
+                    fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric))));
                 }
 
                 // Add layout_hints based on element role and semantics
@@ -889,9 +888,9 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // - epub:type="sidebar" or "marginalia" → yj.sidenote ($620)
                 if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
                     let types: Vec<&str> = epub_type.split_whitespace().collect();
-                    let is_footnote = types.iter().any(|&t| t == "footnote");
-                    let is_endnote = types.iter().any(|&t| t == "endnote" || t == "rearnote");
-                    let is_sidenote = types.iter().any(|&t| t == "sidebar" || t == "marginalia");
+                    let is_footnote = types.contains(&"footnote");
+                    let is_endnote = types.contains(&"endnote") || types.contains(&"rearnote");
+                    let is_sidenote = types.contains(&"sidebar") || types.contains(&"marginalia");
 
                     // Prefer endnote classification if both are present (common in EPUBs)
                     if is_endnote {
@@ -936,10 +935,10 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 stack.push(IonBuilder::with_fields(fields, container_id));
             }
             KfxToken::EndElement => {
-                if let Some(completed) = stack.pop() {
-                    if let Some(parent) = stack.last_mut() {
-                        parent.add_child(completed.build(ctx));
-                    }
+                if let Some(completed) = stack.pop()
+                    && let Some(parent) = stack.last_mut()
+                {
+                    parent.add_child(completed.build(ctx));
                 }
             }
             KfxToken::Text(text) => {
@@ -956,12 +955,11 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                 // Create anchor for inline elements with IDs (e.g., noteref backlinks)
                 // Offset is relative to the current element's accumulated text
-                if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id) {
-                    if let Some(parent) = stack.last() {
-                        if let Some(container_id) = parent.container_id {
-                            ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
-                        }
-                    }
+                if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id)
+                    && let Some(parent) = stack.last()
+                    && let Some(container_id) = parent.container_id
+                {
+                    ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
                 }
 
                 span_stack.push((current_offset, span.clone()));
@@ -1418,19 +1416,17 @@ mod tests {
             match ion {
                 IonValue::Struct(fields) => {
                     for (field_id, value) in fields {
-                        if *field_id == KfxSymbol::YjSemanticsHeadingLevel as u64 {
-                            if let IonValue::Int(level) = value {
+                        if *field_id == KfxSymbol::YjSemanticsHeadingLevel as u64
+                            && let IonValue::Int(level) = value {
                                 return Some(*level);
                             }
-                        }
                     }
                     // Check content_list (children in KFX)
                     for (field_id, value) in fields {
-                        if *field_id == KfxSymbol::ContentList as u64 {
-                            if let Some(level) = find_heading_level(value) {
+                        if *field_id == KfxSymbol::ContentList as u64
+                            && let Some(level) = find_heading_level(value) {
                                 return Some(level);
                             }
-                        }
                     }
                 }
                 IonValue::List(items) => {
@@ -1498,8 +1494,8 @@ mod tests {
             match ion {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
-                        if *key == sym!(LayoutHints) {
-                            if let IonValue::List(items) = value {
+                        if *key == sym!(LayoutHints)
+                            && let IonValue::List(items) = value {
                                 return Some(
                                     items
                                         .iter()
@@ -1513,7 +1509,6 @@ mod tests {
                                         .collect(),
                                 );
                             }
-                        }
                         if let Some(hints) = find_layout_hints(value) {
                             return Some(hints);
                         }
@@ -1559,8 +1554,8 @@ mod tests {
             match ion {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
-                        if *key == sym!(LayoutHints) {
-                            if let IonValue::List(items) = value {
+                        if *key == sym!(LayoutHints)
+                            && let IonValue::List(items) = value {
                                 return Some(
                                     items
                                         .iter()
@@ -1574,7 +1569,6 @@ mod tests {
                                         .collect(),
                                 );
                             }
-                        }
                         if let Some(hints) = find_layout_hints(value) {
                             return Some(hints);
                         }
@@ -1634,11 +1628,10 @@ mod tests {
             match ion {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
-                        if *key == sym!(YjClassification) {
-                            if let IonValue::Symbol(sym) = value {
+                        if *key == sym!(YjClassification)
+                            && let IonValue::Symbol(sym) = value {
                                 return Some(*sym);
                             }
-                        }
                         if let Some(found) = find_classification(value) {
                             return Some(found);
                         }

@@ -1274,6 +1274,7 @@ fn extract_and_print_toc(
 }
 
 /// Recursively extract TOC entries from nav_unit list
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn extract_toc_entries(
     entries: &[boko::kfx::ion::IonValue],
     extended_symbols: &[String],

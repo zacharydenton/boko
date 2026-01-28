@@ -46,10 +46,10 @@ impl SymbolTable {
     /// a shared symbol reference and the number is returned directly.
     pub fn get_or_intern(&mut self, name: &str) -> u64 {
         // Check if it's a shared symbol reference (starts with $)
-        if let Some(id_str) = name.strip_prefix('$') {
-            if let Ok(id) = id_str.parse::<u64>() {
-                return id;
-            }
+        if let Some(id_str) = name.strip_prefix('$')
+            && let Ok(id) = id_str.parse::<u64>()
+        {
+            return id;
         }
 
         // Check if already interned
@@ -67,10 +67,10 @@ impl SymbolTable {
 
     /// Get symbol ID without interning (returns None if not found).
     pub fn get(&self, name: &str) -> Option<u64> {
-        if let Some(id_str) = name.strip_prefix('$') {
-            if let Ok(id) = id_str.parse::<u64>() {
-                return Some(id);
-            }
+        if let Some(id_str) = name.strip_prefix('$')
+            && let Ok(id) = id_str.parse::<u64>()
+        {
+            return Some(id);
         }
         self.symbol_map.get(name).copied()
     }
@@ -117,7 +117,7 @@ impl IdGenerator {
     }
 
     /// Generate the next unique ID.
-    pub fn next(&mut self) -> u64 {
+    pub fn next_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         id
@@ -791,7 +791,7 @@ impl ExportContext {
 
     /// Generate a new unique fragment ID.
     pub fn next_fragment_id(&mut self) -> u64 {
-        self.fragment_ids.next()
+        self.fragment_ids.next_id()
     }
 
     /// Register a section and return its symbol ID.
@@ -845,7 +845,7 @@ impl ExportContext {
     /// The `path` is the source file path (e.g., "chapter1.xhtml") used to resolve
     /// TOC hrefs to positions.
     pub fn begin_chapter_survey(&mut self, chapter_id: ChapterId, path: &str) -> u64 {
-        let fragment_id = self.fragment_ids.next();
+        let fragment_id = self.fragment_ids.next_id();
         self.chapter_fragments.insert(chapter_id, fragment_id);
         self.path_to_fragment.insert(path.to_string(), fragment_id);
         self.current_chapter = Some(chapter_id);
@@ -918,11 +918,11 @@ impl ExportContext {
     /// to point to the first actual content fragment, not the section page_template.
     pub fn resolve_pending_chapter_start_anchor(&mut self, first_content_id: u64) {
         // Record first content ID for this chapter (used for landmarks)
-        if let Some(ref path) = self.current_export_path {
-            if !self.first_content_ids.contains_key(path) {
-                self.first_content_ids
-                    .insert(path.clone(), first_content_id);
-            }
+        if let Some(ref path) = self.current_export_path
+            && !self.first_content_ids.contains_key(path)
+        {
+            self.first_content_ids
+                .insert(path.clone(), first_content_id);
         }
 
         // Get section ID for position_map grouping
@@ -932,15 +932,14 @@ impl ExportContext {
             .unwrap_or(first_content_id);
 
         // Create chapter-start anchor if pending
-        if let Some(path) = self.pending_chapter_start_anchor.take() {
-            if let Some(symbol) =
+        if let Some(path) = self.pending_chapter_start_anchor.take()
+            && let Some(symbol) =
                 self.anchor_registry
                     .create_content_anchor(&path, first_content_id, section_id, 0)
             {
                 // Intern symbol so entity ID is assigned
                 self.symbols.get_or_intern(&symbol);
             }
-        }
     }
 
     /// Process an element ID during storyline building.
@@ -965,15 +964,14 @@ impl ExportContext {
             .record_position(&full_key, content_id, offset);
 
         // Only create anchor entity if this is a link_to target
-        if self.needed_anchors.contains(&full_key) {
-            if let Some(symbol) = self
+        if self.needed_anchors.contains(&full_key)
+            && let Some(symbol) = self
                 .anchor_registry
                 .create_content_anchor(&full_key, content_id, section_id, offset)
             {
                 // Intern symbol so entity ID is assigned
                 self.symbols.get_or_intern(&symbol);
             }
-        }
     }
 
     /// Record a content fragment ID for the current chapter.
@@ -1164,20 +1162,18 @@ impl ExportContext {
             // Try to find the source path for this fragment_id via chapter_fragments
             let mut found_source = None;
             for (cid, &fid) in &self.chapter_fragments {
-                if fid == target.fragment_id {
-                    if let Some(path) = chapter_to_source.get(cid) {
+                if fid == target.fragment_id
+                    && let Some(path) = chapter_to_source.get(cid) {
                         found_source = Some((*path).clone());
                         break;
                     }
-                }
             }
 
             // If we found the source path, look up the first content ID
-            if let Some(source_path) = found_source {
-                if let Some(&content_id) = self.first_content_ids.get(&source_path) {
+            if let Some(source_path) = found_source
+                && let Some(&content_id) = self.first_content_ids.get(&source_path) {
                     target.fragment_id = content_id;
                 }
-            }
         }
     }
 }
@@ -1219,9 +1215,9 @@ mod tests {
     fn test_id_generator() {
         let mut id_gen = IdGenerator::new();
 
-        assert_eq!(id_gen.next(), 866);
-        assert_eq!(id_gen.next(), 867);
-        assert_eq!(id_gen.next(), 868);
+        assert_eq!(id_gen.next_id(), 866);
+        assert_eq!(id_gen.next_id(), 867);
+        assert_eq!(id_gen.next_id(), 868);
     }
 
     #[test]
