@@ -94,9 +94,10 @@ fn main() -> IonResult<()> {
                 "metadata" => report_metadata(&data)?,
                 "navigation" => report_navigation(&data)?,
                 "reading_orders" => report_reading_orders(&data)?,
+                "sections" => report_sections(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, sections",
                         other
                     );
                     std::process::exit(1);
@@ -3529,3 +3530,205 @@ where
     }
 }
 
+/// Report sections from a KFX file
+fn report_sections(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find all section entities (type 260)
+    let section_type = KfxSymbol::Section as u32;
+
+    println!("=== Sections ===\n");
+
+    let mut section_count = 0;
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != section_type {
+            continue;
+        }
+
+        // Found section entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            let resolve_sym = |id: u64| -> String {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or("?")
+                        .to_string()
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+
+            // Extract section info
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                let mut section_name = String::new();
+                let mut templates: Vec<String> = Vec::new();
+
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+                    match field_name.as_str() {
+                        "section_name" => {
+                            if let boko::kfx::ion::IonValue::Symbol(s) = field_value {
+                                section_name = resolve_sym(*s);
+                            }
+                        }
+                        "page_templates" => {
+                            if let boko::kfx::ion::IonValue::List(tpls) = field_value {
+                                for tpl in tpls {
+                                    if let boko::kfx::ion::IonValue::Struct(tpl_fields) = tpl {
+                                        let mut tpl_type = String::new();
+                                        let mut story_name = String::new();
+                                        let mut dims = String::new();
+
+                                        for (tid, tval) in tpl_fields {
+                                            let tname = resolve_sym(*tid);
+                                            match tname.as_str() {
+                                                "type" => {
+                                                    if let boko::kfx::ion::IonValue::Symbol(s) =
+                                                        tval
+                                                    {
+                                                        tpl_type = resolve_sym(*s);
+                                                    }
+                                                }
+                                                "story_name" => {
+                                                    if let boko::kfx::ion::IonValue::Symbol(s) =
+                                                        tval
+                                                    {
+                                                        story_name = resolve_sym(*s);
+                                                    }
+                                                }
+                                                "fixed_width" => {
+                                                    if let boko::kfx::ion::IonValue::Int(w) = tval {
+                                                        dims = format!("{}x", w);
+                                                    }
+                                                }
+                                                "fixed_height" => {
+                                                    if let boko::kfx::ion::IonValue::Int(h) = tval {
+                                                        dims = format!("{}{}", dims, h);
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+
+                                        let tpl_desc = if !dims.is_empty() {
+                                            format!("{} ({}, {})", story_name, tpl_type, dims)
+                                        } else {
+                                            format!("{} ({})", story_name, tpl_type)
+                                        };
+                                        templates.push(tpl_desc);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !section_name.is_empty() {
+                    section_count += 1;
+                    let templates_str = if templates.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" → {}", templates.join(", "))
+                    };
+                    println!("{:<15}{}", section_name, templates_str);
+                }
+            }
+        }
+    }
+
+    println!("\nTotal sections: {}", section_count);
+    Ok(())
+}
