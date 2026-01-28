@@ -710,14 +710,19 @@ impl<W: Write> ExportContext<'_, W> {
             Role::CodeBlock => {
                 self.start_block()?;
                 self.write_anchor_if_present(id)?;
-                // Collect text first to determine fence length
-                let text = self.collect_text(id);
+                // Collect text verbatim to preserve newlines in code
+                let text = self.collect_text_verbatim(id);
 
                 if self.format == TextFormat::Markdown {
+                    // Code fence must start on its own line
+                    if !self.at_line_start {
+                        self.write_newline()?;
+                    }
                     let lang = self.ir.semantics.language(id).unwrap_or("");
                     // Calculate fence length based on content
                     let fence_len = calculate_fence_length(&text, '`');
                     let fence: String = std::iter::repeat_n('`', fence_len).collect();
+                    self.ensure_line_started()?;
                     writeln!(self.writer, "{}{}", fence, lang)?;
                     self.at_line_start = true;
 
@@ -796,40 +801,55 @@ impl<W: Write> ExportContext<'_, W> {
 
     /// Collect all text content from a node and its children.
     fn collect_text(&self, id: NodeId) -> String {
+        self.collect_text_inner(id, false)
+    }
+
+    /// Collect text content preserving literal whitespace (for code blocks).
+    fn collect_text_verbatim(&self, id: NodeId) -> String {
+        self.collect_text_inner(id, true)
+    }
+
+    fn collect_text_inner(&self, id: NodeId, verbatim: bool) -> String {
         let mut result = String::new();
-        self.collect_text_recursive(id, &mut result);
+        self.collect_text_recursive(id, &mut result, verbatim);
         // Strip soft hyphens (U+00AD) used for hyphenation hints in ebooks
         result.replace('\u{00AD}', "")
     }
 
-    fn collect_text_recursive(&self, id: NodeId, result: &mut String) {
+    fn collect_text_recursive(&self, id: NodeId, result: &mut String, verbatim: bool) {
         let Some(node) = self.ir.node(id) else {
             return;
         };
 
         if node.role == Role::Text && !node.text.is_empty() {
             let text = self.ir.text(node.text);
-            // Preserve whitespace structure
-            let has_leading = text.starts_with(char::is_whitespace);
-            let has_trailing = text.ends_with(char::is_whitespace);
-            let words: Vec<&str> = text.split_whitespace().collect();
 
-            if !words.is_empty() {
-                if has_leading && !result.is_empty() && !result.ends_with(' ') {
+            if verbatim {
+                // Preserve whitespace exactly as-is (for code blocks)
+                result.push_str(text);
+            } else {
+                // Normalize whitespace structure
+                let has_leading = text.starts_with(char::is_whitespace);
+                let has_trailing = text.ends_with(char::is_whitespace);
+                let words: Vec<&str> = text.split_whitespace().collect();
+
+                if !words.is_empty() {
+                    if has_leading && !result.is_empty() && !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.push_str(&words.join(" "));
+                    if has_trailing {
+                        result.push(' ');
+                    }
+                } else if !text.is_empty() && !result.is_empty() && !result.ends_with(' ') {
+                    // Pure whitespace
                     result.push(' ');
                 }
-                result.push_str(&words.join(" "));
-                if has_trailing {
-                    result.push(' ');
-                }
-            } else if !text.is_empty() && !result.is_empty() && !result.ends_with(' ') {
-                // Pure whitespace
-                result.push(' ');
             }
         }
 
         for child_id in self.ir.children(id) {
-            self.collect_text_recursive(child_id, result);
+            self.collect_text_recursive(child_id, result, verbatim);
         }
     }
 }
