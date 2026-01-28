@@ -94,10 +94,9 @@ fn main() -> IonResult<()> {
                 "metadata" => report_metadata(&data)?,
                 "navigation" => report_navigation(&data)?,
                 "reading_orders" => report_reading_orders(&data)?,
-                "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, toc",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders",
                         other
                     );
                     std::process::exit(1);
@@ -945,8 +944,9 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
 
 /// TOC entry for reporting
 #[derive(Debug)]
-struct TocEntryInfo {
+struct NavEntryInfo {
     label: String,
+    landmark_type: Option<String>, // h2, h3, cover_page, srl, etc.
     target_id: Option<i64>,
     target_offset: Option<i64>,
     target_text: Option<String>, // Preview of text at target
@@ -954,8 +954,8 @@ struct TocEntryInfo {
     depth: usize,
 }
 
-/// Report TOC entries from a KFX container
-fn report_toc(data: &[u8]) -> IonResult<()> {
+/// Report navigation (headings, toc, landmarks) from a KFX container
+fn report_navigation(data: &[u8]) -> IonResult<()> {
     use boko::kfx::ion::IonParser;
     use boko::kfx::symbols::KfxSymbol;
 
@@ -1131,7 +1131,7 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
         };
 
         // Extract and print TOC
-        extract_and_print_toc(
+        extract_and_print_navigation(
             &value,
             &extended_symbols,
             base_symbol_count,
@@ -1144,8 +1144,8 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
     Ok(())
 }
 
-/// Extract TOC entries from metadata and print them
-fn extract_and_print_toc(
+/// Extract navigation entries from book_navigation and print them
+fn extract_and_print_navigation(
     value: &boko::kfx::ion::IonValue,
     extended_symbols: &[String],
     base_symbol_count: usize,
@@ -1196,21 +1196,17 @@ fn extract_and_print_toc(
                 _ => continue,
             };
 
-            // Check nav_type (235) - we want "toc"
-            let mut is_toc = false;
+            // Extract nav_type, container_name, and entries
+            let mut nav_type = String::new();
             let mut container_name = String::new();
             let mut entries: Option<&Vec<IonValue>> = None;
 
             for (cfield_id, cfield_value) in container_fields {
                 match *cfield_id as u32 {
                     id if id == KfxSymbol::NavType as u32 => {
-                        // nav_type is a symbol
                         if let IonValue::Symbol(sym_id) = cfield_value {
-                            let sym_name =
+                            nav_type =
                                 resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
-                            if sym_name == "toc" {
-                                is_toc = true;
-                            }
                         }
                     }
                     id if id == KfxSymbol::NavContainerName as u32 => {
@@ -1228,12 +1224,19 @@ fn extract_and_print_toc(
                 }
             }
 
-            if is_toc {
-                println!("=== Table of Contents ({}) ===\n", container_name);
+            // Print all nav containers
+            if !nav_type.is_empty() {
+                let header = match nav_type.as_str() {
+                    "toc" => format!("Table of Contents ({})", container_name),
+                    "headings" => format!("Headings ({})", container_name),
+                    "landmarks" => format!("Landmarks ({})", container_name),
+                    _ => format!("{} ({})", nav_type, container_name),
+                };
+                println!("=== {} ===\n", header);
 
                 if let Some(entry_list) = entries {
-                    let mut toc_entries = Vec::new();
-                    extract_toc_entries(
+                    let mut nav_entries = Vec::new();
+                    extract_nav_entries(
                         entry_list,
                         extended_symbols,
                         base_symbol_count,
@@ -1241,10 +1244,10 @@ fn extract_and_print_toc(
                         fragment_content_map,
                         container_type_map,
                         0,
-                        &mut toc_entries,
+                        &mut nav_entries,
                     );
 
-                    for entry in &toc_entries {
+                    for entry in &nav_entries {
                         let indent = "  ".repeat(entry.depth);
                         let position = match (entry.target_id, entry.target_offset) {
                             (Some(id), Some(off)) if off != 0 => format!("→ {}:{}", id, off),
@@ -1252,40 +1255,66 @@ fn extract_and_print_toc(
                             _ => String::new(),
                         };
 
-                        // Show entity type if known, otherwise show whether we found content
+                        // Show landmark type if present (for headings: h2, h3; for landmarks: cover_page, etc.)
+                        let landmark_info = entry
+                            .landmark_type
+                            .as_ref()
+                            .map(|t| format!("[{}] ", t))
+                            .unwrap_or_default();
+
+                        // Show entity type if known
                         let type_info = if let Some(t) = &entry.target_type {
                             format!(" ({})", t)
                         } else if entry.target_text.is_some() {
-                            String::new() // Has content, no need to annotate
+                            String::new()
                         } else {
                             " (no content)".to_string()
+                        };
+
+                        // Build display label - use landmark_type if label is generic
+                        let display_label = if entry.label == "heading-nav-unit"
+                            || entry.label == "cover-nav-unit"
+                        {
+                            entry
+                                .landmark_type
+                                .clone()
+                                .unwrap_or_else(|| entry.label.clone())
+                        } else {
+                            entry.label.clone()
                         };
 
                         if let Some(text) = &entry.target_text {
                             let preview: String = text.chars().take(50).collect();
                             let ellipsis = if text.chars().count() > 50 { "..." } else { "" };
                             println!(
-                                "{}{:<35} {:>12}{}  \"{}{}\"",
-                                indent, entry.label, position, type_info, preview, ellipsis
+                                "{}{}{:<35} {:>12}{}  \"{}{}\"",
+                                indent,
+                                landmark_info,
+                                display_label,
+                                position,
+                                type_info,
+                                preview,
+                                ellipsis
                             );
                         } else {
                             println!(
-                                "{}{:<35} {:>12}{}",
-                                indent, entry.label, position, type_info
+                                "{}{}{:<35} {:>12}{}",
+                                indent, landmark_info, display_label, position, type_info
                             );
                         }
                     }
 
-                    println!("\nTotal entries: {}", toc_entries.len());
+                    println!("\nTotal entries: {}", nav_entries.len());
                 }
+                println!();
             }
         }
     }
 }
 
-/// Recursively extract TOC entries from nav_unit list
+/// Recursively extract navigation entries from nav_unit list
 #[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
-fn extract_toc_entries(
+fn extract_nav_entries(
     entries: &[boko::kfx::ion::IonValue],
     extended_symbols: &[String],
     base_symbol_count: usize,
@@ -1293,7 +1322,7 @@ fn extract_toc_entries(
     fragment_content_map: &HashMap<i64, (String, i64)>,
     container_type_map: &HashMap<i64, String>,
     depth: usize,
-    result: &mut Vec<TocEntryInfo>,
+    result: &mut Vec<NavEntryInfo>,
 ) {
     use boko::kfx::ion::IonValue;
     use boko::kfx::symbols::KfxSymbol;
@@ -1311,12 +1340,23 @@ fn extract_toc_entries(
         };
 
         let mut label = String::new();
+        let mut landmark_type: Option<String> = None;
         let mut target_id: Option<i64> = None;
         let mut target_offset: Option<i64> = None;
         let mut children: Option<&Vec<IonValue>> = None;
 
         for (field_id, field_value) in fields {
             match *field_id as u32 {
+                id if id == KfxSymbol::LandmarkType as u32 => {
+                    // landmark_type is a symbol (h2, h3, cover_page, srl, etc.)
+                    if let IonValue::Symbol(sym_id) = field_value {
+                        landmark_type = Some(resolve_symbol(
+                            *sym_id,
+                            extended_symbols,
+                            base_symbol_count,
+                        ));
+                    }
+                }
                 id if id == KfxSymbol::Representation as u32 => {
                     // representation is a struct with label field
                     if let IonValue::Struct(rep_fields) = field_value {
@@ -1378,13 +1418,14 @@ fn extract_toc_entries(
         // Get container type for target ID (from storyline content_list)
         let target_type = target_id.and_then(|id| container_type_map.get(&id).cloned());
 
-        if !label.is_empty() || target_id.is_some() {
-            result.push(TocEntryInfo {
+        if !label.is_empty() || target_id.is_some() || landmark_type.is_some() {
+            result.push(NavEntryInfo {
                 label: if label.is_empty() {
                     "(untitled)".to_string()
                 } else {
                     label
                 },
+                landmark_type,
                 target_id,
                 target_offset,
                 target_text,
@@ -1395,7 +1436,7 @@ fn extract_toc_entries(
 
         // Recurse into children
         if let Some(child_entries) = children {
-            extract_toc_entries(
+            extract_nav_entries(
                 child_entries,
                 extended_symbols,
                 base_symbol_count,
@@ -3488,216 +3529,3 @@ where
     }
 }
 
-/// Report navigation (book_navigation entity) from a KFX file
-fn report_navigation(data: &[u8]) -> IonResult<()> {
-    use boko::kfx::ion::IonParser;
-    use boko::kfx::symbols::KfxSymbol;
-
-    if data.len() < 18 || &data[0..4] != b"CONT" {
-        eprintln!("Not a KFX container");
-        return Ok(());
-    }
-
-    // Parse container header
-    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
-        eprintln!("Failed to read header length");
-        return Ok(());
-    };
-    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
-        eprintln!("Failed to read container info offset");
-        return Ok(());
-    };
-    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
-        eprintln!("Failed to read container info length");
-        return Ok(());
-    };
-
-    if container_info_offset + container_info_length > data.len() {
-        eprintln!("Container info out of bounds");
-        return Ok(());
-    }
-
-    let container_info_data =
-        &data[container_info_offset..container_info_offset + container_info_length];
-
-    // Get index table location
-    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
-    else {
-        eprintln!("Could not find index table");
-        return Ok(());
-    };
-
-    // Extract extended symbols
-    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
-        parse_container_info_for_doc_symbols(container_info_data)
-    {
-        if doc_sym_offset + doc_sym_length <= data.len() {
-            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
-    let entry_size = 24;
-    let num_entries = index_length / entry_size;
-
-    // Find book_navigation entity (type 389)
-    let book_navigation_type = KfxSymbol::BookNavigation as u32;
-
-    for i in 0..num_entries {
-        let entry_offset = index_offset + i * entry_size;
-        if entry_offset + entry_size > data.len() {
-            break;
-        }
-
-        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
-            continue;
-        };
-        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
-            continue;
-        };
-        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
-            continue;
-        };
-
-        if type_idnum != book_navigation_type {
-            continue;
-        }
-
-        // Found book_navigation entity
-        let abs_offset = header_len + entity_offset;
-        if abs_offset + entity_len > data.len() {
-            continue;
-        }
-
-        let entity_data = &data[abs_offset..abs_offset + entity_len];
-        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
-            continue;
-        }
-
-        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
-            continue;
-        };
-        if entity_header_len >= entity_data.len() {
-            continue;
-        }
-
-        let ion_data = &entity_data[entity_header_len..];
-        let mut parser = IonParser::new(ion_data);
-
-        if let Ok(value) = parser.parse() {
-            // Helper to resolve symbol name
-            let resolve_sym = |id: u64| -> String {
-                if id < base_symbol_count {
-                    KFX_SYMBOL_TABLE
-                        .get(id as usize)
-                        .copied()
-                        .unwrap_or("?")
-                        .to_string()
-                } else {
-                    let ext_idx = (id as usize) - (base_symbol_count as usize);
-                    extended_symbols
-                        .get(ext_idx)
-                        .cloned()
-                        .unwrap_or_else(|| "?".to_string())
-                }
-            };
-
-            println!("=== Book Navigation ===\n");
-
-            // The navigation entity is a list of reading order navigation containers
-            if let boko::kfx::ion::IonValue::List(reading_orders) = &value {
-                for ro in reading_orders {
-                    if let boko::kfx::ion::IonValue::Struct(ro_fields) = ro {
-                        let mut ro_name = String::new();
-                        let mut containers: Vec<(String, String, usize)> = Vec::new();
-
-                        for (fid, fval) in ro_fields {
-                            let fname = resolve_sym(*fid);
-                            match fname.as_str() {
-                                "reading_order_name" => {
-                                    if let boko::kfx::ion::IonValue::Symbol(s) = fval {
-                                        ro_name = resolve_sym(*s);
-                                    }
-                                }
-                                "nav_containers" => {
-                                    if let boko::kfx::ion::IonValue::List(navcs) = fval {
-                                        for navc in navcs {
-                                            // Unwrap annotation (nav_container::)
-                                            let navc_inner = match navc {
-                                                boko::kfx::ion::IonValue::Annotated(_, inner) => {
-                                                    inner.as_ref()
-                                                }
-                                                _ => navc,
-                                            };
-                                            if let boko::kfx::ion::IonValue::Struct(nc_fields) =
-                                                navc_inner
-                                            {
-                                                let mut nav_type = String::new();
-                                                let mut nav_name = String::new();
-                                                let mut entry_count = 0usize;
-
-                                                for (ncid, ncval) in nc_fields {
-                                                    let ncname = resolve_sym(*ncid);
-                                                    match ncname.as_str() {
-                                                        "nav_type" => {
-                                                            if let boko::kfx::ion::IonValue::Symbol(
-                                                                s,
-                                                            ) = ncval
-                                                            {
-                                                                nav_type = resolve_sym(*s);
-                                                            }
-                                                        }
-                                                        "nav_container_name" => {
-                                                            if let boko::kfx::ion::IonValue::Symbol(
-                                                                s,
-                                                            ) = ncval
-                                                            {
-                                                                nav_name = resolve_sym(*s);
-                                                            }
-                                                        }
-                                                        "entries" => {
-                                                            if let boko::kfx::ion::IonValue::List(
-                                                                entries,
-                                                            ) = ncval
-                                                            {
-                                                                entry_count = count_nav_entries(entries);
-                                                            }
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
-
-                                                containers.push((nav_type, nav_name, entry_count));
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        println!("Reading Order: {}\n", ro_name);
-                        for (nav_type, nav_name, entry_count) in &containers {
-                            println!(
-                                "  {:<15} {} ({} entries)",
-                                format!("{}:", nav_type),
-                                nav_name,
-                                entry_count
-                            );
-                        }
-                        println!();
-                    }
-                }
-            }
-        }
-
-        return Ok(());
-    }
-
-    eprintln!("No book_navigation entity found");
-    Ok(())
-}
