@@ -96,9 +96,11 @@ fn main() -> IonResult<()> {
                 "reading_orders" => report_reading_orders(&data)?,
                 "resources" => report_resources(&data)?,
                 "sections" => report_sections(&data)?,
+                "storylines" => report_storylines(&data)?,
+                "locations" => report_locations(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, resources, sections",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, locations, metadata, navigation, reading_orders, resources, sections, storylines",
                         other
                     );
                     std::process::exit(1);
@@ -3910,5 +3912,363 @@ fn report_resources(data: &[u8]) -> IonResult<()> {
     }
 
     println!("\nTotal resources: {}", resource_count);
+    Ok(())
+}
+
+/// Report storylines from a KFX file
+fn report_storylines(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+    let storyline_type = KfxSymbol::Storyline as u32;
+
+    println!("=== Storylines ===\n");
+
+    let mut storyline_count = 0;
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != storyline_type {
+            continue;
+        }
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            let resolve_sym = |id: u64| -> String {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or("?")
+                        .to_string()
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                let mut story_name = String::new();
+                let mut stats = ContentStats::default();
+
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+                    match field_name.as_str() {
+                        "story_name" => {
+                            if let boko::kfx::ion::IonValue::Symbol(s) = field_value {
+                                story_name = resolve_sym(*s);
+                            }
+                        }
+                        "content_list" => {
+                            if let boko::kfx::ion::IonValue::List(items) = field_value {
+                                collect_content_stats(items, &resolve_sym, &mut stats);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !story_name.is_empty() {
+                    storyline_count += 1;
+                    let type_info = if stats.image_count > 0 {
+                        format!(
+                            "{} text, {} image",
+                            stats.text_count, stats.image_count
+                        )
+                    } else {
+                        format!("{} text", stats.text_count)
+                    };
+                    let extra = if stats.link_count > 0 || stats.heading_count > 0 {
+                        let mut parts = Vec::new();
+                        if stats.heading_count > 0 {
+                            parts.push(format!("{} headings", stats.heading_count));
+                        }
+                        if stats.link_count > 0 {
+                            parts.push(format!("{} links", stats.link_count));
+                        }
+                        format!(" [{}]", parts.join(", "))
+                    } else {
+                        String::new()
+                    };
+                    println!("{:<15} ({}){}",story_name, type_info, extra);
+                }
+            }
+        }
+    }
+
+    println!("\nTotal storylines: {}", storyline_count);
+    Ok(())
+}
+
+/// Stats collected from storyline content
+#[derive(Default)]
+struct ContentStats {
+    text_count: usize,
+    image_count: usize,
+    heading_count: usize,
+    link_count: usize,
+}
+
+/// Collect content stats recursively from a content_list
+fn collect_content_stats<F>(items: &[boko::kfx::ion::IonValue], resolve_sym: &F, stats: &mut ContentStats)
+where
+    F: Fn(u64) -> String,
+{
+    for item in items {
+        if let boko::kfx::ion::IonValue::Struct(fields) = item {
+            let mut is_image = false;
+            let mut is_heading = false;
+            let mut has_links = false;
+
+            for (field_id, field_value) in fields {
+                let field_name = resolve_sym(*field_id);
+                match field_name.as_str() {
+                    "type" => {
+                        if let boko::kfx::ion::IonValue::Symbol(s) = field_value {
+                            let type_name = resolve_sym(*s);
+                            if type_name == "image" {
+                                is_image = true;
+                            }
+                        }
+                    }
+                    "yj.semantics.heading_level" => {
+                        is_heading = true;
+                    }
+                    "style_events" => {
+                        if let boko::kfx::ion::IonValue::List(events) = field_value {
+                            for event in events {
+                                if let boko::kfx::ion::IonValue::Struct(event_fields) = event {
+                                    for (eid, _) in event_fields {
+                                        if resolve_sym(*eid) == "link_to" {
+                                            has_links = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    "content_list" => {
+                        if let boko::kfx::ion::IonValue::List(nested) = field_value {
+                            collect_content_stats(nested, resolve_sym, stats);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if is_image {
+                stats.image_count += 1;
+            } else {
+                stats.text_count += 1;
+            }
+            if is_heading {
+                stats.heading_count += 1;
+            }
+            if has_links {
+                stats.link_count += 1;
+            }
+        }
+    }
+}
+
+/// Report location map from a KFX file
+fn report_locations(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+    let location_map_type = KfxSymbol::LocationMap as u32;
+
+    println!("=== Location Map ===\n");
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != location_map_type {
+            continue;
+        }
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            // location_map is a list containing structs with "locations" field
+            let mut total_locations = 0usize;
+            let mut unique_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+            if let boko::kfx::ion::IonValue::List(items) = &value {
+                for item in items {
+                    if let boko::kfx::ion::IonValue::Struct(fields) = item {
+                        for (_, field_value) in fields {
+                            if let boko::kfx::ion::IonValue::List(locations) = field_value {
+                                for loc in locations {
+                                    if let boko::kfx::ion::IonValue::Struct(loc_fields) = loc {
+                                        total_locations += 1;
+                                        for (_, lval) in loc_fields {
+                                            if let boko::kfx::ion::IonValue::Int(id) = lval {
+                                                unique_ids.insert(*id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            println!("Total location entries: {}", total_locations);
+            println!("Unique target IDs:      {}", unique_ids.len());
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No location_map entity found");
     Ok(())
 }
