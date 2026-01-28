@@ -458,46 +458,42 @@ impl<W: Write> ExportContext<'_, W> {
 
             Role::Link => {
                 self.ensure_line_started()?;
-                let text = self.collect_text(id);
 
                 // Parse link from semantics.href (single source of truth)
                 let href = self.ir.semantics.href(id);
                 let link = href.map(crate::ir::Link::parse);
 
-                match link {
-                    Some(crate::ir::Link::External(url)) => {
-                        // External links: show URL
-                        if self.format == TextFormat::Markdown {
-                            write!(self.writer, "[{}]({})", text, url)?;
-                        } else if url != text {
+                // Determine if this is an external link that needs URL display
+                let url_to_show = match &link {
+                    Some(crate::ir::Link::External(url)) => Some(url.as_str()),
+                    Some(crate::ir::Link::Unknown(raw))
+                        if raw.contains("://") || raw.starts_with("mailto:") =>
+                    {
+                        Some(raw.as_str())
+                    }
+                    _ => None,
+                };
+
+                if self.format == TextFormat::Markdown {
+                    if let Some(url) = url_to_show {
+                        // Markdown link: [styled content](url)
+                        write!(self.writer, "[")?;
+                        self.walk_children(id)?;
+                        write!(self.writer, "]({})", url)?;
+                    } else {
+                        // Internal link: just output styled content
+                        self.walk_children(id)?;
+                    }
+                } else {
+                    // Plain text: collect text and maybe show URL
+                    let text = self.collect_text(id);
+                    if let Some(url) = url_to_show {
+                        if url != text {
                             write!(self.writer, "{} ({})", text, url)?;
                         } else {
                             write!(self.writer, "{}", text)?;
                         }
-                    }
-                    Some(crate::ir::Link::Internal(_target)) => {
-                        // TODO: Resolve internal links to flattened anchors
-                        // For now, just output the link text
-                        write!(self.writer, "{}", text)?;
-                    }
-                    Some(crate::ir::Link::Unknown(raw)) => {
-                        // Unknown links: check if it looks like a URL
-                        if raw.contains("://") || raw.starts_with("mailto:") {
-                            if self.format == TextFormat::Markdown {
-                                write!(self.writer, "[{}]({})", text, raw)?;
-                            } else if raw != text {
-                                write!(self.writer, "{} ({})", text, raw)?;
-                            } else {
-                                write!(self.writer, "{}", text)?;
-                            }
-                        } else {
-                            // TODO: Resolve internal paths to flattened anchors
-                            // For now, just output the link text
-                            write!(self.writer, "{}", text)?;
-                        }
-                    }
-                    None => {
-                        // No link data, just show text
+                    } else {
                         write!(self.writer, "{}", text)?;
                     }
                 }

@@ -11,7 +11,8 @@
 //! 1. **Vacuum** - Remove structural whitespace noise
 //! 2. **Span Merge** - Coalesce adjacent text with same style
 //! 3. **List Fuser** - Merge fragmented lists
-//! 4. **Pruner** - Remove empty containers (cascading)
+//! 4. **Wrap Mixed Content** - Normalize inline/block siblings
+//! 5. **Pruner** - Remove empty containers (cascading)
 
 use crate::ir::{IRChapter, NodeId, Role};
 
@@ -19,14 +20,12 @@ use crate::ir::{IRChapter, NodeId, Role};
 ///
 /// Passes are ordered for maximum effectiveness:
 /// 1. Vacuum removes whitespace noise
-/// 2. Hoist dissolves redundant wrapper containers (enables span merge)
-/// 3. Span merge coalesces adjacent text with same style
-/// 4. List fuser repairs fragmented lists
-/// 5. Wrap mixed content normalizes inline/block siblings
-/// 6. Pruner removes any containers emptied by previous passes
+/// 2. Span merge coalesces adjacent text with same style
+/// 3. List fuser repairs fragmented lists
+/// 4. Wrap mixed content normalizes inline/block siblings
+/// 5. Pruner removes any containers emptied by previous passes
 pub fn optimize(chapter: &mut IRChapter) {
     vacuum(chapter);
-    hoist_nested_inlines(chapter);
     merge_adjacent_spans(chapter);
     fuse_lists(chapter);
     wrap_mixed_content(chapter);
@@ -159,143 +158,7 @@ fn is_structural_container(role: Option<Role>) -> bool {
 }
 
 // ============================================================================
-// Pass 2: Hoist Nested Inlines (Wrapper Hell Fix)
-// ============================================================================
-
-/// Dissolve redundant wrapper containers to expose siblings for merging.
-///
-/// Legacy formats (MOBI, AZW) emulate "Small Caps" by wrapping each character
-/// in a separate `<font>` or `<div>` container:
-/// ```html
-/// <div><span>T</span></div><div><span>HE</span></div>
-/// ```
-///
-/// This creates "Wrapper Hell" where text nodes aren't siblings, preventing
-/// span merge. This pass identifies containers that:
-/// 1. Are generic (Container or Inline)
-/// 2. Have exactly one child
-/// 3. Have no semantic attributes (id, href, etc.)
-///
-/// These wrappers are dissolved by promoting the child to the wrapper's position.
-fn hoist_nested_inlines(chapter: &mut IRChapter) {
-    if chapter.node_count() == 0 {
-        return;
-    }
-
-    // Run multiple passes to handle deeply nested wrappers (Div > Div > Span)
-    // In practice, 2-3 passes clear even the worst MOBI soup.
-    let mut changed = true;
-    let mut attempts = 0;
-
-    while changed && attempts < 5 {
-        changed = hoist_pass(chapter, NodeId::ROOT);
-        attempts += 1;
-    }
-}
-
-/// Run one hoisting pass over the tree. Returns true if any changes were made.
-fn hoist_pass(chapter: &mut IRChapter, parent_id: NodeId) -> bool {
-    let mut changed = false;
-
-    // Recurse into children first (bottom-up for efficiency)
-    let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
-    while let Some(child_id) = child_opt {
-        if hoist_pass(chapter, child_id) {
-            changed = true;
-        }
-        child_opt = chapter.node(child_id).and_then(|n| n.next_sibling);
-    }
-
-    // Now check each child for redundant wrappers
-    let mut prev_opt: Option<NodeId> = None;
-    let mut cursor_opt = chapter.node(parent_id).and_then(|n| n.first_child);
-
-    while let Some(current_id) = cursor_opt {
-        let next_opt = chapter.node(current_id).and_then(|n| n.next_sibling);
-
-        if is_redundant_wrapper(chapter, current_id) {
-            // Get the single child that we'll promote
-            let child_id = chapter
-                .node(current_id)
-                .and_then(|n| n.first_child)
-                .unwrap();
-
-            // 1. Reparent child to grandparent
-            if let Some(child_node) = chapter.node_mut(child_id) {
-                child_node.parent = Some(parent_id);
-                child_node.next_sibling = next_opt;
-            }
-
-            // 2. Patch sibling chain: splice child into wrapper's position
-            if let Some(prev_id) = prev_opt {
-                if let Some(prev_node) = chapter.node_mut(prev_id) {
-                    prev_node.next_sibling = Some(child_id);
-                }
-            } else if let Some(parent_node) = chapter.node_mut(parent_id) {
-                parent_node.first_child = Some(child_id);
-            }
-
-            // 3. Detach the wrapper (leave it as a dead node)
-            if let Some(wrapper_node) = chapter.node_mut(current_id) {
-                wrapper_node.first_child = None;
-                wrapper_node.next_sibling = None;
-            }
-
-            // Continue from the promoted child (it's now in the wrapper's position)
-            prev_opt = Some(child_id);
-            cursor_opt = next_opt;
-            changed = true;
-        } else {
-            prev_opt = Some(current_id);
-            cursor_opt = next_opt;
-        }
-    }
-
-    changed
-}
-
-/// Check if a node is a redundant wrapper that can be dissolved.
-fn is_redundant_wrapper(chapter: &IRChapter, node_id: NodeId) -> bool {
-    let node = match chapter.node(node_id) {
-        Some(n) => n,
-        None => return false,
-    };
-
-    // 1. Must be a generic container (Container or Inline)
-    if !matches!(node.role, Role::Container | Role::Inline) {
-        return false;
-    }
-
-    // 2. Must have exactly one child
-    let first_child = match node.first_child {
-        Some(id) => id,
-        None => return false,
-    };
-
-    // Check that first child has no sibling (exactly one child)
-    if chapter
-        .node(first_child)
-        .and_then(|n| n.next_sibling)
-        .is_some()
-    {
-        return false;
-    }
-
-    // 3. Must have no semantic attributes
-    if has_semantic_attrs(chapter, node_id) {
-        return false;
-    }
-
-    // 4. Must not have text content (containers shouldn't, but be defensive)
-    if !node.text.is_empty() {
-        return false;
-    }
-
-    true
-}
-
-// ============================================================================
-// Pass 3: Span Merge (Adjacent Text Coalescing)
+// Pass 2: Span Merge (Adjacent Text Coalescing)
 // ============================================================================
 
 /// Merge adjacent inline/text nodes with identical styles.
@@ -400,7 +263,7 @@ fn can_merge_spans(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> bo
 }
 
 // ============================================================================
-// Pass 4: List Fuser (Fragmented List Repair)
+// Pass 3: List Fuser (Fragmented List Repair)
 // ============================================================================
 
 /// Fuse adjacent lists of the same type.
@@ -516,7 +379,7 @@ fn fuse_list_pair(chapter: &mut IRChapter, left_id: NodeId, right_id: NodeId) {
 }
 
 // ============================================================================
-// Pass 5: Wrap Mixed Content (Inline/Block Normalization)
+// Pass 4: Wrap Mixed Content (Inline/Block Normalization)
 // ============================================================================
 
 /// Wrap consecutive inline children in a Container when they're siblings to block elements.
@@ -726,7 +589,7 @@ fn wrap_run(
 }
 
 // ============================================================================
-// Pass 6: Pruner (Empty Container Removal)
+// Pass 5: Pruner (Empty Container Removal)
 // ============================================================================
 
 /// Remove empty containers in post-order (cascading).
@@ -980,143 +843,6 @@ mod tests {
 
         // Whitespace should be preserved because it has an ID (link target)
         assert_eq!(chapter.children(list).count(), 2);
-    }
-
-    // ------------------------------------------------------------------------
-    // Hoist Tests
-    // ------------------------------------------------------------------------
-
-    #[test]
-    fn test_hoist_dissolves_single_child_wrapper() {
-        let mut chapter = IRChapter::new();
-
-        // Create: Root > Container > Inline > Text "Hello"
-        // Both Container and Inline are redundant wrappers (single child each)
-        let container = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, container);
-
-        let inline = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(container, inline);
-
-        let text_range = chapter.append_text("Hello");
-        let text_node = chapter.alloc_node(Node::text(text_range));
-        chapter.append_child(inline, text_node);
-
-        // Before: Root > Container > Inline > Text
-        assert_eq!(chapter.children(NodeId::ROOT).count(), 1);
-        let root_child = chapter.children(NodeId::ROOT).next().unwrap();
-        assert_eq!(chapter.node(root_child).unwrap().role, Role::Container);
-
-        hoist_nested_inlines(&mut chapter);
-
-        // After: Root > Text (both Container and Inline dissolved)
-        // Multiple passes dissolve the nested wrappers
-        let root_children: Vec<_> = chapter.children(NodeId::ROOT).collect();
-        assert_eq!(root_children.len(), 1);
-        assert_eq!(chapter.node(root_children[0]).unwrap().role, Role::Text);
-    }
-
-    #[test]
-    fn test_hoist_enables_span_merge() {
-        let mut chapter = IRChapter::new();
-
-        // Create "Wrapper Hell" structure (like MOBI small caps):
-        // Root > [Container > Inline > Text "T", Container > Inline > Text "HE"]
-        let c1 = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, c1);
-        let i1 = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(c1, i1);
-        let t1 = chapter.append_text("T");
-        let t1_node = chapter.alloc_node(Node::text(t1));
-        chapter.append_child(i1, t1_node);
-
-        let c2 = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, c2);
-        let i2 = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(c2, i2);
-        let t2 = chapter.append_text("HE");
-        let t2_node = chapter.alloc_node(Node::text(t2));
-        chapter.append_child(i2, t2_node);
-
-        // Before: 2 containers at root
-        assert_eq!(chapter.children(NodeId::ROOT).count(), 2);
-
-        // Full optimization pipeline
-        optimize(&mut chapter);
-
-        // After: Should have a single text node with "THE"
-        // (Containers dissolved, Inlines dissolved, Text merged)
-        let mut found_the = false;
-        for id in chapter.iter_dfs() {
-            let node = chapter.node(id).unwrap();
-            if node.role == Role::Text && !node.text.is_empty() {
-                let text = chapter.text(node.text);
-                if text == "THE" {
-                    found_the = true;
-                }
-            }
-        }
-        assert!(found_the, "Expected merged text 'THE' not found");
-    }
-
-    #[test]
-    fn test_hoist_preserves_multi_child_container() {
-        let mut chapter = IRChapter::new();
-
-        // Create: Root > Container > [Inline "A", Inline "B"]
-        // Container has 2 children, so it's NOT redundant
-        let container = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, container);
-
-        let i1 = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(container, i1);
-        let t1 = chapter.append_text("A");
-        let t1_node = chapter.alloc_node(Node::text(t1));
-        chapter.append_child(i1, t1_node);
-
-        let i2 = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(container, i2);
-        let t2 = chapter.append_text("B");
-        let t2_node = chapter.alloc_node(Node::text(t2));
-        chapter.append_child(i2, t2_node);
-
-        hoist_nested_inlines(&mut chapter);
-
-        // Container should still be there (has 2 children)
-        let root_children: Vec<_> = chapter.children(NodeId::ROOT).collect();
-        assert_eq!(root_children.len(), 1);
-        assert_eq!(
-            chapter.node(root_children[0]).unwrap().role,
-            Role::Container
-        );
-    }
-
-    #[test]
-    fn test_hoist_preserves_container_with_id() {
-        let mut chapter = IRChapter::new();
-
-        // Create: Root > Container[id="anchor"] > Inline > Text
-        // Container has semantic attribute, so it's NOT redundant
-        let container = chapter.alloc_node(Node::new(Role::Container));
-        chapter.append_child(NodeId::ROOT, container);
-        chapter.semantics.set_id(container, "anchor".to_string());
-
-        let inline = chapter.alloc_node(Node::new(Role::Inline));
-        chapter.append_child(container, inline);
-
-        let text_range = chapter.append_text("Hello");
-        let text_node = chapter.alloc_node(Node::text(text_range));
-        chapter.append_child(inline, text_node);
-
-        hoist_nested_inlines(&mut chapter);
-
-        // Container should still be there (has ID)
-        let root_children: Vec<_> = chapter.children(NodeId::ROOT).collect();
-        assert_eq!(root_children.len(), 1);
-        assert_eq!(
-            chapter.node(root_children[0]).unwrap().role,
-            Role::Container
-        );
     }
 
     // ------------------------------------------------------------------------
