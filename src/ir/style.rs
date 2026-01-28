@@ -4,6 +4,61 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
+/// Macro for defining CSS keyword enums with automatic ToCss implementation.
+///
+/// Inspired by lightningcss's `enum_property!` macro, this reduces boilerplate
+/// for enums that map directly to CSS keywords.
+///
+/// # Example
+///
+/// ```ignore
+/// enum_property! {
+///     /// Font style (normal, italic, oblique).
+///     pub enum FontStyle {
+///         #[default]
+///         Normal => "normal",
+///         Italic => "italic",
+///         Oblique => "oblique",
+///     }
+/// }
+/// ```
+macro_rules! enum_property {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident => $css:literal
+            ),* $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+        $vis enum $name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )*
+        }
+
+        impl $name {
+            /// Returns the CSS keyword for this value.
+            #[inline]
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $($name::$variant => $css,)*
+                }
+            }
+        }
+
+        impl ToCss for $name {
+            fn to_css(&self, buf: &mut String) {
+                buf.push_str(self.as_str());
+            }
+        }
+    };
+}
+
 /// Trait for converting IR style values back to CSS strings.
 pub trait ToCss {
     /// Write this value as CSS to the buffer.
@@ -45,320 +100,174 @@ impl ToCss for FontWeight {
     }
 }
 
-/// Font style (normal, italic, oblique).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum FontStyle {
-    #[default]
-    Normal,
-    Italic,
-    Oblique,
-}
-
-impl ToCss for FontStyle {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            FontStyle::Normal => "normal",
-            FontStyle::Italic => "italic",
-            FontStyle::Oblique => "oblique",
-        });
+enum_property! {
+    /// Font style (normal, italic, oblique).
+    pub enum FontStyle {
+        #[default]
+        Normal => "normal",
+        Italic => "italic",
+        Oblique => "oblique",
     }
 }
 
-/// Font variant (normal, small-caps).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum FontVariant {
-    #[default]
-    Normal,
-    SmallCaps,
-}
-
-/// Text transform values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum TextTransform {
-    #[default]
-    None,
-    Uppercase,
-    Lowercase,
-    Capitalize,
-}
-
-impl ToCss for TextTransform {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            TextTransform::None => "none",
-            TextTransform::Uppercase => "uppercase",
-            TextTransform::Lowercase => "lowercase",
-            TextTransform::Capitalize => "capitalize",
-        });
+enum_property! {
+    /// Font variant (normal, small-caps).
+    pub enum FontVariant {
+        #[default]
+        Normal => "normal",
+        SmallCaps => "small-caps",
     }
 }
 
-/// Hyphenation mode.
-/// Default is `Manual` so that explicit `hyphens: auto` is emitted in KFX output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Hyphens {
-    Auto,
-    #[default]
-    Manual,
-    None,
-}
-
-impl ToCss for Hyphens {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            Hyphens::Auto => "auto",
-            Hyphens::Manual => "manual",
-            Hyphens::None => "none",
-        });
+enum_property! {
+    /// Text transform values.
+    pub enum TextTransform {
+        #[default]
+        None => "none",
+        Uppercase => "uppercase",
+        Lowercase => "lowercase",
+        Capitalize => "capitalize",
     }
 }
 
-/// Text decoration line style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum DecorationStyle {
-    #[default]
-    None,
-    Solid,
-    Dotted,
-    Dashed,
-    Double,
-}
-
-impl ToCss for DecorationStyle {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            DecorationStyle::None => "none",
-            DecorationStyle::Solid => "solid",
-            DecorationStyle::Dotted => "dotted",
-            DecorationStyle::Dashed => "dashed",
-            DecorationStyle::Double => "double",
-        });
+enum_property! {
+    /// Hyphenation mode.
+    /// Default is `Manual` so that explicit `hyphens: auto` is emitted in KFX output.
+    pub enum Hyphens {
+        Auto => "auto",
+        #[default]
+        Manual => "manual",
+        None => "none",
     }
 }
 
-/// Float positioning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Float {
-    #[default]
-    None,
-    Left,
-    Right,
-}
-
-impl ToCss for Float {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            Float::None => "none",
-            Float::Left => "left",
-            Float::Right => "right",
-        });
+enum_property! {
+    /// Text decoration line style.
+    pub enum DecorationStyle {
+        #[default]
+        None => "none",
+        Solid => "solid",
+        Dotted => "dotted",
+        Dashed => "dashed",
+        Double => "double",
     }
 }
 
-/// Page break behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BreakValue {
-    #[default]
-    Auto,
-    Always,
-    Avoid,
-    /// Break to a new column (for multi-column layouts)
-    Column,
-}
-
-impl ToCss for BreakValue {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            BreakValue::Auto => "auto",
-            BreakValue::Always => "always",
-            BreakValue::Avoid => "avoid",
-            BreakValue::Column => "column",
-        });
+enum_property! {
+    /// Float positioning.
+    pub enum Float {
+        #[default]
+        None => "none",
+        Left => "left",
+        Right => "right",
     }
 }
 
-/// Border style values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BorderStyle {
-    #[default]
-    None,
-    Solid,
-    Dotted,
-    Dashed,
-    Double,
-    Groove,
-    Ridge,
-    Inset,
-    Outset,
-}
-
-impl ToCss for BorderStyle {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            BorderStyle::None => "none",
-            BorderStyle::Solid => "solid",
-            BorderStyle::Dotted => "dotted",
-            BorderStyle::Dashed => "dashed",
-            BorderStyle::Double => "double",
-            BorderStyle::Groove => "groove",
-            BorderStyle::Ridge => "ridge",
-            BorderStyle::Inset => "inset",
-            BorderStyle::Outset => "outset",
-        });
+enum_property! {
+    /// Page break behavior.
+    pub enum BreakValue {
+        #[default]
+        Auto => "auto",
+        Always => "always",
+        Avoid => "avoid",
+        Column => "column",
     }
 }
 
-/// List style position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ListStylePosition {
-    #[default]
-    Outside,
-    Inside,
-}
-
-impl ToCss for ListStylePosition {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            ListStylePosition::Outside => "outside",
-            ListStylePosition::Inside => "inside",
-        });
+enum_property! {
+    /// Border style values.
+    pub enum BorderStyle {
+        #[default]
+        None => "none",
+        Solid => "solid",
+        Dotted => "dotted",
+        Dashed => "dashed",
+        Double => "double",
+        Groove => "groove",
+        Ridge => "ridge",
+        Inset => "inset",
+        Outset => "outset",
     }
 }
 
-/// CSS visibility values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Visibility {
-    #[default]
-    Visible,
-    Hidden,
-    Collapse,
-}
-
-impl ToCss for Visibility {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            Visibility::Visible => "visible",
-            Visibility::Hidden => "hidden",
-            Visibility::Collapse => "collapse",
-        });
+enum_property! {
+    /// List style position.
+    pub enum ListStylePosition {
+        #[default]
+        Outside => "outside",
+        Inside => "inside",
     }
 }
 
-/// CSS box-sizing values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum BoxSizing {
-    /// Width/height include only content (CSS default)
-    #[default]
-    ContentBox,
-    /// Width/height include padding and border
-    BorderBox,
-}
-
-impl ToCss for BoxSizing {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            BoxSizing::ContentBox => "content-box",
-            BoxSizing::BorderBox => "border-box",
-        });
+enum_property! {
+    /// CSS visibility values.
+    pub enum Visibility {
+        #[default]
+        Visible => "visible",
+        Hidden => "hidden",
+        Collapse => "collapse",
     }
 }
 
-impl ToCss for FontVariant {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            FontVariant::Normal => "normal",
-            FontVariant::SmallCaps => "small-caps",
-        });
+enum_property! {
+    /// CSS box-sizing values.
+    pub enum BoxSizing {
+        /// Width/height include only content (CSS default)
+        #[default]
+        ContentBox => "content-box",
+        /// Width/height include padding and border
+        BorderBox => "border-box",
     }
 }
 
-/// Text alignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum TextAlign {
-    #[default]
-    Start,
-    End,
-    Left,
-    Right,
-    Center,
-    Justify,
-}
-
-impl ToCss for TextAlign {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            TextAlign::Start => "start",
-            TextAlign::End => "end",
-            TextAlign::Left => "left",
-            TextAlign::Right => "right",
-            TextAlign::Center => "center",
-            TextAlign::Justify => "justify",
-        });
+enum_property! {
+    /// Text alignment.
+    pub enum TextAlign {
+        #[default]
+        Start => "start",
+        End => "end",
+        Left => "left",
+        Right => "right",
+        Center => "center",
+        Justify => "justify",
     }
 }
 
-/// Display mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Display {
-    #[default]
-    Block,
-    Inline,
-    None,
-    ListItem,
-    TableCell,
-    TableRow,
-}
-
-/// CSS list-style-type values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ListStyleType {
-    /// No marker
-    #[default]
-    None,
-    /// • (default for ul)
-    Disc,
-    /// ○
-    Circle,
-    /// ▪
-    Square,
-    /// 1, 2, 3 (default for ol)
-    Decimal,
-    /// a, b, c
-    LowerAlpha,
-    /// A, B, C
-    UpperAlpha,
-    /// i, ii, iii
-    LowerRoman,
-    /// I, II, III
-    UpperRoman,
-}
-
-impl ToCss for ListStyleType {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            ListStyleType::None => "none",
-            ListStyleType::Disc => "disc",
-            ListStyleType::Circle => "circle",
-            ListStyleType::Square => "square",
-            ListStyleType::Decimal => "decimal",
-            ListStyleType::LowerAlpha => "lower-alpha",
-            ListStyleType::UpperAlpha => "upper-alpha",
-            ListStyleType::LowerRoman => "lower-roman",
-            ListStyleType::UpperRoman => "upper-roman",
-        });
+enum_property! {
+    /// Display mode.
+    pub enum Display {
+        #[default]
+        Block => "block",
+        Inline => "inline",
+        None => "none",
+        ListItem => "list-item",
+        TableCell => "table-cell",
+        TableRow => "table-row",
     }
 }
 
-impl ToCss for Display {
-    fn to_css(&self, buf: &mut String) {
-        buf.push_str(match self {
-            Display::Block => "block",
-            Display::Inline => "inline",
-            Display::None => "none",
-            Display::ListItem => "list-item",
-            Display::TableCell => "table-cell",
-            Display::TableRow => "table-row",
-        });
+enum_property! {
+    /// CSS list-style-type values.
+    pub enum ListStyleType {
+        /// No marker
+        #[default]
+        None => "none",
+        /// Disc bullet (default for ul)
+        Disc => "disc",
+        /// Circle bullet
+        Circle => "circle",
+        /// Square bullet
+        Square => "square",
+        /// Decimal numbers (default for ol)
+        Decimal => "decimal",
+        /// Lowercase letters
+        LowerAlpha => "lower-alpha",
+        /// Uppercase letters
+        UpperAlpha => "upper-alpha",
+        /// Lowercase roman numerals
+        LowerRoman => "lower-roman",
+        /// Uppercase roman numerals
+        UpperRoman => "upper-roman",
     }
 }
 
