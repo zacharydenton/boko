@@ -9,7 +9,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::ir as ir_style;
 use crate::kfx::ion::IonValue;
-use crate::kfx::style_schema::{extract_ir_field, KfxValue, StyleContext, StyleSchema};
+use crate::kfx::style_schema::{KfxValue, StyleContext, StyleSchema, extract_ir_field};
 use crate::kfx::symbols::KfxSymbol;
 
 // ============================================================================
@@ -138,7 +138,10 @@ impl ComputedStyle {
         let mut fields = Vec::new();
 
         // style_name field first
-        fields.push((KfxSymbol::StyleName as u64, IonValue::Symbol(style_name_symbol)));
+        fields.push((
+            KfxSymbol::StyleName as u64,
+            IonValue::Symbol(style_name_symbol),
+        ));
 
         // Add all properties
         for (symbol, value) in &self.properties {
@@ -369,9 +372,12 @@ fn expand_shorthand(property: &str, value: &str) -> Option<Vec<(String, String)>
     match property {
         "margin" => Some(expand_box_shorthand("margin", &parts)),
         "padding" => Some(expand_box_shorthand("padding", &parts)),
-        "border-width" => Some(expand_box_shorthand("border", &parts).into_iter()
-            .map(|(p, v)| (format!("{}-width", p), v))
-            .collect()),
+        "border-width" => Some(
+            expand_box_shorthand("border", &parts)
+                .into_iter()
+                .map(|(p, v)| (format!("{}-width", p), v))
+                .collect(),
+        ),
         "font" => expand_font_shorthand(value),
         _ => None,
     }
@@ -408,7 +414,11 @@ fn expand_font_shorthand(value: &str) -> Option<Vec<(String, String)>> {
             result.push(("font-style".to_string(), lower));
         } else if lower == "bold" || lower == "normal" || lower == "lighter" || lower == "bolder" {
             result.push(("font-weight".to_string(), lower));
-        } else if part.contains("px") || part.contains("em") || part.contains("pt") || part.contains('%') {
+        } else if part.contains("px")
+            || part.contains("em")
+            || part.contains("pt")
+            || part.contains('%')
+        {
             // This might be size or size/line-height
             if part.contains('/') {
                 let size_parts: Vec<&str> = part.split('/').collect();

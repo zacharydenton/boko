@@ -50,7 +50,10 @@ impl ArenaSink {
 impl TreeSink for ArenaSink {
     type Handle = NodeHandle;
     type Output = Self;
-    type ElemName<'a> = &'a QualName where Self: 'a;
+    type ElemName<'a>
+        = &'a QualName
+    where
+        Self: 'a;
 
     fn finish(self) -> Self::Output {
         self

@@ -372,7 +372,8 @@ impl AnchorRegistry {
         } else {
             // Internal link - store full href for reverse mapping
             // This allows create_content_anchor to find the symbol using the full path
-            self.anchor_to_symbol.insert(href.to_string(), symbol.clone());
+            self.anchor_to_symbol
+                .insert(href.to_string(), symbol.clone());
         }
 
         symbol
@@ -402,7 +403,13 @@ impl AnchorRegistry {
     /// * `fragment_id` - Content fragment ID the anchor points to
     /// * `section_id` - Section's page_template ID for position_map grouping
     /// * `offset` - Byte offset within the fragment
-    pub fn resolve_anchor(&mut self, anchor_or_href: &str, fragment_id: u64, section_id: u64, offset: usize) {
+    pub fn resolve_anchor(
+        &mut self,
+        anchor_or_href: &str,
+        fragment_id: u64,
+        section_id: u64,
+        offset: usize,
+    ) {
         // Extract fragment if href contains #, otherwise use as-is
         let anchor_name = extract_fragment(anchor_or_href).unwrap_or(anchor_or_href);
 
@@ -452,7 +459,8 @@ impl AnchorRegistry {
             // Create new anchor symbol
             let symbol = format!("a{:X}", self.next_anchor_id);
             self.next_anchor_id += 1;
-            self.anchor_to_symbol.insert(anchor_name.to_string(), symbol.clone());
+            self.anchor_to_symbol
+                .insert(anchor_name.to_string(), symbol.clone());
             symbol
         };
 
@@ -514,7 +522,6 @@ impl AnchorRegistry {
     pub fn is_empty(&self) -> bool {
         self.link_to_symbol.is_empty()
     }
-
 }
 
 /// Extract the fragment (anchor) part from an href.
@@ -750,7 +757,10 @@ impl ExportContext {
         self.current_export_path = Some(source_path.to_string());
 
         // Check if this chapter needs a chapter-start anchor
-        if self.paths_needing_chapter_start_anchor.contains(source_path) {
+        if self
+            .paths_needing_chapter_start_anchor
+            .contains(source_path)
+        {
             self.pending_chapter_start_anchor = Some(source_path.to_string());
         } else {
             self.pending_chapter_start_anchor = None;
@@ -796,10 +806,7 @@ impl ExportContext {
     /// Converts the IR ComputedStyle to KFX format via the schema-driven
     /// StyleBuilder pipeline, then deduplicates via the StyleRegistry.
     /// Returns the symbol ID to use in storyline elements.
-    pub fn register_ir_style(
-        &mut self,
-        ir_style: &crate::ir::ComputedStyle,
-    ) -> u64 {
+    pub fn register_ir_style(&mut self, ir_style: &crate::ir::ComputedStyle) -> u64 {
         // Use the schema-driven pipeline (single source of truth)
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(&schema);
@@ -913,7 +920,8 @@ impl ExportContext {
         // Record first content ID for this chapter (used for landmarks)
         if let Some(ref path) = self.current_export_path {
             if !self.first_content_ids.contains_key(path) {
-                self.first_content_ids.insert(path.clone(), first_content_id);
+                self.first_content_ids
+                    .insert(path.clone(), first_content_id);
             }
         }
 
@@ -958,12 +966,10 @@ impl ExportContext {
 
         // Only create anchor entity if this is a link_to target
         if self.needed_anchors.contains(&full_key) {
-            if let Some(symbol) = self.anchor_registry.create_content_anchor(
-                &full_key,
-                content_id,
-                section_id,
-                offset,
-            ) {
+            if let Some(symbol) = self
+                .anchor_registry
+                .create_content_anchor(&full_key, content_id, section_id, offset)
+            {
                 // Intern symbol so entity ID is assigned
                 self.symbols.get_or_intern(&symbol);
             }
@@ -1031,7 +1037,8 @@ impl ExportContext {
     /// Get all needed anchors matching a pattern (for testing).
     #[cfg(test)]
     pub fn find_needed_anchors(&self, pattern: &str) -> Vec<&str> {
-        self.needed_anchors.iter()
+        self.needed_anchors
+            .iter()
             .filter(|a| a.contains(pattern))
             .map(|s| s.as_str())
             .collect()
@@ -1341,6 +1348,9 @@ mod tests {
 
         // No anchor should be created
         let anchors = ctx.anchor_registry.drain_anchors();
-        assert!(anchors.is_empty(), "No anchor should be created for unneeded ID");
+        assert!(
+            anchors.is_empty(),
+            "No anchor should be created for unneeded ID"
+        );
     }
 }

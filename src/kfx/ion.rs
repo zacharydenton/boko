@@ -751,10 +751,10 @@ mod tests {
         // 20 = 0x14, with MSB = 0x94
         let data = [
             0xe0, 0x01, 0x00, 0xea, // BVM
-            0xd6,       // struct, length 6
-            0x8a,       // field 10 (VarUInt: 10 | 0x80)
+            0xd6, // struct, length 6
+            0x8a, // field 10 (VarUInt: 10 | 0x80)
             0x81, b'a', // string "a"
-            0x94,       // field 20 (VarUInt: 20 | 0x80)
+            0x94, // field 20 (VarUInt: 20 | 0x80)
             0x21, 0x01, // int 1
         ];
         let mut parser = IonParser::new(&data);
@@ -769,11 +769,11 @@ mod tests {
         // Struct content: field1(1) + nop(4) + field2(1) + int(2) = 8 bytes
         let data = [
             0xe0, 0x01, 0x00, 0xea, // BVM
-            0xd8,                   // struct, length 8
-            0x81,                   // field 1
+            0xd8, // struct, length 8
+            0x81, // field 1
             0x03, 0xAA, 0xBB, 0xCC, // NOP pad (type 0, len 3, 3 garbage bytes)
-            0x82,                   // field 2
-            0x21, 0x2a,             // int 42
+            0x82, // field 2
+            0x21, 0x2a, // int 42
         ];
         let mut parser = IonParser::new(&data);
         let value = parser.parse().unwrap();
@@ -904,13 +904,7 @@ mod tests {
         // Test write_value with a complex nested structure
         let value = IonValue::Struct(vec![
             (1, IonValue::String("title".to_string())),
-            (
-                2,
-                IonValue::List(vec![
-                    IonValue::Int(1),
-                    IonValue::Int(2),
-                ]),
-            ),
+            (2, IonValue::List(vec![IonValue::Int(1), IonValue::Int(2)])),
             (3, IonValue::Bool(true)),
         ]);
 
@@ -934,7 +928,12 @@ mod tests {
 
         let data = writer.into_bytes();
         // First byte should be type 5 (decimal)
-        assert_eq!(data[0] >> 4, 5, "Expected type 5 (decimal), got type {}", data[0] >> 4);
+        assert_eq!(
+            data[0] >> 4,
+            5,
+            "Expected type 5 (decimal), got type {}",
+            data[0] >> 4
+        );
     }
 
     #[test]

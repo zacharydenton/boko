@@ -605,7 +605,9 @@ impl KfxSchema {
     where
         F: Fn(KfxSymbol) -> bool,
     {
-        self.span_rules.iter().find(|rule| has_field(rule.indicator))
+        self.span_rules
+            .iter()
+            .find(|rule| has_field(rule.indicator))
     }
 
     /// Resolve a style_event to IR Role.
@@ -618,11 +620,7 @@ impl KfxSchema {
                 // Convert has_field to get_attr: if field exists, return Some(1)
                 // This allows Dynamic strategies to detect attribute presence
                 self.execute_strategy_for_role(&rule.strategy, |sym| {
-                    if has_field(sym) {
-                        Some(1)
-                    } else {
-                        None
-                    }
+                    if has_field(sym) { Some(1) } else { None }
                 })
             }
             None => Role::Inline, // default span role

@@ -380,7 +380,9 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        chapter.semantics.set_href(link, "https://example.com".to_string());
+        chapter
+            .semantics
+            .set_href(link, "https://example.com".to_string());
 
         let text_range = chapter.append_text("Click me");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -399,12 +401,18 @@ mod tests {
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter.semantics.set_src(img, "images/photo.jpg".to_string());
+        chapter
+            .semantics
+            .set_src(img, "images/photo.jpg".to_string());
         chapter.semantics.set_alt(img, "A photo".to_string());
 
         let result = synthesize_html(&chapter, &HashMap::new());
 
-        assert!(result.body.contains(r#"<img src="images/photo.jpg" alt="A photo"/>"#));
+        assert!(
+            result
+                .body
+                .contains(r#"<img src="images/photo.jpg" alt="A photo"/>"#)
+        );
         assert!(result.assets.contains("images/photo.jpg"));
     }
 
@@ -452,7 +460,8 @@ mod tests {
         let chapter = make_test_chapter();
         let style_map = HashMap::new();
 
-        let result = synthesize_xhtml_document(&chapter, &style_map, "Test Chapter", Some("style.css"));
+        let result =
+            synthesize_xhtml_document(&chapter, &style_map, "Test Chapter", Some("style.css"));
 
         assert!(result.body.contains("<?xml version"));
         assert!(result.body.contains("<!DOCTYPE html"));

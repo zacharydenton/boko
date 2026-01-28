@@ -1,7 +1,7 @@
 //! IO Abstractions for random-access byte reading.
 
-mod byte_source;
 mod adapter;
+mod byte_source;
 
-pub use byte_source::{ByteSource, FileSource, MemorySource};
 pub use adapter::ByteSourceCursor;
+pub use byte_source::{ByteSource, FileSource, MemorySource};

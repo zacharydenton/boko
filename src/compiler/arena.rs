@@ -197,7 +197,10 @@ impl ArenaDom {
     /// Append a child to a parent node.
     pub fn append(&mut self, parent: ArenaNodeId, child: ArenaNodeId) {
         // Get parent's last child
-        let last_child = self.get(parent).map(|n| n.last_child).unwrap_or(ArenaNodeId::NONE);
+        let last_child = self
+            .get(parent)
+            .map(|n| n.last_child)
+            .unwrap_or(ArenaNodeId::NONE);
 
         // Set child's parent and prev sibling
         if let Some(child_node) = self.get_mut(child) {
@@ -223,8 +226,14 @@ impl ArenaDom {
 
     /// Insert a node before a sibling.
     pub fn insert_before(&mut self, sibling: ArenaNodeId, new_node: ArenaNodeId) {
-        let parent = self.get(sibling).map(|n| n.parent).unwrap_or(ArenaNodeId::NONE);
-        let prev = self.get(sibling).map(|n| n.prev_sibling).unwrap_or(ArenaNodeId::NONE);
+        let parent = self
+            .get(sibling)
+            .map(|n| n.parent)
+            .unwrap_or(ArenaNodeId::NONE);
+        let prev = self
+            .get(sibling)
+            .map(|n| n.prev_sibling)
+            .unwrap_or(ArenaNodeId::NONE);
 
         // Set new node's links
         if let Some(new) = self.get_mut(new_node) {
@@ -250,7 +259,10 @@ impl ArenaDom {
 
     /// Append text to an existing text node, or create new if last child isn't text.
     pub fn append_text(&mut self, parent: ArenaNodeId, text: &str) {
-        let last_child = self.get(parent).map(|n| n.last_child).unwrap_or(ArenaNodeId::NONE);
+        let last_child = self
+            .get(parent)
+            .map(|n| n.last_child)
+            .unwrap_or(ArenaNodeId::NONE);
 
         // Try to append to existing text node
         if let Some(last) = self.get_mut(last_child) {
@@ -282,8 +294,14 @@ impl ArenaDom {
 
     /// Iterate over children of a node.
     pub fn children(&self, parent: ArenaNodeId) -> ChildrenIter<'_> {
-        let first = self.get(parent).map(|n| n.first_child).unwrap_or(ArenaNodeId::NONE);
-        ChildrenIter { dom: self, current: first }
+        let first = self
+            .get(parent)
+            .map(|n| n.first_child)
+            .unwrap_or(ArenaNodeId::NONE);
+        ChildrenIter {
+            dom: self,
+            current: first,
+        }
     }
 
     /// Find the first element matching a predicate (DFS).
@@ -338,7 +356,11 @@ impl<'a> Iterator for ChildrenIter<'a> {
             return None;
         }
         let id = self.current;
-        self.current = self.dom.get(id).map(|n| n.next_sibling).unwrap_or(ArenaNodeId::NONE);
+        self.current = self
+            .dom
+            .get(id)
+            .map(|n| n.next_sibling)
+            .unwrap_or(ArenaNodeId::NONE);
         Some(id)
     }
 }

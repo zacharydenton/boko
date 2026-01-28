@@ -285,9 +285,7 @@ impl<'a> selectors::Element for ElementRef<'a> {
     }
 
     fn has_local_name(&self, name: &CssLocalName) -> bool {
-        self.dom
-            .element_name(self.id)
-            .is_some_and(|n| n == &name.0)
+        self.dom.element_name(self.id).is_some_and(|n| n == &name.0)
     }
 
     fn has_namespace(&self, ns: &CssNamespace) -> bool {

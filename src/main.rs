@@ -254,11 +254,15 @@ fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
             cover_image: meta.cover_image.clone(),
             description: meta.description.clone(),
             modified_date: meta.modified_date.clone(),
-            contributors: meta.contributors.iter().map(|c| ContributorInfo {
-                name: c.name.clone(),
-                role: c.role.clone(),
-                file_as: c.file_as.clone(),
-            }).collect(),
+            contributors: meta
+                .contributors
+                .iter()
+                .map(|c| ContributorInfo {
+                    name: c.name.clone(),
+                    role: c.role.clone(),
+                    file_as: c.file_as.clone(),
+                })
+                .collect(),
             title_sort: meta.title_sort.clone(),
             author_sort: meta.author_sort.clone(),
             collection: meta.collection.as_ref().map(|c| CollectionInfoJson {
@@ -375,7 +379,10 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     println!("\nSpine ({} chapters):", book.spine().len());
     for entry in book.spine() {
         let source = book.source_id(entry.id).unwrap_or("?");
-        println!("  [{}] {} ({} bytes)", entry.id.0, source, entry.size_estimate);
+        println!(
+            "  [{}] {} ({} bytes)",
+            entry.id.0, source, entry.size_estimate
+        );
     }
 
     // Table of contents
@@ -453,7 +460,9 @@ fn convert(
         Some(parse_format(fmt)?)
     } else if from_stdin {
         // Default to EPUB for stdin since that's most common
-        return Err("Input format required when reading from stdin. Use -f (epub|azw3|mobi)".to_string());
+        return Err(
+            "Input format required when reading from stdin. Use -f (epub|azw3|mobi)".to_string(),
+        );
     } else {
         Format::from_path(input)
     };

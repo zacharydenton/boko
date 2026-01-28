@@ -11,9 +11,9 @@ use crate::book::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
-    Compression, Encoding, HuffCdicReader, MobiHeader, PdbInfo, TocNode,
-    build_toc_from_ncx, detect_image_type, is_metadata_record, parse_exth, parse_ncx_index,
-    read_index, strip_trailing_data, NULL_INDEX, palmdoc,
+    Compression, Encoding, HuffCdicReader, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
+    build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth,
+    parse_ncx_index, read_index, strip_trailing_data,
 };
 
 /// MOBI6 format importer with lazy loading.
@@ -118,7 +118,10 @@ impl Importer for MobiImporter {
             .and_then(|s| s.split('.').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, format!("Invalid asset path: {}", key))
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Invalid asset path: {}", key),
+                )
             })?;
 
         self.load_image_record(idx)
@@ -401,7 +404,9 @@ fn build_metadata(
         metadata.date = exth.pub_date.clone();
         metadata.rights = exth.rights.clone();
         metadata.language = exth.language.clone().unwrap_or_default();
-        metadata.identifier = exth.isbn.clone()
+        metadata.identifier = exth
+            .isbn
+            .clone()
             .or_else(|| exth.asin.clone())
             .or_else(|| exth.source.clone())
             .unwrap_or_default();

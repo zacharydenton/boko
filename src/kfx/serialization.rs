@@ -301,7 +301,10 @@ mod tests {
 
     #[test]
     fn test_create_entity_data() {
-        let value = IonValue::Struct(vec![(KfxSymbol::Title as u64, IonValue::String("Test".into()))]);
+        let value = IonValue::Struct(vec![(
+            KfxSymbol::Title as u64,
+            IonValue::String("Test".into()),
+        )]);
         let data = create_entity_data(&value);
 
         // Should start with ENTY magic

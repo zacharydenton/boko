@@ -71,11 +71,7 @@ pub fn get_chapter_image_path(chapter: &IRChapter) -> Option<String> {
         }
     }
 
-    if image_count == 1 {
-        image_path
-    } else {
-        None
-    }
+    if image_count == 1 { image_path } else { None }
 }
 
 /// Check if a standalone cover section is needed.

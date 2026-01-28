@@ -11,15 +11,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::book::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
-use crate::kfx::schema::schema;
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::ir::IRChapter;
 use crate::kfx::container::{
-    self, extract_doc_symbols, get_field, get_symbol_text, parse_container_header,
-    parse_container_info, parse_index_table, skip_enty_header, ContainerError, EntityLoc,
+    self, ContainerError, EntityLoc, extract_doc_symbols, get_field, get_symbol_text,
+    parse_container_header, parse_container_info, parse_index_table, skip_enty_header,
 };
 use crate::kfx::ion::{IonParser, IonValue};
+use crate::kfx::schema::schema;
 use crate::kfx::storyline::parse_storyline_to_ir;
 use crate::kfx::symbols::KfxSymbol;
 
@@ -216,13 +216,18 @@ impl KfxImporter {
         let header = parse_container_header(&header_data)?;
 
         // Read and parse container info
-        let container_info_data =
-            source.read_at(header.container_info_offset as u64, header.container_info_length)?;
+        let container_info_data = source.read_at(
+            header.container_info_offset as u64,
+            header.container_info_length,
+        )?;
         let container_info = parse_container_info(&container_info_data)?;
 
         // Get index table location (required)
         let (index_offset, index_length) = container_info.index.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "Missing index table in container")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Missing index table in container",
+            )
         })?;
 
         // Read and parse document symbols (optional)
@@ -326,7 +331,8 @@ impl KfxImporter {
 
                                 if category == "kindle_title_metadata" {
                                     if let Some(metadata_list) =
-                                        get_field(cat_fields, sym!(Metadata)).and_then(|v| v.as_list())
+                                        get_field(cat_fields, sym!(Metadata))
+                                            .and_then(|v| v.as_list())
                                     {
                                         for meta in metadata_list {
                                             if let Some(meta_fields) = meta.as_struct() {
@@ -341,9 +347,10 @@ impl KfxImporter {
                                                     "title" => {
                                                         self.metadata.title = value.to_string()
                                                     }
-                                                    "author" => {
-                                                        self.metadata.authors.push(value.to_string())
-                                                    }
+                                                    "author" => self
+                                                        .metadata
+                                                        .authors
+                                                        .push(value.to_string()),
                                                     "publisher" => {
                                                         self.metadata.publisher =
                                                             Some(value.to_string())
@@ -374,13 +381,14 @@ impl KfxImporter {
                                                         self.metadata.modified_date =
                                                             Some(value.to_string())
                                                     }
-                                                    "translator" => {
-                                                        self.metadata.contributors.push(Contributor {
+                                                    "translator" => self
+                                                        .metadata
+                                                        .contributors
+                                                        .push(Contributor {
                                                             name: value.to_string(),
                                                             file_as: None,
                                                             role: Some("trl".to_string()),
-                                                        })
-                                                    }
+                                                        }),
                                                     "title_pronunciation" => {
                                                         self.metadata.title_sort =
                                                             Some(value.to_string())
@@ -498,8 +506,8 @@ impl KfxImporter {
                 let inner = entry.unwrap_annotated();
                 if let Some(entry_fields) = inner.as_struct() {
                     // Get landmark_type symbol and convert via schema
-                    let landmark_type = get_field(entry_fields, sym!(LandmarkType))
-                        .and_then(|v| match v {
+                    let landmark_type =
+                        get_field(entry_fields, sym!(LandmarkType)).and_then(|v| match v {
                             IonValue::Symbol(id) => schema().landmark_from_kfx(*id),
                             _ => None,
                         });
@@ -569,8 +577,8 @@ impl KfxImporter {
                     }
 
                     // Get target position (includes id and offset for within-section navigation)
-                    let target_pos = get_field(entry_fields, sym!(TargetPosition))
-                        .and_then(|v| v.as_struct());
+                    let target_pos =
+                        get_field(entry_fields, sym!(TargetPosition)).and_then(|v| v.as_struct());
                     let href = if let Some(pos) = target_pos {
                         let id = get_field(pos, sym!(Id)).and_then(|v| v.as_int());
                         let offset = get_field(pos, sym!(Offset)).and_then(|v| v.as_int());
@@ -648,8 +656,8 @@ impl KfxImporter {
             if loc.type_id == KfxSymbol::Storyline as u32 {
                 if let Ok(elem) = self.parse_entity_ion(*loc) {
                     if let Some(fields) = elem.as_struct() {
-                        if let Some(name) = get_field(fields, sym!(StoryName))
-                            .and_then(|v| self.get_symbol_text(v))
+                        if let Some(name) =
+                            get_field(fields, sym!(StoryName)).and_then(|v| self.get_symbol_text(v))
                         {
                             storyline_map.insert(name.to_string(), *loc);
                         }
@@ -806,13 +814,13 @@ impl KfxImporter {
                 if let Ok(elem) = self.parse_entity_ion(*loc) {
                     if let Some(fields) = elem.as_struct() {
                         // Check if name matches
-                        let entity_name = get_field(fields, sym!(Name))
-                            .and_then(|v| self.get_symbol_text(v));
+                        let entity_name =
+                            get_field(fields, sym!(Name)).and_then(|v| self.get_symbol_text(v));
 
                         if entity_name == Some(name) {
                             // Extract content_list
-                            if let Some(list) = get_field(fields, sym!(ContentList))
-                                .and_then(|v| v.as_list())
+                            if let Some(list) =
+                                get_field(fields, sym!(ContentList)).and_then(|v| v.as_list())
                             {
                                 return Some(
                                     list.iter()

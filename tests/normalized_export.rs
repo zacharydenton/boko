@@ -2,9 +2,9 @@
 
 use std::io::Cursor;
 
-use boko::export::{normalize_book, EpubConfig, EpubExporter, Exporter, GlobalStylePool};
-use boko::ir::{ComputedStyle, FontWeight, IRChapter, StyleId};
 use boko::Book;
+use boko::export::{EpubConfig, EpubExporter, Exporter, GlobalStylePool, normalize_book};
+use boko::ir::{ComputedStyle, FontWeight, IRChapter, StyleId};
 
 // ============================================================================
 // Unit Tests for GlobalStylePool
@@ -126,11 +126,17 @@ fn test_normalize_book_produces_content() {
     let content = normalize_book(&mut book).expect("normalize_book failed");
 
     // Should have chapters
-    assert!(!content.chapters.is_empty(), "Should have normalized chapters");
+    assert!(
+        !content.chapters.is_empty(),
+        "Should have normalized chapters"
+    );
 
     // Each chapter should have content
     for chapter in &content.chapters {
-        assert!(!chapter.document.is_empty(), "Chapter document should not be empty");
+        assert!(
+            !chapter.document.is_empty(),
+            "Chapter document should not be empty"
+        );
         assert!(
             chapter.document.contains("<!DOCTYPE"),
             "Chapter should be valid XHTML"

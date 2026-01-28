@@ -104,7 +104,10 @@ pub enum KfxValue {
     Bool(bool),
     Null,
     /// Dimensioned value: { value: N, unit: Symbol }
-    Dimensioned { value: f64, unit: KfxSymbol },
+    Dimensioned {
+        value: f64,
+        unit: KfxSymbol,
+    },
 }
 
 impl KfxValue {
@@ -119,7 +122,10 @@ impl KfxValue {
             KfxValue::Bool(b) => IonValue::Bool(*b),
             KfxValue::Null => IonValue::Null,
             KfxValue::Dimensioned { value, unit } => IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Decimal(value.to_string())),
+                (
+                    KfxSymbol::Value as u64,
+                    IonValue::Decimal(value.to_string()),
+                ),
                 (KfxSymbol::Unit as u64, IonValue::Symbol(*unit as u64)),
             ]),
         }
@@ -350,7 +356,9 @@ impl StyleSchema {
             ir_key: "font-size",
             ir_field: Some(IrField::FontSize),
             kfx_symbol: KfxSymbol::FontSize,
-            transform: ValueTransform::Dimensioned { unit: KfxSymbol::Rem },
+            transform: ValueTransform::Dimensioned {
+                unit: KfxSymbol::Rem,
+            },
             context: StyleContext::Any,
         });
 
@@ -359,9 +367,10 @@ impl StyleSchema {
             ir_key: "font-variant",
             ir_field: Some(IrField::FontVariant),
             kfx_symbol: KfxSymbol::GlyphTransform,
-            transform: ValueTransform::Map(vec![
-                ("small-caps".into(), KfxValue::Symbol(KfxSymbol::SmallCaps)),
-            ]),
+            transform: ValueTransform::Map(vec![(
+                "small-caps".into(),
+                KfxValue::Symbol(KfxSymbol::SmallCaps),
+            )]),
             context: StyleContext::InlineSafe,
         });
 
@@ -746,9 +755,10 @@ impl StyleSchema {
             ir_key: "box-align",
             ir_field: Some(IrField::BoxAlign),
             kfx_symbol: KfxSymbol::BoxAlign,
-            transform: ValueTransform::Map(vec![
-                ("center".into(), KfxValue::Symbol(KfxSymbol::Center)),
-            ]),
+            transform: ValueTransform::Map(vec![(
+                "center".into(),
+                KfxValue::Symbol(KfxSymbol::Center),
+            )]),
             context: StyleContext::BlockOnly,
         });
 
@@ -1032,8 +1042,14 @@ impl StyleSchema {
             ir_field: Some(IrField::SizingBounds),
             kfx_symbol: KfxSymbol::SizingBounds,
             transform: ValueTransform::Map(vec![
-                ("content-box".into(), KfxValue::Symbol(KfxSymbol::ContentBounds)),
-                ("border-box".into(), KfxValue::Symbol(KfxSymbol::BorderBounds)),
+                (
+                    "content-box".into(),
+                    KfxValue::Symbol(KfxSymbol::ContentBounds),
+                ),
+                (
+                    "border-box".into(),
+                    KfxValue::Symbol(KfxSymbol::BorderBounds),
+                ),
             ]),
             context: StyleContext::BlockOnly,
         });
@@ -1135,17 +1151,14 @@ impl ValueTransform {
                 let color = parse_css_color(raw)?;
                 match output_format {
                     ColorFormat::PackedInt => {
-                        let packed = ((color.0 as i64) << 16)
-                            | ((color.1 as i64) << 8)
-                            | (color.2 as i64);
+                        let packed =
+                            ((color.0 as i64) << 16) | ((color.1 as i64) << 8) | (color.2 as i64);
                         Some(KfxValue::Integer(packed))
                     }
                     ColorFormat::RgbStruct => {
                         // Would need a KfxValue variant for this
                         Some(KfxValue::Integer(
-                            ((color.0 as i64) << 16)
-                                | ((color.1 as i64) << 8)
-                                | (color.2 as i64),
+                            ((color.0 as i64) << 16) | ((color.1 as i64) << 8) | (color.2 as i64),
                         ))
                     }
                 }
@@ -1161,7 +1174,10 @@ impl ValueTransform {
 
             ValueTransform::Dimensioned { unit } => {
                 let (num, _css_unit) = parse_css_length(raw)?;
-                Some(KfxValue::Dimensioned { value: num, unit: *unit })
+                Some(KfxValue::Dimensioned {
+                    value: num,
+                    unit: *unit,
+                })
             }
 
             ValueTransform::ConvertToDimensioned {
@@ -1810,7 +1826,9 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
 impl StyleSchema {
     /// Look up a schema rule by its KFX symbol.
     pub fn get_by_kfx_symbol(&self, kfx_symbol: u64) -> Option<&StylePropertyRule> {
-        self.rules.values().find(|r| r.kfx_symbol as u64 == kfx_symbol)
+        self.rules
+            .values()
+            .find(|r| r.kfx_symbol as u64 == kfx_symbol)
     }
 }
 
@@ -1858,12 +1876,15 @@ impl ValueTransform {
             }
 
             ValueTransform::Dimensioned { unit }
-            | ValueTransform::ConvertToDimensioned { target_unit: unit, .. } => {
+            | ValueTransform::ConvertToDimensioned {
+                target_unit: unit, ..
+            } => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers) or Float
                 let fields = value.as_struct()?;
                 let value_field = get_field_by_symbol(fields, KfxSymbol::Value)?;
-                let num = value_field.as_float()
+                let num = value_field
+                    .as_float()
                     .or_else(|| value_field.as_int().map(|i| i as f64))?;
                 let unit_sym = get_field_by_symbol(fields, KfxSymbol::Unit)?.as_symbol()? as u32;
 
@@ -1910,7 +1931,10 @@ impl ValueTransform {
 
 /// Helper to get a field from an Ion struct by KfxSymbol.
 fn get_field_by_symbol(fields: &[(u64, IonValue)], sym: KfxSymbol) -> Option<&IonValue> {
-    fields.iter().find(|(k, _)| *k == sym as u64).map(|(_, v)| v)
+    fields
+        .iter()
+        .find(|(k, _)| *k == sym as u64)
+        .map(|(_, v)| v)
 }
 
 /// Apply a CSS value to an IR ComputedStyle field.
@@ -1923,7 +1947,10 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             ir_style.font_weight = match css_value {
                 "bold" => ir_style::FontWeight::BOLD,
                 "normal" => ir_style::FontWeight::NORMAL,
-                s => s.parse::<u16>().map(ir_style::FontWeight).unwrap_or(ir_style::FontWeight::NORMAL),
+                s => s
+                    .parse::<u16>()
+                    .map(ir_style::FontWeight)
+                    .unwrap_or(ir_style::FontWeight::NORMAL),
             };
         }
         IrField::FontStyle => {
@@ -2015,13 +2042,11 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 ir_style.background_color = Some(ir_style::Color::rgb(r, g, b));
             }
         }
-        IrField::VerticalAlign => {
-            match css_value {
-                "super" => ir_style.vertical_align_super = true,
-                "sub" => ir_style.vertical_align_sub = true,
-                _ => {}
-            }
-        }
+        IrField::VerticalAlign => match css_value {
+            "super" => ir_style.vertical_align_super = true,
+            "sub" => ir_style.vertical_align_sub = true,
+            _ => {}
+        },
         IrField::TextDecorationUnderline => {
             ir_style.text_decoration_underline = css_value == "underline";
         }
@@ -2267,7 +2292,10 @@ fn parse_css_length_to_ir(s: &str) -> Option<ir_style::Length> {
 /// 1. For each KFX property, look up the schema rule by kfx_symbol
 /// 2. Apply inverse transform to get CSS value
 /// 3. Apply CSS value to IR field
-pub fn import_kfx_style(schema: &StyleSchema, props: &[(u64, IonValue)]) -> ir_style::ComputedStyle {
+pub fn import_kfx_style(
+    schema: &StyleSchema,
+    props: &[(u64, IonValue)],
+) -> ir_style::ComputedStyle {
     let mut style = ir_style::ComputedStyle::default();
 
     for (kfx_symbol, kfx_value) in props {
@@ -2413,7 +2441,10 @@ mod tests {
 
         let mut bold = ComputedStyle::default();
         bold.font_weight = FontWeight::BOLD;
-        assert_eq!(extract_ir_field(&bold, IrField::FontWeight), Some("bold".to_string()));
+        assert_eq!(
+            extract_ir_field(&bold, IrField::FontWeight),
+            Some("bold".to_string())
+        );
     }
 
     #[test]
@@ -2425,7 +2456,10 @@ mod tests {
 
         let mut italic = ComputedStyle::default();
         italic.font_style = FontStyle::Italic;
-        assert_eq!(extract_ir_field(&italic, IrField::FontStyle), Some("italic".to_string()));
+        assert_eq!(
+            extract_ir_field(&italic, IrField::FontStyle),
+            Some("italic".to_string())
+        );
     }
 
     #[test]
@@ -2437,7 +2471,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.color = Some(Color::rgb(255, 0, 0));
-        assert_eq!(extract_ir_field(&styled, IrField::Color), Some("#ff0000".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::Color),
+            Some("#ff0000".to_string())
+        );
     }
 
     #[test]
@@ -2449,7 +2486,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.margin_top = Length::Em(1.5);
-        assert_eq!(extract_ir_field(&styled, IrField::MarginTop), Some("1.5em".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::MarginTop),
+            Some("1.5em".to_string())
+        );
     }
 
     #[test]
@@ -2458,11 +2498,19 @@ mod tests {
 
         // Count rules with IR field mappings
         let mapped_count = schema.ir_mapped_rules().count();
-        assert!(mapped_count > 10, "Expected >10 IR-mapped rules, got {}", mapped_count);
+        assert!(
+            mapped_count > 10,
+            "Expected >10 IR-mapped rules, got {}",
+            mapped_count
+        );
 
         // All mapped rules should have ir_field set
         for rule in schema.ir_mapped_rules() {
-            assert!(rule.ir_field.is_some(), "Rule {} has no ir_field", rule.ir_key);
+            assert!(
+                rule.ir_field.is_some(),
+                "Rule {} has no ir_field",
+                rule.ir_key
+            );
         }
     }
 
@@ -2640,7 +2688,10 @@ mod tests {
     fn test_rgb_function_parsing() {
         assert_eq!(parse_css_color("rgb(255, 0, 0)"), Some((255, 0, 0)));
         assert_eq!(parse_css_color("rgb(0, 128, 255)"), Some((0, 128, 255)));
-        assert_eq!(parse_css_color("rgba(255, 255, 255, 0.5)"), Some((255, 255, 255)));
+        assert_eq!(
+            parse_css_color("rgba(255, 255, 255, 0.5)"),
+            Some((255, 255, 255))
+        );
     }
 
     #[test]
@@ -2679,15 +2730,42 @@ mod tests {
         let rule = schema.get("font-weight").unwrap();
 
         // Verify all numeric weights map to correct symbols
-        assert!(matches!(rule.transform.apply("100"), Some(KfxValue::Symbol(KfxSymbol::Thin))));
-        assert!(matches!(rule.transform.apply("200"), Some(KfxValue::Symbol(KfxSymbol::UltraLight))));
-        assert!(matches!(rule.transform.apply("300"), Some(KfxValue::Symbol(KfxSymbol::Light))));
-        assert!(matches!(rule.transform.apply("400"), Some(KfxValue::Symbol(KfxSymbol::Normal))));
-        assert!(matches!(rule.transform.apply("500"), Some(KfxValue::Symbol(KfxSymbol::Medium))));
-        assert!(matches!(rule.transform.apply("600"), Some(KfxValue::Symbol(KfxSymbol::SemiBold))));
-        assert!(matches!(rule.transform.apply("700"), Some(KfxValue::Symbol(KfxSymbol::Bold))));
-        assert!(matches!(rule.transform.apply("800"), Some(KfxValue::Symbol(KfxSymbol::UltraBold))));
-        assert!(matches!(rule.transform.apply("900"), Some(KfxValue::Symbol(KfxSymbol::Heavy))));
+        assert!(matches!(
+            rule.transform.apply("100"),
+            Some(KfxValue::Symbol(KfxSymbol::Thin))
+        ));
+        assert!(matches!(
+            rule.transform.apply("200"),
+            Some(KfxValue::Symbol(KfxSymbol::UltraLight))
+        ));
+        assert!(matches!(
+            rule.transform.apply("300"),
+            Some(KfxValue::Symbol(KfxSymbol::Light))
+        ));
+        assert!(matches!(
+            rule.transform.apply("400"),
+            Some(KfxValue::Symbol(KfxSymbol::Normal))
+        ));
+        assert!(matches!(
+            rule.transform.apply("500"),
+            Some(KfxValue::Symbol(KfxSymbol::Medium))
+        ));
+        assert!(matches!(
+            rule.transform.apply("600"),
+            Some(KfxValue::Symbol(KfxSymbol::SemiBold))
+        ));
+        assert!(matches!(
+            rule.transform.apply("700"),
+            Some(KfxValue::Symbol(KfxSymbol::Bold))
+        ));
+        assert!(matches!(
+            rule.transform.apply("800"),
+            Some(KfxValue::Symbol(KfxSymbol::UltraBold))
+        ));
+        assert!(matches!(
+            rule.transform.apply("900"),
+            Some(KfxValue::Symbol(KfxSymbol::Heavy))
+        ));
     }
 
     #[test]
@@ -2696,8 +2774,14 @@ mod tests {
         let rule = schema.get("font-style").unwrap();
 
         // Oblique should map to Oblique, NOT Italic (per Amazon's ElementEnums.data)
-        assert!(matches!(rule.transform.apply("oblique"), Some(KfxValue::Symbol(KfxSymbol::Oblique))));
-        assert!(matches!(rule.transform.apply("italic"), Some(KfxValue::Symbol(KfxSymbol::Italic))));
+        assert!(matches!(
+            rule.transform.apply("oblique"),
+            Some(KfxValue::Symbol(KfxSymbol::Oblique))
+        ));
+        assert!(matches!(
+            rule.transform.apply("italic"),
+            Some(KfxValue::Symbol(KfxSymbol::Italic))
+        ));
     }
 
     #[test]
@@ -2706,10 +2790,22 @@ mod tests {
         let rule = schema.get("text-align").unwrap();
 
         // Start/End should be distinct from Left/Right for RTL support
-        assert!(matches!(rule.transform.apply("start"), Some(KfxValue::Symbol(KfxSymbol::Start))));
-        assert!(matches!(rule.transform.apply("end"), Some(KfxValue::Symbol(KfxSymbol::End))));
-        assert!(matches!(rule.transform.apply("left"), Some(KfxValue::Symbol(KfxSymbol::Left))));
-        assert!(matches!(rule.transform.apply("right"), Some(KfxValue::Symbol(KfxSymbol::Right))));
+        assert!(matches!(
+            rule.transform.apply("start"),
+            Some(KfxValue::Symbol(KfxSymbol::Start))
+        ));
+        assert!(matches!(
+            rule.transform.apply("end"),
+            Some(KfxValue::Symbol(KfxSymbol::End))
+        ));
+        assert!(matches!(
+            rule.transform.apply("left"),
+            Some(KfxValue::Symbol(KfxSymbol::Left))
+        ));
+        assert!(matches!(
+            rule.transform.apply("right"),
+            Some(KfxValue::Symbol(KfxSymbol::Right))
+        ));
     }
 
     #[test]
@@ -2733,8 +2829,14 @@ mod tests {
         // Should use BaselineStyle symbol, not TextBaseline
         assert_eq!(rule.kfx_symbol, KfxSymbol::BaselineStyle);
 
-        assert!(matches!(rule.transform.apply("super"), Some(KfxValue::Symbol(KfxSymbol::Superscript))));
-        assert!(matches!(rule.transform.apply("sub"), Some(KfxValue::Symbol(KfxSymbol::Subscript))));
+        assert!(matches!(
+            rule.transform.apply("super"),
+            Some(KfxValue::Symbol(KfxSymbol::Superscript))
+        ));
+        assert!(matches!(
+            rule.transform.apply("sub"),
+            Some(KfxValue::Symbol(KfxSymbol::Subscript))
+        ));
     }
 
     // ========================================================================
@@ -2752,7 +2854,10 @@ mod tests {
 
         // Normal symbol → "normal" CSS string
         let kfx_value = IonValue::Symbol(KfxSymbol::Normal as u64);
-        assert_eq!(rule.transform.inverse(&kfx_value), Some("normal".to_string()));
+        assert_eq!(
+            rule.transform.inverse(&kfx_value),
+            Some("normal".to_string())
+        );
     }
 
     #[test]
@@ -2763,14 +2868,23 @@ mod tests {
         // {value: 1.5, unit: em} → "1.5em" (Float)
         let kfx_value = IonValue::Struct(vec![
             (KfxSymbol::Value as u64, IonValue::Float(1.5)),
-            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Em as u64),
+            ),
         ]);
-        assert_eq!(rule.transform.inverse(&kfx_value), Some("1.5em".to_string()));
+        assert_eq!(
+            rule.transform.inverse(&kfx_value),
+            Some("1.5em".to_string())
+        );
 
         // {value: 2, unit: em} → "2em" (Int - Amazon may store whole numbers as Int)
         let kfx_value = IonValue::Struct(vec![
             (KfxSymbol::Value as u64, IonValue::Int(2)),
-            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Em as u64),
+            ),
         ]);
         assert_eq!(rule.transform.inverse(&kfx_value), Some("2em".to_string()));
     }
@@ -2782,11 +2896,17 @@ mod tests {
 
         // 0xFF0000 → "#ff0000"
         let kfx_value = IonValue::Int(0xFF0000);
-        assert_eq!(rule.transform.inverse(&kfx_value), Some("#ff0000".to_string()));
+        assert_eq!(
+            rule.transform.inverse(&kfx_value),
+            Some("#ff0000".to_string())
+        );
 
         // 0x00FF00 → "#00ff00"
         let kfx_value = IonValue::Int(0x00FF00);
-        assert_eq!(rule.transform.inverse(&kfx_value), Some("#00ff00".to_string()));
+        assert_eq!(
+            rule.transform.inverse(&kfx_value),
+            Some("#00ff00".to_string())
+        );
     }
 
     #[test]
@@ -2797,12 +2917,24 @@ mod tests {
 
         // Build KFX style properties
         let props = vec![
-            (KfxSymbol::FontWeight as u64, IonValue::Symbol(KfxSymbol::Bold as u64)),
-            (KfxSymbol::TextAlignment as u64, IonValue::Symbol(KfxSymbol::Center as u64)),
-            (KfxSymbol::MarginTop as u64, IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Float(2.0)),
-                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
-            ])),
+            (
+                KfxSymbol::FontWeight as u64,
+                IonValue::Symbol(KfxSymbol::Bold as u64),
+            ),
+            (
+                KfxSymbol::TextAlignment as u64,
+                IonValue::Symbol(KfxSymbol::Center as u64),
+            ),
+            (
+                KfxSymbol::MarginTop as u64,
+                IonValue::Struct(vec![
+                    (KfxSymbol::Value as u64, IonValue::Float(2.0)),
+                    (
+                        KfxSymbol::Unit as u64,
+                        IonValue::Symbol(KfxSymbol::Em as u64),
+                    ),
+                ]),
+            ),
         ];
 
         // Import using schema
@@ -2825,7 +2957,11 @@ mod tests {
         let result = transform.apply("32px").unwrap();
         match result {
             KfxValue::Dimensioned { value, unit } => {
-                assert!((value - 2.0).abs() < 0.001, "32px / 16px should be 2em, got {}", value);
+                assert!(
+                    (value - 2.0).abs() < 0.001,
+                    "32px / 16px should be 2em, got {}",
+                    value
+                );
                 assert_eq!(unit, KfxSymbol::Em);
             }
             _ => panic!("Expected Dimensioned, got {:?}", result),
@@ -2836,7 +2972,11 @@ mod tests {
         match result {
             KfxValue::Dimensioned { value, unit } => {
                 // 1.5em * 16 = 24px, 24px / 16 = 1.5em
-                assert!((value - 1.5).abs() < 0.001, "1.5em should stay 1.5em, got {}", value);
+                assert!(
+                    (value - 1.5).abs() < 0.001,
+                    "1.5em should stay 1.5em, got {}",
+                    value
+                );
                 assert_eq!(unit, KfxSymbol::Em);
             }
             _ => panic!("Expected Dimensioned, got {:?}", result),
@@ -2846,7 +2986,11 @@ mod tests {
         let result = transform.apply("50%").unwrap();
         match result {
             KfxValue::Dimensioned { value, unit } => {
-                assert!((value - 50.0).abs() < 0.001, "50% should be preserved as 50, got {}", value);
+                assert!(
+                    (value - 50.0).abs() < 0.001,
+                    "50% should be preserved as 50, got {}",
+                    value
+                );
                 assert_eq!(unit, KfxSymbol::Percent);
             }
             _ => panic!("Expected Dimensioned, got {:?}", result),
@@ -2863,7 +3007,10 @@ mod tests {
 
         let kfx_value = IonValue::Struct(vec![
             (KfxSymbol::Value as u64, IonValue::Float(2.0)),
-            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Em as u64),
+            ),
         ]);
 
         let css = transform.inverse(&kfx_value).unwrap();
@@ -2872,7 +3019,10 @@ mod tests {
         // Test with Int value (Amazon sometimes stores whole numbers as Int)
         let kfx_value = IonValue::Struct(vec![
             (KfxSymbol::Value as u64, IonValue::Int(3)),
-            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Em as u64),
+            ),
         ]);
 
         let css = transform.inverse(&kfx_value).unwrap();
@@ -2898,10 +3048,22 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("text-transform").unwrap();
 
-        assert!(matches!(rule.transform.apply("uppercase"), Some(KfxValue::Symbol(KfxSymbol::Uppercase))));
-        assert!(matches!(rule.transform.apply("lowercase"), Some(KfxValue::Symbol(KfxSymbol::Lowercase))));
-        assert!(matches!(rule.transform.apply("capitalize"), Some(KfxValue::Symbol(KfxSymbol::Titlecase))));
-        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+        assert!(matches!(
+            rule.transform.apply("uppercase"),
+            Some(KfxValue::Symbol(KfxSymbol::Uppercase))
+        ));
+        assert!(matches!(
+            rule.transform.apply("lowercase"),
+            Some(KfxValue::Symbol(KfxSymbol::Lowercase))
+        ));
+        assert!(matches!(
+            rule.transform.apply("capitalize"),
+            Some(KfxValue::Symbol(KfxSymbol::Titlecase))
+        ));
+        assert!(matches!(
+            rule.transform.apply("none"),
+            Some(KfxValue::Symbol(KfxSymbol::None))
+        ));
     }
 
     #[test]
@@ -2909,9 +3071,18 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("hyphens").unwrap();
 
-        assert!(matches!(rule.transform.apply("auto"), Some(KfxValue::Symbol(KfxSymbol::Auto))));
-        assert!(matches!(rule.transform.apply("manual"), Some(KfxValue::Symbol(KfxSymbol::Manual))));
-        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+        assert!(matches!(
+            rule.transform.apply("auto"),
+            Some(KfxValue::Symbol(KfxSymbol::Auto))
+        ));
+        assert!(matches!(
+            rule.transform.apply("manual"),
+            Some(KfxValue::Symbol(KfxSymbol::Manual))
+        ));
+        assert!(matches!(
+            rule.transform.apply("none"),
+            Some(KfxValue::Symbol(KfxSymbol::None))
+        ));
     }
 
     #[test]
@@ -2919,8 +3090,14 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("white-space").unwrap();
 
-        assert!(matches!(rule.transform.apply("nowrap"), Some(KfxValue::Bool(true))));
-        assert!(matches!(rule.transform.apply("normal"), Some(KfxValue::Bool(false))));
+        assert!(matches!(
+            rule.transform.apply("nowrap"),
+            Some(KfxValue::Bool(true))
+        ));
+        assert!(matches!(
+            rule.transform.apply("normal"),
+            Some(KfxValue::Bool(false))
+        ));
     }
 
     #[test]
@@ -2928,12 +3105,24 @@ mod tests {
         let schema = StyleSchema::standard();
 
         let rule = schema.get("break-before").unwrap();
-        assert!(matches!(rule.transform.apply("always"), Some(KfxValue::Symbol(KfxSymbol::Always))));
-        assert!(matches!(rule.transform.apply("avoid"), Some(KfxValue::Symbol(KfxSymbol::Avoid))));
-        assert!(matches!(rule.transform.apply("auto"), Some(KfxValue::Symbol(KfxSymbol::Auto))));
+        assert!(matches!(
+            rule.transform.apply("always"),
+            Some(KfxValue::Symbol(KfxSymbol::Always))
+        ));
+        assert!(matches!(
+            rule.transform.apply("avoid"),
+            Some(KfxValue::Symbol(KfxSymbol::Avoid))
+        ));
+        assert!(matches!(
+            rule.transform.apply("auto"),
+            Some(KfxValue::Symbol(KfxSymbol::Auto))
+        ));
 
         let rule = schema.get("break-inside").unwrap();
-        assert!(matches!(rule.transform.apply("avoid"), Some(KfxValue::Symbol(KfxSymbol::Avoid))));
+        assert!(matches!(
+            rule.transform.apply("avoid"),
+            Some(KfxValue::Symbol(KfxSymbol::Avoid))
+        ));
     }
 
     #[test]
@@ -2941,9 +3130,18 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("float").unwrap();
 
-        assert!(matches!(rule.transform.apply("left"), Some(KfxValue::Symbol(KfxSymbol::Left))));
-        assert!(matches!(rule.transform.apply("right"), Some(KfxValue::Symbol(KfxSymbol::Right))));
-        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+        assert!(matches!(
+            rule.transform.apply("left"),
+            Some(KfxValue::Symbol(KfxSymbol::Left))
+        ));
+        assert!(matches!(
+            rule.transform.apply("right"),
+            Some(KfxValue::Symbol(KfxSymbol::Right))
+        ));
+        assert!(matches!(
+            rule.transform.apply("none"),
+            Some(KfxValue::Symbol(KfxSymbol::None))
+        ));
     }
 
     #[test]
@@ -2951,12 +3149,30 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("border-top-style").unwrap();
 
-        assert!(matches!(rule.transform.apply("solid"), Some(KfxValue::Symbol(KfxSymbol::Solid))));
-        assert!(matches!(rule.transform.apply("dashed"), Some(KfxValue::Symbol(KfxSymbol::Dashed))));
-        assert!(matches!(rule.transform.apply("dotted"), Some(KfxValue::Symbol(KfxSymbol::Dotted))));
-        assert!(matches!(rule.transform.apply("double"), Some(KfxValue::Symbol(KfxSymbol::Double))));
-        assert!(matches!(rule.transform.apply("groove"), Some(KfxValue::Symbol(KfxSymbol::Groove))));
-        assert!(matches!(rule.transform.apply("none"), Some(KfxValue::Symbol(KfxSymbol::None))));
+        assert!(matches!(
+            rule.transform.apply("solid"),
+            Some(KfxValue::Symbol(KfxSymbol::Solid))
+        ));
+        assert!(matches!(
+            rule.transform.apply("dashed"),
+            Some(KfxValue::Symbol(KfxSymbol::Dashed))
+        ));
+        assert!(matches!(
+            rule.transform.apply("dotted"),
+            Some(KfxValue::Symbol(KfxSymbol::Dotted))
+        ));
+        assert!(matches!(
+            rule.transform.apply("double"),
+            Some(KfxValue::Symbol(KfxSymbol::Double))
+        ));
+        assert!(matches!(
+            rule.transform.apply("groove"),
+            Some(KfxValue::Symbol(KfxSymbol::Groove))
+        ));
+        assert!(matches!(
+            rule.transform.apply("none"),
+            Some(KfxValue::Symbol(KfxSymbol::None))
+        ));
     }
 
     #[test]
@@ -2964,8 +3180,14 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("list-style-position").unwrap();
 
-        assert!(matches!(rule.transform.apply("inside"), Some(KfxValue::Symbol(KfxSymbol::Inside))));
-        assert!(matches!(rule.transform.apply("outside"), Some(KfxValue::Symbol(KfxSymbol::Outside))));
+        assert!(matches!(
+            rule.transform.apply("inside"),
+            Some(KfxValue::Symbol(KfxSymbol::Inside))
+        ));
+        assert!(matches!(
+            rule.transform.apply("outside"),
+            Some(KfxValue::Symbol(KfxSymbol::Outside))
+        ));
     }
 
     #[test]
@@ -2973,8 +3195,14 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("visibility").unwrap();
 
-        assert!(matches!(rule.transform.apply("visible"), Some(KfxValue::Symbol(KfxSymbol::Show))));
-        assert!(matches!(rule.transform.apply("hidden"), Some(KfxValue::Symbol(KfxSymbol::Hide))));
+        assert!(matches!(
+            rule.transform.apply("visible"),
+            Some(KfxValue::Symbol(KfxSymbol::Show))
+        ));
+        assert!(matches!(
+            rule.transform.apply("hidden"),
+            Some(KfxValue::Symbol(KfxSymbol::Hide))
+        ));
     }
 
     #[test]
@@ -2986,7 +3214,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.letter_spacing = Length::Em(0.1);
-        assert_eq!(extract_ir_field(&styled, IrField::LetterSpacing), Some("0.1em".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::LetterSpacing),
+            Some("0.1em".to_string())
+        );
     }
 
     #[test]
@@ -2998,7 +3229,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.text_transform = TextTransform::Uppercase;
-        assert_eq!(extract_ir_field(&styled, IrField::TextTransform), Some("uppercase".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::TextTransform),
+            Some("uppercase".to_string())
+        );
     }
 
     #[test]
@@ -3010,7 +3244,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.break_before = BreakValue::Always;
-        assert_eq!(extract_ir_field(&styled, IrField::BreakBefore), Some("always".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::BreakBefore),
+            Some("always".to_string())
+        );
     }
 
     #[test]
@@ -3022,7 +3259,10 @@ mod tests {
 
         let mut styled = ComputedStyle::default();
         styled.border_style_top = BorderStyle::Solid;
-        assert_eq!(extract_ir_field(&styled, IrField::BorderStyleTop), Some("solid".to_string()));
+        assert_eq!(
+            extract_ir_field(&styled, IrField::BorderStyleTop),
+            Some("solid".to_string())
+        );
     }
 
     #[test]
@@ -3080,7 +3320,11 @@ mod tests {
 
         // Count rules with IR field mappings (should be ~50+ now with all phases)
         let mapped_count = schema.ir_mapped_rules().count();
-        assert!(mapped_count >= 40, "Expected >=40 IR-mapped rules, got {}", mapped_count);
+        assert!(
+            mapped_count >= 40,
+            "Expected >=40 IR-mapped rules, got {}",
+            mapped_count
+        );
     }
 
     #[test]

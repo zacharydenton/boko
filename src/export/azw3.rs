@@ -6,17 +6,17 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Seek, Write};
 use std::path::Path;
 
-use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use flate2::write::ZlibEncoder;
 
 use crate::book::{Book, Resource, TocEntry};
 use crate::mobi::index::{
-    build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx, calculate_cncx_offsets,
-    NcxBuildEntry,
+    NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
+    calculate_cncx_offsets,
 };
 use crate::mobi::skeleton::{Chunker, ChunkerResult};
 use crate::mobi::writer_transform::{
-    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_10, write_base32_4,
+    rewrite_css_references_fast, rewrite_html_references_fast, write_base32_4, write_base32_10,
 };
 
 use super::Exporter;
@@ -124,13 +124,7 @@ impl BookContext {
             let data = book.load_asset(&path)?;
             let media_type = guess_media_type(&path_str);
 
-            resources.insert(
-                path_str,
-                Resource {
-                    data,
-                    media_type,
-                },
-            );
+            resources.insert(path_str, Resource { data, media_type });
         }
 
         // Also add spine items as resources (needed for internal lookups)
@@ -199,10 +193,7 @@ impl BookContext {
         for asset_path in &normalized.assets {
             if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
                 let media_type = guess_media_type(asset_path);
-                resources.insert(
-                    asset_path.clone(),
-                    Resource { data, media_type },
-                );
+                resources.insert(asset_path.clone(), Resource { data, media_type });
             }
         }
 
@@ -472,7 +463,12 @@ impl Kf8Builder {
                     // Try to resolve the link target
                     let resolved = if fragment.starts_with("filepos") {
                         // MOBI filepos reference - use filepos_map
-                        resolve_filepos_to_offset(target_file, fragment, filepos_map, aid_offset_map)
+                        resolve_filepos_to_offset(
+                            target_file,
+                            fragment,
+                            filepos_map,
+                            aid_offset_map,
+                        )
                     } else {
                         // Standard element ID - use id_map
                         let key = (target_file.clone(), fragment.clone());
@@ -1120,7 +1116,7 @@ fn resolve_filepos(
     // Find the aid at or before target_pos using binary search
     // positions is sorted by original position (ascending)
     let idx = match positions.binary_search_by_key(&target_pos, |(pos, _)| *pos) {
-        Ok(i) => i,        // Exact match
+        Ok(i) => i,                    // Exact match
         Err(i) => i.saturating_sub(1), // Use previous entry (largest <= target)
     };
 
@@ -1262,10 +1258,7 @@ mod tests {
         let mut filepos_map = HashMap::new();
         filepos_map.insert(
             "content.html".to_string(),
-            vec![
-                (100, "0001".to_string()),
-                (500, "0002".to_string()),
-            ],
+            vec![(100, "0001".to_string()), (500, "0002".to_string())],
         );
 
         let mut aid_offset_map = HashMap::new();

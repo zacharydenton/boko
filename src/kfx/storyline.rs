@@ -20,7 +20,7 @@
 use crate::ir::{IRChapter, Node, NodeId};
 use crate::kfx::container::get_field;
 use crate::kfx::ion::IonValue;
-use crate::kfx::schema::{schema, SemanticTarget};
+use crate::kfx::schema::{SemanticTarget, schema};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, SpanStart, TokenStream};
 use crate::kfx::transforms::ImportContext;
@@ -68,7 +68,10 @@ pub fn tokenize_storyline(
         None => return stream,
     };
 
-    let ctx = TokenizeContext { doc_symbols, anchors };
+    let ctx = TokenizeContext {
+        doc_symbols,
+        anchors,
+    };
     tokenize_content_list(content_list, &ctx, &mut stream);
     stream
 }
@@ -109,9 +112,8 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     // Use schema to resolve role with attribute lookup closure
     // Return int values directly, or symbol IDs cast to i64 for symbol-based attributes
     let mut role = schema().resolve_element_role(kfx_type_id, |symbol| {
-        get_field(fields, symbol as u64).and_then(|v| {
-            v.as_int().or_else(|| v.as_symbol().map(|s| s as i64))
-        })
+        get_field(fields, symbol as u64)
+            .and_then(|v| v.as_int().or_else(|| v.as_symbol().map(|s| s as i64)))
     });
 
     // Check for semantic type annotation (yj.semantics.type) which uses local symbols.
@@ -150,8 +152,8 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     let has_children = get_field(fields, sym!(ContentList)).is_some();
 
     // Get style reference (symbol ID or name) for later lookup
-    let style_name = get_field(fields, sym!(Style))
-        .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols));
+    let style_name =
+        get_field(fields, sym!(Style)).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols));
 
     // Emit StartElement token
     stream.push(KfxToken::StartElement(ElementStart {
@@ -186,9 +188,7 @@ fn get_semantic_type_annotation(
 ) -> Option<String> {
     // Find the field ID for "yj.semantics.type" in local symbols.
     // Local symbol IDs are offset by the base symbol table size.
-    let doc_idx = doc_symbols
-        .iter()
-        .position(|s| s == "yj.semantics.type")?;
+    let doc_idx = doc_symbols.iter().position(|s| s == "yj.semantics.type")?;
     let field_id = crate::kfx::symbols::KFX_SYMBOL_TABLE_SIZE + doc_idx;
 
     // Get the value and resolve it to a string
@@ -212,8 +212,8 @@ fn extract_all_element_attrs(
     };
 
     for rule in schema().element_attr_rules(kfx_type_id) {
-        if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u64).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
+        if let Some(raw_value) = get_field(fields, rule.kfx_field as u64)
+            .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
             let parsed = rule.transform.import(&raw_value, &import_ctx);
@@ -285,8 +285,8 @@ where
     };
 
     for rule in schema().span_attr_rules(&has_field) {
-        if let Some(raw_value) =
-            get_field(fields, rule.kfx_field as u64).and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
+        if let Some(raw_value) = get_field(fields, rule.kfx_field as u64)
+            .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
             // Apply the transformer to convert the raw value
             let parsed = rule.transform.import(&raw_value, &import_ctx);
@@ -416,19 +416,14 @@ fn apply_semantics_to_node(
 /// This is schema-driven: iterates schema rules with KFX symbol mappings,
 /// applies inverse transforms to convert KFX values back to IR values.
 fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
-    use crate::kfx::style_schema::{import_kfx_style, StyleSchema};
+    use crate::kfx::style_schema::{StyleSchema, import_kfx_style};
 
     let schema = StyleSchema::standard();
     import_kfx_style(&schema, props)
 }
 
 /// Build text nodes with inline spans applied.
-fn build_text_with_spans(
-    chapter: &mut IRChapter,
-    parent: NodeId,
-    text: &str,
-    spans: &[SpanStart],
-) {
+fn build_text_with_spans(chapter: &mut IRChapter, parent: NodeId, text: &str, spans: &[SpanStart]) {
     // Sort spans by offset, then by length (shorter first for same offset)
     let mut sorted_spans: Vec<_> = spans.iter().collect();
     sorted_spans.sort_by_key(|s| (s.offset, s.length));
@@ -1538,10 +1533,7 @@ mod tests {
         }
 
         let hints = find_layout_hints(&ion);
-        assert!(
-            hints.is_some(),
-            "Heading should have layout_hints"
-        );
+        assert!(hints.is_some(), "Heading should have layout_hints");
         let hints = hints.unwrap();
         assert!(
             hints.contains(&(KfxSymbol::TreatAsTitle as u64)),
@@ -1602,10 +1594,7 @@ mod tests {
         }
 
         let hints = find_layout_hints(&ion);
-        assert!(
-            hints.is_some(),
-            "Figure should have layout_hints"
-        );
+        assert!(hints.is_some(), "Figure should have layout_hints");
         let hints = hints.unwrap();
         assert!(
             hints.contains(&(KfxSymbol::Figure as u64)),
@@ -1631,7 +1620,9 @@ mod tests {
         chapter.append_child(chapter.root(), endnote_id);
 
         // Set epub:type to indicate this is an endnote
-        chapter.semantics.set_epub_type(endnote_id, "endnote footnote".to_string());
+        chapter
+            .semantics
+            .set_epub_type(endnote_id, "endnote footnote".to_string());
         chapter.semantics.set_id(endnote_id, "note-1".to_string());
 
         let mut ctx = crate::kfx::context::ExportContext::new();

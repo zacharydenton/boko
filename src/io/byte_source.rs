@@ -35,7 +35,9 @@ impl FileSource {
 
 #[cfg(unix)]
 impl ByteSource for FileSource {
-    fn len(&self) -> u64 { self.len }
+    fn len(&self) -> u64 {
+        self.len
+    }
 
     fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         use std::os::unix::fs::FileExt; // Enables pread
@@ -47,7 +49,9 @@ impl ByteSource for FileSource {
 
 #[cfg(not(unix))]
 impl ByteSource for FileSource {
-    fn len(&self) -> u64 { self.len }
+    fn len(&self) -> u64 {
+        self.len
+    }
 
     fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
         // Fallback for Windows/WASM where pread might not be available directly on File

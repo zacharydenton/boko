@@ -3,7 +3,7 @@
 use html5ever::LocalName;
 
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
-use super::css::{compute_styles, Origin, Stylesheet};
+use super::css::{Origin, Stylesheet, compute_styles};
 use super::element_ref::ElementRef;
 use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role};
 
@@ -96,9 +96,9 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         "pre" => Role::CodeBlock,
 
         // Inline elements with styling (rendered via ComputedStyle)
-        "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd"
-        | "samp" | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small"
-        | "mark" | "abbr" | "time" | "q" => Role::Inline,
+        "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd" | "samp"
+        | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small" | "mark"
+        | "abbr" | "time" | "q" => Role::Inline,
 
         // Headings with level
         "h1" => Role::Heading(1),
@@ -133,8 +133,9 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
         "td" | "th" => Role::TableCell,
 
         // Other inline containers
-        "label" | "legend" | "output" | "data" | "ruby" | "rt" | "rp" | "bdi" | "bdo"
-        | "wbr" => Role::Inline,
+        "label" | "legend" | "output" | "data" | "ruby" | "rt" | "rp" | "bdi" | "bdo" | "wbr" => {
+            Role::Inline
+        }
 
         // Default to container for unknown block elements
         _ => Role::Container,
@@ -385,9 +386,8 @@ impl<'a> TransformContext<'a> {
             }
 
             // Skip other node types
-            ArenaNodeData::Document
-            | ArenaNodeData::Comment(_)
-            | ArenaNodeData::Doctype { .. } => {}
+            ArenaNodeData::Document | ArenaNodeData::Comment(_) | ArenaNodeData::Doctype { .. } => {
+            }
         }
     }
 }
@@ -471,10 +471,7 @@ mod tests {
         // Find link node
         for id in chapter.iter_dfs() {
             if chapter.node(id).unwrap().role == Role::Link {
-                assert_eq!(
-                    chapter.semantics.href(id),
-                    Some("https://example.com")
-                );
+                assert_eq!(chapter.semantics.href(id), Some("https://example.com"));
                 return;
             }
         }

@@ -17,7 +17,7 @@ pub use mobi::MobiImporter;
 use std::path::{Path, PathBuf};
 
 use crate::book::{Landmark, Metadata, TocEntry};
-use crate::compiler::{compile_html_bytes, extract_stylesheets, Origin, Stylesheet};
+use crate::compiler::{Origin, Stylesheet, compile_html_bytes, extract_stylesheets};
 use crate::ir::IRChapter;
 
 /// Unique identifier for a chapter/spine item within a book.

@@ -10,16 +10,21 @@ use crate::book::{Book, LandmarkType};
 use crate::export::Exporter;
 use crate::import::ChapterId;
 use crate::ir::{IRChapter, NodeId, Role};
-use crate::kfx::context::{ExportContext, LandmarkTarget};
 use crate::kfx::auxiliary::build_auxiliary_data_fragment;
-use crate::kfx::cover::{build_cover_section, is_image_only_chapter, needs_standalone_cover, normalize_cover_path, COVER_SECTION_NAME};
+use crate::kfx::context::{ExportContext, LandmarkTarget};
+use crate::kfx::cover::{
+    COVER_SECTION_NAME, build_cover_section, is_image_only_chapter, needs_standalone_cover,
+    normalize_cover_path,
+};
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
-use crate::kfx::serialization::{
-    create_entity_data, generate_container_id, serialize_annotated_ion, serialize_container,
-    SerializedEntity,
+use crate::kfx::metadata::{
+    MetadataCategory, MetadataContext, build_category_entries, generate_book_id,
 };
-use crate::kfx::metadata::{build_category_entries, generate_book_id, MetadataCategory, MetadataContext};
+use crate::kfx::serialization::{
+    SerializedEntity, create_entity_data, generate_container_id, serialize_annotated_ion,
+    serialize_container,
+};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
 use crate::util::detect_media_format;
@@ -103,7 +108,11 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     };
 
     // If standalone cover needed, section offset starts at 1 (c0 reserved for cover)
-    let section_offset = if standalone_cover_path.is_some() { 1 } else { 0 };
+    let section_offset = if standalone_cover_path.is_some() {
+        1
+    } else {
+        0
+    };
 
     // Collect spine info with appropriate offset
     // Generate clean short section names (like 'c0', 'c1', etc.)
@@ -174,7 +183,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
     // Fall back to heuristics if IR didn't provide Cover or StartReading
     let has_cover = ctx.landmark_fragments.contains_key(&LandmarkType::Cover);
-    let has_srl = ctx.landmark_fragments.contains_key(&LandmarkType::StartReading);
+    let has_srl = ctx
+        .landmark_fragments
+        .contains_key(&LandmarkType::StartReading);
 
     if !has_cover || !has_srl {
         for (chapter_id, _section_name) in &spine_info {
@@ -193,7 +204,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
                             },
                         );
                     } else if !is_cover
-                        && !ctx.landmark_fragments.contains_key(&LandmarkType::StartReading)
+                        && !ctx
+                            .landmark_fragments
+                            .contains_key(&LandmarkType::StartReading)
                     {
                         ctx.landmark_fragments.insert(
                             LandmarkType::StartReading,
@@ -208,7 +221,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
                 // Stop once we have both
                 if ctx.landmark_fragments.contains_key(&LandmarkType::Cover)
-                    && ctx.landmark_fragments.contains_key(&LandmarkType::StartReading)
+                    && ctx
+                        .landmark_fragments
+                        .contains_key(&LandmarkType::StartReading)
                 {
                     break;
                 }
@@ -280,7 +295,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // Generate standalone cover section if needed (c0)
     // Note: cover_fragment_id was assigned in Pass 1 for landmark resolution
     if let Some(ref cover_path) = standalone_cover_path {
-        let section_id = ctx.cover_fragment_id.expect("cover_fragment_id should be set in Pass 1");
+        let section_id = ctx
+            .cover_fragment_id
+            .expect("cover_fragment_id should be set in Pass 1");
         // Get the next fragment ID which will be the cover's content ID
         let cover_content_id = ctx.fragment_ids.peek();
         // Store cover content ID for position_map (so c0 contains both section and content IDs)
@@ -301,12 +318,8 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
             let source_path = book.source_id(*chapter_id).unwrap_or("");
             ctx.begin_chapter_export(*chapter_id, source_path);
 
-            let (section, storyline, content) = build_chapter_entities_grouped(
-                &chapter,
-                *chapter_id,
-                section_name,
-                &mut ctx,
-            );
+            let (section, storyline, content) =
+                build_chapter_entities_grouped(&chapter, *chapter_id, section_name, &mut ctx);
             section_fragments.push(section);
             storyline_fragments.push(storyline);
             if let Some(c) = content {
@@ -366,7 +379,11 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
     // 2l. Container metadata entities
     fragments.push(build_resource_path_fragment());
-    fragments.push(build_container_entity_map_fragment(&container_id, &fragments, &ctx));
+    fragments.push(build_container_entity_map_fragment(
+        &container_id,
+        &fragments,
+        &ctx,
+    ));
 
     // 2d. Document data fragment ($538) - built AFTER all IDs are assigned so max_id is correct
     // Insert at position 3 (after content_features, book_metadata, metadata)
@@ -407,7 +424,12 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 /// - Track text offsets for link resolution
 ///
 /// NO ION GENERATION happens here.
-fn survey_chapter(chapter: &IRChapter, chapter_id: ChapterId, source_path: &str, ctx: &mut ExportContext) {
+fn survey_chapter(
+    chapter: &IRChapter,
+    chapter_id: ChapterId,
+    source_path: &str,
+    ctx: &mut ExportContext,
+) {
     // Begin surveying this chapter (with source path for TOC resolution)
     let _fragment_id = ctx.begin_chapter_survey(chapter_id, source_path);
 
@@ -474,7 +496,11 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
 /// Note: hrefs are already resolved to full paths during import
 /// (via resolve_semantic_paths in import/mod.rs), so no additional
 /// path resolution is needed here.
-fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
+fn collect_needed_anchors_from_chapter(
+    chapter: &IRChapter,
+    node_id: NodeId,
+    ctx: &mut ExportContext,
+) {
     if chapter.node(node_id).is_none() {
         return;
     }
@@ -512,7 +538,8 @@ fn build_style_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
 /// Build the metadata fragment ($258) - contains reading_orders.
 fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
     // Build section list from context's registered sections
-    let sections: Vec<IonValue> = ctx.section_ids
+    let sections: Vec<IonValue> = ctx
+        .section_ids
         .iter()
         .map(|&id| IonValue::Symbol(id))
         .collect();
@@ -529,9 +556,7 @@ fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
     let reading_orders = IonValue::List(vec![reading_order]);
 
     // $258 (metadata) contains reading_orders directly
-    let metadata = IonValue::Struct(vec![
-        (KfxSymbol::ReadingOrders as u64, reading_orders),
-    ]);
+    let metadata = IonValue::Struct(vec![(KfxSymbol::ReadingOrders as u64, reading_orders)]);
 
     KfxFragment::singleton(KfxSymbol::Metadata, metadata)
 }
@@ -540,7 +565,11 @@ fn build_metadata_fragment(ctx: &ExportContext) -> KfxFragment {
 ///
 /// Uses the metadata schema to map IR metadata to KFX categories.
 /// To add new metadata fields, update the schema in `kfx/metadata.rs`.
-fn build_book_metadata_fragment(book: &Book, container_id: &str, ctx: &ExportContext) -> KfxFragment {
+fn build_book_metadata_fragment(
+    book: &Book,
+    container_id: &str,
+    ctx: &ExportContext,
+) -> KfxFragment {
     let meta = book.metadata();
 
     // Build metadata context with transformed values
@@ -677,7 +706,10 @@ fn build_content_features_fragment() -> KfxFragment {
             KfxSymbol::Namespace as u64,
             IonValue::String("com.amazon.yjconversion".to_string()),
         ),
-        (KfxSymbol::Key as u64, IonValue::String("yj_hdv".to_string())),
+        (
+            KfxSymbol::Key as u64,
+            IonValue::String("yj_hdv".to_string()),
+        ),
         (
             KfxSymbol::VersionInfo as u64,
             IonValue::Struct(vec![(
@@ -733,7 +765,10 @@ fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
             KfxSymbol::FontSize as u64,
             IonValue::Struct(vec![
                 (KfxSymbol::Value as u64, IonValue::Decimal("1".to_string())),
-                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+                (
+                    KfxSymbol::Unit as u64,
+                    IonValue::Symbol(KfxSymbol::Em as u64),
+                ),
             ]),
         ),
         (
@@ -748,8 +783,14 @@ fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
         (
             KfxSymbol::LineHeight as u64,
             IonValue::Struct(vec![
-                (KfxSymbol::Value as u64, IonValue::Decimal("1.2".to_string())),
-                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Em as u64)),
+                (
+                    KfxSymbol::Value as u64,
+                    IonValue::Decimal("1.2".to_string()),
+                ),
+                (
+                    KfxSymbol::Unit as u64,
+                    IonValue::Symbol(KfxSymbol::Em as u64),
+                ),
             ]),
         ),
         (
@@ -934,7 +975,10 @@ fn build_headings_entries(ctx: &ExportContext) -> Vec<IonValue> {
                 (
                     KfxSymbol::TargetPosition as u64,
                     IonValue::Struct(vec![
-                        (KfxSymbol::Id as u64, IonValue::Int(first.fragment_id as i64)),
+                        (
+                            KfxSymbol::Id as u64,
+                            IonValue::Int(first.fragment_id as i64),
+                        ),
                         (KfxSymbol::Offset as u64, IonValue::Int(first.offset as i64)),
                     ]),
                 ),
@@ -990,8 +1034,14 @@ fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<IonValue> {
                 (
                     KfxSymbol::TargetPosition as u64,
                     IonValue::Struct(vec![
-                        (KfxSymbol::Id as u64, IonValue::Int(target.fragment_id as i64)),
-                        (KfxSymbol::Offset as u64, IonValue::Int(target.offset as i64)),
+                        (
+                            KfxSymbol::Id as u64,
+                            IonValue::Int(target.fragment_id as i64),
+                        ),
+                        (
+                            KfxSymbol::Offset as u64,
+                            IonValue::Int(target.offset as i64),
+                        ),
                     ]),
                 ),
             ])),
@@ -1138,7 +1188,10 @@ fn build_chapter_entities_grouped(
     // Entity A: CONTENT ($145) - Holds the raw text strings
     let content_fragment = if !content_strings.is_empty() {
         let content_ion = IonValue::Struct(vec![
-            (KfxSymbol::Name as u64, IonValue::Symbol(content_name_symbol)),
+            (
+                KfxSymbol::Name as u64,
+                IonValue::Symbol(content_name_symbol),
+            ),
             (
                 KfxSymbol::ContentList as u64,
                 IonValue::List(content_strings.into_iter().map(IonValue::String).collect()),
@@ -1212,12 +1265,8 @@ fn build_chapter_entities_grouped(
             IonValue::List(vec![page_template]),
         ),
     ]);
-    let section_fragment = KfxFragment::new_with_id(
-        KfxSymbol::Section,
-        section_id,
-        section_name,
-        section_ion,
-    );
+    let section_fragment =
+        KfxFragment::new_with_id(KfxSymbol::Section, section_id, section_name, section_ion);
 
     (section_fragment, storyline_fragment, content_fragment)
 }
@@ -1309,7 +1358,9 @@ fn build_chapter_entities(
     ctx.begin_chapter(&content_name);
 
     // Get the section fragment ID assigned during Pass 1
-    let section_id = ctx.get_chapter_fragment(chapter_id).unwrap_or_else(|| ctx.next_fragment_id());
+    let section_id = ctx
+        .get_chapter_fragment(chapter_id)
+        .unwrap_or_else(|| ctx.next_fragment_id());
 
     // =========================================================================
     // 2. GENERATE: Schema-driven token generation + text/structure split
@@ -1329,32 +1380,58 @@ fn build_chapter_entities(
     // Entity A: CONTENT ($145) - Holds the raw text strings
     if !content_strings.is_empty() {
         let content_ion = IonValue::Struct(vec![
-            (KfxSymbol::Name as u64, IonValue::Symbol(content_name_symbol)),
+            (
+                KfxSymbol::Name as u64,
+                IonValue::Symbol(content_name_symbol),
+            ),
             (
                 KfxSymbol::ContentList as u64,
                 IonValue::List(content_strings.into_iter().map(IonValue::String).collect()),
             ),
         ]);
-        fragments.push(KfxFragment::new(KfxSymbol::Content, &content_name, content_ion));
+        fragments.push(KfxFragment::new(
+            KfxSymbol::Content,
+            &content_name,
+            content_ion,
+        ));
     }
 
     // Entity B: STORYLINE ($259) - Holds the structure, references Content by name
     let storyline_ion = IonValue::Struct(vec![
-        (KfxSymbol::StoryName as u64, IonValue::Symbol(story_name_symbol)),
+        (
+            KfxSymbol::StoryName as u64,
+            IonValue::Symbol(story_name_symbol),
+        ),
         (KfxSymbol::ContentList as u64, storyline_content_list),
     ]);
-    fragments.push(KfxFragment::new(KfxSymbol::Storyline, &story_name, storyline_ion));
+    fragments.push(KfxFragment::new(
+        KfxSymbol::Storyline,
+        &story_name,
+        storyline_ion,
+    ));
 
     // Entity C: SECTION ($260) - Entry point, references Storyline by story_name
     let page_template = IonValue::Struct(vec![
         (KfxSymbol::Id as u64, IonValue::Int(section_id as i64)),
-        (KfxSymbol::StoryName as u64, IonValue::Symbol(story_name_symbol)),
-        (KfxSymbol::Type as u64, IonValue::Symbol(KfxSymbol::Text as u64)),
+        (
+            KfxSymbol::StoryName as u64,
+            IonValue::Symbol(story_name_symbol),
+        ),
+        (
+            KfxSymbol::Type as u64,
+            IonValue::Symbol(KfxSymbol::Text as u64),
+        ),
     ]);
 
     let section_ion = IonValue::Struct(vec![
-        (KfxSymbol::SectionName as u64, IonValue::Symbol(section_name_symbol)),
-        (KfxSymbol::PageTemplates as u64, IonValue::List(vec![page_template])),
+        (
+            KfxSymbol::SectionName as u64,
+            IonValue::Symbol(section_name_symbol),
+        ),
+        (
+            KfxSymbol::PageTemplates as u64,
+            IonValue::List(vec![page_template]),
+        ),
     ]);
     fragments.push(KfxFragment::new_with_id(
         KfxSymbol::Section,
@@ -1365,7 +1442,6 @@ fn build_chapter_entities(
 
     fragments
 }
-
 
 /// Build the document symbols section.
 ///
@@ -1438,7 +1514,11 @@ fn build_format_capabilities_ion() -> Vec<u8> {
 }
 
 /// Build an external_resource fragment ($164) - metadata about a resource.
-fn build_external_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> KfxFragment {
+fn build_external_resource_fragment(
+    href: &str,
+    data: &[u8],
+    ctx: &mut ExportContext,
+) -> KfxFragment {
     // Generate a short resource name (e.g., "e0", "e1", etc.)
     let resource_name = generate_resource_name(href, ctx);
     let resource_name_symbol = ctx.symbols.get_or_intern(&resource_name);
@@ -1453,10 +1533,7 @@ fn build_external_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportCon
 
     // location - path to the bcRawMedia entity
     let location = format!("resource/{}", resource_name);
-    fields.push((
-        KfxSymbol::Location as u64,
-        IonValue::String(location),
-    ));
+    fields.push((KfxSymbol::Location as u64, IonValue::String(location)));
 
     // format - file type symbol
     let format_symbol = detect_format_symbol(href, data);
@@ -1465,15 +1542,15 @@ fn build_external_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportCon
     // For images, try to extract dimensions
     if let Some((width, height)) = crate::util::extract_image_dimensions(data) {
         fields.push((KfxSymbol::ResourceWidth as u64, IonValue::Int(width as i64)));
-        fields.push((KfxSymbol::ResourceHeight as u64, IonValue::Int(height as i64)));
+        fields.push((
+            KfxSymbol::ResourceHeight as u64,
+            IonValue::Int(height as i64),
+        ));
     }
 
     // mime type for images
     if let Some(mime) = crate::util::detect_mime_type(href, data) {
-        fields.push((
-            KfxSymbol::Mime as u64,
-            IonValue::String(mime.to_string()),
-        ));
+        fields.push((KfxSymbol::Mime as u64, IonValue::String(mime.to_string())));
     }
 
     let ion = IonValue::Struct(fields);
@@ -1498,9 +1575,7 @@ fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> 
 ///
 /// Returns (fragments, anchor_ids_by_fragment) where anchor_ids_by_fragment
 /// maps fragment_id → list of anchor symbol IDs for use in position_map.
-fn build_anchor_fragments(
-    ctx: &mut ExportContext,
-) -> (Vec<KfxFragment>, HashMap<u64, Vec<u64>>) {
+fn build_anchor_fragments(ctx: &mut ExportContext) -> (Vec<KfxFragment>, HashMap<u64, Vec<u64>>) {
     let mut fragments = Vec::new();
     let mut anchor_ids_by_fragment: HashMap<u64, Vec<u64>> = HashMap::new();
 
@@ -1520,14 +1595,23 @@ fn build_anchor_fragments(
 
         // Build position struct - uses content fragment_id for navigation target
         let mut pos_fields = Vec::new();
-        pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(anchor.fragment_id as i64)));
+        pos_fields.push((
+            KfxSymbol::Id as u64,
+            IonValue::Int(anchor.fragment_id as i64),
+        ));
         // Only include offset when non-zero - reference KFX omits offset for fragment-only positions
         if anchor.offset > 0 {
-            pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
+            pos_fields.push((
+                KfxSymbol::Offset as u64,
+                IonValue::Int(anchor.offset as i64),
+            ));
         }
 
         let ion = IonValue::Struct(vec![
-            (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
+            (
+                KfxSymbol::AnchorName as u64,
+                IonValue::Symbol(anchor_symbol_id),
+            ),
             (KfxSymbol::Position as u64, IonValue::Struct(pos_fields)),
         ]);
 
@@ -1544,7 +1628,10 @@ fn build_anchor_fragments(
         // External anchors use uri instead of position
         let ion = IonValue::Struct(vec![
             (KfxSymbol::Uri as u64, IonValue::String(anchor.uri.clone())),
-            (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
+            (
+                KfxSymbol::AnchorName as u64,
+                IonValue::Symbol(anchor_symbol_id),
+            ),
         ]);
 
         fragments.push(KfxFragment::new(KfxSymbol::Anchor, &anchor.symbol, ion));
@@ -1582,7 +1669,10 @@ fn build_position_map_fragment(
         }
         let entry = IonValue::Struct(vec![
             (KfxSymbol::Contains as u64, IonValue::List(contains_list)),
-            (KfxSymbol::SectionName as u64, IonValue::Symbol(ctx.section_ids[0])),
+            (
+                KfxSymbol::SectionName as u64,
+                IonValue::Symbol(ctx.section_ids[0]),
+            ),
         ]);
         entries.push(entry);
         1 // Skip c0 when processing spine chapters
@@ -1694,7 +1784,11 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
         // Get content IDs for this chapter
         if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
             for &content_id in content_ids {
-                let text_len = ctx.content_id_lengths.get(&content_id).copied().unwrap_or(0);
+                let text_len = ctx
+                    .content_id_lengths
+                    .get(&content_id)
+                    .copied()
+                    .unwrap_or(0);
                 if text_len > 0 {
                     let start = cumulative_offset;
                     let end = cumulative_offset + text_len;
@@ -1744,10 +1838,7 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
 /// This entity lists additional resource paths. For simple conversions,
 /// the entries array is empty.
 fn build_resource_path_fragment() -> KfxFragment {
-    let ion = IonValue::Struct(vec![(
-        KfxSymbol::Entries as u64,
-        IonValue::List(vec![]),
-    )]);
+    let ion = IonValue::Struct(vec![(KfxSymbol::Entries as u64, IonValue::List(vec![]))]);
     KfxFragment::singleton(KfxSymbol::ResourcePath, ion)
 }
 
@@ -1780,7 +1871,10 @@ fn build_container_entity_map_fragment(
 
     // Build the container_list entry
     let container_entry = IonValue::Struct(vec![
-        (KfxSymbol::Id as u64, IonValue::String(container_id.to_string())),
+        (
+            KfxSymbol::Id as u64,
+            IonValue::String(container_id.to_string()),
+        ),
         (KfxSymbol::Contains as u64, IonValue::List(entity_names)),
     ]);
 
@@ -1991,7 +2085,10 @@ mod tests {
                 let has_categorised = fields
                     .iter()
                     .any(|(id, _)| *id == KfxSymbol::CategorisedMetadata as u64);
-                assert!(has_categorised, "book_metadata should contain categorised_metadata");
+                assert!(
+                    has_categorised,
+                    "book_metadata should contain categorised_metadata"
+                );
 
                 // Get the categorised_metadata list
                 let categorised = fields
@@ -2096,7 +2193,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_content_features_fragment() {
         let frag = build_content_features_fragment();
@@ -2112,7 +2208,10 @@ mod tests {
                 let features = fields
                     .iter()
                     .find(|(id, _)| *id == KfxSymbol::Features as u64);
-                assert!(features.is_some(), "content_features should contain features");
+                assert!(
+                    features.is_some(),
+                    "content_features should contain features"
+                );
 
                 // Features should be a list with 3 items
                 if let Some((_, IonValue::List(items))) = features {
@@ -2203,9 +2302,7 @@ mod tests {
 
         // Extract max_id from the fragment
         if let crate::kfx::fragment::FragmentData::Ion(IonValue::Struct(fields)) = &frag.data {
-            let max_id_field = fields
-                .iter()
-                .find(|(id, _)| *id == KfxSymbol::MaxId as u64);
+            let max_id_field = fields.iter().find(|(id, _)| *id == KfxSymbol::MaxId as u64);
 
             if let Some((_, IonValue::Int(max_id))) = max_id_field {
                 // max_id should be at least 100 (the IDs we generated)
@@ -2238,7 +2335,10 @@ mod tests {
     fn test_build_headings_entries_empty() {
         let ctx = ExportContext::new();
         let entries = build_headings_entries(&ctx);
-        assert!(entries.is_empty(), "No headings should produce empty entries");
+        assert!(
+            entries.is_empty(),
+            "No headings should produce empty entries"
+        );
     }
 
     #[test]
@@ -2283,7 +2383,9 @@ mod tests {
                 }
 
                 // Should have nested entries
-                let nested = fields.iter().find(|(id, _)| *id == KfxSymbol::Entries as u64);
+                let nested = fields
+                    .iter()
+                    .find(|(id, _)| *id == KfxSymbol::Entries as u64);
                 assert!(nested.is_some(), "Should have nested entries");
                 if let Some((_, IonValue::List(list))) = nested {
                     assert_eq!(list.len(), 3, "Should have 3 nested h2 entries");
@@ -2400,7 +2502,9 @@ mod tests {
                     .iter()
                     .find(|(id, _)| *id == KfxSymbol::TargetPosition as u64);
                 if let Some((_, IonValue::Struct(pos_fields))) = target {
-                    let id_field = pos_fields.iter().find(|(id, _)| *id == KfxSymbol::Id as u64);
+                    let id_field = pos_fields
+                        .iter()
+                        .find(|(id, _)| *id == KfxSymbol::Id as u64);
                     let offset_field = pos_fields
                         .iter()
                         .find(|(id, _)| *id == KfxSymbol::Offset as u64);
@@ -2589,7 +2693,11 @@ mod entity_structure_tests {
         // Content is optional (image-only chapters may not have content)
         // Just verify that after storylines, we only have content entities (if any)
         for t in after_storylines.iter().take(content_count) {
-            assert_eq!(*t, KfxSymbol::Content as u64, "content should follow storylines");
+            assert_eq!(
+                *t,
+                KfxSymbol::Content as u64,
+                "content should follow storylines"
+            );
         }
 
         // Verify grouping - no interleaving
@@ -2690,7 +2798,11 @@ mod section_type_tests {
 
         // Verify this book needs a standalone cover (cover.jpg != titlepage.png)
         let asset_paths: Vec<_> = book.list_assets();
-        let cover_image = book.metadata().cover_image.clone().expect("should have cover");
+        let cover_image = book
+            .metadata()
+            .cover_image
+            .clone()
+            .expect("should have cover");
         let normalized = normalize_cover_path(&cover_image, &asset_paths);
 
         // Get first chapter ID
@@ -2713,12 +2825,8 @@ mod section_type_tests {
 
         // Build the titlepage section (c1)
         let first_chapter = book.load_chapter(first_chapter_id).unwrap();
-        let (section, _, _) = build_chapter_entities_grouped(
-            &first_chapter,
-            first_chapter_id,
-            "c1",
-            &mut ctx,
-        );
+        let (section, _, _) =
+            build_chapter_entities_grouped(&first_chapter, first_chapter_id, "c1", &mut ctx);
 
         // Extract the page_template type from the section
         if let FragmentData::Ion(IonValue::Struct(fields)) = &section.data {
@@ -2762,10 +2870,13 @@ mod resource_export_tests {
     fn test_kfx_export_includes_images() {
         let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
         let data = build_kfx_container(&mut book).unwrap();
-        
+
         // KFX should be > 400KB (images alone are ~401KB)
-        assert!(data.len() > 400000, 
-            "KFX should include image data, got {} bytes", data.len());
+        assert!(
+            data.len() > 400000,
+            "KFX should include image data, got {} bytes",
+            data.len()
+        );
     }
 
     #[test]
@@ -2782,7 +2893,8 @@ mod resource_export_tests {
         let assets = reimported.list_assets();
 
         // Load all assets and verify total size
-        let total_size: usize = assets.iter()
+        let total_size: usize = assets
+            .iter()
             .filter_map(|a| reimported.load_asset(a).ok())
             .map(|d| d.len())
             .sum();
@@ -2790,8 +2902,11 @@ mod resource_export_tests {
         std::fs::remove_file(&temp_path).ok();
 
         // Should have ~401KB of image data
-        assert!(total_size > 100000,
-            "Expected > 100KB of assets from KFX, got {} bytes", total_size);
+        assert!(
+            total_size > 100000,
+            "Expected > 100KB of assets from KFX, got {} bytes",
+            total_size
+        );
     }
 }
 
@@ -2822,7 +2937,8 @@ mod anchor_resolution_tests {
 
         // Find the enchiridion chapter (has links to endnotes)
         // and the endnotes chapter (has the anchor targets)
-        let enchiridion_id = spine_info.iter()
+        let enchiridion_id = spine_info
+            .iter()
             .find(|(id, _)| {
                 book.source_id(*id)
                     .map(|p| p.contains("enchiridion"))
@@ -2830,7 +2946,8 @@ mod anchor_resolution_tests {
             })
             .map(|(id, _)| *id);
 
-        let endnotes_id = spine_info.iter()
+        let endnotes_id = spine_info
+            .iter()
             .find(|(id, _)| {
                 book.source_id(*id)
                     .map(|p| p.contains("endnotes"))
@@ -2906,7 +3023,8 @@ mod anchor_resolution_tests {
             .collect();
 
         // Find endnotes chapter
-        let endnotes_id = spine_info.iter()
+        let endnotes_id = spine_info
+            .iter()
             .find(|(id, _)| {
                 book.source_id(*id)
                     .map(|p| p.contains("endnotes"))
@@ -2947,8 +3065,7 @@ mod anchor_resolution_tests {
         let anchors = ctx.anchor_registry.drain_anchors();
 
         // Find the anchor for note-1
-        let note_anchor = anchors.iter()
-            .find(|a| a.anchor_name.ends_with("note-1"));
+        let note_anchor = anchors.iter().find(|a| a.anchor_name.ends_with("note-1"));
 
         assert!(
             note_anchor.is_some(),
@@ -2966,7 +3083,6 @@ mod anchor_resolution_tests {
         );
     }
 
-
     #[test]
     fn test_anchor_entities_created_in_full_export() {
         // Test that anchor entities are actually created during full export
@@ -2974,7 +3090,9 @@ mod anchor_resolution_tests {
         let kfx_data = build_kfx_container(&mut book).unwrap();
 
         // Parse the KFX container to find anchor entities
-        use crate::kfx::container::{parse_container_header, parse_container_info, parse_index_table};
+        use crate::kfx::container::{
+            parse_container_header, parse_container_info, parse_index_table,
+        };
 
         // 1. Parse header to get container_info location
         let header = parse_container_header(&kfx_data).expect("Failed to parse header");

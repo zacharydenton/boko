@@ -52,7 +52,7 @@ pub mod wasm;
 
 // Primary exports
 pub use book::{Book, Format, Metadata, Resource, TocEntry};
-pub use compiler::{compile_html, Origin, Stylesheet};
+pub use compiler::{Origin, Stylesheet, compile_html};
 pub use export::{Azw3Exporter, EpubExporter, Exporter, TextConfig, TextExporter, TextFormat};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};

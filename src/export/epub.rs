@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 use std::path::Path;
 
-use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::book::{Book, TocEntry};
 
@@ -89,8 +89,7 @@ impl EpubExporter {
             .compression_level(Some(compression_level as i64));
 
         // 1. Write mimetype (must be first, uncompressed)
-        zip.start_file("mimetype", stored)
-            .map_err(io_error)?;
+        zip.start_file("mimetype", stored).map_err(io_error)?;
         zip.write_all(b"application/epub+zip")?;
 
         // 2. Write container.xml
@@ -147,7 +146,8 @@ impl EpubExporter {
 
         // 5. Write toc.ncx
         let ncx = generate_ncx(book.metadata(), book.toc());
-        zip.start_file("OEBPS/toc.ncx", deflated).map_err(io_error)?;
+        zip.start_file("OEBPS/toc.ncx", deflated)
+            .map_err(io_error)?;
         zip.write_all(ncx.as_bytes())?;
 
         // 6. Write chapters
@@ -253,7 +253,8 @@ impl EpubExporter {
 
         // 5. Write toc.ncx
         let ncx = generate_ncx(book.metadata(), book.toc());
-        zip.start_file("OEBPS/toc.ncx", deflated).map_err(io_error)?;
+        zip.start_file("OEBPS/toc.ncx", deflated)
+            .map_err(io_error)?;
         zip.write_all(ncx.as_bytes())?;
 
         // 6. Write unified stylesheet
@@ -315,10 +316,12 @@ fn generate_opf(
     let mut opf = String::new();
 
     // Use EPUB3 for extended metadata support
-    opf.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    opf.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-"#);
+"#,
+    );
 
     // Track IDs for refinements
     let mut next_id = 1;
@@ -440,8 +443,7 @@ fn generate_opf(
             };
             opf.push_str(&format!(
                 "    <meta refines=\"#{}\" property=\"group-position\">{}</meta>\n",
-                coll_id,
-                pos_str
+                coll_id, pos_str
             ));
         }
     }
@@ -469,10 +471,7 @@ fn generate_opf(
         ));
     }
     if let Some(ref date) = metadata.date {
-        opf.push_str(&format!(
-            "    <dc:date>{}</dc:date>\n",
-            escape_xml(date)
-        ));
+        opf.push_str(&format!("    <dc:date>{}</dc:date>\n", escape_xml(date)));
     }
     if let Some(ref rights) = metadata.rights {
         opf.push_str(&format!(
@@ -516,24 +515,30 @@ fn generate_opf(
 fn generate_ncx(metadata: &crate::book::Metadata, toc: &[TocEntry]) -> String {
     let mut ncx = String::new();
 
-    ncx.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    ncx.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head>
-    <meta name="dtb:uid" content=""#);
+    <meta name="dtb:uid" content=""#,
+    );
     ncx.push_str(&escape_xml(&metadata.identifier));
-    ncx.push_str(r#""/>
+    ncx.push_str(
+        r#""/>
     <meta name="dtb:depth" content="1"/>
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
   <docTitle>
-    <text>"#);
+    <text>"#,
+    );
     ncx.push_str(&escape_xml(&metadata.title));
-    ncx.push_str(r#"</text>
+    ncx.push_str(
+        r#"</text>
   </docTitle>
   <navMap>
-"#);
+"#,
+    );
 
     let mut play_order = 1;
     write_nav_points(&mut ncx, toc, &mut play_order, 2);

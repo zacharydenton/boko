@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::io;
 
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
 use crate::book::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
 
@@ -281,7 +281,13 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                                 }
                             } else if let Some(ref val) = content {
                                 // Top-level meta without refines
-                                handle_meta_property(prop, val, &mut metadata, &mut element_ids, elem_id.as_deref());
+                                handle_meta_property(
+                                    prop,
+                                    val,
+                                    &mut metadata,
+                                    &mut element_ids,
+                                    elem_id.as_deref(),
+                                );
                             }
                         }
                     }
@@ -322,7 +328,13 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                                     value,
                                 });
                             } else {
-                                handle_meta_property(prop, &value, &mut metadata, &mut element_ids, meta_id.as_deref());
+                                handle_meta_property(
+                                    prop,
+                                    &value,
+                                    &mut metadata,
+                                    &mut element_ids,
+                                    meta_id.as_deref(),
+                                );
                             }
                         }
                     }
@@ -351,7 +363,8 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         "contributor" => {
                             // Store contributor for later refinement processing
                             if let Some(ref id) = current_element_id {
-                                element_ids.insert(id.clone(), MetaElement::Contributor(text.clone()));
+                                element_ids
+                                    .insert(id.clone(), MetaElement::Contributor(text.clone()));
                             }
                             // Add basic contributor without role
                             metadata.contributors.push(Contributor {
@@ -395,9 +408,10 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
     if let Some(cover_item) = epub3_cover {
         metadata.cover_image = Some(cover_item.href.clone());
     } else if let Some(cover_id) = epub2_cover_id
-        && let Some(item) = manifest.get(&cover_id) {
-            metadata.cover_image = Some(item.href.clone());
-        }
+        && let Some(item) = manifest.get(&cover_id)
+    {
+        metadata.cover_image = Some(item.href.clone());
+    }
 
     // Detect EPUB3 nav document (properties="nav")
     let nav_href = manifest
@@ -436,10 +450,7 @@ fn handle_meta_property(
     elem_id: Option<&str>,
 ) {
     // Strip namespace prefix if present (e.g., "dcterms:modified" -> "modified")
-    let prop_local = property
-        .rsplit(':')
-        .next()
-        .unwrap_or(property);
+    let prop_local = property.rsplit(':').next().unwrap_or(property);
 
     match prop_local {
         "modified" => {
@@ -482,7 +493,8 @@ fn apply_refinements(
     }
 
     for refinement in refinements {
-        let prop_local = refinement.property
+        let prop_local = refinement
+            .property
             .rsplit(':')
             .next()
             .unwrap_or(&refinement.property);
@@ -792,7 +804,9 @@ fn epub_type_to_landmark(epub_type: &str) -> Option<LandmarkType> {
             "glossary" => return Some(LandmarkType::Glossary),
             "index" => return Some(LandmarkType::Index),
             "preface" => return Some(LandmarkType::Preface),
-            "endnotes" | "footnotes" | "notes" | "rearnotes" => return Some(LandmarkType::Endnotes),
+            "endnotes" | "footnotes" | "notes" | "rearnotes" => {
+                return Some(LandmarkType::Endnotes);
+            }
             "loi" => return Some(LandmarkType::Loi),
             "lot" => return Some(LandmarkType::Lot),
             _ => {}
@@ -847,10 +861,10 @@ fn resolve_entity(entity: &str) -> Option<String> {
         }
     } else if let Some(dec) = entity.strip_prefix('#')
         && let Ok(code) = dec.parse::<u32>()
-            && let Some(c) = char::from_u32(code)
-        {
-            return Some(c.to_string());
-        }
+        && let Some(c) = char::from_u32(code)
+    {
+        return Some(c.to_string());
+    }
 
     None
 }
@@ -924,12 +938,14 @@ mod tests {
     #[test]
     fn test_parse_container_xml_with_bom() {
         let mut container = vec![0xEF, 0xBB, 0xBF]; // BOM
-        container.extend_from_slice(br#"<?xml version="1.0"?>
+        container.extend_from_slice(
+            br#"<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles>
     <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
-</container>"#);
+</container>"#,
+        );
 
         let result = parse_container_xml(&container).unwrap();
         assert_eq!(result, "content.opf");
@@ -967,8 +983,14 @@ mod tests {
         assert_eq!(result.metadata.authors, vec!["Author One", "Author Two"]);
         assert_eq!(result.metadata.language, "en");
         assert_eq!(result.metadata.identifier, "urn:isbn:1234567890");
-        assert_eq!(result.metadata.publisher, Some("Test Publisher".to_string()));
-        assert_eq!(result.metadata.description, Some("A test book description.".to_string()));
+        assert_eq!(
+            result.metadata.publisher,
+            Some("Test Publisher".to_string())
+        );
+        assert_eq!(
+            result.metadata.description,
+            Some("A test book description.".to_string())
+        );
         assert_eq!(result.metadata.subjects, vec!["Fiction", "Adventure"]);
         assert_eq!(result.metadata.date, Some("2024-01-15".to_string()));
         assert_eq!(result.metadata.rights, Some("Public Domain".to_string()));
@@ -990,7 +1012,10 @@ mod tests {
 </package>"#;
 
         let result = parse_opf(opf).unwrap();
-        assert_eq!(result.metadata.cover_image, Some("images/cover.jpg".to_string()));
+        assert_eq!(
+            result.metadata.cover_image,
+            Some("images/cover.jpg".to_string())
+        );
     }
 
     #[test]
@@ -1276,7 +1301,10 @@ mod tests {
 </package>"#;
 
         let result = parse_opf(opf).unwrap();
-        assert_eq!(result.metadata.modified_date, Some("2024-01-15T12:00:00Z".to_string()));
+        assert_eq!(
+            result.metadata.modified_date,
+            Some("2024-01-15T12:00:00Z".to_string())
+        );
     }
 
     #[test]
@@ -1299,8 +1327,14 @@ mod tests {
         let result = parse_opf(opf).unwrap();
         assert_eq!(result.metadata.contributors.len(), 1);
         assert_eq!(result.metadata.contributors[0].name, "John Translator");
-        assert_eq!(result.metadata.contributors[0].role, Some("trl".to_string()));
-        assert_eq!(result.metadata.contributors[0].file_as, Some("Translator, John".to_string()));
+        assert_eq!(
+            result.metadata.contributors[0].role,
+            Some("trl".to_string())
+        );
+        assert_eq!(
+            result.metadata.contributors[0].file_as,
+            Some("Translator, John".to_string())
+        );
     }
 
     #[test]
@@ -1345,7 +1379,10 @@ mod tests {
 
         let result = parse_opf(opf).unwrap();
         assert_eq!(result.metadata.title, "The Great Adventure");
-        assert_eq!(result.metadata.title_sort, Some("Great Adventure, The".to_string()));
+        assert_eq!(
+            result.metadata.title_sort,
+            Some("Great Adventure, The".to_string())
+        );
     }
 
     #[test]
@@ -1415,12 +1452,20 @@ mod tests {
         assert_eq!(result.metadata.contributors.len(), 3);
 
         // Find translator
-        let translator = result.metadata.contributors.iter().find(|c| c.role == Some("trl".to_string()));
+        let translator = result
+            .metadata
+            .contributors
+            .iter()
+            .find(|c| c.role == Some("trl".to_string()));
         assert!(translator.is_some());
         assert_eq!(translator.unwrap().name, "Translator Name");
 
         // Find editor
-        let editor = result.metadata.contributors.iter().find(|c| c.role == Some("edt".to_string()));
+        let editor = result
+            .metadata
+            .contributors
+            .iter()
+            .find(|c| c.role == Some("edt".to_string()));
         assert!(editor.is_some());
         assert_eq!(editor.unwrap().name, "Editor Name");
     }

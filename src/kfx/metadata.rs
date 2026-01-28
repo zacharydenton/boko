@@ -401,7 +401,10 @@ mod tests {
         };
 
         assert_eq!(MetadataField::Title.extract(&meta), Some("Test Book"));
-        assert_eq!(MetadataField::FirstAuthor.extract(&meta), Some("Author One"));
+        assert_eq!(
+            MetadataField::FirstAuthor.extract(&meta),
+            Some("Author One")
+        );
         assert_eq!(MetadataField::Language.extract(&meta), Some("en"));
         assert_eq!(
             MetadataField::Description.extract(&meta),
@@ -423,7 +426,11 @@ mod tests {
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
 
         // Should have title, language, author (but not description/publisher since they're None)
-        assert!(entries.iter().any(|(k, v)| *k == "title" && v == "Test Book"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "title" && v == "Test Book")
+        );
         assert!(entries.iter().any(|(k, v)| *k == "language" && v == "en"));
         assert!(entries.iter().any(|(k, v)| *k == "author" && v == "Author"));
         assert!(!entries.iter().any(|(k, _)| *k == "description"));
@@ -435,12 +442,16 @@ mod tests {
         let ctx = MetadataContext::default();
         let entries = build_category_entries(MetadataCategory::KindleEbook, &meta, &ctx);
 
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "selection" && v == "enabled"));
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "nested_span" && v == "enabled"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "selection" && v == "enabled")
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "nested_span" && v == "enabled")
+        );
     }
 
     #[test]
@@ -452,12 +463,16 @@ mod tests {
         };
         let entries = build_category_entries(MetadataCategory::KindleAudit, &meta, &ctx);
 
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "file_creator" && v == "boko"));
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "creator_version" && v == "1.0.0"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "file_creator" && v == "boko")
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "creator_version" && v == "1.0.0")
+        );
     }
 
     #[test]
@@ -480,9 +495,11 @@ mod tests {
             ..Default::default()
         };
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "cover_image" && v == "e6"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "cover_image" && v == "e6")
+        );
     }
 
     #[test]
@@ -496,9 +513,11 @@ mod tests {
 
         let ctx = MetadataContext::default();
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "issue_date" && v == "2022-05-26"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "issue_date" && v == "2022-05-26")
+        );
     }
 
     #[test]
@@ -547,7 +566,10 @@ mod tests {
         let id2 = super::generate_book_id("urn:uuid:bbbbbbbb-1234-1234-1234-123456789abc");
 
         // Different identifiers should produce different book_ids
-        assert_ne!(id1, id2, "different identifiers should produce different book_ids");
+        assert_ne!(
+            id1, id2,
+            "different identifiers should produce different book_ids"
+        );
     }
 
     #[test]
@@ -561,9 +583,11 @@ mod tests {
         let ctx = MetadataContext::default();
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
 
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "cde_content_type" && v == "EBOK"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "cde_content_type" && v == "EBOK")
+        );
     }
 
     #[test]
@@ -582,11 +606,15 @@ mod tests {
         };
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
 
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "asset_id" && v == "CR!ABCDEFGHIJKLMNOPQRSTUVWXYZ12"));
-        assert!(entries
-            .iter()
-            .any(|(k, v)| *k == "book_id" && v == "BtestBookId12345678901"));
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "asset_id" && v == "CR!ABCDEFGHIJKLMNOPQRSTUVWXYZ12")
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "book_id" && v == "BtestBookId12345678901")
+        );
     }
 }

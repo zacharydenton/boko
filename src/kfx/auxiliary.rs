@@ -68,9 +68,7 @@ mod tests {
 
         if let FragmentData::Ion(IonValue::Struct(fields)) = &frag.data {
             // Check kfx_id - should be a symbol now
-            let kfx_id = fields
-                .iter()
-                .find(|(id, _)| *id == KfxSymbol::KfxId as u64);
+            let kfx_id = fields.iter().find(|(id, _)| *id == KfxSymbol::KfxId as u64);
             assert!(kfx_id.is_some(), "should have kfx_id");
             assert!(
                 matches!(kfx_id, Some((_, IonValue::Symbol(_)))),

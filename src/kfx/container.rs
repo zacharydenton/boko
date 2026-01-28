@@ -286,10 +286,7 @@ pub fn get_symbol_text<'a>(value: &'a IonValue, doc_symbols: &'a [String]) -> Op
 /// Get a field from a struct by symbol ID.
 #[inline]
 pub fn get_field(fields: &[(u64, IonValue)], symbol_id: u64) -> Option<&IonValue> {
-    fields
-        .iter()
-        .find(|(k, _)| *k == symbol_id)
-        .map(|(_, v)| v)
+    fields.iter().find(|(k, _)| *k == symbol_id).map(|(_, v)| v)
 }
 
 #[cfg(test)]
@@ -405,7 +402,10 @@ mod tests {
         let doc_symbols = vec!["custom_symbol".to_string()];
         // Document-local symbols start after the base table
         let doc_symbol_id = KFX_SYMBOL_TABLE.len() as u64;
-        assert_eq!(resolve_symbol(doc_symbol_id, &doc_symbols), Some("custom_symbol"));
+        assert_eq!(
+            resolve_symbol(doc_symbol_id, &doc_symbols),
+            Some("custom_symbol")
+        );
     }
 
     #[test]
@@ -421,12 +421,13 @@ mod tests {
         // Build a valid $ion_symbol_table: $3::{ $7: ["hello", "world"] }
         let mut writer = IonWriter::new();
         writer.write_bvm();
-        let symtab = IonValue::Struct(vec![
-            (7, IonValue::List(vec![
+        let symtab = IonValue::Struct(vec![(
+            7,
+            IonValue::List(vec![
                 IonValue::String("hello".into()),
                 IonValue::String("world".into()),
-            ])),
-        ]);
+            ]),
+        )]);
         writer.write_annotated(&[3], &symtab);
         let data = writer.into_bytes();
 
@@ -448,9 +449,10 @@ mod tests {
         ]);
         let symtab = IonValue::Struct(vec![
             (6, IonValue::List(vec![import_entry])),
-            (7, IonValue::List(vec![
-                IonValue::String("custom_sym".into()),
-            ])),
+            (
+                7,
+                IonValue::List(vec![IonValue::String("custom_sym".into())]),
+            ),
         ]);
         writer.write_annotated(&[3], &symtab);
         let data = writer.into_bytes();

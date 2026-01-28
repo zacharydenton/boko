@@ -345,9 +345,8 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
 
         "font-size" => parse_font_size(input).unwrap_or(PropertyValue::None),
 
-        "margin" | "margin-top" | "margin-bottom" | "margin-left" | "margin-right"
-        | "padding" | "padding-top" | "padding-bottom" | "padding-left"
-        | "padding-right" | "text-indent" => {
+        "margin" | "margin-top" | "margin-bottom" | "margin-left" | "margin-right" | "padding"
+        | "padding-top" | "padding-bottom" | "padding-left" | "padding-right" | "text-indent" => {
             parse_length(input).unwrap_or(PropertyValue::None)
         }
 
@@ -385,9 +384,7 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
         "white-space" => parse_white_space(input).unwrap_or(PropertyValue::None),
 
         // Phase 2: Text decoration extensions
-        "text-decoration-style" => {
-            parse_decoration_style(input).unwrap_or(PropertyValue::None)
-        }
+        "text-decoration-style" => parse_decoration_style(input).unwrap_or(PropertyValue::None),
 
         "text-decoration-color" => parse_color(input).unwrap_or(PropertyValue::None),
 
@@ -408,21 +405,31 @@ fn parse_property_value(property: &str, input: &mut Parser<'_, '_>) -> PropertyV
         }
 
         // Phase 5: Border properties
-        "border-style" | "border-top-style" | "border-right-style" | "border-bottom-style"
+        "border-style"
+        | "border-top-style"
+        | "border-right-style"
+        | "border-bottom-style"
         | "border-left-style" => parse_border_style(input).unwrap_or(PropertyValue::None),
 
-        "border-width" | "border-top-width" | "border-right-width" | "border-bottom-width"
-        | "border-left-width" | "border-radius" | "border-top-left-radius"
-        | "border-top-right-radius" | "border-bottom-left-radius"
+        "border-width"
+        | "border-top-width"
+        | "border-right-width"
+        | "border-bottom-width"
+        | "border-left-width"
+        | "border-radius"
+        | "border-top-left-radius"
+        | "border-top-right-radius"
+        | "border-bottom-left-radius"
         | "border-bottom-right-radius" => parse_length(input).unwrap_or(PropertyValue::None),
 
-        "border-color" | "border-top-color" | "border-right-color" | "border-bottom-color"
+        "border-color"
+        | "border-top-color"
+        | "border-right-color"
+        | "border-bottom-color"
         | "border-left-color" => parse_color(input).unwrap_or(PropertyValue::None),
 
         // Phase 6: List properties
-        "list-style-position" => {
-            parse_list_style_position(input).unwrap_or(PropertyValue::None)
-        }
+        "list-style-position" => parse_list_style_position(input).unwrap_or(PropertyValue::None),
 
         // Phase 7: Amazon properties
         "visibility" => parse_visibility(input).unwrap_or(PropertyValue::None),
@@ -452,7 +459,7 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
             "gray" | "grey" => Color::rgb(128, 128, 128),
             "transparent" => Color::TRANSPARENT,
             "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()))
+                return Some(PropertyValue::Keyword(token.to_string()));
             }
             _ => return None,
         };
@@ -546,7 +553,9 @@ fn parse_length(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
         Token::Percentage { unit_value, .. } => {
             Some(PropertyValue::Length(Length::Percent(*unit_value * 100.0)))
         }
-        Token::Number { value, .. } if *value == 0.0 => Some(PropertyValue::Length(Length::Px(0.0))),
+        Token::Number { value, .. } if *value == 0.0 => {
+            Some(PropertyValue::Length(Length::Px(0.0)))
+        }
         Token::Ident(ident) => match ident.as_ref() {
             "auto" => Some(PropertyValue::Length(Length::Auto)),
             "inherit" | "initial" | "unset" => Some(PropertyValue::Keyword(ident.to_string())),
@@ -634,7 +643,7 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
             "xx-large" => Length::Em(2.0),
             "xxx-large" => Length::Em(3.0),
             "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()))
+                return Some(PropertyValue::Keyword(token.to_string()));
             }
             _ => return None,
         };
@@ -653,7 +662,7 @@ fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
             "lighter" => FontWeight(300),
             "bolder" => FontWeight(700),
             "inherit" | "initial" | "unset" => {
-                return Some(PropertyValue::Keyword(token.to_string()))
+                return Some(PropertyValue::Keyword(token.to_string()));
             }
             _ => return None,
         };
@@ -1533,8 +1542,14 @@ mod tests {
         // Non-inherited properties should be at default values
         let default = ComputedStyle::default();
         assert_eq!(child.width, default.width, "width should not be inherited");
-        assert_eq!(child.margin_top, default.margin_top, "margin-top should not be inherited");
-        assert_eq!(child.display, default.display, "display should not be inherited");
+        assert_eq!(
+            child.margin_top, default.margin_top,
+            "margin-top should not be inherited"
+        );
+        assert_eq!(
+            child.display, default.display,
+            "display should not be inherited"
+        );
     }
 
     #[test]
@@ -1590,7 +1605,11 @@ mod tests {
 
         // Unitless 1.5 should be converted to 1.5em
         if let PropertyValue::Length(len) = &decl.value {
-            assert_eq!(*len, Length::Em(1.5), "unitless line-height should become em");
+            assert_eq!(
+                *len,
+                Length::Em(1.5),
+                "unitless line-height should become em"
+            );
         } else {
             panic!("line-height should be a length");
         }

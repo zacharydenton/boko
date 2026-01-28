@@ -13,14 +13,13 @@ use std::sync::Arc;
 use crate::book::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
-use crate::mobi::{
-    Compression, Encoding, HuffCdicReader, MobiFormat, MobiHeader, PdbInfo, TocNode,
-    build_toc_from_ncx, detect_image_type, is_metadata_record, parse_exth, parse_fdst,
-    strip_trailing_data, NULL_INDEX, palmdoc,
-};
 use crate::mobi::parser::{
-    DivElement, SkeletonFile,
-    parse_div_index, parse_ncx_index, parse_skel_index, read_index,
+    DivElement, SkeletonFile, parse_div_index, parse_ncx_index, parse_skel_index, read_index,
+};
+use crate::mobi::{
+    Compression, Encoding, HuffCdicReader, MobiFormat, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
+    build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
+    strip_trailing_data,
 };
 
 /// AZW3/KF8 format importer with lazy loading.
@@ -135,7 +134,10 @@ impl Importer for Azw3Importer {
             .and_then(|s| s.split('.').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, format!("Invalid asset path: {}", key))
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Invalid asset path: {}", key),
+                )
             })?;
 
         self.load_image_record(idx)
@@ -233,7 +235,8 @@ impl Azw3Importer {
 
         // Parse skeleton index
         let files = if mobi.skel_index != NULL_INDEX {
-            let (entries, _) = read_index(&mut read_record_offset, mobi.skel_index as usize, codec)?;
+            let (entries, _) =
+                read_index(&mut read_record_offset, mobi.skel_index as usize, codec)?;
             parse_skel_index(&entries)
         } else {
             Vec::new()
@@ -241,7 +244,8 @@ impl Azw3Importer {
 
         // Parse div index
         let elems = if mobi.div_index != NULL_INDEX {
-            let (entries, cncx) = read_index(&mut read_record_offset, mobi.div_index as usize, codec)?;
+            let (entries, cncx) =
+                read_index(&mut read_record_offset, mobi.div_index as usize, codec)?;
             parse_div_index(&entries, &cncx)
         } else {
             Vec::new()
@@ -249,7 +253,8 @@ impl Azw3Importer {
 
         // Parse NCX for TOC
         let ncx = if mobi.ncx_index != NULL_INDEX {
-            let (entries, cncx) = read_index(&mut read_record_offset, mobi.ncx_index as usize, codec)?;
+            let (entries, cncx) =
+                read_index(&mut read_record_offset, mobi.ncx_index as usize, codec)?;
             parse_ncx_index(&entries, &cncx)
         } else {
             Vec::new()
@@ -272,9 +277,10 @@ impl Azw3Importer {
             let nodes = build_toc_from_ncx(&ncx, |entry| {
                 // KF8 uses pos_fid (file ID + offset) or falls back to byte position
                 if let Some((elem_idx, _offset)) = entry.pos_fid
-                    && let Some(elem) = elems.get(elem_idx as usize) {
-                        return format!("part{:04}.html", elem.file_number);
-                    }
+                    && let Some(elem) = elems.get(elem_idx as usize)
+                {
+                    return format!("part{:04}.html", elem.file_number);
+                }
                 find_file_for_position(&files, entry.pos)
                     .map(|f| format!("part{:04}.html", f.file_number))
                     .unwrap_or_else(|| "part0000.html".to_string())
@@ -284,9 +290,10 @@ impl Azw3Importer {
 
         // Find cover image
         if let Some(exth) = exth
-            && let Some(cover_idx) = exth.cover_offset {
-                metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
-            }
+            && let Some(cover_idx) = exth.cover_offset
+        {
+            metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
+        }
 
         Ok(Self {
             source,
@@ -299,7 +306,11 @@ impl Azw3Importer {
             landmarks: Vec::new(), // AZW3 format doesn't have landmarks
             spine,
             chapter_paths,
-            kf8: Kf8Structure { flow_table, files, elems },
+            kf8: Kf8Structure {
+                flow_table,
+                files,
+                elems,
+            },
             text_cache: None,
             chapter_cache: HashMap::new(),
         })
@@ -360,7 +371,12 @@ impl Azw3Importer {
     /// Build a specific chapter from cached text.
     fn build_chapter(&self, chapter_id: u32, text: &[u8]) -> io::Result<Vec<u8>> {
         // Get HTML content (flow 0)
-        let (html_start, html_end) = self.kf8.flow_table.first().copied().unwrap_or((0, text.len()));
+        let (html_start, html_end) = self
+            .kf8
+            .flow_table
+            .first()
+            .copied()
+            .unwrap_or((0, text.len()));
         let html_text = &text[html_start..html_end.min(text.len())];
 
         // Build all parts and return the requested one
@@ -484,7 +500,9 @@ fn build_metadata(
         metadata.date = exth.pub_date.clone();
         metadata.rights = exth.rights.clone();
         metadata.language = exth.language.clone().unwrap_or_default();
-        metadata.identifier = exth.isbn.clone()
+        metadata.identifier = exth
+            .isbn
+            .clone()
             .or_else(|| exth.asin.clone())
             .or_else(|| exth.source.clone())
             .unwrap_or_default();

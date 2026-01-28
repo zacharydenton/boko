@@ -40,11 +40,11 @@ mod normalize;
 mod text;
 
 pub use azw3::{Azw3Config, Azw3Exporter};
-pub use css_gen::{generate_css, generate_css_all, CssArtifact};
+pub use css_gen::{CssArtifact, generate_css, generate_css_all};
 pub use epub::{EpubConfig, EpubExporter};
-pub use html_synth::{escape_xml, synthesize_html, synthesize_xhtml_document, SynthesisResult};
+pub use html_synth::{SynthesisResult, escape_xml, synthesize_html, synthesize_xhtml_document};
 pub use kfx::{KfxConfig, KfxExporter};
-pub use normalize::{normalize_book, ChapterContent, GlobalStylePool, NormalizedContent};
+pub use normalize::{ChapterContent, GlobalStylePool, NormalizedContent, normalize_book};
 pub use text::{TextConfig, TextExporter, TextFormat};
 
 /// Trait for exporting books to specific formats.

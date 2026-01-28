@@ -10,7 +10,9 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crate::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, TextExporter, TextFormat};
-use crate::import::{Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry};
+use crate::import::{
+    Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry,
+};
 use crate::io::MemorySource;
 use crate::ir::IRChapter;
 
@@ -208,7 +210,10 @@ impl Format {
 
     /// Whether this format can be used for input/import.
     pub fn can_import(&self) -> bool {
-        matches!(self, Format::Epub | Format::Azw3 | Format::Mobi | Format::Kfx)
+        matches!(
+            self,
+            Format::Epub | Format::Azw3 | Format::Mobi | Format::Kfx
+        )
     }
 
     /// Whether this format can be used for output/export.
@@ -241,7 +246,7 @@ impl Book {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Text and Markdown formats are export-only",
-                ))
+                ));
             }
         };
         Ok(Self {
@@ -264,7 +269,7 @@ impl Book {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Text and Markdown formats are export-only",
-                ))
+                ));
             }
         };
         Ok(Self {
@@ -355,9 +360,10 @@ impl Book {
     pub fn load_chapter_cached(&mut self, id: ChapterId) -> io::Result<Arc<IRChapter>> {
         // Fast path: check read lock first
         {
-            let cache = self.ir_cache.read().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned")
-            })?;
+            let cache = self
+                .ir_cache
+                .read()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned"))?;
             if let Some(chapter) = cache.get(&id) {
                 return Ok(Arc::clone(chapter));
             }
@@ -369,9 +375,10 @@ impl Book {
 
         // Write to cache
         {
-            let mut cache = self.ir_cache.write().map_err(|_| {
-                io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned")
-            })?;
+            let mut cache = self
+                .ir_cache
+                .write()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "IR cache lock poisoned"))?;
             cache.insert(id, Arc::clone(&chapter_arc));
         }
 
@@ -432,8 +439,12 @@ impl Book {
         match format {
             Format::Epub => EpubExporter::new().export(self, writer),
             Format::Azw3 => Azw3Exporter::new().export(self, writer),
-            Format::Text => TextExporter::new().format(TextFormat::Plain).export(self, writer),
-            Format::Markdown => TextExporter::new().format(TextFormat::Markdown).export(self, writer),
+            Format::Text => TextExporter::new()
+                .format(TextFormat::Plain)
+                .export(self, writer),
+            Format::Markdown => TextExporter::new()
+                .format(TextFormat::Markdown)
+                .export(self, writer),
             Format::Kfx => KfxExporter::new().export(self, writer),
             Format::Mobi => Err(io::Error::new(
                 io::ErrorKind::Unsupported,

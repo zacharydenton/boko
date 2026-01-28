@@ -111,7 +111,8 @@ pub fn extract_image_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     }
 
     // PNG: width/height at bytes 16-23 in IHDR chunk
-    if data.len() >= 24 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+    if data.len() >= 24 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
+    {
         let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
         let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
         return Some((width, height));
@@ -144,7 +145,21 @@ fn extract_jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         let marker = data[i + 1];
 
         // SOF markers (Start of Frame) - various encoding types
-        if matches!(marker, 0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF) {
+        if matches!(
+            marker,
+            0xC0 | 0xC1
+                | 0xC2
+                | 0xC3
+                | 0xC5
+                | 0xC6
+                | 0xC7
+                | 0xC9
+                | 0xCA
+                | 0xCB
+                | 0xCD
+                | 0xCE
+                | 0xCF
+        ) {
             if i + 9 < data.len() {
                 let height = u16::from_be_bytes([data[i + 5], data[i + 6]]) as u32;
                 let width = u16::from_be_bytes([data[i + 7], data[i + 8]]) as u32;
@@ -370,10 +385,7 @@ pub fn extract_xml_encoding(bytes: &[u8]) -> Option<&str> {
     }
 
     let value_start = 1;
-    let value_end = after_enc[value_start..]
-        .iter()
-        .position(|&b| b == quote)?
-        + value_start;
+    let value_end = after_enc[value_start..].iter().position(|&b| b == quote)? + value_start;
 
     std::str::from_utf8(&after_enc[value_start..value_end]).ok()
 }
@@ -403,7 +415,10 @@ mod tests {
     fn test_detect_media_format_by_magic_bytes() {
         // JPEG magic bytes
         let jpeg_data = [0xFF, 0xD8, 0xFF, 0xE0];
-        assert_eq!(detect_media_format("unknown", &jpeg_data), MediaFormat::Jpeg);
+        assert_eq!(
+            detect_media_format("unknown", &jpeg_data),
+            MediaFormat::Jpeg
+        );
 
         // PNG magic bytes
         let png_data = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];

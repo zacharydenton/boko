@@ -8,7 +8,7 @@ use std::path::Path;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use boko::export::{Azw3Exporter, EpubExporter, Exporter, TextExporter};
-use boko::{Book, Format, compile_html, Origin, Stylesheet};
+use boko::{Book, Format, Origin, Stylesheet, compile_html};
 
 const EPUB_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.epub");
 const AZW3_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.azw3");

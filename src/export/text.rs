@@ -639,7 +639,11 @@ impl<W: Write> ExportContext<'_, W> {
                         ""
                     };
 
-                    write!(self.writer, "{}{}{}{}{}", ticks, spacer, content, spacer, ticks)?;
+                    write!(
+                        self.writer,
+                        "{}{}{}{}{}",
+                        ticks, spacer, content, spacer, ticks
+                    )?;
                 } else {
                     if self.format == TextFormat::Markdown {
                         self.ensure_line_started()?;
@@ -1124,7 +1128,9 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        chapter.semantics.set_href(link, "https://example.com".to_string());
+        chapter
+            .semantics
+            .set_href(link, "https://example.com".to_string());
 
         let text_range = chapter.append_text("Click here");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1140,9 +1146,7 @@ mod tests {
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter
-            .semantics
-            .set_src(img, "photo.jpg".to_string());
+        chapter.semantics.set_src(img, "photo.jpg".to_string());
         chapter.semantics.set_alt(img, "A photo".to_string());
 
         let result = export_to_string(&chapter, TextFormat::Markdown);
@@ -1302,10 +1306,26 @@ mod tests {
 
         let result = export_to_string(&chapter, TextFormat::Markdown);
         // Special chars should be escaped
-        assert!(result.contains("\\*bold\\*"), "Asterisks should be escaped: {}", result);
-        assert!(result.contains("\\_italic\\_"), "Underscores should be escaped: {}", result);
-        assert!(result.contains("\\[link\\]"), "Brackets should be escaped: {}", result);
-        assert!(result.contains("\\`code\\`"), "Backticks should be escaped: {}", result);
+        assert!(
+            result.contains("\\*bold\\*"),
+            "Asterisks should be escaped: {}",
+            result
+        );
+        assert!(
+            result.contains("\\_italic\\_"),
+            "Underscores should be escaped: {}",
+            result
+        );
+        assert!(
+            result.contains("\\[link\\]"),
+            "Brackets should be escaped: {}",
+            result
+        );
+        assert!(
+            result.contains("\\`code\\`"),
+            "Backticks should be escaped: {}",
+            result
+        );
     }
 
     #[test]
@@ -1321,8 +1341,16 @@ mod tests {
 
         let result = export_to_string(&chapter, TextFormat::Plain);
         // Plain text should NOT escape
-        assert!(result.contains("*bold*"), "Plain should not escape: {}", result);
-        assert!(result.contains("_italic_"), "Plain should not escape: {}", result);
+        assert!(
+            result.contains("*bold*"),
+            "Plain should not escape: {}",
+            result
+        );
+        assert!(
+            result.contains("_italic_"),
+            "Plain should not escape: {}",
+            result
+        );
     }
 
     #[test]
@@ -1345,7 +1373,12 @@ mod tests {
 
         // Tight list should NOT have blank lines between items
         let lines: Vec<&str> = result.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 3, "Tight list should have 3 lines: {:?}", lines);
+        assert_eq!(
+            lines.len(),
+            3,
+            "Tight list should have 3 lines: {:?}",
+            lines
+        );
     }
 
     #[test]
@@ -1576,7 +1609,8 @@ mod tests {
         let text_node = chapter.alloc_node(Node::text(text_range));
         chapter.append_child(h1, text_node);
 
-        let result = export_to_string_with_path(&chapter, TextFormat::Markdown, Some("text/ch1.xhtml"));
+        let result =
+            export_to_string_with_path(&chapter, TextFormat::Markdown, Some("text/ch1.xhtml"));
 
         // Anchors are not output yet (internal links not implemented)
         assert!(
@@ -1593,7 +1627,9 @@ mod tests {
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
         // Set an internal link to another file
-        chapter.semantics.set_href(link, "chapter2.xhtml#section-3".to_string());
+        chapter
+            .semantics
+            .set_href(link, "chapter2.xhtml#section-3".to_string());
 
         let text_range = chapter.append_text("See section 3");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1613,5 +1649,4 @@ mod tests {
             result
         );
     }
-
 }

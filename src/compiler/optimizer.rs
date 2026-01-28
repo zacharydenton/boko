@@ -215,7 +215,10 @@ fn hoist_pass(chapter: &mut IRChapter, parent_id: NodeId) -> bool {
 
         if is_redundant_wrapper(chapter, current_id) {
             // Get the single child that we'll promote
-            let child_id = chapter.node(current_id).and_then(|n| n.first_child).unwrap();
+            let child_id = chapter
+                .node(current_id)
+                .and_then(|n| n.first_child)
+                .unwrap();
 
             // 1. Reparent child to grandparent
             if let Some(child_node) = chapter.node_mut(child_id) {
@@ -272,7 +275,11 @@ fn is_redundant_wrapper(chapter: &IRChapter, node_id: NodeId) -> bool {
     };
 
     // Check that first child has no sibling (exactly one child)
-    if chapter.node(first_child).and_then(|n| n.next_sibling).is_some() {
+    if chapter
+        .node(first_child)
+        .and_then(|n| n.next_sibling)
+        .is_some()
+    {
         return false;
     }
 
@@ -1083,7 +1090,10 @@ mod tests {
         // Container should still be there (has 2 children)
         let root_children: Vec<_> = chapter.children(NodeId::ROOT).collect();
         assert_eq!(root_children.len(), 1);
-        assert_eq!(chapter.node(root_children[0]).unwrap().role, Role::Container);
+        assert_eq!(
+            chapter.node(root_children[0]).unwrap().role,
+            Role::Container
+        );
     }
 
     #[test]
@@ -1108,7 +1118,10 @@ mod tests {
         // Container should still be there (has ID)
         let root_children: Vec<_> = chapter.children(NodeId::ROOT).collect();
         assert_eq!(root_children.len(), 1);
-        assert_eq!(chapter.node(root_children[0]).unwrap().role, Role::Container);
+        assert_eq!(
+            chapter.node(root_children[0]).unwrap().role,
+            Role::Container
+        );
     }
 
     // ------------------------------------------------------------------------
@@ -1142,7 +1155,10 @@ mod tests {
 
         let children: Vec<_> = chapter.children(para).collect();
         assert_eq!(children.len(), 1);
-        assert_eq!(chapter.text(chapter.node(children[0]).unwrap().text), "THE ");
+        assert_eq!(
+            chapter.text(chapter.node(children[0]).unwrap().text),
+            "THE "
+        );
     }
 
     #[test]
@@ -1437,4 +1453,3 @@ mod tests {
         assert_eq!(children.len(), 3);
     }
 }
-

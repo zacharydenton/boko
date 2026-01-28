@@ -5,8 +5,8 @@ use std::io;
 pub use super::headers::{Compression, Encoding, ExthHeader, MobiHeader, NULL_INDEX};
 pub use super::huffcdic::HuffCdicReader;
 pub use super::index::{
-    Cncx, DivElement, IndexEntry, NcxEntry, SkeletonFile,
-    parse_div_index, parse_ncx_index, parse_skel_index, read_index,
+    Cncx, DivElement, IndexEntry, NcxEntry, SkeletonFile, parse_div_index, parse_ncx_index,
+    parse_skel_index, read_index,
 };
 
 /// PDB (Palm Database) header info extracted from bytes.
@@ -59,7 +59,8 @@ impl PdbInfo {
         let mut record_offsets = Vec::with_capacity(num_records as usize);
         for i in 0..num_records as usize {
             let pos = records_start + i * 8;
-            let offset = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            let offset =
+                u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
             record_offsets.push(offset);
         }
 
@@ -129,11 +130,12 @@ pub fn detect_format(mobi: &MobiHeader, exth: Option<&ExthHeader>) -> MobiFormat
 
     // Check for combo file: EXTH 121 points to KF8 boundary
     if let Some(kf8_idx) = exth.and_then(|e| e.kf8_boundary)
-        && kf8_idx > 0 {
-            return MobiFormat::Combo {
-                kf8_record_offset: kf8_idx as usize,
-            };
-        }
+        && kf8_idx > 0
+    {
+        return MobiFormat::Combo {
+            kf8_record_offset: kf8_idx as usize,
+        };
+    }
 
     MobiFormat::Mobi6
 }
@@ -282,9 +284,21 @@ pub fn is_metadata_record(data: &[u8]) -> bool {
     }
     matches!(
         &data[..4],
-        b"FLIS" | b"FCIS" | b"SRCS" | b"BOUN" | b"FDST" | b"DATP"
-        | b"AUDI" | b"VIDE" | b"RESC" | b"CMET" | b"PAGE" | b"CONT"
-        | b"CRES" | b"FONT" | b"INDX"
+        b"FLIS"
+            | b"FCIS"
+            | b"SRCS"
+            | b"BOUN"
+            | b"FDST"
+            | b"DATP"
+            | b"AUDI"
+            | b"VIDE"
+            | b"RESC"
+            | b"CMET"
+            | b"PAGE"
+            | b"CONT"
+            | b"CRES"
+            | b"FONT"
+            | b"INDX"
     ) || data.starts_with(b"BOUNDARY")
 }
 
@@ -463,7 +477,12 @@ mod tests {
         };
 
         let format = detect_format(&header, Some(&exth));
-        assert!(matches!(format, MobiFormat::Combo { kf8_record_offset: 100 }));
+        assert!(matches!(
+            format,
+            MobiFormat::Combo {
+                kf8_record_offset: 100
+            }
+        ));
         assert!(format.is_kf8());
         assert_eq!(format.record_offset(), 100);
     }
@@ -536,10 +555,16 @@ mod tests {
     #[test]
     fn test_detect_image_type() {
         // JPEG
-        assert_eq!(detect_image_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(
+            detect_image_type(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some("image/jpeg")
+        );
 
         // PNG
-        assert_eq!(detect_image_type(&[0x89, b'P', b'N', b'G']), Some("image/png"));
+        assert_eq!(
+            detect_image_type(&[0x89, b'P', b'N', b'G']),
+            Some("image/png")
+        );
 
         // GIF
         assert_eq!(detect_image_type(b"GIF89a"), Some("image/gif"));
