@@ -1018,9 +1018,12 @@ pub fn compute_styles(
     let mut matched: Vec<MatchedRule> = Vec::new();
     let mut order = 0;
 
+    // Reuse selector caches across all rule matching for this element
+    let mut caches = SelectorCaches::default();
+
     for (stylesheet, origin) in stylesheets {
         for rule in &stylesheet.rules {
-            if rule_matches(elem, rule) {
+            if rule_matches_with_caches(elem, rule, &mut caches) {
                 for decl in &rule.declarations {
                     matched.push(MatchedRule {
                         declaration: decl,
@@ -1074,13 +1077,16 @@ pub fn compute_styles(
     style
 }
 
-/// Check if a rule matches an element.
-fn rule_matches(elem: ElementRef<'_>, rule: &CssRule) -> bool {
-    let mut caches = SelectorCaches::default();
+/// Check if a rule matches an element (with shared caches for better performance).
+fn rule_matches_with_caches(
+    elem: ElementRef<'_>,
+    rule: &CssRule,
+    caches: &mut SelectorCaches,
+) -> bool {
     let mut context = MatchingContext::new(
         selectors::matching::MatchingMode::Normal,
         None,
-        &mut caches,
+        caches,
         selectors::context::QuirksMode::NoQuirks,
         selectors::matching::NeedsSelectorFlags::No,
         selectors::matching::MatchingForInvalidation::No,
