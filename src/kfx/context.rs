@@ -936,11 +936,14 @@ impl ExportContext {
             .unwrap_or(content_id);
 
         let full_key = self.build_anchor_key(anchor_id);
+
         if self.needed_anchors.contains(&full_key) {
-            if let Some(symbol) =
-                self.anchor_registry
-                    .create_content_anchor(&full_key, content_id, section_id, offset)
-            {
+            if let Some(symbol) = self.anchor_registry.create_content_anchor(
+                &full_key,
+                content_id,
+                section_id,
+                offset,
+            ) {
                 // Intern symbol so entity ID is assigned
                 self.symbols.get_or_intern(&symbol);
             }
@@ -985,6 +988,33 @@ impl ExportContext {
         } else {
             anchor_id.to_string()
         }
+    }
+
+    /// Get the current chapter path (for testing).
+    #[cfg(test)]
+    pub fn get_current_chapter_path(&self) -> Option<&str> {
+        self.current_chapter_path.as_deref()
+    }
+
+    /// Get the number of needed anchors (for testing).
+    #[cfg(test)]
+    pub fn needed_anchor_count(&self) -> usize {
+        self.needed_anchors.len()
+    }
+
+    /// Check if a specific anchor is needed (for testing).
+    #[cfg(test)]
+    pub fn has_needed_anchor(&self, key: &str) -> bool {
+        self.needed_anchors.contains(key)
+    }
+
+    /// Get all needed anchors matching a pattern (for testing).
+    #[cfg(test)]
+    pub fn find_needed_anchors(&self, pattern: &str) -> Vec<&str> {
+        self.needed_anchors.iter()
+            .filter(|a| a.contains(pattern))
+            .map(|s| s.as_str())
+            .collect()
     }
 
     /// Check if an anchor is needed (has a link pointing to it).
@@ -1240,5 +1270,57 @@ mod tests {
         let (idx, offset) = ctx.append_text("World");
         assert_eq!(idx, 1);
         assert_eq!(offset, 5);
+    }
+
+    #[test]
+    fn test_cross_file_anchor_resolution() {
+        // Simulate the full anchor resolution flow for cross-file links
+        // This tests that a link from chapter1 to chapter2#note-1 resolves correctly
+        let mut ctx = ExportContext::new();
+
+        // Step 1: Register link target (simulates collect_needed_anchors_from_chapter)
+        // The href has been resolved to full path by resolve_semantic_paths
+        let full_href = "OEBPS/text/endnotes.xhtml#note-1";
+        ctx.anchor_registry.register_link_target(full_href);
+        ctx.register_needed_anchor(full_href);
+
+        // Verify the anchor symbol was created
+        assert!(ctx.anchor_registry.get_symbol(full_href).is_some());
+        let symbol = ctx.anchor_registry.get_symbol(full_href).unwrap();
+        assert_eq!(symbol, "a0");
+
+        // Step 2: Begin chapter export for endnotes.xhtml (simulates begin_chapter_export)
+        ctx.begin_chapter_export(ChapterId(1), "OEBPS/text/endnotes.xhtml");
+
+        // Verify current_chapter_path is set correctly
+        assert_eq!(ctx.build_anchor_key("note-1"), full_href);
+
+        // Step 3: Create anchor when we encounter the element with id="note-1"
+        let content_id = 123;
+        ctx.create_anchor_if_needed("note-1", content_id, 0);
+
+        // Step 4: Drain anchors and verify the anchor was created correctly
+        let anchors = ctx.anchor_registry.drain_anchors();
+        assert_eq!(anchors.len(), 1, "Expected one anchor to be created");
+
+        let anchor = &anchors[0];
+        assert_eq!(anchor.symbol, "a0");
+        assert_eq!(anchor.fragment_id, content_id);
+        assert_eq!(anchor.offset, 0);
+    }
+
+    #[test]
+    fn test_anchor_not_created_if_not_needed() {
+        let mut ctx = ExportContext::new();
+
+        // Don't register any needed anchors
+        ctx.begin_chapter_export(ChapterId(1), "OEBPS/text/chapter1.xhtml");
+
+        // Try to create an anchor that wasn't registered as needed
+        ctx.create_anchor_if_needed("unused-id", 123, 0);
+
+        // No anchor should be created
+        let anchors = ctx.anchor_registry.drain_anchors();
+        assert!(anchors.is_empty(), "No anchor should be created for unneeded ID");
     }
 }

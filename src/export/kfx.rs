@@ -470,17 +470,22 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
 ///
 /// Also registers link targets with the AnchorRegistry to generate
 /// anchor symbols for use in style_events.
+///
+/// Note: hrefs are already resolved to full paths during import
+/// (via resolve_semantic_paths in import/mod.rs), so no additional
+/// path resolution is needed here.
 fn collect_needed_anchors_from_chapter(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
     if chapter.node(node_id).is_none() {
         return;
     }
 
-    // Check for href with fragment (internal link target)
+    // Check for href (link target)
+    // Hrefs are already resolved to full paths during import
     if let Some(href) = chapter.semantics.href(node_id) {
         // Register with AnchorRegistry to generate a symbol for this link target
         ctx.anchor_registry.register_link_target(href);
 
-        // Register the full href as a needed anchor (for create_anchor_if_needed lookup)
+        // Register the href as a needed anchor (for create_anchor_if_needed lookup)
         ctx.register_needed_anchor(href);
     }
 
@@ -2764,24 +2769,154 @@ mod resource_export_tests {
         // Export EPUB to KFX
         let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
         let kfx_data = build_kfx_container(&mut book).unwrap();
-        
+
         // Write to temp file and re-open
         let temp_path = std::env::temp_dir().join("test_roundtrip.kfx");
         std::fs::write(&temp_path, &kfx_data).unwrap();
-        
+
         let mut reimported = Book::open(&temp_path).unwrap();
         let assets = reimported.list_assets();
-        
+
         // Load all assets and verify total size
         let total_size: usize = assets.iter()
             .filter_map(|a| reimported.load_asset(a).ok())
             .map(|d| d.len())
             .sum();
-        
+
         std::fs::remove_file(&temp_path).ok();
-        
+
         // Should have ~401KB of image data
-        assert!(total_size > 100000, 
+        assert!(total_size > 100000,
             "Expected > 100KB of assets from KFX, got {} bytes", total_size);
+    }
+}
+
+#[cfg(test)]
+mod anchor_resolution_tests {
+    use super::*;
+    use crate::book::Book;
+
+    #[test]
+    fn test_cross_file_anchor_resolution_flow() {
+        // Test the full anchor resolution flow with epictetus.epub
+        // This EPUB has endnotes in endnotes.xhtml with links from the main text
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+
+        // Set up context
+        let mut ctx = ExportContext::new();
+
+        // Collect spine info
+        let spine_info: Vec<_> = book
+            .spine()
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                let section_name = format!("c{}", idx);
+                (entry.id, section_name)
+            })
+            .collect();
+
+        // Find the enchiridion chapter (has links to endnotes)
+        // and the endnotes chapter (has the anchor targets)
+        let enchiridion_id = spine_info.iter()
+            .find(|(id, _)| {
+                book.source_id(*id)
+                    .map(|p| p.contains("enchiridion"))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| *id);
+
+        let endnotes_id = spine_info.iter()
+            .find(|(id, _)| {
+                book.source_id(*id)
+                    .map(|p| p.contains("endnotes"))
+                    .unwrap_or(false)
+            })
+            .map(|(id, _)| *id);
+
+        assert!(enchiridion_id.is_some(), "Should find enchiridion chapter");
+        assert!(endnotes_id.is_some(), "Should find endnotes chapter");
+
+        let enchiridion_id = enchiridion_id.unwrap();
+        let endnotes_id = endnotes_id.unwrap();
+
+        let endnotes_path = book.source_id(endnotes_id).unwrap().to_string();
+
+        // Step 1: Collect needed anchors from enchiridion (has links to endnotes)
+        // Note: hrefs are already resolved to full paths during import
+        if let Ok(chapter) = book.load_chapter(enchiridion_id) {
+            collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
+        }
+
+        // Check how many anchors were registered
+        assert!(
+            ctx.needed_anchor_count() > 0,
+            "Should have registered some needed anchors"
+        );
+
+        // Step 2: Survey endnotes chapter
+        if let Ok(chapter) = book.load_chapter(endnotes_id) {
+            ctx.register_section("c_endnotes");
+            survey_chapter(&chapter, endnotes_id, &endnotes_path, &mut ctx);
+        }
+
+        // Step 3: Begin export for endnotes chapter
+        ctx.begin_chapter_export(endnotes_id, &endnotes_path);
+
+        // Verify current_chapter_path is set
+        assert_eq!(
+            ctx.get_current_chapter_path(),
+            Some(endnotes_path.as_str()),
+            "current_chapter_path should be set to endnotes path"
+        );
+
+        // Step 4: Build anchor key and check if it's in needed_anchors
+        // Endnotes typically have IDs like "note-1", "note-2", etc.
+        let sample_key = ctx.build_anchor_key("note-1");
+
+        // The key should match exactly - verifies anchor path resolution is working
+        assert!(
+            ctx.has_needed_anchor(&sample_key),
+            "Anchor key '{}' should be in needed_anchors",
+            sample_key
+        );
+    }
+
+    #[test]
+    fn test_anchor_entities_created_in_full_export() {
+        // Test that anchor entities are actually created during full export
+        let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
+        let kfx_data = build_kfx_container(&mut book).unwrap();
+
+        // Parse the KFX container to find anchor entities
+        use crate::kfx::container::{parse_container_header, parse_container_info, parse_index_table};
+
+        // 1. Parse header to get container_info location
+        let header = parse_container_header(&kfx_data).expect("Failed to parse header");
+
+        // 2. Parse container_info to get index table location
+        let ci_start = header.container_info_offset;
+        let ci_end = ci_start + header.container_info_length;
+        let container_info = parse_container_info(&kfx_data[ci_start..ci_end])
+            .expect("Failed to parse container info");
+
+        // 3. Parse the index table
+        let (idx_offset, idx_len) = container_info.index.expect("No index table");
+        let index = parse_index_table(
+            &kfx_data[idx_offset..idx_offset + idx_len],
+            header.header_len,
+        );
+
+        // Find anchor entities (type 266 = $266 = Anchor)
+        let anchor_count = index.iter().filter(|e| e.type_id == 266).count();
+
+        // Should have anchors for internal links (endnotes, uncopyright, etc.)
+        // The EPUB has 42 endnotes from Enchiridion + some from other sections
+        // Plus backlinks and other internal links
+        assert!(
+            anchor_count >= 40,
+            "Expected at least 40 anchor entities for endnotes, got {}",
+            anchor_count
+        );
     }
 }
