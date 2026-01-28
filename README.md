@@ -1,136 +1,165 @@
 # boko
 
-[![CI](https://github.com/zacharydenton/boko/actions/workflows/ci.yml/badge.svg)](https://github.com/zacharydenton/boko/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/boko.svg)](https://crates.io/crates/boko)
-[![docs.rs](https://docs.rs/boko/badge.svg)](https://docs.rs/boko)
-
-A fast, lightweight Rust library for converting between EPUB and Kindle ebook formats (KFX, AZW3, MOBI).
+A fast Rust library and CLI for converting between ebook formats.
 
 ## Features
 
-- **Fast**: 100-200x faster than calibre's ebook-convert
-- **Lightweight**: Pure Rust with minimal dependencies
-- **Complete**: Preserves metadata, table of contents, images, fonts, and CSS
-- **Flexible**: Use as a library or command-line tool
-- **Cross-platform**: Native binaries for all platforms, plus WebAssembly for browsers
-
-## Performance
-
-Benchmarks converting a 450KB ebook on an AMD Ryzen 9 7950X:
-
-| Conversion | boko | calibre | Speedup |
-|------------|------|---------|---------|
-| EPUB → AZW3 | 4.5 ms | 1,039 ms | **230x** |
-| AZW3 → EPUB | 3.2 ms | 564 ms | **176x** |
-
-## Installation
-
-Requires Rust nightly (uses edition 2024 features).
-
-### CLI
-
-```bash
-rustup default nightly
-cargo install boko
-```
-
-### Library
-
-```toml
-[dependencies]
-boko = { version = "0.1", default-features = false }
-```
-
-## Usage
-
-### Command Line
-
-```bash
-# Convert EPUB to KFX (latest Kindle format)
-boko book.epub book.kfx
-
-# Convert EPUB to AZW3
-boko book.epub book.azw3
-
-# Convert KFX/AZW3/MOBI to EPUB
-boko book.kfx book.epub
-
-# Show book metadata
-boko -i book.epub
-```
-
-### Library
-
-```rust
-use boko::Book;
-
-// Open and convert with automatic format detection
-let book = Book::open("input.epub")?;
-book.save("output.kfx")?;  // or .azw3, .mobi
-```
-
-For explicit format control (Format: Epub, Kfx, Azw3, Mobi):
-
-```rust
-use boko::{Book, Format};
-
-let book = Book::open_format("input.bin", Format::Mobi)?;
-book.save_format("output.bin", Format::Azw3)?;
-```
-
-Free functions are also available:
-
-```rust
-use boko::{read_epub, write_mobi};
-
-let book = read_epub("input.epub")?;
-write_mobi(&book, "output.azw3")?;
-```
-
-### Creating Books Programmatically
-
-```rust
-use boko::{Book, Metadata, TocEntry};
-
-let mut book = Book::new();
-book.metadata = Metadata::new("My Book")
-    .with_author("Author Name")
-    .with_language("en");
-
-// Add content
-book.add_resource(
-    "chapter1.xhtml",
-    b"<?xml version=\"1.0\"?>
-      <html><body><h1>Chapter 1</h1><p>Hello, world!</p></body></html>".to_vec(),
-    "application/xhtml+xml"
-);
-book.add_spine_item("ch1", "chapter1.xhtml", "application/xhtml+xml");
-book.toc.push(TocEntry::new("Chapter 1", "chapter1.xhtml"));
-
-// Save in any format
-book.save("my-book.epub")?;
-book.save("my-book.kfx")?;
-book.save("my-book.azw3")?;
-```
-
-## Web App
-
-A browser-based converter is available at [zacharydenton.github.io/boko](https://zacharydenton.github.io/boko). All conversions happen locally in your browser using WebAssembly.
+- **Multi-format support**: Read and write EPUB, KFX (Kindle Format 10), and AZW3
+- **Intermediate representation**: Content is compiled to a semantic IR for accurate format conversion
+- **CSS preservation**: Full CSS parsing and transformation between formats
+- **Metadata fidelity**: Extended EPUB3 metadata (contributors, series, refinements) round-trips through KFX
+- **Lazy loading**: Efficient random access via `ByteSource` trait
 
 ## Supported Formats
 
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
-| EPUB 2/3 | ✓ | ✓ | |
-| KFX (KF10) | ✓ | ✓ | Latest Kindle format with enhanced typography |
-| AZW3 (KF8) | ✓ | ✓ | |
-| MOBI | ✓ | | Legacy format, read-only |
+| EPUB 2/3 | ✓ | ✓ | Full EPUB3 metadata support |
+| KFX | ✓ | ✓ | Kindle Format 10 with enhanced typography |
+| AZW3 | ✓ | ✓ | Kindle Format 8 |
+| MOBI | ✓ | - | Legacy format, read-only |
+| Text | - | ✓ | Plain text export |
+| Markdown | - | ✓ | Markdown export |
 
-KFX output includes real CSS parsing from EPUB stylesheets for accurate typography.
+## Installation
 
-## Contributing
+Requires Rust nightly (edition 2024).
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+```bash
+cargo install boko
+```
+
+## CLI Usage
+
+### Show book info
+
+```bash
+# Human-readable output
+boko info book.epub
+
+# JSON output
+boko info --json book.epub
+```
+
+### Convert between formats
+
+```bash
+# EPUB to KFX (latest Kindle format)
+boko convert book.epub book.kfx
+
+# EPUB to AZW3
+boko convert book.epub book.azw3
+
+# KFX/AZW3/MOBI to EPUB
+boko convert book.kfx book.epub
+
+# Export to text or markdown
+boko convert book.epub book.txt
+boko convert book.epub book.md
+```
+
+### Inspect the IR
+
+```bash
+# Dump chapter structure
+boko dump book.epub
+
+# Show structure without text content
+boko dump -s book.epub
+
+# Dump a specific chapter
+boko dump -c 0 book.epub
+
+# Show only the style pool
+boko dump --styles-only book.epub
+```
+
+## Library Usage
+
+```rust
+use boko::Book;
+
+// Open a book (format auto-detected from extension)
+let mut book = Book::open("input.epub")?;
+
+// Access metadata
+println!("Title: {}", book.metadata().title);
+println!("Authors: {:?}", book.metadata().authors);
+
+// Iterate chapters
+let spine: Vec<_> = book.spine().to_vec();
+for entry in spine {
+    let chapter = book.load_chapter(entry.id)?;
+    println!("Chapter has {} nodes", chapter.nodes.len());
+}
+
+// Export to another format
+book.export("output.kfx")?;
+```
+
+### Working with the IR
+
+Boko compiles ebook content to an intermediate representation (IR) that captures semantic structure:
+
+```rust
+use boko::{Book, compile_html, Stylesheet};
+
+// Compile HTML to IR
+let html = r#"<p class="intro">Hello <em>world</em></p>"#;
+let css = Stylesheet::parse("p.intro { font-size: 1.2em; }");
+let chapter = compile_html(html, &css)?;
+
+// Traverse the node tree
+for node in &chapter.nodes {
+    match &node.content {
+        boko::ir::Content::Text(text) => println!("Text: {}", text),
+        boko::ir::Content::Element { tag, .. } => println!("Element: {}", tag),
+        _ => {}
+    }
+}
+```
+
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Import    │     │     IR      │     │   Export    │
+├─────────────┤     ├─────────────┤     ├─────────────┤
+│ EPUB        │────▶│ Nodes       │────▶│ EPUB        │
+│ KFX         │     │ Styles      │     │ KFX         │
+│ AZW3        │     │ Metadata    │     │ AZW3        │
+│ MOBI        │     │ TOC         │     │ Text/MD     │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
+
+The IR captures:
+- **Nodes**: Semantic tree with elements, text, and structure
+- **Styles**: Computed CSS properties per node
+- **Roles**: Semantic annotations (heading, paragraph, list, etc.)
+- **Metadata**: Title, authors, contributors, series, etc.
+
+## Metadata Support
+
+Extended EPUB3 metadata is preserved during conversion:
+
+- `dcterms:modified` - Modification timestamp
+- `dc:contributor` with role refinements (translator, editor, illustrator)
+- `file-as` refinements for sort ordering
+- `belongs-to-collection` with series position
+
+Example output from `boko info`:
+
+```
+Title: The Great Novel
+Authors: Jane Author
+Language: en
+Modified: 2024-01-15T12:00:00Z
+Title Sort: Great Novel, The
+Author Sort: Author, Jane
+Contributors:
+  John Translator (trl) [Translator, John]
+Collection: Epic Saga (series, #2)
+```
 
 ## License
 
