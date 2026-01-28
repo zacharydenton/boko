@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_style_builder() {
         let schema = StyleSchema::standard();
-        let mut builder = StyleBuilder::new(&schema);
+        let mut builder = StyleBuilder::new(schema);
 
         builder.apply("font-weight", "bold");
         builder.apply("font-style", "italic");

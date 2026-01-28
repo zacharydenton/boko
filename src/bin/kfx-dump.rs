@@ -2883,8 +2883,8 @@ fn report_features(data: &[u8]) -> IonResult<()> {
                 for (field_id, field_value) in fields {
                     let field_name = resolve_sym(*field_id);
 
-                    if field_name == "features" {
-                        if let boko::kfx::ion::IonValue::List(features) = field_value {
+                    if field_name == "features"
+                        && let boko::kfx::ion::IonValue::List(features) = field_value {
                             for (idx, feature) in features.iter().enumerate() {
                                 if let boko::kfx::ion::IonValue::Struct(ffields) = feature {
                                     let mut namespace = String::new();
@@ -2911,27 +2911,24 @@ fn report_features(data: &[u8]) -> IonResult<()> {
                                                 if let boko::kfx::ion::IonValue::Struct(vi) = fval {
                                                     for (vid, vval) in vi {
                                                         let vname = resolve_sym(*vid);
-                                                        if vname == "version" {
-                                                            if let boko::kfx::ion::IonValue::Struct(
+                                                        if vname == "version"
+                                                            && let boko::kfx::ion::IonValue::Struct(
                                                                 ver,
                                                             ) = vval
                                                             {
                                                                 for (verid, verval) in ver {
                                                                     let vername =
                                                                         resolve_sym(*verid);
-                                                                    if vername == "major_version" {
-                                                                        if let boko::kfx::ion::IonValue::Int(v) = verval {
+                                                                    if vername == "major_version"
+                                                                        && let boko::kfx::ion::IonValue::Int(v) = verval {
                                                                             major = *v;
                                                                         }
-                                                                    }
-                                                                    if vername == "minor_version" {
-                                                                        if let boko::kfx::ion::IonValue::Int(v) = verval {
+                                                                    if vername == "minor_version"
+                                                                        && let boko::kfx::ion::IonValue::Int(v) = verval {
                                                                             minor = *v;
                                                                         }
-                                                                    }
                                                                 }
                                                             }
-                                                        }
                                                     }
                                                 }
                                             }
@@ -2950,7 +2947,6 @@ fn report_features(data: &[u8]) -> IonResult<()> {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -3081,8 +3077,8 @@ fn report_metadata(data: &[u8]) -> IonResult<()> {
                 for (field_id, field_value) in fields {
                     let field_name = resolve_sym(*field_id);
 
-                    if field_name == "categorised_metadata" {
-                        if let boko::kfx::ion::IonValue::List(categories) = field_value {
+                    if field_name == "categorised_metadata"
+                        && let boko::kfx::ion::IonValue::List(categories) = field_value {
                             for category in categories {
                                 if let boko::kfx::ion::IonValue::Struct(cat_fields) = category {
                                     let mut cat_name = String::new();
@@ -3155,7 +3151,6 @@ fn report_metadata(data: &[u8]) -> IonResult<()> {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -3288,8 +3283,8 @@ fn report_reading_orders(data: &[u8]) -> IonResult<()> {
                 for (field_id, field_value) in fields {
                     let field_name = resolve_sym(*field_id);
 
-                    if field_name == "reading_orders" {
-                        if let boko::kfx::ion::IonValue::List(orders) = field_value {
+                    if field_name == "reading_orders"
+                        && let boko::kfx::ion::IonValue::List(orders) = field_value {
                             for (idx, order) in orders.iter().enumerate() {
                                 if let boko::kfx::ion::IonValue::Struct(order_fields) = order {
                                     let mut order_name = String::new();
@@ -3336,7 +3331,6 @@ fn report_reading_orders(data: &[u8]) -> IonResult<()> {
                                 }
                             }
                         }
-                    }
                 }
             }
         }
@@ -4185,20 +4179,18 @@ where
                     }
                     "content" => {
                         // Extract sample text if we don't have one yet
-                        if stats.first_text.is_none() {
-                            if let boko::kfx::ion::IonValue::Struct(content_fields) = field_value {
+                        if stats.first_text.is_none()
+                            && let boko::kfx::ion::IonValue::Struct(content_fields) = field_value {
                                 for (cid, cval) in content_fields {
-                                    if resolve_sym(*cid) == "text" {
-                                        if let boko::kfx::ion::IonValue::String(t) = cval {
+                                    if resolve_sym(*cid) == "text"
+                                        && let boko::kfx::ion::IonValue::String(t) = cval {
                                             let sample: String = t.chars().take(60).collect();
                                             if !sample.trim().is_empty() {
                                                 stats.first_text = Some(sample);
                                             }
                                         }
-                                    }
                                 }
                             }
-                        }
                     }
                     _ => {}
                 }
@@ -4351,8 +4343,8 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                     if let boko::kfx::ion::IonValue::Struct(fields) = item {
                         for (fid, field_value) in fields {
                             let fname = resolve_sym(*fid);
-                            if fname == "locations" {
-                                if let boko::kfx::ion::IonValue::List(locations) = field_value {
+                            if fname == "locations"
+                                && let boko::kfx::ion::IonValue::List(locations) = field_value {
                                     for loc in locations {
                                         if let boko::kfx::ion::IonValue::Struct(loc_fields) = loc {
                                             let mut id = 0i64;
@@ -4382,7 +4374,6 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                                         }
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -4988,8 +4979,8 @@ fn report_dependencies(data: &[u8]) -> IonResult<()> {
             if let boko::kfx::ion::IonValue::Struct(fields) = inner {
                 for (field_id, field_value) in fields {
                     let field_name = resolve_sym(*field_id);
-                    if field_name == "container_list" {
-                        if let boko::kfx::ion::IonValue::List(containers) = field_value {
+                    if field_name == "container_list"
+                        && let boko::kfx::ion::IonValue::List(containers) = field_value {
                             let mut total_entities = 0usize;
 
                             for container in containers {
@@ -5075,7 +5066,6 @@ fn report_dependencies(data: &[u8]) -> IonResult<()> {
                             println!("Total containers: {}", containers.len());
                             println!("Total entity refs: {}", total_entities);
                         }
-                    }
                 }
             }
         }

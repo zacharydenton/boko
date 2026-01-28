@@ -558,8 +558,8 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         _start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         // Handle margin/padding shorthand expansion
-        if name.as_ref() == "margin" || name.as_ref() == "padding" {
-            if let Some(decls) = Declaration::parse_box_shorthand(&name, input) {
+        if (name.as_ref() == "margin" || name.as_ref() == "padding")
+            && let Some(decls) = Declaration::parse_box_shorthand(&name, input) {
                 let important = input.try_parse(cssparser::parse_important).is_ok();
                 let target = if important {
                     &mut *self.important_declarations
@@ -569,7 +569,6 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
                 target.extend(decls);
                 return Ok(());
             }
-        }
 
         // Parse regular declarations
         if let Some(decl) = Declaration::parse(&name, input) {
@@ -971,11 +970,10 @@ fn parse_clear(input: &mut Parser<'_, '_>) -> Option<Clear> {
 }
 
 fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
-    if let Ok(Token::Number { int_value: Some(v), .. }) = input.next().cloned() {
-        if v >= 0 {
+    if let Ok(Token::Number { int_value: Some(v), .. }) = input.next().cloned()
+        && v >= 0 {
             return Some(v as u32);
         }
-    }
     None
 }
 

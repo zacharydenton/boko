@@ -3164,7 +3164,7 @@ mod tests {
         ];
 
         // Import using schema
-        let ir_style = import_kfx_style(&schema, &props);
+        let ir_style = import_kfx_style(schema, &props);
 
         // Verify fields were set correctly
         assert_eq!(ir_style.font_weight, FontWeight::BOLD);
