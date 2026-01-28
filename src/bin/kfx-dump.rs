@@ -24,7 +24,7 @@ struct Args {
     stat: bool,
 
     /// Print detailed report for specified field/fragment (can be specified multiple times)
-    /// Supported: anchors
+    /// Supported: anchors, toc
     #[arg(short = 'f', long = "field")]
     field: Vec<String>,
 }
@@ -81,8 +81,9 @@ fn main() -> IonResult<()> {
         for field in &args.field {
             match field.as_str() {
                 "anchors" => report_anchors(&data)?,
+                "toc" => report_toc(&data)?,
                 other => {
-                    eprintln!("Unknown field report: {}. Supported: anchors", other);
+                    eprintln!("Unknown field report: {}. Supported: anchors, toc", other);
                     std::process::exit(1);
                 }
             }
@@ -795,6 +796,395 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
     }
 
     Ok(())
+}
+
+/// TOC entry for reporting
+#[derive(Debug)]
+struct TocEntryInfo {
+    label: String,
+    target_id: Option<i64>,
+    target_offset: Option<i64>,
+    target_text: Option<String>,  // Preview of text at target
+    depth: usize,
+}
+
+/// Report TOC entries from a KFX container
+fn report_toc(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data = &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) = parse_container_info_for_doc_symbols(container_info_data) {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len();
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data) else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Collect content entities for text preview lookup
+    let mut content_map: HashMap<String, Vec<String>> = HashMap::new();
+    // Map fragment ID → (content_name, content_index) for resolving target positions
+    let mut fragment_content_map: HashMap<i64, (String, i64)> = HashMap::new();
+
+    // First pass: collect content and storyline data
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+
+        // Parse ENTY format
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else { continue };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+        let value = match parser.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Collect content entities
+        if type_idnum == KfxSymbol::Content as u32 {
+            if let Some((name, texts)) = extract_content_texts(&value, &extended_symbols, base_symbol_count) {
+                content_map.insert(name, texts);
+            }
+        }
+
+        // Collect fragment content mappings from storylines
+        if type_idnum == KfxSymbol::Storyline as u32 {
+            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map);
+        }
+    }
+
+    // Second pass: find book_navigation entity and extract TOC
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+
+        // Look for BookNavigation entity (type = 389)
+        if type_idnum != KfxSymbol::BookNavigation as u32 {
+            continue;
+        }
+
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+
+        // Parse ENTY format
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else { continue };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+        let value = match parser.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Extract and print TOC
+        extract_and_print_toc(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map);
+    }
+
+    Ok(())
+}
+
+/// Extract TOC entries from metadata and print them
+fn extract_and_print_toc(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    content_map: &HashMap<String, Vec<String>>,
+    fragment_content_map: &HashMap<i64, (String, i64)>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    // Unwrap list if present (book_navigation contains a list with one struct)
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        IonValue::List(items) if !items.is_empty() => &items[0],
+        _ => value,
+    };
+
+    let inner = match inner {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => inner,
+    };
+
+    let fields = match inner {
+        IonValue::Struct(f) => f,
+        _ => return,
+    };
+
+    // Find nav_containers field (392)
+    for (field_id, field_value) in fields {
+        if *field_id != KfxSymbol::NavContainers as u64 {
+            continue;
+        }
+
+        let containers = match field_value {
+            IonValue::List(items) => items,
+            _ => continue,
+        };
+
+        for container in containers {
+            // Each container is an annotated struct with annotation nav_container (391)
+            let container_inner = match container {
+                IonValue::Annotated(_, inner) => inner.as_ref(),
+                _ => container,
+            };
+
+            let container_fields = match container_inner {
+                IonValue::Struct(f) => f,
+                _ => continue,
+            };
+
+            // Check nav_type (235) - we want "toc"
+            let mut is_toc = false;
+            let mut container_name = String::new();
+            let mut entries: Option<&Vec<IonValue>> = None;
+
+            for (cfield_id, cfield_value) in container_fields {
+                match *cfield_id as u32 {
+                    id if id == KfxSymbol::NavType as u32 => {
+                        // nav_type is a symbol
+                        if let IonValue::Symbol(sym_id) = cfield_value {
+                            let sym_name = resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
+                            if sym_name == "toc" {
+                                is_toc = true;
+                            }
+                        }
+                    }
+                    id if id == KfxSymbol::NavContainerName as u32 => {
+                        if let IonValue::Symbol(sym_id) = cfield_value {
+                            container_name = resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
+                        }
+                    }
+                    id if id == KfxSymbol::Entries as u32 => {
+                        if let IonValue::List(items) = cfield_value {
+                            entries = Some(items);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if is_toc {
+                println!("=== Table of Contents ({}) ===\n", container_name);
+
+                if let Some(entry_list) = entries {
+                    let mut toc_entries = Vec::new();
+                    extract_toc_entries(entry_list, extended_symbols, base_symbol_count, content_map, fragment_content_map, 0, &mut toc_entries);
+
+                    for entry in &toc_entries {
+                        let indent = "  ".repeat(entry.depth);
+                        let position = match (entry.target_id, entry.target_offset) {
+                            (Some(id), Some(off)) if off != 0 => format!("→ {}:{}", id, off),
+                            (Some(id), _) => format!("→ {}", id),
+                            _ => String::new(),
+                        };
+
+                        if let Some(text) = &entry.target_text {
+                            let preview: String = text.chars().take(50).collect();
+                            let ellipsis = if text.chars().count() > 50 { "..." } else { "" };
+                            println!("{}{:<40} {:>12}  \"{}{}\"", indent, entry.label, position, preview, ellipsis);
+                        } else {
+                            println!("{}{:<40} {:>12}", indent, entry.label, position);
+                        }
+                    }
+
+                    println!("\nTotal entries: {}", toc_entries.len());
+                }
+            }
+        }
+    }
+}
+
+/// Recursively extract TOC entries from nav_unit list
+fn extract_toc_entries(
+    entries: &[boko::kfx::ion::IonValue],
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    content_map: &HashMap<String, Vec<String>>,
+    fragment_content_map: &HashMap<i64, (String, i64)>,
+    depth: usize,
+    result: &mut Vec<TocEntryInfo>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    for entry in entries {
+        // Each entry is nav_unit (393) annotated struct
+        let entry_inner = match entry {
+            IonValue::Annotated(_, inner) => inner.as_ref(),
+            _ => entry,
+        };
+
+        let fields = match entry_inner {
+            IonValue::Struct(f) => f,
+            _ => continue,
+        };
+
+        let mut label = String::new();
+        let mut target_id: Option<i64> = None;
+        let mut target_offset: Option<i64> = None;
+        let mut children: Option<&Vec<IonValue>> = None;
+
+        for (field_id, field_value) in fields {
+            match *field_id as u32 {
+                id if id == KfxSymbol::Representation as u32 => {
+                    // representation is a struct with label field
+                    if let IonValue::Struct(rep_fields) = field_value {
+                        for (rep_field_id, rep_field_value) in rep_fields {
+                            if *rep_field_id as u32 == KfxSymbol::Label as u32 {
+                                if let IonValue::String(s) = rep_field_value {
+                                    label = s.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+                id if id == KfxSymbol::TargetPosition as u32 => {
+                    // target_position is a struct with id and offset
+                    if let IonValue::Struct(pos_fields) = field_value {
+                        for (pos_field_id, pos_field_value) in pos_fields {
+                            match *pos_field_id as u32 {
+                                pid if pid == KfxSymbol::Id as u32 => {
+                                    if let IonValue::Int(i) = pos_field_value {
+                                        target_id = Some(*i);
+                                    }
+                                }
+                                pid if pid == KfxSymbol::Offset as u32 => {
+                                    if let IonValue::Int(i) = pos_field_value {
+                                        target_offset = Some(*i);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                id if id == KfxSymbol::Entries as u32 => {
+                    if let IonValue::List(items) = field_value {
+                        children = Some(items);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Get text preview at target position
+        let target_text = target_id.and_then(|id| {
+            fragment_content_map.get(&id).and_then(|(content_name, content_index)| {
+                content_map.get(content_name).and_then(|texts| {
+                    texts.get(*content_index as usize).map(|text| {
+                        let start = target_offset.unwrap_or(0) as usize;
+                        text.chars().skip(start).take(60).collect::<String>()
+                    }).filter(|s| !s.is_empty())
+                })
+            })
+        });
+
+        if !label.is_empty() || target_id.is_some() {
+            result.push(TocEntryInfo {
+                label: if label.is_empty() { "(untitled)".to_string() } else { label },
+                target_id,
+                target_offset,
+                target_text,
+                depth,
+            });
+        }
+
+        // Recurse into children
+        if let Some(child_entries) = children {
+            extract_toc_entries(child_entries, extended_symbols, base_symbol_count, content_map, fragment_content_map, depth + 1, result);
+        }
+    }
+}
+
+/// Resolve a symbol ID to its text name
+fn resolve_symbol(sym_id: u64, extended_symbols: &[String], base_symbol_count: usize) -> String {
+    let idx = sym_id as usize;
+    if idx < base_symbol_count {
+        KFX_SYMBOL_TABLE.get(idx).map(|s| s.to_string()).unwrap_or_else(|| format!("${}", sym_id))
+    } else {
+        let ext_idx = idx - base_symbol_count;
+        extended_symbols.get(ext_idx).cloned().unwrap_or_else(|| format!("${}", sym_id))
+    }
 }
 
 /// Extract name and content_list texts from a content entity
