@@ -7,7 +7,7 @@ use std::path::Path;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use boko::export::{Azw3Exporter, EpubExporter, Exporter, TextExporter};
+use boko::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, TextExporter};
 use boko::{Book, Format, Origin, Stylesheet, compile_html};
 
 const EPUB_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.epub");
@@ -85,6 +85,17 @@ fn bench_write_azw3(c: &mut Criterion) {
     });
 }
 
+fn bench_write_kfx(c: &mut Criterion) {
+    let mut book = Book::from_bytes(EPUB_BYTES, Format::Epub).unwrap();
+
+    c.bench_function("write_kfx", |b| {
+        b.iter(|| {
+            let mut output = Cursor::new(Vec::new());
+            KfxExporter::new().export(&mut book, &mut output).unwrap();
+        });
+    });
+}
+
 // ============================================================================
 // IR Pipeline Benchmarks
 // ============================================================================
@@ -130,6 +141,7 @@ criterion_group!(
     bench_read_kfx,
     bench_write_epub,
     bench_write_azw3,
+    bench_write_kfx,
     // IR pipeline
     bench_compile_html,
     bench_compile_html_no_css,
