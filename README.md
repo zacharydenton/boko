@@ -13,6 +13,7 @@ A fast Rust library and CLI for converting between ebook formats.
 - **CSS preservation**: Full CSS parsing and transformation between formats
 - **Metadata fidelity**: Extended EPUB3 metadata (contributors, series, refinements) round-trips through KFX
 - **Lazy loading**: Efficient random access via `ByteSource` trait
+- **Cross-platform**: Native binaries for all platforms, plus WebAssembly for browsers
 
 ## Supported Formats
 
@@ -164,6 +165,10 @@ Contributors:
   John Translator (trl) [Translator, John]
 Collection: Epic Saga (series, #2)
 ```
+
+## Web App
+
+A browser-based converter is available at [zacharydenton.github.io/boko](https://zacharydenton.github.io/boko). All conversions happen locally in your browser using WebAssembly.
 
 ## License
 
