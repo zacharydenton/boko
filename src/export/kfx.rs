@@ -1771,17 +1771,14 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
 
     let mut location_entries = Vec::new();
 
-    // Build a list of (content_id, start_offset, end_offset) for all content fragments
-    // This allows us to map each location to the content fragment that contains it
-    let mut content_ranges: Vec<(u64, usize, usize)> = Vec::new();
-    let mut cumulative_offset: usize = 0;
-
     // Collect chapter fragment IDs in order (sorted by page_template ID)
     let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
+    // Generate location entries by iterating through content items in order.
+    // Each content item gets at least one location at offset 0.
+    // Long content items (>CHARS_PER_LOCATION) get additional locations.
     for (chapter_id, _) in &chapter_entries {
-        // Get content IDs for this chapter
         if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
             for &content_id in content_ids {
                 let text_len = ctx
@@ -1789,43 +1786,28 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
                     .get(&content_id)
                     .copied()
                     .unwrap_or(0);
-                if text_len > 0 {
-                    let start = cumulative_offset;
-                    let end = cumulative_offset + text_len;
-                    content_ranges.push((content_id, start, end));
-                    cumulative_offset = end;
+
+                if text_len == 0 {
+                    continue;
+                }
+
+                // Always emit at least one location at offset 0 for this content item
+                let mut offset: usize = 0;
+                loop {
+                    let entry = IonValue::Struct(vec![
+                        (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
+                        (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
+                    ]);
+                    location_entries.push(entry);
+
+                    // For long content, add more locations every CHARS_PER_LOCATION
+                    offset += CHARS_PER_LOCATION;
+                    if offset >= text_len {
+                        break;
+                    }
                 }
             }
         }
-    }
-
-    // Generate location entries
-    // Each location covers CHARS_PER_LOCATION characters
-    // Reference KFX uses offset: 0 for all entries, pointing to the content fragment that starts at that location
-    let total_chars = cumulative_offset;
-    let mut location_char_pos: usize = 0;
-
-    while location_char_pos < total_chars {
-        // Find the content fragment that contains this character position
-        // and calculate the offset within that content item
-        let (content_id, offset_within_content) = content_ranges
-            .iter()
-            .find(|(_, start, end)| location_char_pos >= *start && location_char_pos < *end)
-            .map(|(id, start, _)| (*id, location_char_pos - start))
-            .unwrap_or_else(|| {
-                // Fallback to last content fragment if somehow out of range
-                content_ranges
-                    .last()
-                    .map(|(id, start, _)| (*id, location_char_pos.saturating_sub(*start)))
-                    .unwrap_or((0, 0))
-            });
-
-        let entry = IonValue::Struct(vec![
-            (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
-            (KfxSymbol::Offset as u64, IonValue::Int(offset_within_content as i64)),
-        ]);
-        location_entries.push(entry);
-        location_char_pos += CHARS_PER_LOCATION;
     }
 
     // Wrap in locations list structure
