@@ -8,12 +8,16 @@ use super::element_ref::ElementRef;
 use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role};
 
 /// User-agent default stylesheet.
+///
+/// This is intentionally minimal - only display types and essential semantic
+/// mappings. All spacing (margins, padding) and sizing should come from the
+/// EPUB CSS. The target renderer (Kindle, etc.) has its own sensible defaults.
 pub fn user_agent_stylesheet() -> Stylesheet {
     Stylesheet::parse(
         r#"
         /* Block elements */
         html, body, div, section, article, aside, nav, header, footer, main,
-        address, blockquote, figure, figcaption, details, summary {
+        address, blockquote, figure, figcaption, details, summary, p, pre, hr, hgroup {
             display: block;
         }
 
@@ -22,129 +26,44 @@ pub fn user_agent_stylesheet() -> Stylesheet {
             display: block;
             font-weight: bold;
         }
-        h1 { font-size: 2em; margin-top: 0.67em; margin-bottom: 0.67em; }
-        h2 { font-size: 1.5em; margin-top: 0.83em; margin-bottom: 0.83em; }
-        h3 { font-size: 1.17em; margin-top: 1em; margin-bottom: 1em; }
-        h4 { font-size: 1em; margin-top: 1.33em; margin-bottom: 1.33em; }
-        h5 { font-size: 0.83em; margin-top: 1.67em; margin-bottom: 1.67em; }
-        h6 { font-size: 0.67em; margin-top: 2.33em; margin-bottom: 2.33em; }
+        h1 { font-size: 2em; }
+        h2 { font-size: 1.5em; }
+        h3 { font-size: 1.17em; }
+        h4 { font-size: 1em; }
+        h5 { font-size: 0.83em; }
+        h6 { font-size: 0.67em; }
 
-        /* Paragraphs */
-        p {
-            display: block;
-            margin-top: 1em;
-            margin-bottom: 1em;
-        }
-
-        /* Lists */
-        ul, ol {
-            display: block;
-            margin-top: 1em;
-            margin-bottom: 1em;
-            padding-left: 40px;
-        }
-        ul {
-            list-style-type: disc;
-        }
-        ol {
-            list-style-type: decimal;
-        }
-        li {
-            display: list-item;
-        }
+        /* Lists - display and list-style only, no padding/margins */
+        ul, ol { display: block; }
+        ul { list-style-type: disc; }
+        ol { list-style-type: decimal; }
+        li { display: list-item; }
 
         /* Inline elements */
         span, a, em, i, strong, b, cite, var, dfn, abbr, acronym,
         code, kbd, samp, tt, sub, sup, small, big, q,
-        u, ins, s, strike, del, mark, time, label {
+        u, ins, s, strike, del, mark, time, label, img {
             display: inline;
         }
 
-        /* Inline styles */
-        em, i, cite, var, dfn {
-            font-style: italic;
-        }
-        strong, b {
-            font-weight: bold;
-        }
-        code, kbd, samp, tt {
-            font-family: monospace;
-        }
-        sup {
-            vertical-align: super;
-            font-size: 0.83em;
-        }
-        sub {
-            vertical-align: sub;
-            font-size: 0.83em;
-        }
-        u, ins {
-            text-decoration: underline;
-        }
-        s, strike, del {
-            text-decoration: line-through;
-        }
-
-        /* Links */
-        a:link {
-            color: blue;
-            text-decoration: underline;
-        }
-
-        /* Preformatted */
-        pre {
-            display: block;
-            font-family: monospace;
-            white-space: pre;
-            margin: 1em 0;
-        }
-
-        /* Blockquote */
-        blockquote {
-            display: block;
-            margin-top: 1em;
-            margin-bottom: 1em;
-            margin-left: 40px;
-            margin-right: 40px;
-        }
-
-        /* Horizontal rule */
-        hr {
-            display: block;
-            margin-top: 0.5em;
-            margin-bottom: 0.5em;
-            border-style: inset;
-            border-width: 1px;
-        }
+        /* Semantic inline styles */
+        em, i, cite, var, dfn { font-style: italic; }
+        strong, b { font-weight: bold; }
+        code, kbd, samp, tt, pre { font-family: monospace; }
+        sup { vertical-align: super; }
+        sub { vertical-align: sub; }
+        u, ins { text-decoration: underline; }
+        s, strike, del { text-decoration: line-through; }
 
         /* Tables */
-        table {
-            display: table;
-        }
-        tr {
-            display: table-row;
-        }
-        td, th {
-            display: table-cell;
-        }
-        th {
-            font-weight: bold;
-            text-align: center;
-        }
+        table { display: table; }
+        tr { display: table-row; }
+        td, th { display: table-cell; }
+        th { font-weight: bold; }
 
         /* Hidden elements */
         head, script, style, link, meta, title, template {
             display: none;
-        }
-
-        /* Images are inline-block by default but we treat them as inline */
-        img {
-            display: inline;
-        }
-
-        /* Spans are inline */
-        span, a {
-            display: inline;
         }
     "#,
     )
