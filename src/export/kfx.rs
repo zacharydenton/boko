@@ -1298,6 +1298,11 @@ fn build_cover_storyline(chapter: &IRChapter, ctx: &mut ExportContext) -> IonVal
                 // Generate unique container ID
                 let container_id = ctx.fragment_ids.next_id();
 
+                // Record content ID for position_map and location_map
+                ctx.record_content_id(container_id);
+                // Record length of 1 for image (per kfx_output algorithm)
+                ctx.record_content_length(container_id, 1);
+
                 // Build the image struct directly (no container wrapper)
                 let image_struct = IonValue::Struct(vec![
                     (KfxSymbol::Id as u64, IonValue::Int(container_id as i64)),
@@ -1727,35 +1732,47 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
     let mut entries = Vec::new();
     let mut pid = 0i64;
 
-    // Collect all content fragment IDs across all chapters, sorted by ID
-    let mut all_content_ids: Vec<u64> = Vec::new();
-
-    // Add cover content ID if present
+    // Process cover content ID first if present
     if let Some(cover_id) = ctx.cover_content_id {
-        all_content_ids.push(cover_id);
+        let content_len = ctx
+            .content_id_lengths
+            .get(&cover_id)
+            .copied()
+            .unwrap_or(1)
+            .max(1) as i64;
+
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Pid as u64, IonValue::Int(pid)),
+            (KfxSymbol::Eid as u64, IonValue::Int(cover_id as i64)),
+            (KfxSymbol::Offset as u64, IonValue::Int(0)),
+        ]);
+        entries.push(entry);
+        pid += content_len;
     }
 
-    // Add all chapter content IDs
+    // Process chapter content in order (sorted by fragment ID)
     let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
     for (chapter_id, _) in &chapter_entries {
         if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
-            all_content_ids.extend(content_ids.iter().copied());
+            for &eid in content_ids {
+                let content_len = ctx
+                    .content_id_lengths
+                    .get(&eid)
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1) as i64;
+
+                let entry = IonValue::Struct(vec![
+                    (KfxSymbol::Pid as u64, IonValue::Int(pid)),
+                    (KfxSymbol::Eid as u64, IonValue::Int(eid as i64)),
+                    (KfxSymbol::Offset as u64, IonValue::Int(0)),
+                ]);
+                entries.push(entry);
+                pid += content_len;
+            }
         }
-    }
-
-    // Sort all content IDs to ensure consistent ordering
-    all_content_ids.sort();
-
-    // Generate an entry for each content fragment
-    for eid in all_content_ids {
-        let entry = IonValue::Struct(vec![
-            (KfxSymbol::Pid as u64, IonValue::Int(pid)),
-            (KfxSymbol::Eid as u64, IonValue::Int(eid as i64)),
-        ]);
-        entries.push(entry);
-        pid += 1;
     }
 
     let ion = IonValue::List(entries);
@@ -1764,48 +1781,54 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
 
 /// Build location_map fragment ($550).
 ///
-/// Maps location numbers to positions. Locations are synthetic page-like
-/// markers every ~110 characters (Kindle's standard).
+/// Maps location numbers to positions. Every content item gets at least one
+/// location entry at offset 0 (required for TOC navigation), plus additional
+/// entries every ~110 characters for longer content.
 fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
     const CHARS_PER_LOCATION: usize = 110;
 
     let mut location_entries = Vec::new();
 
-    // Collect chapter fragment IDs in order (sorted by page_template ID)
+    // Helper closure to process a single content ID
+    // Every content item gets at least one location at offset 0,
+    // plus additional locations every CHARS_PER_LOCATION for long content.
+    let mut process_content_id = |content_id: u64| {
+        let content_len = ctx
+            .content_id_lengths
+            .get(&content_id)
+            .copied()
+            .unwrap_or(1)
+            .max(1);
+
+        // Always emit at least one location at offset 0
+        let mut offset: usize = 0;
+        loop {
+            let entry = IonValue::Struct(vec![
+                (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
+                (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
+            ]);
+            location_entries.push(entry);
+
+            offset += CHARS_PER_LOCATION;
+            if offset >= content_len {
+                break;
+            }
+        }
+    };
+
+    // Process cover content ID first if present
+    if let Some(cover_id) = ctx.cover_content_id {
+        process_content_id(cover_id);
+    }
+
+    // Process chapter content in order (sorted by fragment ID)
     let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
-    // Generate location entries by iterating through content items in order.
-    // Each content item gets at least one location at offset 0.
-    // Long content items (>CHARS_PER_LOCATION) get additional locations.
     for (chapter_id, _) in &chapter_entries {
         if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
             for &content_id in content_ids {
-                let text_len = ctx
-                    .content_id_lengths
-                    .get(&content_id)
-                    .copied()
-                    .unwrap_or(0);
-
-                if text_len == 0 {
-                    continue;
-                }
-
-                // Always emit at least one location at offset 0 for this content item
-                let mut offset: usize = 0;
-                loop {
-                    let entry = IonValue::Struct(vec![
-                        (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
-                        (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
-                    ]);
-                    location_entries.push(entry);
-
-                    // For long content, add more locations every CHARS_PER_LOCATION
-                    offset += CHARS_PER_LOCATION;
-                    if offset >= text_len {
-                        break;
-                    }
-                }
+                process_content_id(content_id);
             }
         }
     }
