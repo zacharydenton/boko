@@ -4931,14 +4931,15 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
                 println!();
             } else if is_position_id_map {
                 println!("--- position_id_map ---");
-                println!("Maps position IDs to entity IDs for anchor resolution.\n");
-                // position_id_map is a List of {pid, eid} structs
+                println!("Maps cumulative positions (PIDs) to EID + offset.\n");
+                // position_id_map is a List of {pid, eid, offset} structs
                 if let boko::kfx::ion::IonValue::List(entries) = inner {
-                    let mut mappings: Vec<(i64, i64)> = Vec::new();
+                    let mut mappings: Vec<(i64, i64, i64)> = Vec::new();
                     for entry in entries {
                         if let boko::kfx::ion::IonValue::Struct(fields) = entry {
                             let mut pid = 0i64;
                             let mut eid = 0i64;
+                            let mut offset = 0i64;
                             for (fid, fval) in fields {
                                 let fname = resolve_sym_inner(*fid);
                                 match fname.as_str() {
@@ -4952,29 +4953,39 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
                                             eid = *v;
                                         }
                                     }
+                                    "offset" => {
+                                        if let boko::kfx::ion::IonValue::Int(v) = fval {
+                                            offset = *v;
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
-                            mappings.push((pid, eid));
+                            mappings.push((pid, eid, offset));
                         }
                     }
 
                     println!("Total entries: {}", mappings.len());
                     if !mappings.is_empty() {
-                        let min_pid = mappings.iter().map(|(p, _)| *p).min().unwrap_or(0);
-                        let max_pid = mappings.iter().map(|(p, _)| *p).max().unwrap_or(0);
-                        let min_eid = mappings.iter().map(|(_, e)| *e).min().unwrap_or(0);
-                        let max_eid = mappings.iter().map(|(_, e)| *e).max().unwrap_or(0);
-                        println!("Position ID range: {}..{}", min_pid, max_pid);
-                        println!("Entity ID range: {}..{}", min_eid, max_eid);
+                        let min_pid = mappings.iter().map(|(p, _, _)| *p).min().unwrap_or(0);
+                        let max_pid = mappings.iter().map(|(p, _, _)| *p).max().unwrap_or(0);
+                        let min_eid = mappings.iter().map(|(_, e, _)| *e).min().unwrap_or(0);
+                        let max_eid = mappings.iter().map(|(_, e, _)| *e).max().unwrap_or(0);
+                        let nonzero_offsets = mappings.iter().filter(|(_, _, o)| *o != 0).count();
+                        println!("PID range: {}..{}", min_pid, max_pid);
+                        println!("EID range: {}..{}", min_eid, max_eid);
+                        println!("Entries with non-zero offset: {}", nonzero_offsets);
                         println!();
                         // Show sample mappings
-                        // Note: eid values are content fragment IDs, not symbol IDs
-                        println!("Sample mappings (first 10):");
-                        for (pid, eid) in mappings.iter().take(10) {
-                            println!("  pid {:>6} → eid {}", pid, eid);
+                        println!("Sample mappings (first 15):");
+                        for (pid, eid, offset) in mappings.iter().take(15) {
+                            if *offset == 0 {
+                                println!("  pid {:>6} → eid {}", pid, eid);
+                            } else {
+                                println!("  pid {:>6} → eid {}:{}", pid, eid, offset);
+                            }
                         }
-                        if mappings.len() > 10 {
+                        if mappings.len() > 15 {
                             println!("  ...");
                         }
                     }
