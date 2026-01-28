@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io;
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(windows)))]
 use std::io::{Read, Seek, SeekFrom};
 
 /// A thread-safe, random-access source of bytes.
@@ -47,17 +47,28 @@ impl ByteSource for FileSource {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 impl ByteSource for FileSource {
     fn len(&self) -> u64 {
         self.len
     }
 
     fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-        // Fallback for Windows/WASM where pread might not be available directly on File
-        // We clone the file handle (which is usually a cheap FD clone) or use a Mutex.
-        // For high-performance Windows, prefer `std::os::windows::fs::FileExt::seek_read`
+        use std::os::windows::fs::FileExt;
+        let mut buffer = vec![0u8; len];
+        self.file.seek_read(&mut buffer, offset)?;
+        Ok(buffer)
+    }
+}
 
+#[cfg(all(not(unix), not(windows)))]
+impl ByteSource for FileSource {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        // Fallback for WASM and other platforms
         let mut file_clone = self.file.try_clone()?;
         file_clone.seek(SeekFrom::Start(offset))?;
 
