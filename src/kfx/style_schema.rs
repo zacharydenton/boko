@@ -91,6 +91,15 @@ pub enum ValueTransform {
 
     /// Symbol lookup: converts string to KFX symbol ID.
     ToSymbol,
+
+    /// Wrap integer in a struct with a single field.
+    /// Used for orphans/widows: `3` -> `{ first: 3 }` or `{ last: 3 }`
+    WrapInStruct {
+        /// Field name symbol (e.g., First or Last)
+        field: KfxSymbol,
+        /// Minimum value (KFX enforces min of 1 for orphans/widows)
+        min_value: Option<i64>,
+    },
 }
 
 /// KFX value representation for transforms.
@@ -107,6 +116,12 @@ pub enum KfxValue {
     Dimensioned {
         value: f64,
         unit: KfxSymbol,
+    },
+    /// Single-field struct: { field: value }
+    /// Used for orphans/widows: { first: N } or { last: N }
+    StructField {
+        field: KfxSymbol,
+        value: i64,
     },
 }
 
@@ -128,6 +143,9 @@ impl KfxValue {
                 ),
                 (KfxSymbol::Unit as u64, IonValue::Symbol(*unit as u64)),
             ]),
+            KfxValue::StructField { field, value } => {
+                IonValue::Struct(vec![(*field as u64, IonValue::Int(*value))])
+            }
         }
     }
 }
@@ -249,6 +267,15 @@ pub enum IrField {
     Visibility,
     /// Maps CSS box-sizing to KFX sizing_bounds
     SizingBounds,
+    // Phase 8: Additional layout properties
+    Clear,
+    MinWidth,
+    MaxHeight,
+    // Phase 9: Pagination control
+    Orphans,
+    Widows,
+    // Phase 10: Text wrapping
+    WordBreak,
 }
 
 /// Declarative definition for how a style property maps from IR to KFX.
@@ -752,6 +779,28 @@ impl StyleSchema {
         });
 
         schema.register(StylePropertyRule {
+            ir_key: "min-width",
+            ir_field: Some(IrField::MinWidth),
+            kfx_symbol: KfxSymbol::MinWidth,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "max-height",
+            ir_field: Some(IrField::MaxHeight),
+            kfx_symbol: KfxSymbol::MaxHeight,
+            transform: ValueTransform::ConvertToDimensioned {
+                base_pixels: DEFAULT_BASE_FONT_SIZE,
+                target_unit: KfxSymbol::Em,
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        schema.register(StylePropertyRule {
             ir_key: "float",
             ir_field: Some(IrField::Float),
             kfx_symbol: KfxSymbol::Float,
@@ -1067,6 +1116,70 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
+        // ====================================================================
+        // Phase 8: Additional Layout Properties
+        // ====================================================================
+
+        // clear → yj.float_clear
+        schema.register(StylePropertyRule {
+            ir_key: "clear",
+            ir_field: Some(IrField::Clear),
+            kfx_symbol: KfxSymbol::YjFloatClear,
+            transform: ValueTransform::Map(vec![
+                ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+                ("left".into(), KfxValue::Symbol(KfxSymbol::Left)),
+                ("right".into(), KfxValue::Symbol(KfxSymbol::Right)),
+                ("both".into(), KfxValue::Symbol(KfxSymbol::Both)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 9: Pagination Control (orphans/widows)
+        // ====================================================================
+
+        // orphans → keep_lines_together: { first: N }
+        schema.register(StylePropertyRule {
+            ir_key: "orphans",
+            ir_field: Some(IrField::Orphans),
+            kfx_symbol: KfxSymbol::KeepLinesTogether,
+            transform: ValueTransform::WrapInStruct {
+                field: KfxSymbol::First,
+                min_value: Some(1), // KFX enforces minimum of 1
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        // widows → keep_lines_together: { last: N }
+        schema.register(StylePropertyRule {
+            ir_key: "widows",
+            ir_field: Some(IrField::Widows),
+            kfx_symbol: KfxSymbol::KeepLinesTogether,
+            transform: ValueTransform::WrapInStruct {
+                field: KfxSymbol::Last,
+                min_value: Some(1), // KFX enforces minimum of 1
+            },
+            context: StyleContext::BlockOnly,
+        });
+
+        // ====================================================================
+        // Phase 10: Text Wrapping
+        // ====================================================================
+
+        // word-break → word_break
+        // Note: Only normal and break-all are supported by KFX.
+        // keep-all and break-word are not in the KFX symbol table.
+        schema.register(StylePropertyRule {
+            ir_key: "word-break",
+            ir_field: Some(IrField::WordBreak),
+            kfx_symbol: KfxSymbol::WordBreak,
+            transform: ValueTransform::Map(vec![
+                ("normal".into(), KfxValue::Symbol(KfxSymbol::Normal)),
+                ("break-all".into(), KfxValue::Symbol(KfxSymbol::BreakAll)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
         schema
     }
 }
@@ -1232,6 +1345,20 @@ impl ValueTransform {
             }
 
             ValueTransform::ToSymbol => Some(KfxValue::String(raw.to_string())),
+
+            ValueTransform::WrapInStruct { field, min_value } => {
+                let num = parse_number(raw)? as i64;
+                // Apply minimum value (KFX enforces min of 1 for orphans/widows)
+                let clamped = if let Some(min) = min_value {
+                    num.max(*min)
+                } else {
+                    num
+                };
+                Some(KfxValue::StructField {
+                    field: *field,
+                    value: clamped,
+                })
+            }
         }
     }
 }
@@ -1666,6 +1793,20 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        IrField::MinWidth => {
+            if ir_style.min_width != default.min_width {
+                Some(ir_style.min_width.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::MaxHeight => {
+            if ir_style.max_height != default.max_height {
+                Some(ir_style.max_height.to_css_string())
+            } else {
+                None
+            }
+        }
         IrField::Float => {
             if ir_style.float != default.float {
                 Some(ir_style.float.to_css_string())
@@ -1823,6 +1964,37 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        // Phase 8: Additional layout properties
+        IrField::Clear => {
+            if ir_style.clear != default.clear {
+                Some(ir_style.clear.to_css_string())
+            } else {
+                None
+            }
+        }
+        // Phase 9: Pagination control
+        IrField::Orphans => {
+            if ir_style.orphans != default.orphans {
+                Some(ir_style.orphans.to_string())
+            } else {
+                None
+            }
+        }
+        IrField::Widows => {
+            if ir_style.widows != default.widows {
+                Some(ir_style.widows.to_string())
+            } else {
+                None
+            }
+        }
+        // Phase 10: Text wrapping
+        IrField::WordBreak => {
+            if ir_style.word_break != default.word_break {
+                Some(ir_style.word_break.to_css_string())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -1929,6 +2101,13 @@ impl ValueTransform {
                 let i = value.as_int()?;
                 let original = i as f64 / factor;
                 Some(original.to_string())
+            }
+
+            ValueTransform::WrapInStruct { field, .. } => {
+                // Parse struct { field: N } and extract integer value
+                let fields = value.as_struct()?;
+                let int_value = get_field_by_symbol(fields, *field)?.as_int()?;
+                Some(int_value.to_string())
             }
 
             _ => None, // Other transforms not commonly used for styles
@@ -2128,6 +2307,16 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 ir_style.min_height = len;
             }
         }
+        IrField::MinWidth => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.min_width = len;
+            }
+        }
+        IrField::MaxHeight => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.max_height = len;
+            }
+        }
         IrField::Float => {
             ir_style.float = match css_value {
                 "left" => ir_style::Float::Left,
@@ -2260,6 +2449,35 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             ir_style.box_sizing = match css_value {
                 "border-box" => ir_style::BoxSizing::BorderBox,
                 _ => ir_style::BoxSizing::ContentBox,
+            };
+        }
+        // Phase 8: Additional layout properties
+        IrField::Clear => {
+            ir_style.clear = match css_value {
+                "left" => ir_style::Clear::Left,
+                "right" => ir_style::Clear::Right,
+                "both" => ir_style::Clear::Both,
+                _ => ir_style::Clear::None,
+            };
+        }
+        // Phase 9: Pagination control
+        IrField::Orphans => {
+            if let Ok(n) = css_value.parse::<u32>() {
+                ir_style.orphans = n;
+            }
+        }
+        IrField::Widows => {
+            if let Ok(n) = css_value.parse::<u32>() {
+                ir_style.widows = n;
+            }
+        }
+        // Phase 10: Text wrapping
+        IrField::WordBreak => {
+            ir_style.word_break = match css_value {
+                "break-all" => ir_style::WordBreak::BreakAll,
+                "keep-all" => ir_style::WordBreak::KeepAll,
+                "break-word" => ir_style::WordBreak::BreakWord,
+                _ => ir_style::WordBreak::Normal,
             };
         }
     }

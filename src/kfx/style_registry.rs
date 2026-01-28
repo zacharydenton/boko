@@ -168,6 +168,10 @@ fn hash_kfx_value<H: Hasher>(value: &KfxValue, hasher: &mut H) {
             value.to_bits().hash(hasher);
             (*unit as u64).hash(hasher);
         }
+        KfxValue::StructField { field, value } => {
+            (*field as u64).hash(hasher);
+            value.hash(hasher);
+        }
     }
 }
 
