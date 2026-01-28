@@ -4217,9 +4217,18 @@ fn collect_content_stats<F>(
 }
 
 /// Report location map from a KFX file
+/// Content info for a position ID
+#[derive(Debug, Clone)]
+struct ContentInfo {
+    content_type: String,
+    story_name: String,
+    content_ref: Option<String>,
+}
+
 fn report_locations(data: &[u8]) -> IonResult<()> {
     use boko::kfx::ion::IonParser;
     use boko::kfx::symbols::KfxSymbol;
+    use std::collections::HashMap;
 
     if data.len() < 18 || &data[0..4] != b"CONT" {
         eprintln!("Not a KFX container");
@@ -4253,12 +4262,225 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
         return Ok(());
     };
 
+    // Extract extended symbols for resolving
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let resolve_sym = |id: u64| -> String {
+        if id < base_symbol_count {
+            KFX_SYMBOL_TABLE
+                .get(id as usize)
+                .copied()
+                .unwrap_or("?")
+                .to_string()
+        } else {
+            let ext_idx = (id as usize) - (base_symbol_count as usize);
+            extended_symbols
+                .get(ext_idx)
+                .cloned()
+                .unwrap_or_else(|| "?".to_string())
+        }
+    };
+
     let entry_size = 24;
     let num_entries = index_length / entry_size;
     let location_map_type = KfxSymbol::LocationMap as u32;
+    let position_map_type = KfxSymbol::PositionMap as u32;
+    let storyline_type = KfxSymbol::Storyline as u32;
+
+    // First pass: build position_id → section_name map from position_map
+    // and position_id → content_info map from storylines
+    let mut position_to_section: HashMap<i64, String> = HashMap::new();
+    let mut position_to_content: HashMap<i64, ContentInfo> = HashMap::new();
+
+    // Helper to extract content items recursively from content_list
+    fn extract_content_items(
+        value: &boko::kfx::ion::IonValue,
+        story_name: &str,
+        resolve_sym: &dyn Fn(u64) -> String,
+        result: &mut HashMap<i64, ContentInfo>,
+    ) {
+        if let boko::kfx::ion::IonValue::Struct(fields) = value {
+            let mut item_id: Option<i64> = None;
+            let mut item_type = String::new();
+            let mut content_ref: Option<String> = None;
+            let mut nested_content: Option<&boko::kfx::ion::IonValue> = None;
+
+            for (fid, fval) in fields {
+                let fname = resolve_sym(*fid);
+                match fname.as_str() {
+                    "id" => {
+                        if let boko::kfx::ion::IonValue::Int(id) = fval {
+                            item_id = Some(*id);
+                        }
+                    }
+                    "type" => {
+                        if let boko::kfx::ion::IonValue::Symbol(s) = fval {
+                            item_type = resolve_sym(*s);
+                        }
+                    }
+                    "content" => {
+                        if let boko::kfx::ion::IonValue::Struct(cf) = fval {
+                            for (cid, cval) in cf {
+                                if resolve_sym(*cid) == "name"
+                                    && let boko::kfx::ion::IonValue::Symbol(s) = cval {
+                                        content_ref = Some(resolve_sym(*s));
+                                    }
+                            }
+                        }
+                    }
+                    "content_list" => {
+                        nested_content = Some(fval);
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(id) = item_id {
+                result.insert(
+                    id,
+                    ContentInfo {
+                        content_type: if item_type.is_empty() {
+                            "unknown".to_string()
+                        } else {
+                            item_type
+                        },
+                        story_name: story_name.to_string(),
+                        content_ref,
+                    },
+                );
+            }
+
+            // Recurse into nested content_list
+            if let Some(boko::kfx::ion::IonValue::List(items)) = nested_content {
+                for item in items {
+                    extract_content_items(item, story_name, resolve_sym, result);
+                }
+            }
+        }
+    }
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if type_idnum == position_map_type {
+            if let Ok(value) = parser.parse() {
+                let inner = match &value {
+                    boko::kfx::ion::IonValue::Annotated(_, inner) => inner.as_ref(),
+                    _ => &value,
+                };
+                if let boko::kfx::ion::IonValue::List(sections) = inner {
+                    for section in sections {
+                        if let boko::kfx::ion::IonValue::Struct(sec_fields) = section {
+                            let mut sec_name = String::new();
+                            let mut contains: Vec<i64> = Vec::new();
+                            for (sid, sval) in sec_fields {
+                                let fname = resolve_sym(*sid);
+                                match fname.as_str() {
+                                    "section_name" => {
+                                        if let boko::kfx::ion::IonValue::Symbol(s) = sval {
+                                            sec_name = resolve_sym(*s);
+                                        }
+                                    }
+                                    "contains" => {
+                                        if let boko::kfx::ion::IonValue::List(refs) = sval {
+                                            for r in refs {
+                                                if let boko::kfx::ion::IonValue::Int(pid) = r {
+                                                    contains.push(*pid);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            for pid in contains {
+                                position_to_section.insert(pid, sec_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        } else if type_idnum == storyline_type
+            && let Ok(value) = parser.parse()
+                && let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                    let mut story_name = String::new();
+                    let mut content_list: Option<&boko::kfx::ion::IonValue> = None;
+
+                    for (fid, fval) in fields {
+                        let fname = resolve_sym(*fid);
+                        match fname.as_str() {
+                            "story_name" => {
+                                if let boko::kfx::ion::IonValue::Symbol(s) = fval {
+                                    story_name = resolve_sym(*s);
+                                }
+                            }
+                            "content_list" => {
+                                content_list = Some(fval);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if let Some(boko::kfx::ion::IonValue::List(items)) = content_list {
+                        for item in items {
+                            extract_content_items(
+                                item,
+                                &story_name,
+                                &resolve_sym,
+                                &mut position_to_content,
+                            );
+                        }
+                    }
+                }
+    }
 
     println!("=== Location Map ===\n");
 
+    // Second pass: find and parse location_map
     for i in 0..num_entries {
         let entry_offset = index_offset + i * entry_size;
         if entry_offset + entry_size > data.len() {
@@ -4298,36 +4520,6 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
 
         let ion_data = &entity_data[entity_header_len..];
         let mut parser = IonParser::new(ion_data);
-
-        // Need extended symbols for resolving
-        let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
-            parse_container_info_for_doc_symbols(container_info_data)
-        {
-            if doc_sym_offset + doc_sym_length <= data.len() {
-                extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
-        let resolve_sym = |id: u64| -> String {
-            if id < base_symbol_count {
-                KFX_SYMBOL_TABLE
-                    .get(id as usize)
-                    .copied()
-                    .unwrap_or("?")
-                    .to_string()
-            } else {
-                let ext_idx = (id as usize) - (base_symbol_count as usize);
-                extended_symbols
-                    .get(ext_idx)
-                    .cloned()
-                    .unwrap_or_else(|| "?".to_string())
-            }
-        };
 
         if let Ok(value) = parser.parse() {
             println!("Maps Kindle locations (indices) to position IDs in the content.\n");
@@ -4390,6 +4582,8 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
 
             println!("Total location entries: {}", all_locations.len());
             println!("Unique position IDs: {}", unique_ids.len());
+            println!("Position→Section mappings: {}", position_to_section.len());
+            println!("Position→Content mappings: {}", position_to_content.len());
 
             if !all_locations.is_empty() {
                 let min_id = all_locations.iter().map(|e| e.id).min().unwrap_or(0);
@@ -4397,17 +4591,28 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                 println!("Position ID range: {}..{}", min_id, max_id);
                 println!();
 
+                // Helper to format location entry with resolved content
+                let format_entry = |entry: &LocationEntry| -> String {
+                    let mut result = format!("loc {:>5} → pos {}", entry.index, entry.id);
+                    if entry.offset != 0 {
+                        result.push_str(&format!(":{}", entry.offset));
+                    }
+                    if let Some(sec_name) = position_to_section.get(&entry.id) {
+                        result.push_str(&format!(" [{}]", sec_name));
+                    }
+                    if let Some(info) = position_to_content.get(&entry.id) {
+                        result.push_str(&format!(" {} in {}", info.content_type, info.story_name));
+                        if let Some(ref content_ref) = info.content_ref {
+                            result.push_str(&format!(" → {}", content_ref));
+                        }
+                    }
+                    result
+                };
+
                 // Show sample entries
                 println!("Sample entries (first 15):");
                 for entry in all_locations.iter().take(15) {
-                    if entry.offset != 0 {
-                        println!(
-                            "  loc {:>5} → position {}:{}",
-                            entry.index, entry.id, entry.offset
-                        );
-                    } else {
-                        println!("  loc {:>5} → position {}", entry.index, entry.id);
-                    }
+                    println!("  {}", format_entry(entry));
                 }
                 if all_locations.len() > 15 {
                     println!("  ...");
@@ -4420,15 +4625,36 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                         .into_iter()
                         .rev()
                     {
-                        if entry.offset != 0 {
-                            println!(
-                                "  loc {:>5} → position {}:{}",
-                                entry.index, entry.id, entry.offset
-                            );
-                        } else {
-                            println!("  loc {:>5} → position {}", entry.index, entry.id);
-                        }
+                        println!("  {}", format_entry(entry));
                     }
+                }
+
+                // Show section breakdown
+                println!("\n--- Section breakdown ---");
+                let mut section_counts: HashMap<String, usize> = HashMap::new();
+                for entry in &all_locations {
+                    if let Some(sec_name) = position_to_section.get(&entry.id) {
+                        *section_counts.entry(sec_name.clone()).or_insert(0) += 1;
+                    }
+                }
+                let mut section_list: Vec<_> = section_counts.iter().collect();
+                section_list.sort_by_key(|(name, _)| name.as_str());
+                for (sec_name, count) in section_list {
+                    println!("  {}: {} locations", sec_name, count);
+                }
+
+                // Show content type breakdown
+                println!("\n--- Content type breakdown ---");
+                let mut type_counts: HashMap<String, usize> = HashMap::new();
+                for entry in &all_locations {
+                    if let Some(info) = position_to_content.get(&entry.id) {
+                        *type_counts.entry(info.content_type.clone()).or_insert(0) += 1;
+                    }
+                }
+                let mut type_list: Vec<_> = type_counts.iter().collect();
+                type_list.sort_by(|(_, a), (_, b)| b.cmp(a)); // Sort by count descending
+                for (content_type, count) in type_list {
+                    println!("  {}: {} locations", content_type, count);
                 }
             }
         }
