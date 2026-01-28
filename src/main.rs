@@ -163,6 +163,34 @@ struct MetadataInfo {
     cover_image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_date: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    contributors: Vec<ContributorInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title_sort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    author_sort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    collection: Option<CollectionInfoJson>,
+}
+
+#[derive(Serialize)]
+struct ContributorInfo {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_as: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CollectionInfoJson {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    collection_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    position: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -225,6 +253,19 @@ fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
             rights: meta.rights.clone(),
             cover_image: meta.cover_image.clone(),
             description: meta.description.clone(),
+            modified_date: meta.modified_date.clone(),
+            contributors: meta.contributors.iter().map(|c| ContributorInfo {
+                name: c.name.clone(),
+                role: c.role.clone(),
+                file_as: c.file_as.clone(),
+            }).collect(),
+            title_sort: meta.title_sort.clone(),
+            author_sort: meta.author_sort.clone(),
+            collection: meta.collection.as_ref().map(|c| CollectionInfoJson {
+                name: c.name.clone(),
+                collection_type: c.collection_type.clone(),
+                position: c.position,
+            }),
         },
         spine: book
             .spine()
@@ -295,6 +336,38 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
             println!("Description: {}...", &desc[..200]);
         } else {
             println!("Description: {desc}");
+        }
+    }
+    if let Some(ref modified) = meta.modified_date {
+        println!("Modified: {modified}");
+    }
+    if let Some(ref title_sort) = meta.title_sort {
+        println!("Title Sort: {title_sort}");
+    }
+    if let Some(ref author_sort) = meta.author_sort {
+        println!("Author Sort: {author_sort}");
+    }
+    if !meta.contributors.is_empty() {
+        println!("Contributors:");
+        for contrib in &meta.contributors {
+            let role = contrib.role.as_deref().unwrap_or("contributor");
+            if let Some(ref file_as) = contrib.file_as {
+                println!("  {} ({}) [{}]", contrib.name, role, file_as);
+            } else {
+                println!("  {} ({})", contrib.name, role);
+            }
+        }
+    }
+    if let Some(ref coll) = meta.collection {
+        let coll_type = coll.collection_type.as_deref().unwrap_or("collection");
+        if let Some(pos) = coll.position {
+            if pos.fract() == 0.0 {
+                println!("Collection: {} ({}, #{})", coll.name, coll_type, pos as i64);
+            } else {
+                println!("Collection: {} ({}, #{})", coll.name, coll_type, pos);
+            }
+        } else {
+            println!("Collection: {} ({})", coll.name, coll_type);
         }
     }
 

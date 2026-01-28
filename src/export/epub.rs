@@ -314,23 +314,50 @@ fn generate_opf(
 ) -> String {
     let mut opf = String::new();
 
+    // Use EPUB3 for extended metadata support
     opf.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 "#);
 
-    // Title
+    // Track IDs for refinements
+    let mut next_id = 1;
+
+    // Title with optional file-as refinement
+    let title_id = format!("title{}", next_id);
+    next_id += 1;
     opf.push_str(&format!(
-        "    <dc:title>{}</dc:title>\n",
+        "    <dc:title id=\"{}\">{}</dc:title>\n",
+        title_id,
         escape_xml(&metadata.title)
     ));
-
-    // Authors
-    for author in &metadata.authors {
+    if let Some(ref title_sort) = metadata.title_sort {
         opf.push_str(&format!(
-            "    <dc:creator>{}</dc:creator>\n",
+            "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
+            title_id,
+            escape_xml(title_sort)
+        ));
+    }
+
+    // Authors with optional file-as refinement for first author
+    for (i, author) in metadata.authors.iter().enumerate() {
+        let creator_id = format!("creator{}", next_id);
+        next_id += 1;
+        opf.push_str(&format!(
+            "    <dc:creator id=\"{}\">{}</dc:creator>\n",
+            creator_id,
             escape_xml(author)
         ));
+        // Add file-as for first author if available
+        if i == 0 {
+            if let Some(ref author_sort) = metadata.author_sort {
+                opf.push_str(&format!(
+                    "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
+                    creator_id,
+                    escape_xml(author_sort)
+                ));
+            }
+        }
     }
 
     // Language
@@ -352,6 +379,75 @@ fn generate_opf(
     } else {
         opf.push_str("    <dc:identifier id=\"BookId\">urn:uuid:00000000-0000-0000-0000-000000000000</dc:identifier>\n");
     }
+
+    // dcterms:modified (required for EPUB3)
+    if let Some(ref modified) = metadata.modified_date {
+        opf.push_str(&format!(
+            "    <meta property=\"dcterms:modified\">{}</meta>\n",
+            escape_xml(modified)
+        ));
+    } else {
+        // Generate a timestamp for EPUB3 compliance
+        opf.push_str("    <meta property=\"dcterms:modified\">2024-01-01T00:00:00Z</meta>\n");
+    }
+
+    // Contributors with role refinements
+    for contrib in &metadata.contributors {
+        let contrib_id = format!("contrib{}", next_id);
+        next_id += 1;
+        opf.push_str(&format!(
+            "    <dc:contributor id=\"{}\">{}</dc:contributor>\n",
+            contrib_id,
+            escape_xml(&contrib.name)
+        ));
+        if let Some(ref role) = contrib.role {
+            opf.push_str(&format!(
+                "    <meta refines=\"#{}\" property=\"role\" scheme=\"marc:relators\">{}</meta>\n",
+                contrib_id,
+                escape_xml(role)
+            ));
+        }
+        if let Some(ref file_as) = contrib.file_as {
+            opf.push_str(&format!(
+                "    <meta refines=\"#{}\" property=\"file-as\">{}</meta>\n",
+                contrib_id,
+                escape_xml(file_as)
+            ));
+        }
+    }
+
+    // Collection/series info
+    if let Some(ref coll) = metadata.collection {
+        let coll_id = format!("collection{}", next_id);
+        next_id += 1;
+        opf.push_str(&format!(
+            "    <meta property=\"belongs-to-collection\" id=\"{}\">{}</meta>\n",
+            coll_id,
+            escape_xml(&coll.name)
+        ));
+        if let Some(ref coll_type) = coll.collection_type {
+            opf.push_str(&format!(
+                "    <meta refines=\"#{}\" property=\"collection-type\">{}</meta>\n",
+                coll_id,
+                escape_xml(coll_type)
+            ));
+        }
+        if let Some(pos) = coll.position {
+            let pos_str = if pos.fract() == 0.0 {
+                format!("{}", pos as i64)
+            } else {
+                format!("{}", pos)
+            };
+            opf.push_str(&format!(
+                "    <meta refines=\"#{}\" property=\"group-position\">{}</meta>\n",
+                coll_id,
+                pos_str
+            ));
+        }
+    }
+
+    // Suppress unused variable warning
+    let _ = next_id;
 
     // Optional metadata
     if let Some(ref publisher) = metadata.publisher {

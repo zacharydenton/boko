@@ -42,6 +42,25 @@ pub struct Resource {
     pub media_type: String,
 }
 
+/// A contributor with optional role and sort name.
+#[derive(Debug, Clone, Default)]
+pub struct Contributor {
+    pub name: String,
+    pub file_as: Option<String>,
+    /// MARC relator code: "trl", "edt", "ill", etc.
+    pub role: Option<String>,
+}
+
+/// Collection/series information.
+#[derive(Debug, Clone)]
+pub struct CollectionInfo {
+    pub name: String,
+    /// "series" or "set"
+    pub collection_type: Option<String>,
+    /// group-position (1, 2, 3.5, etc.)
+    pub position: Option<f64>,
+}
+
 /// Book metadata (Dublin Core + extensions)
 #[derive(Debug, Clone, Default)]
 pub struct Metadata {
@@ -55,6 +74,16 @@ pub struct Metadata {
     pub date: Option<String>,
     pub rights: Option<String>,
     pub cover_image: Option<String>,
+    /// dcterms:modified timestamp
+    pub modified_date: Option<String>,
+    /// dc:contributor with roles (translators, editors, illustrators, etc.)
+    pub contributors: Vec<Contributor>,
+    /// file-as for title (sort key)
+    pub title_sort: Option<String>,
+    /// file-as for first author (sort key)
+    pub author_sort: Option<String>,
+    /// belongs-to-collection (series info)
+    pub collection: Option<CollectionInfo>,
 }
 
 /// A table of contents entry (hierarchical)

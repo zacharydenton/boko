@@ -63,6 +63,18 @@ pub enum MetadataField {
     AssetId,
     /// Book ID - from context (derived from identifier), not Metadata.
     BookId,
+    /// dcterms:modified timestamp
+    ModifiedDate,
+    /// First contributor with role="trl" (translator)
+    Translator,
+    /// file-as for title (sort key)
+    TitleSort,
+    /// file-as for first author (sort key)
+    AuthorSort,
+    /// Series/collection name
+    SeriesName,
+    /// Series position (group-position)
+    SeriesPosition,
 }
 
 impl MetadataField {
@@ -96,8 +108,19 @@ impl MetadataField {
             }
             MetadataField::Date => meta.date.as_deref(),
             MetadataField::CoverImage => meta.cover_image.as_deref(),
-            // These are context-driven, not from Metadata
-            MetadataField::AssetId | MetadataField::BookId => None,
+            MetadataField::ModifiedDate => meta.modified_date.as_deref(),
+            MetadataField::Translator => {
+                // Find first contributor with role "trl"
+                meta.contributors
+                    .iter()
+                    .find(|c| c.role.as_deref() == Some("trl"))
+                    .map(|c| c.name.as_str())
+            }
+            MetadataField::TitleSort => meta.title_sort.as_deref(),
+            MetadataField::AuthorSort => meta.author_sort.as_deref(),
+            MetadataField::SeriesName => meta.collection.as_ref().map(|c| c.name.as_str()),
+            // These are context-driven or need special handling
+            MetadataField::AssetId | MetadataField::BookId | MetadataField::SeriesPosition => None,
         }
     }
 }
@@ -158,6 +181,37 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
             key: "cde_content_type",
             category: MetadataCategory::KindleTitle,
             source: MetadataSource::Static("EBOK"),
+        },
+        // Extended metadata for better round-trip fidelity
+        MetadataRule {
+            key: "modified_date",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::ModifiedDate),
+        },
+        MetadataRule {
+            key: "translator",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::Translator),
+        },
+        MetadataRule {
+            key: "title_pronunciation",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::TitleSort),
+        },
+        MetadataRule {
+            key: "author_pronunciation",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::AuthorSort),
+        },
+        MetadataRule {
+            key: "series_name",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::SeriesName),
+        },
+        MetadataRule {
+            key: "series_position",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::SeriesPosition),
         },
         // kindle_ebook_metadata category
         MetadataRule {
@@ -299,6 +353,17 @@ pub fn build_category_entries(
                     MetadataField::BookId => {
                         // Book ID from context (derived from identifier)
                         ctx.book_id.clone()
+                    }
+                    MetadataField::SeriesPosition => {
+                        // Series position from collection
+                        meta.collection.as_ref().and_then(|c| c.position).map(|p| {
+                            // Format as integer if whole number, otherwise with decimal
+                            if p.fract() == 0.0 {
+                                format!("{}", p as i64)
+                            } else {
+                                format!("{}", p)
+                            }
+                        })
                     }
                     _ => field.extract(meta).map(|s| s.to_string()),
                 }

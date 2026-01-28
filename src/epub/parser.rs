@@ -6,7 +6,7 @@ use std::io;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
-use crate::book::{Landmark, LandmarkType, Metadata, TocEntry};
+use crate::book::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
 
 /// Parsed OPF package data.
 pub struct OpfData {
@@ -49,6 +49,26 @@ pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
     ))
 }
 
+/// Types of metadata elements that can have refinements applied.
+#[derive(Debug, Clone)]
+enum MetaElement {
+    Title,
+    Creator(String),
+    Contributor(String),
+    Collection,
+}
+
+/// A refinement from an EPUB3 meta element.
+#[derive(Debug)]
+struct Refinement {
+    /// ID of the element being refined (without #)
+    refines: String,
+    /// Property name (role, file-as, collection-type, group-position)
+    property: String,
+    /// The value
+    value: String,
+}
+
 /// Parse OPF package document.
 pub fn parse_opf(content: &str) -> io::Result<OpfData> {
     let mut reader = Reader::from_str(content);
@@ -60,9 +80,21 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
     let mut toc_id: Option<String> = None;
     let mut epub2_cover_id: Option<String> = None;
 
+    // Track elements with IDs for refinement linking
+    let mut element_ids: HashMap<String, MetaElement> = HashMap::new();
+    // Collect refinements to apply after parsing
+    let mut refinements: Vec<Refinement> = Vec::new();
+
     let mut in_metadata = false;
     let mut current_element: Option<String> = None;
+    let mut current_element_id: Option<String> = None;
     let mut buf_text = String::new();
+
+    // For meta elements with content (non-empty tags)
+    let mut in_meta = false;
+    let mut meta_property: Option<String> = None;
+    let mut meta_refines: Option<String> = None;
+    let mut meta_id: Option<String> = None;
 
     loop {
         match reader.read_event() {
@@ -73,10 +105,52 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                 match local {
                     b"metadata" => in_metadata = true,
                     b"title" | b"creator" | b"language" | b"identifier" | b"publisher"
-                    | b"description" | b"subject" | b"date" | b"rights" => {
+                    | b"description" | b"subject" | b"date" | b"rights" | b"contributor" => {
                         if in_metadata {
                             current_element = Some(String::from_utf8_lossy(local).to_string());
                             buf_text.clear();
+                            // Check for id attribute
+                            current_element_id = None;
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"id" {
+                                    current_element_id = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    b"meta" if in_metadata => {
+                        // EPUB3 meta with property attribute
+                        in_meta = true;
+                        buf_text.clear();
+                        meta_property = None;
+                        meta_refines = None;
+                        meta_id = None;
+
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"property" => {
+                                    meta_property = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                b"refines" => {
+                                    meta_refines = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                b"id" => {
+                                    meta_id = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     b"spine" => {
@@ -148,16 +222,41 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                             }
                         }
                     }
-                    b"meta" => {
+                    b"meta" if in_metadata => {
+                        // Handle both EPUB2 style (name/content) and EPUB3 empty meta
                         let mut is_cover = false;
                         let mut cover_id = String::new();
+                        let mut property: Option<String> = None;
+                        let mut refines: Option<String> = None;
+                        let mut content: Option<String> = None;
+                        let mut elem_id: Option<String> = None;
 
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"name" if attr.value.as_ref() == b"cover" => is_cover = true,
                                 b"content" => {
-                                    cover_id = String::from_utf8(attr.value.to_vec())
-                                        .map_err(io::Error::other)?
+                                    let val = String::from_utf8(attr.value.to_vec())
+                                        .map_err(io::Error::other)?;
+                                    cover_id = val.clone();
+                                    content = Some(val);
+                                }
+                                b"property" => {
+                                    property = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                b"refines" => {
+                                    refines = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
+                                }
+                                b"id" => {
+                                    elem_id = Some(
+                                        String::from_utf8(attr.value.to_vec())
+                                            .map_err(io::Error::other)?,
+                                    );
                                 }
                                 _ => {}
                             }
@@ -166,17 +265,36 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         if is_cover && !cover_id.is_empty() {
                             epub2_cover_id = Some(cover_id);
                         }
+
+                        // EPUB3 meta with property but no content - value is in text
+                        // EPUB3 empty meta with content attribute
+                        if let Some(ref prop) = property {
+                            if let Some(ref r) = refines {
+                                // This is a refinement
+                                let refines_id = r.strip_prefix('#').unwrap_or(r).to_string();
+                                if let Some(val) = content {
+                                    refinements.push(Refinement {
+                                        refines: refines_id,
+                                        property: prop.clone(),
+                                        value: val,
+                                    });
+                                }
+                            } else if let Some(ref val) = content {
+                                // Top-level meta without refines
+                                handle_meta_property(prop, val, &mut metadata, &mut element_ids, elem_id.as_deref());
+                            }
+                        }
                     }
                     _ => {}
                 }
             }
             Ok(Event::Text(e)) => {
-                if current_element.is_some() {
+                if current_element.is_some() || in_meta {
                     buf_text.push_str(&String::from_utf8_lossy(e.as_ref()));
                 }
             }
             Ok(Event::GeneralRef(e)) => {
-                if current_element.is_some() {
+                if current_element.is_some() || in_meta {
                     let entity = String::from_utf8_lossy(e.as_ref());
                     if let Some(resolved) = resolve_entity(&entity) {
                         buf_text.push_str(&resolved);
@@ -191,22 +309,70 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                     in_metadata = false;
                 }
 
-                if let Some(ref elem) = current_element {
-                    match elem.as_str() {
-                        "title" => metadata.title = buf_text.clone(),
-                        "creator" => metadata.authors.push(buf_text.clone()),
-                        "language" => metadata.language = buf_text.clone(),
-                        "identifier" if metadata.identifier.is_empty() => {
-                            metadata.identifier = buf_text.clone()
+                if local == b"meta" && in_meta {
+                    // Handle EPUB3 meta element with text content
+                    if let Some(ref prop) = meta_property {
+                        let value = buf_text.trim().to_string();
+                        if !value.is_empty() {
+                            if let Some(ref r) = meta_refines {
+                                let refines_id = r.strip_prefix('#').unwrap_or(r).to_string();
+                                refinements.push(Refinement {
+                                    refines: refines_id,
+                                    property: prop.clone(),
+                                    value,
+                                });
+                            } else {
+                                handle_meta_property(prop, &value, &mut metadata, &mut element_ids, meta_id.as_deref());
+                            }
                         }
-                        "publisher" => metadata.publisher = Some(buf_text.clone()),
-                        "description" => metadata.description = Some(buf_text.clone()),
-                        "subject" => metadata.subjects.push(buf_text.clone()),
-                        "date" => metadata.date = Some(buf_text.clone()),
-                        "rights" => metadata.rights = Some(buf_text.clone()),
+                    }
+                    in_meta = false;
+                    meta_property = None;
+                    meta_refines = None;
+                    meta_id = None;
+                    buf_text.clear();
+                }
+
+                if let Some(ref elem) = current_element {
+                    let text = buf_text.clone();
+                    match elem.as_str() {
+                        "title" => {
+                            metadata.title = text;
+                            if let Some(ref id) = current_element_id {
+                                element_ids.insert(id.clone(), MetaElement::Title);
+                            }
+                        }
+                        "creator" => {
+                            metadata.authors.push(text.clone());
+                            if let Some(ref id) = current_element_id {
+                                element_ids.insert(id.clone(), MetaElement::Creator(text));
+                            }
+                        }
+                        "contributor" => {
+                            // Store contributor for later refinement processing
+                            if let Some(ref id) = current_element_id {
+                                element_ids.insert(id.clone(), MetaElement::Contributor(text.clone()));
+                            }
+                            // Add basic contributor without role
+                            metadata.contributors.push(Contributor {
+                                name: text,
+                                file_as: None,
+                                role: None,
+                            });
+                        }
+                        "language" => metadata.language = text,
+                        "identifier" if metadata.identifier.is_empty() => {
+                            metadata.identifier = text
+                        }
+                        "publisher" => metadata.publisher = Some(text),
+                        "description" => metadata.description = Some(text),
+                        "subject" => metadata.subjects.push(text),
+                        "date" => metadata.date = Some(text),
+                        "rights" => metadata.rights = Some(text),
                         _ => {}
                     }
                     current_element = None;
+                    current_element_id = None;
                     buf_text.clear();
                 }
             }
@@ -215,6 +381,9 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
             _ => {}
         }
     }
+
+    // Apply refinements to their target elements
+    apply_refinements(&mut metadata, &element_ids, &refinements);
 
     // Detect cover image (EPUB3 property takes priority)
     let epub3_cover = manifest.values().find(|item| {
@@ -256,6 +425,131 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
         ncx_href,
         nav_href,
     })
+}
+
+/// Handle a top-level meta property (no refines attribute).
+fn handle_meta_property(
+    property: &str,
+    value: &str,
+    metadata: &mut Metadata,
+    element_ids: &mut HashMap<String, MetaElement>,
+    elem_id: Option<&str>,
+) {
+    // Strip namespace prefix if present (e.g., "dcterms:modified" -> "modified")
+    let prop_local = property
+        .rsplit(':')
+        .next()
+        .unwrap_or(property);
+
+    match prop_local {
+        "modified" => {
+            metadata.modified_date = Some(value.to_string());
+        }
+        "belongs-to-collection" => {
+            // Initialize collection if not present
+            if metadata.collection.is_none() {
+                metadata.collection = Some(CollectionInfo {
+                    name: value.to_string(),
+                    collection_type: None,
+                    position: None,
+                });
+            } else if let Some(ref mut coll) = metadata.collection {
+                coll.name = value.to_string();
+            }
+            // Track the collection element ID for refinements
+            if let Some(id) = elem_id {
+                element_ids.insert(id.to_string(), MetaElement::Collection);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Apply collected refinements to their target elements.
+fn apply_refinements(
+    metadata: &mut Metadata,
+    element_ids: &HashMap<String, MetaElement>,
+    refinements: &[Refinement],
+) {
+    // Track collection refinements by collection element ID
+    let mut collection_id: Option<String> = None;
+
+    for (id, elem) in element_ids {
+        if matches!(elem, MetaElement::Collection) {
+            collection_id = Some(id.clone());
+            break;
+        }
+    }
+
+    for refinement in refinements {
+        let prop_local = refinement.property
+            .rsplit(':')
+            .next()
+            .unwrap_or(&refinement.property);
+
+        if let Some(elem) = element_ids.get(&refinement.refines) {
+            match elem {
+                MetaElement::Title => {
+                    if prop_local == "file-as" {
+                        metadata.title_sort = Some(refinement.value.clone());
+                    }
+                }
+                MetaElement::Creator(name) => {
+                    if prop_local == "file-as" {
+                        // Find first author and set author_sort
+                        if metadata.authors.first().map(|a| a == name).unwrap_or(false) {
+                            metadata.author_sort = Some(refinement.value.clone());
+                        }
+                    }
+                }
+                MetaElement::Contributor(name) => {
+                    // Find the contributor and update it
+                    for contrib in &mut metadata.contributors {
+                        if contrib.name == *name {
+                            match prop_local {
+                                "role" => contrib.role = Some(refinement.value.clone()),
+                                "file-as" => contrib.file_as = Some(refinement.value.clone()),
+                                _ => {}
+                            }
+                            break;
+                        }
+                    }
+                }
+                MetaElement::Collection => {
+                    if let Some(ref mut coll) = metadata.collection {
+                        match prop_local {
+                            "collection-type" => {
+                                coll.collection_type = Some(refinement.value.clone());
+                            }
+                            "group-position" => {
+                                coll.position = refinement.value.parse().ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        } else {
+            // Check if this is a refinement for a collection that wasn't tracked
+            // by belongs-to-collection (some EPUBs use meta property="belongs-to-collection"
+            // with an id, then refine that)
+            if let Some(ref coll_id) = collection_id {
+                if &refinement.refines == coll_id {
+                    if let Some(ref mut coll) = metadata.collection {
+                        match prop_local {
+                            "collection-type" => {
+                                coll.collection_type = Some(refinement.value.clone());
+                            }
+                            "group-position" => {
+                                coll.position = refinement.value.parse().ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Parse NCX table of contents.
@@ -964,5 +1258,170 @@ mod tests {
 
         let result = parse_opf(opf).unwrap();
         assert_eq!(result.nav_href, None);
+    }
+
+    #[test]
+    fn test_parse_opf_dcterms_modified() {
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test Book</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-15T12:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"#;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.modified_date, Some("2024-01-15T12:00:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_contributor_with_role() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test Book</dc:title>
+    <dc:language>en</dc:language>
+    <dc:contributor id="contrib1">John Translator</dc:contributor>
+    <meta refines="#contrib1" property="role" scheme="marc:relators">trl</meta>
+    <meta refines="#contrib1" property="file-as">Translator, John</meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.contributors.len(), 1);
+        assert_eq!(result.metadata.contributors[0].name, "John Translator");
+        assert_eq!(result.metadata.contributors[0].role, Some("trl".to_string()));
+        assert_eq!(result.metadata.contributors[0].file_as, Some("Translator, John".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_collection_series() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>The Second Book</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="belongs-to-collection" id="series1">My Awesome Series</meta>
+    <meta refines="#series1" property="collection-type">series</meta>
+    <meta refines="#series1" property="group-position">2</meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert!(result.metadata.collection.is_some());
+        let coll = result.metadata.collection.unwrap();
+        assert_eq!(coll.name, "My Awesome Series");
+        assert_eq!(coll.collection_type, Some("series".to_string()));
+        assert_eq!(coll.position, Some(2.0));
+    }
+
+    #[test]
+    fn test_parse_opf_title_file_as() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title id="title1">The Great Adventure</dc:title>
+    <meta refines="#title1" property="file-as">Great Adventure, The</meta>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.title, "The Great Adventure");
+        assert_eq!(result.metadata.title_sort, Some("Great Adventure, The".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_author_file_as() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test Book</dc:title>
+    <dc:creator id="author1">Jane Doe</dc:creator>
+    <meta refines="#author1" property="file-as">Doe, Jane</meta>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.authors, vec!["Jane Doe"]);
+        assert_eq!(result.metadata.author_sort, Some("Doe, Jane".to_string()));
+    }
+
+    #[test]
+    fn test_parse_opf_collection_fractional_position() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Book 3.5</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="belongs-to-collection" id="s1">Series Name</meta>
+    <meta refines="#s1" property="group-position">3.5</meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert!(result.metadata.collection.is_some());
+        let coll = result.metadata.collection.unwrap();
+        assert_eq!(coll.position, Some(3.5));
+    }
+
+    #[test]
+    fn test_parse_opf_multiple_contributors() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test Book</dc:title>
+    <dc:language>en</dc:language>
+    <dc:contributor id="c1">Translator Name</dc:contributor>
+    <meta refines="#c1" property="role">trl</meta>
+    <dc:contributor id="c2">Editor Name</dc:contributor>
+    <meta refines="#c2" property="role">edt</meta>
+    <dc:contributor id="c3">Illustrator Name</dc:contributor>
+    <meta refines="#c3" property="role">ill</meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        assert_eq!(result.metadata.contributors.len(), 3);
+
+        // Find translator
+        let translator = result.metadata.contributors.iter().find(|c| c.role == Some("trl".to_string()));
+        assert!(translator.is_some());
+        assert_eq!(translator.unwrap().name, "Translator Name");
+
+        // Find editor
+        let editor = result.metadata.contributors.iter().find(|c| c.role == Some("edt".to_string()));
+        assert!(editor.is_some());
+        assert_eq!(editor.unwrap().name, "Editor Name");
     }
 }

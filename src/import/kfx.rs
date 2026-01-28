@@ -10,7 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::book::{Landmark, Metadata, TocEntry};
+use crate::book::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
 use crate::kfx::schema::schema;
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
@@ -368,6 +368,59 @@ impl KfxImporter {
                                                             self.resolve_cover_value(value_elem)
                                                         {
                                                             self.metadata.cover_image = Some(cover);
+                                                        }
+                                                    }
+                                                    "modified_date" => {
+                                                        self.metadata.modified_date =
+                                                            Some(value.to_string())
+                                                    }
+                                                    "translator" => {
+                                                        self.metadata.contributors.push(Contributor {
+                                                            name: value.to_string(),
+                                                            file_as: None,
+                                                            role: Some("trl".to_string()),
+                                                        })
+                                                    }
+                                                    "title_pronunciation" => {
+                                                        self.metadata.title_sort =
+                                                            Some(value.to_string())
+                                                    }
+                                                    "author_pronunciation" => {
+                                                        self.metadata.author_sort =
+                                                            Some(value.to_string())
+                                                    }
+                                                    "series_name" => {
+                                                        if self.metadata.collection.is_none() {
+                                                            self.metadata.collection =
+                                                                Some(CollectionInfo {
+                                                                    name: value.to_string(),
+                                                                    collection_type: Some(
+                                                                        "series".to_string(),
+                                                                    ),
+                                                                    position: None,
+                                                                });
+                                                        } else if let Some(ref mut coll) =
+                                                            self.metadata.collection
+                                                        {
+                                                            coll.name = value.to_string();
+                                                        }
+                                                    }
+                                                    "series_position" => {
+                                                        if let Ok(pos) = value.parse::<f64>() {
+                                                            if let Some(ref mut coll) =
+                                                                self.metadata.collection
+                                                            {
+                                                                coll.position = Some(pos);
+                                                            } else {
+                                                                self.metadata.collection =
+                                                                    Some(CollectionInfo {
+                                                                        name: String::new(),
+                                                                        collection_type: Some(
+                                                                            "series".to_string(),
+                                                                        ),
+                                                                        position: Some(pos),
+                                                                    });
+                                                            }
                                                         }
                                                     }
                                                     _ => {}
