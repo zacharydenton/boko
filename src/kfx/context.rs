@@ -477,6 +477,17 @@ impl AnchorRegistry {
         Some(symbol)
     }
 
+    /// Record the position of an element ID (for TOC/navigation lookup).
+    ///
+    /// This stores the position without creating an anchor entity.
+    /// Use this to track element positions for TOC resolution.
+    pub fn record_position(&mut self, anchor_name: &str, fragment_id: u64, offset: usize) {
+        // Only record if not already present (first occurrence wins)
+        self.anchor_positions
+            .entry(anchor_name.to_string())
+            .or_insert((fragment_id, offset));
+    }
+
     /// Get the content position for an anchor (for TOC resolution).
     ///
     /// Returns (content_fragment_id, offset) if the anchor exists.
@@ -924,7 +935,11 @@ impl ExportContext {
         }
     }
 
-    /// Create an anchor entity if the given ID is a needed TOC/link target.
+    /// Process an element ID during storyline building.
+    ///
+    /// This does two things:
+    /// 1. Records the position for TOC/navigation lookup (always)
+    /// 2. Creates an anchor entity if this ID is a link_to target (only for needed anchors)
     ///
     /// Call this during Pass 2 when processing elements with ID attributes.
     /// This ensures anchors point to actual content fragment IDs, not section IDs.
@@ -937,6 +952,11 @@ impl ExportContext {
 
         let full_key = self.build_anchor_key(anchor_id);
 
+        // Always record position for TOC/navigation lookup
+        self.anchor_registry
+            .record_position(&full_key, content_id, offset);
+
+        // Only create anchor entity if this is a link_to target
         if self.needed_anchors.contains(&full_key) {
             if let Some(symbol) = self.anchor_registry.create_content_anchor(
                 &full_key,

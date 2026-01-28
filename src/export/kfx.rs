@@ -137,9 +137,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // 1a. Collect needed anchors FIRST (before survey)
-    // Only IDs that are link targets or TOC destinations need anchor entities.
-    // This prevents creating anchors for every element ID in the source.
-    ctx.register_toc_anchors(book.toc());
+    // Only IDs that are link targets need anchor entities.
+    // TOC navigation uses direct fragment ID references (target_position.id),
+    // not anchor entities, so we don't register TOC entries as needed anchors.
     for (chapter_id, _) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
             collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
@@ -1519,8 +1519,10 @@ fn build_anchor_fragments(
         // Build position struct - uses content fragment_id for navigation target
         let mut pos_fields = Vec::new();
         pos_fields.push((KfxSymbol::Id as u64, IonValue::Int(anchor.fragment_id as i64)));
-        // Always include offset field - Kindle requires it even when 0
-        pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
+        // Only include offset when non-zero - reference KFX omits offset for fragment-only positions
+        if anchor.offset > 0 {
+            pos_fields.push((KfxSymbol::Offset as u64, IonValue::Int(anchor.offset as i64)));
+        }
 
         let ion = IonValue::Struct(vec![
             (KfxSymbol::AnchorName as u64, IonValue::Symbol(anchor_symbol_id)),
