@@ -90,10 +90,11 @@ fn main() -> IonResult<()> {
                 "anchors" => report_anchors(&data)?,
                 "container" => report_container(&data)?,
                 "features" => report_features(&data)?,
+                "metadata" => report_metadata(&data)?,
                 "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, features, toc",
+                        "Unknown field report: {}. Supported: anchors, container, features, metadata, toc",
                         other
                     );
                     std::process::exit(1);
@@ -2907,5 +2908,210 @@ fn report_features(data: &[u8]) -> IonResult<()> {
     }
 
     eprintln!("No content_features entity found");
+    Ok(())
+}
+
+/// Report metadata (book_metadata entity) from a KFX file
+fn report_metadata(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find book_metadata entity (type 490)
+    let book_metadata_type = KfxSymbol::BookMetadata as u32;
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != book_metadata_type {
+            continue;
+        }
+
+        // Found book_metadata entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            // Helper to resolve symbol name
+            let resolve_sym = |id: u64| -> &str {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE.get(id as usize).copied().unwrap_or("?")
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .map(|s| s.as_str())
+                        .unwrap_or("?")
+                }
+            };
+
+            // Extract and display categorised_metadata
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+
+                    if field_name == "categorised_metadata" {
+                        if let boko::kfx::ion::IonValue::List(categories) = field_value {
+                            for category in categories {
+                                if let boko::kfx::ion::IonValue::Struct(cat_fields) = category {
+                                    let mut cat_name = String::new();
+                                    let mut metadata_list = Vec::new();
+
+                                    for (cid, cval) in cat_fields {
+                                        let cname = resolve_sym(*cid);
+                                        match cname {
+                                            "category" => {
+                                                if let boko::kfx::ion::IonValue::String(s) = cval {
+                                                    cat_name = s.clone();
+                                                }
+                                            }
+                                            "metadata" => {
+                                                if let boko::kfx::ion::IonValue::List(items) = cval
+                                                {
+                                                    for item in items {
+                                                        if let boko::kfx::ion::IonValue::Struct(
+                                                            item_fields,
+                                                        ) = item
+                                                        {
+                                                            let mut key = String::new();
+                                                            let mut val = String::new();
+
+                                                            for (iid, ival) in item_fields {
+                                                                let iname = resolve_sym(*iid);
+                                                                match iname {
+                                                                    "key" => {
+                                                                        if let boko::kfx::ion::IonValue::String(s) = ival {
+                                                                            key = s.clone();
+                                                                        }
+                                                                    }
+                                                                    "value" => {
+                                                                        val = match ival {
+                                                                            boko::kfx::ion::IonValue::String(s) => s.clone(),
+                                                                            boko::kfx::ion::IonValue::Int(i) => i.to_string(),
+                                                                            boko::kfx::ion::IonValue::Bool(b) => b.to_string(),
+                                                                            _ => format!("{:?}", ival),
+                                                                        };
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+
+                                                            if !key.is_empty() {
+                                                                metadata_list.push((key, val));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+
+                                    // Print category header and metadata
+                                    if !cat_name.is_empty() {
+                                        println!("=== {} ===\n", cat_name);
+                                        for (key, val) in &metadata_list {
+                                            // Truncate long values
+                                            let display_val = if val.len() > 60 {
+                                                format!("{}...", &val[..60])
+                                            } else {
+                                                val.clone()
+                                            };
+                                            println!("{:<25} {}", format!("{}:", key), display_val);
+                                        }
+                                        println!();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No book_metadata entity found");
     Ok(())
 }
