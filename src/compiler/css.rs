@@ -284,10 +284,7 @@ impl Declaration {
     }
 
     /// Parse margin/padding shorthand, returning expanded declarations.
-    pub fn parse_box_shorthand(
-        name: &str,
-        input: &mut Parser<'_, '_>,
-    ) -> Option<[Declaration; 4]> {
+    pub fn parse_box_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
         let (top, right, bottom, left) = parse_box_shorthand_values(input)?;
         match name {
             "margin" => Some([
@@ -559,16 +556,17 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
         // Handle margin/padding shorthand expansion
         if (name.as_ref() == "margin" || name.as_ref() == "padding")
-            && let Some(decls) = Declaration::parse_box_shorthand(&name, input) {
-                let important = input.try_parse(cssparser::parse_important).is_ok();
-                let target = if important {
-                    &mut *self.important_declarations
-                } else {
-                    &mut *self.declarations
-                };
-                target.extend(decls);
-                return Ok(());
-            }
+            && let Some(decls) = Declaration::parse_box_shorthand(&name, input)
+        {
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            let target = if important {
+                &mut *self.important_declarations
+            } else {
+                &mut *self.declarations
+            };
+            target.extend(decls);
+            return Ok(());
+        }
 
         // Parse regular declarations
         if let Some(decl) = Declaration::parse(&name, input) {
@@ -738,7 +736,9 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// Parse margin/padding shorthand with 1-4 values.
 /// Returns (top, right, bottom, left) following CSS box model rules.
-fn parse_box_shorthand_values(input: &mut Parser<'_, '_>) -> Option<(Length, Length, Length, Length)> {
+fn parse_box_shorthand_values(
+    input: &mut Parser<'_, '_>,
+) -> Option<(Length, Length, Length, Length)> {
     let mut values = Vec::with_capacity(4);
 
     // Parse up to 4 length values
@@ -870,11 +870,7 @@ fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecorationVal
         }
         found = true;
     }
-    if found {
-        Some(result)
-    } else {
-        None
-    }
+    if found { Some(result) } else { None }
 }
 
 fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlignValue> {
@@ -970,10 +966,13 @@ fn parse_clear(input: &mut Parser<'_, '_>) -> Option<Clear> {
 }
 
 fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
-    if let Ok(Token::Number { int_value: Some(v), .. }) = input.next().cloned()
-        && v >= 0 {
-            return Some(v as u32);
-        }
+    if let Ok(Token::Number {
+        int_value: Some(v), ..
+    }) = input.next().cloned()
+        && v >= 0
+    {
+        return Some(v as u32);
+    }
     None
 }
 
@@ -1485,9 +1484,15 @@ mod tests {
         assert_eq!(decls.len(), 4);
 
         // Find margin-left and margin-right
-        let margin_left = decls.iter().find(|d| matches!(d, Declaration::MarginLeft(_)));
-        let margin_right = decls.iter().find(|d| matches!(d, Declaration::MarginRight(_)));
-        let margin_top = decls.iter().find(|d| matches!(d, Declaration::MarginTop(_)));
+        let margin_left = decls
+            .iter()
+            .find(|d| matches!(d, Declaration::MarginLeft(_)));
+        let margin_right = decls
+            .iter()
+            .find(|d| matches!(d, Declaration::MarginRight(_)));
+        let margin_top = decls
+            .iter()
+            .find(|d| matches!(d, Declaration::MarginTop(_)));
 
         assert!(margin_left.is_some(), "margin-left should exist");
         assert!(margin_right.is_some(), "margin-right should exist");
@@ -1634,7 +1639,11 @@ mod tests {
 
             let decl = &stylesheet.rules[0].declarations[0];
             if let Declaration::Clear(clear) = decl {
-                assert_eq!(*clear, expected, "clear: {} should parse correctly", css_value);
+                assert_eq!(
+                    *clear, expected,
+                    "clear: {} should parse correctly",
+                    css_value
+                );
             } else {
                 panic!("clear should be a Clear value");
             }
@@ -1685,7 +1694,11 @@ mod tests {
 
             let decl = &stylesheet.rules[0].declarations[0];
             if let Declaration::WordBreak(wb) = decl {
-                assert_eq!(*wb, expected, "word-break: {} should parse correctly", css_value);
+                assert_eq!(
+                    *wb, expected,
+                    "word-break: {} should parse correctly",
+                    css_value
+                );
             } else {
                 panic!("word-break should be a WordBreak value");
             }
@@ -1706,7 +1719,11 @@ mod tests {
 
             let decl = &stylesheet.rules[0].declarations[0];
             if let Declaration::OverflowWrap(ow) = decl {
-                assert_eq!(*ow, expected, "overflow-wrap: {} should parse correctly", css_value);
+                assert_eq!(
+                    *ow, expected,
+                    "overflow-wrap: {} should parse correctly",
+                    css_value
+                );
             } else {
                 panic!("overflow-wrap should be an OverflowWrap value");
             }

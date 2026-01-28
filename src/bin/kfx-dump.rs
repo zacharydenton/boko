@@ -1212,8 +1212,7 @@ fn extract_and_print_navigation(
                 match *cfield_id as u32 {
                     id if id == KfxSymbol::NavType as u32 => {
                         if let IonValue::Symbol(sym_id) = cfield_value {
-                            nav_type =
-                                resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
+                            nav_type = resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
                         }
                     }
                     id if id == KfxSymbol::NavContainerName as u32 => {
@@ -1357,11 +1356,8 @@ fn extract_nav_entries(
                 id if id == KfxSymbol::LandmarkType as u32 => {
                     // landmark_type is a symbol (h2, h3, cover_page, srl, etc.)
                     if let IonValue::Symbol(sym_id) = field_value {
-                        landmark_type = Some(resolve_symbol(
-                            *sym_id,
-                            extended_symbols,
-                            base_symbol_count,
-                        ));
+                        landmark_type =
+                            Some(resolve_symbol(*sym_id, extended_symbols, base_symbol_count));
                     }
                 }
                 id if id == KfxSymbol::Representation as u32 => {
@@ -2884,69 +2880,74 @@ fn report_features(data: &[u8]) -> IonResult<()> {
                     let field_name = resolve_sym(*field_id);
 
                     if field_name == "features"
-                        && let boko::kfx::ion::IonValue::List(features) = field_value {
-                            for (idx, feature) in features.iter().enumerate() {
-                                if let boko::kfx::ion::IonValue::Struct(ffields) = feature {
-                                    let mut namespace = String::new();
-                                    let mut key = String::new();
-                                    let mut major = 0i64;
-                                    let mut minor = 0i64;
+                        && let boko::kfx::ion::IonValue::List(features) = field_value
+                    {
+                        for (idx, feature) in features.iter().enumerate() {
+                            if let boko::kfx::ion::IonValue::Struct(ffields) = feature {
+                                let mut namespace = String::new();
+                                let mut key = String::new();
+                                let mut major = 0i64;
+                                let mut minor = 0i64;
 
-                                    for (fid, fval) in ffields {
-                                        let fname = resolve_sym(*fid);
+                                for (fid, fval) in ffields {
+                                    let fname = resolve_sym(*fid);
 
-                                        match fname {
-                                            "namespace" => {
-                                                if let boko::kfx::ion::IonValue::String(s) = fval {
-                                                    namespace = s.clone();
-                                                }
+                                    match fname {
+                                        "namespace" => {
+                                            if let boko::kfx::ion::IonValue::String(s) = fval {
+                                                namespace = s.clone();
                                             }
-                                            "key" => {
-                                                if let boko::kfx::ion::IonValue::String(s) = fval {
-                                                    key = s.clone();
-                                                }
+                                        }
+                                        "key" => {
+                                            if let boko::kfx::ion::IonValue::String(s) = fval {
+                                                key = s.clone();
                                             }
-                                            "version_info" => {
-                                                // Extract version from nested struct
-                                                if let boko::kfx::ion::IonValue::Struct(vi) = fval {
-                                                    for (vid, vval) in vi {
-                                                        let vname = resolve_sym(*vid);
-                                                        if vname == "version"
-                                                            && let boko::kfx::ion::IonValue::Struct(
-                                                                ver,
-                                                            ) = vval
+                                        }
+                                        "version_info" => {
+                                            // Extract version from nested struct
+                                            if let boko::kfx::ion::IonValue::Struct(vi) = fval {
+                                                for (vid, vval) in vi {
+                                                    let vname = resolve_sym(*vid);
+                                                    if vname == "version"
+                                                        && let boko::kfx::ion::IonValue::Struct(ver) =
+                                                            vval
+                                                    {
+                                                        for (verid, verval) in ver {
+                                                            let vername = resolve_sym(*verid);
+                                                            if vername == "major_version"
+                                                                && let boko::kfx::ion::IonValue::Int(
+                                                                    v,
+                                                                ) = verval
                                                             {
-                                                                for (verid, verval) in ver {
-                                                                    let vername =
-                                                                        resolve_sym(*verid);
-                                                                    if vername == "major_version"
-                                                                        && let boko::kfx::ion::IonValue::Int(v) = verval {
-                                                                            major = *v;
-                                                                        }
-                                                                    if vername == "minor_version"
-                                                                        && let boko::kfx::ion::IonValue::Int(v) = verval {
-                                                                            minor = *v;
-                                                                        }
-                                                                }
+                                                                major = *v;
                                                             }
+                                                            if vername == "minor_version"
+                                                                && let boko::kfx::ion::IonValue::Int(
+                                                                    v,
+                                                                ) = verval
+                                                            {
+                                                                minor = *v;
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
-
-                                    println!(
-                                        "{:2}. {}.{} v{}.{}",
-                                        idx + 1,
-                                        namespace,
-                                        key,
-                                        major,
-                                        minor
-                                    );
                                 }
+
+                                println!(
+                                    "{:2}. {}.{} v{}.{}",
+                                    idx + 1,
+                                    namespace,
+                                    key,
+                                    major,
+                                    minor
+                                );
                             }
                         }
+                    }
                 }
             }
         }
@@ -3078,34 +3079,34 @@ fn report_metadata(data: &[u8]) -> IonResult<()> {
                     let field_name = resolve_sym(*field_id);
 
                     if field_name == "categorised_metadata"
-                        && let boko::kfx::ion::IonValue::List(categories) = field_value {
-                            for category in categories {
-                                if let boko::kfx::ion::IonValue::Struct(cat_fields) = category {
-                                    let mut cat_name = String::new();
-                                    let mut metadata_list = Vec::new();
+                        && let boko::kfx::ion::IonValue::List(categories) = field_value
+                    {
+                        for category in categories {
+                            if let boko::kfx::ion::IonValue::Struct(cat_fields) = category {
+                                let mut cat_name = String::new();
+                                let mut metadata_list = Vec::new();
 
-                                    for (cid, cval) in cat_fields {
-                                        let cname = resolve_sym(*cid);
-                                        match cname {
-                                            "category" => {
-                                                if let boko::kfx::ion::IonValue::String(s) = cval {
-                                                    cat_name = s.clone();
-                                                }
+                                for (cid, cval) in cat_fields {
+                                    let cname = resolve_sym(*cid);
+                                    match cname {
+                                        "category" => {
+                                            if let boko::kfx::ion::IonValue::String(s) = cval {
+                                                cat_name = s.clone();
                                             }
-                                            "metadata" => {
-                                                if let boko::kfx::ion::IonValue::List(items) = cval
-                                                {
-                                                    for item in items {
-                                                        if let boko::kfx::ion::IonValue::Struct(
-                                                            item_fields,
-                                                        ) = item
-                                                        {
-                                                            let mut key = String::new();
-                                                            let mut val = String::new();
+                                        }
+                                        "metadata" => {
+                                            if let boko::kfx::ion::IonValue::List(items) = cval {
+                                                for item in items {
+                                                    if let boko::kfx::ion::IonValue::Struct(
+                                                        item_fields,
+                                                    ) = item
+                                                    {
+                                                        let mut key = String::new();
+                                                        let mut val = String::new();
 
-                                                            for (iid, ival) in item_fields {
-                                                                let iname = resolve_sym(*iid);
-                                                                match iname {
+                                                        for (iid, ival) in item_fields {
+                                                            let iname = resolve_sym(*iid);
+                                                            match iname {
                                                                     "key" => {
                                                                         if let boko::kfx::ion::IonValue::String(s) = ival {
                                                                             key = s.clone();
@@ -3121,36 +3122,36 @@ fn report_metadata(data: &[u8]) -> IonResult<()> {
                                                                     }
                                                                     _ => {}
                                                                 }
-                                                            }
+                                                        }
 
-                                                            if !key.is_empty() {
-                                                                metadata_list.push((key, val));
-                                                            }
+                                                        if !key.is_empty() {
+                                                            metadata_list.push((key, val));
                                                         }
                                                     }
                                                 }
                                             }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
+                                }
 
-                                    // Print category header and metadata
-                                    if !cat_name.is_empty() {
-                                        println!("=== {} ===\n", cat_name);
-                                        for (key, val) in &metadata_list {
-                                            // Truncate long values
-                                            let display_val = if val.len() > 60 {
-                                                format!("{}...", &val[..60])
-                                            } else {
-                                                val.clone()
-                                            };
-                                            println!("{:<25} {}", format!("{}:", key), display_val);
-                                        }
-                                        println!();
+                                // Print category header and metadata
+                                if !cat_name.is_empty() {
+                                    println!("=== {} ===\n", cat_name);
+                                    for (key, val) in &metadata_list {
+                                        // Truncate long values
+                                        let display_val = if val.len() > 60 {
+                                            format!("{}...", &val[..60])
+                                        } else {
+                                            val.clone()
+                                        };
+                                        println!("{:<25} {}", format!("{}:", key), display_val);
                                     }
+                                    println!();
                                 }
                             }
                         }
+                    }
                 }
             }
         }
@@ -3284,53 +3285,51 @@ fn report_reading_orders(data: &[u8]) -> IonResult<()> {
                     let field_name = resolve_sym(*field_id);
 
                     if field_name == "reading_orders"
-                        && let boko::kfx::ion::IonValue::List(orders) = field_value {
-                            for (idx, order) in orders.iter().enumerate() {
-                                if let boko::kfx::ion::IonValue::Struct(order_fields) = order {
-                                    let mut order_name = String::new();
-                                    let mut sections: Vec<String> = Vec::new();
+                        && let boko::kfx::ion::IonValue::List(orders) = field_value
+                    {
+                        for (idx, order) in orders.iter().enumerate() {
+                            if let boko::kfx::ion::IonValue::Struct(order_fields) = order {
+                                let mut order_name = String::new();
+                                let mut sections: Vec<String> = Vec::new();
 
-                                    for (oid, oval) in order_fields {
-                                        let oname = resolve_sym(*oid);
-                                        match oname {
-                                            "reading_order_name" => {
-                                                if let boko::kfx::ion::IonValue::Symbol(s) = oval {
-                                                    order_name = resolve_sym(*s).to_string();
-                                                } else if let boko::kfx::ion::IonValue::String(s) =
-                                                    oval
-                                                {
-                                                    order_name = s.clone();
-                                                }
+                                for (oid, oval) in order_fields {
+                                    let oname = resolve_sym(*oid);
+                                    match oname {
+                                        "reading_order_name" => {
+                                            if let boko::kfx::ion::IonValue::Symbol(s) = oval {
+                                                order_name = resolve_sym(*s).to_string();
+                                            } else if let boko::kfx::ion::IonValue::String(s) = oval
+                                            {
+                                                order_name = s.clone();
                                             }
-                                            "sections" => {
-                                                if let boko::kfx::ion::IonValue::List(secs) = oval {
-                                                    for sec in secs {
-                                                        if let boko::kfx::ion::IonValue::Symbol(s) =
-                                                            sec
-                                                        {
-                                                            sections
-                                                                .push(resolve_sym(*s).to_string());
-                                                        }
+                                        }
+                                        "sections" => {
+                                            if let boko::kfx::ion::IonValue::List(secs) = oval {
+                                                for sec in secs {
+                                                    if let boko::kfx::ion::IonValue::Symbol(s) = sec
+                                                    {
+                                                        sections.push(resolve_sym(*s).to_string());
                                                     }
                                                 }
                                             }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
-
-                                    println!(
-                                        "{}. {} ({} sections)",
-                                        idx + 1,
-                                        order_name,
-                                        sections.len()
-                                    );
-                                    for (sidx, sec) in sections.iter().enumerate() {
-                                        println!("   {:3}. {}", sidx + 1, sec);
-                                    }
-                                    println!();
                                 }
+
+                                println!(
+                                    "{}. {} ({} sections)",
+                                    idx + 1,
+                                    order_name,
+                                    sections.len()
+                                );
+                                for (sidx, sec) in sections.iter().enumerate() {
+                                    println!("   {:3}. {}", sidx + 1, sec);
+                                }
+                                println!();
                             }
                         }
+                    }
                 }
             }
         }
@@ -3517,7 +3516,11 @@ where
                 .iter()
                 .take(3)
                 .map(|(k, v)| {
-                    format!("{}: {}", resolve_sym(*k), format_ion_value_simple(v, resolve_sym))
+                    format!(
+                        "{}: {}",
+                        resolve_sym(*k),
+                        format_ion_value_simple(v, resolve_sym)
+                    )
                 })
                 .collect();
             if fields.len() > 3 {
@@ -3899,10 +3902,7 @@ fn report_resources(data: &[u8]) -> IonResult<()> {
                         (Some(w), Some(h)) => format!(" {}x{}", w, h),
                         _ => String::new(),
                     };
-                    println!(
-                        "{:<10} {:<6}{} → {}",
-                        resource_name, format, dims, location
-                    );
+                    println!("{:<10} {:<6}{} → {}", resource_name, format, dims, location);
                 }
             }
         }
@@ -4119,8 +4119,11 @@ struct ContentStats {
 }
 
 /// Collect content stats recursively from a content_list
-fn collect_content_stats<F>(items: &[boko::kfx::ion::IonValue], resolve_sym: &F, stats: &mut ContentStats)
-where
+fn collect_content_stats<F>(
+    items: &[boko::kfx::ion::IonValue],
+    resolve_sym: &F,
+    stats: &mut ContentStats,
+) where
     F: Fn(u64) -> String,
 {
     for item in items {
@@ -4180,17 +4183,19 @@ where
                     "content" => {
                         // Extract sample text if we don't have one yet
                         if stats.first_text.is_none()
-                            && let boko::kfx::ion::IonValue::Struct(content_fields) = field_value {
-                                for (cid, cval) in content_fields {
-                                    if resolve_sym(*cid) == "text"
-                                        && let boko::kfx::ion::IonValue::String(t) = cval {
-                                            let sample: String = t.chars().take(60).collect();
-                                            if !sample.trim().is_empty() {
-                                                stats.first_text = Some(sample);
-                                            }
-                                        }
+                            && let boko::kfx::ion::IonValue::Struct(content_fields) = field_value
+                        {
+                            for (cid, cval) in content_fields {
+                                if resolve_sym(*cid) == "text"
+                                    && let boko::kfx::ion::IonValue::String(t) = cval
+                                {
+                                    let sample: String = t.chars().take(60).collect();
+                                    if !sample.trim().is_empty() {
+                                        stats.first_text = Some(sample);
+                                    }
                                 }
                             }
+                        }
                     }
                     _ => {}
                 }
@@ -4344,36 +4349,37 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                         for (fid, field_value) in fields {
                             let fname = resolve_sym(*fid);
                             if fname == "locations"
-                                && let boko::kfx::ion::IonValue::List(locations) = field_value {
-                                    for loc in locations {
-                                        if let boko::kfx::ion::IonValue::Struct(loc_fields) = loc {
-                                            let mut id = 0i64;
-                                            let mut offset = 0i64;
-                                            for (lid, lval) in loc_fields {
-                                                let lname = resolve_sym(*lid);
-                                                match lname.as_str() {
-                                                    "id" => {
-                                                        if let boko::kfx::ion::IonValue::Int(v) = lval {
-                                                            id = *v;
-                                                        }
+                                && let boko::kfx::ion::IonValue::List(locations) = field_value
+                            {
+                                for loc in locations {
+                                    if let boko::kfx::ion::IonValue::Struct(loc_fields) = loc {
+                                        let mut id = 0i64;
+                                        let mut offset = 0i64;
+                                        for (lid, lval) in loc_fields {
+                                            let lname = resolve_sym(*lid);
+                                            match lname.as_str() {
+                                                "id" => {
+                                                    if let boko::kfx::ion::IonValue::Int(v) = lval {
+                                                        id = *v;
                                                     }
-                                                    "offset" => {
-                                                        if let boko::kfx::ion::IonValue::Int(v) = lval {
-                                                            offset = *v;
-                                                        }
-                                                    }
-                                                    _ => {}
                                                 }
+                                                "offset" => {
+                                                    if let boko::kfx::ion::IonValue::Int(v) = lval {
+                                                        offset = *v;
+                                                    }
+                                                }
+                                                _ => {}
                                             }
-                                            all_locations.push(LocationEntry {
-                                                index: location_index,
-                                                id,
-                                                offset,
-                                            });
-                                            location_index += 1;
                                         }
+                                        all_locations.push(LocationEntry {
+                                            index: location_index,
+                                            id,
+                                            offset,
+                                        });
+                                        location_index += 1;
                                     }
                                 }
+                            }
                         }
                     }
                 }
@@ -4406,7 +4412,14 @@ fn report_locations(data: &[u8]) -> IonResult<()> {
                 if all_locations.len() > 15 {
                     println!("  ...");
                     println!("\nLast 5 entries:");
-                    for entry in all_locations.iter().rev().take(5).collect::<Vec<_>>().into_iter().rev() {
+                    for entry in all_locations
+                        .iter()
+                        .rev()
+                        .take(5)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                    {
                         if entry.offset != 0 {
                             println!(
                                 "  loc {:>5} → position {}:{}",
@@ -4595,14 +4608,8 @@ fn report_positions(data: &[u8]) -> IonResult<()> {
                                 if contains.len() <= 10 {
                                     println!("  positions: {:?}", contains);
                                 } else {
-                                    println!(
-                                        "  first 5: {:?}",
-                                        &contains[..5]
-                                    );
-                                    println!(
-                                        "  last 5:  {:?}",
-                                        &contains[contains.len() - 5..]
-                                    );
+                                    println!("  first 5: {:?}", &contains[..5]);
+                                    println!("  last 5:  {:?}", &contains[contains.len() - 5..]);
                                 }
                                 println!();
                             }
@@ -4829,7 +4836,7 @@ fn report_content(data: &[u8]) -> IonResult<()> {
                             boko::kfx::ion::IonValue::String(s) => content_len = s.len(),
                             boko::kfx::ion::IonValue::Blob(b) => content_len = b.len(),
                             _ => {}
-                        }
+                        },
                         _ => {}
                     }
                 }
@@ -4980,92 +4987,111 @@ fn report_dependencies(data: &[u8]) -> IonResult<()> {
                 for (field_id, field_value) in fields {
                     let field_name = resolve_sym(*field_id);
                     if field_name == "container_list"
-                        && let boko::kfx::ion::IonValue::List(containers) = field_value {
-                            let mut total_entities = 0usize;
+                        && let boko::kfx::ion::IonValue::List(containers) = field_value
+                    {
+                        let mut total_entities = 0usize;
 
-                            for container in containers {
-                                if let boko::kfx::ion::IonValue::Struct(c_fields) = container {
-                                    let mut container_name = String::new();
-                                    let mut entity_names: Vec<String> = Vec::new();
+                        for container in containers {
+                            if let boko::kfx::ion::IonValue::Struct(c_fields) = container {
+                                let mut container_name = String::new();
+                                let mut entity_names: Vec<String> = Vec::new();
 
-                                    for (cid, cval) in c_fields {
-                                        let cname = resolve_sym(*cid);
-                                        match cname.as_str() {
-                                            "id" => {
-                                                if let boko::kfx::ion::IonValue::String(s) = cval {
-                                                    container_name = s.clone();
-                                                }
+                                for (cid, cval) in c_fields {
+                                    let cname = resolve_sym(*cid);
+                                    match cname.as_str() {
+                                        "id" => {
+                                            if let boko::kfx::ion::IonValue::String(s) = cval {
+                                                container_name = s.clone();
                                             }
-                                            "contains" => {
-                                                if let boko::kfx::ion::IonValue::List(names) = cval {
-                                                    for name in names {
-                                                        if let boko::kfx::ion::IonValue::Symbol(s) = name {
-                                                            entity_names.push(resolve_sym(*s));
-                                                        }
+                                        }
+                                        "contains" => {
+                                            if let boko::kfx::ion::IonValue::List(names) = cval {
+                                                for name in names {
+                                                    if let boko::kfx::ion::IonValue::Symbol(s) =
+                                                        name
+                                                    {
+                                                        entity_names.push(resolve_sym(*s));
                                                     }
                                                 }
                                             }
-                                            _ => {}
                                         }
-                                    }
-
-                                    total_entities += entity_names.len();
-
-                                    if !entity_names.is_empty() {
-                                        println!("Container: {}", container_name);
-                                        println!("Entities ({}):", entity_names.len());
-
-                                        // Group entities by type prefix
-                                        let mut by_type: std::collections::HashMap<String, Vec<String>> =
-                                            std::collections::HashMap::new();
-                                        for name in &entity_names {
-                                            // Determine type from prefix
-                                            let type_prefix = if name.starts_with("content_") {
-                                                "content"
-                                            } else if name.starts_with("style_") || name.starts_with('s') && name.chars().nth(1).map(|c| c.is_ascii_digit()).unwrap_or(false) {
-                                                "style"
-                                            } else if name.starts_with("anchor_") || name.starts_with('a') && name.len() > 1 {
-                                                "anchor"
-                                            } else if name.starts_with('l') && name.len() > 1 {
-                                                "storyline"
-                                            } else if name.starts_with('c') && name.len() > 1 {
-                                                "section"
-                                            } else if name.starts_with('e') && name.len() > 1 {
-                                                "resource"
-                                            } else {
-                                                "other"
-                                            };
-                                            by_type
-                                                .entry(type_prefix.to_string())
-                                                .or_default()
-                                                .push(name.clone());
-                                        }
-
-                                        // Print by type
-                                        let mut types: Vec<_> = by_type.keys().collect();
-                                        types.sort();
-                                        for type_name in types {
-                                            let names = &by_type[type_name];
-                                            if names.len() <= 8 {
-                                                println!("  {} ({}): {}", type_name, names.len(), names.join(", "));
-                                            } else {
-                                                println!(
-                                                    "  {} ({}): {}, ... {}",
-                                                    type_name,
-                                                    names.len(),
-                                                    names[..3].join(", "),
-                                                    names[names.len() - 2..].join(", ")
-                                                );
-                                            }
-                                        }
-                                        println!();
+                                        _ => {}
                                     }
                                 }
-                            }
 
-                            println!("Total containers: {}", containers.len());
-                            println!("Total entity refs: {}", total_entities);
+                                total_entities += entity_names.len();
+
+                                if !entity_names.is_empty() {
+                                    println!("Container: {}", container_name);
+                                    println!("Entities ({}):", entity_names.len());
+
+                                    // Group entities by type prefix
+                                    let mut by_type: std::collections::HashMap<
+                                        String,
+                                        Vec<String>,
+                                    > = std::collections::HashMap::new();
+                                    for name in &entity_names {
+                                        // Determine type from prefix
+                                        let type_prefix = if name.starts_with("content_") {
+                                            "content"
+                                        } else if name.starts_with("style_")
+                                            || name.starts_with('s')
+                                                && name
+                                                    .chars()
+                                                    .nth(1)
+                                                    .map(|c| c.is_ascii_digit())
+                                                    .unwrap_or(false)
+                                        {
+                                            "style"
+                                        } else if name.starts_with("anchor_")
+                                            || name.starts_with('a') && name.len() > 1
+                                        {
+                                            "anchor"
+                                        } else if name.starts_with('l') && name.len() > 1 {
+                                            "storyline"
+                                        } else if name.starts_with('c') && name.len() > 1 {
+                                            "section"
+                                        } else if name.starts_with('e') && name.len() > 1 {
+                                            "resource"
+                                        } else {
+                                            "other"
+                                        };
+                                        by_type
+                                            .entry(type_prefix.to_string())
+                                            .or_default()
+                                            .push(name.clone());
+                                    }
+
+                                    // Print by type
+                                    let mut types: Vec<_> = by_type.keys().collect();
+                                    types.sort();
+                                    for type_name in types {
+                                        let names = &by_type[type_name];
+                                        if names.len() <= 8 {
+                                            println!(
+                                                "  {} ({}): {}",
+                                                type_name,
+                                                names.len(),
+                                                names.join(", ")
+                                            );
+                                        } else {
+                                            println!(
+                                                "  {} ({}): {}, ... {}",
+                                                type_name,
+                                                names.len(),
+                                                names[..3].join(", "),
+                                                names[names.len() - 2..].join(", ")
+                                            );
+                                        }
+                                    }
+                                    println!();
+                                }
+                            }
                         }
+
+                        println!("Total containers: {}", containers.len());
+                        println!("Total entity refs: {}", total_entities);
+                    }
                 }
             }
         }
