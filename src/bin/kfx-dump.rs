@@ -94,10 +94,11 @@ fn main() -> IonResult<()> {
                 "metadata" => report_metadata(&data)?,
                 "navigation" => report_navigation(&data)?,
                 "reading_orders" => report_reading_orders(&data)?,
+                "resources" => report_resources(&data)?,
                 "sections" => report_sections(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, sections",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, navigation, reading_orders, resources, sections",
                         other
                     );
                     std::process::exit(1);
@@ -3730,5 +3731,184 @@ fn report_sections(data: &[u8]) -> IonResult<()> {
     }
 
     println!("\nTotal sections: {}", section_count);
+    Ok(())
+}
+
+/// Report external resources from a KFX file
+fn report_resources(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find all external_resource entities (type 164)
+    let resource_type = KfxSymbol::ExternalResource as u32;
+
+    println!("=== External Resources ===\n");
+
+    let mut resource_count = 0;
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != resource_type {
+            continue;
+        }
+
+        // Found external_resource entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            let resolve_sym = |id: u64| -> String {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or("?")
+                        .to_string()
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+
+            // Extract resource info
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                let mut resource_name = String::new();
+                let mut format = String::new();
+                let mut location = String::new();
+                let mut width: Option<i64> = None;
+                let mut height: Option<i64> = None;
+
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+                    match field_name.as_str() {
+                        "resource_name" => {
+                            if let boko::kfx::ion::IonValue::Symbol(s) = field_value {
+                                resource_name = resolve_sym(*s);
+                            }
+                        }
+                        "format" => {
+                            if let boko::kfx::ion::IonValue::Symbol(s) = field_value {
+                                format = resolve_sym(*s);
+                            }
+                        }
+                        "location" => {
+                            if let boko::kfx::ion::IonValue::String(s) = field_value {
+                                location = s.clone();
+                            }
+                        }
+                        "resource_width" => {
+                            if let boko::kfx::ion::IonValue::Int(w) = field_value {
+                                width = Some(*w);
+                            }
+                        }
+                        "resource_height" => {
+                            if let boko::kfx::ion::IonValue::Int(h) = field_value {
+                                height = Some(*h);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !resource_name.is_empty() {
+                    resource_count += 1;
+                    let dims = match (width, height) {
+                        (Some(w), Some(h)) => format!(" {}x{}", w, h),
+                        _ => String::new(),
+                    };
+                    println!(
+                        "{:<10} {:<6}{} → {}",
+                        resource_name, format, dims, location
+                    );
+                }
+            }
+        }
+    }
+
+    println!("\nTotal resources: {}", resource_count);
     Ok(())
 }
