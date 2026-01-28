@@ -139,6 +139,12 @@ pub fn build_cover_section(
     // Assign a fragment ID for the cover image content
     let cover_content_id = ctx.next_fragment_id();
 
+    // Record content ID for position_map and location_map
+    // Note: For standalone cover, there's no active chapter context, so we store
+    // it separately in cover_content_id (handled by build_position_id_map_fragment
+    // and build_location_map_fragment)
+    ctx.record_content_length(cover_content_id, 1);
+
     // Build storyline content: [{ id, type: image, resource_name, style }]
     let content_list = IonValue::List(vec![IonValue::Struct(vec![
         (KfxSymbol::Id as u64, IonValue::Int(cover_content_id as i64)),
