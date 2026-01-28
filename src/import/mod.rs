@@ -191,6 +191,7 @@ fn resolve_semantic_paths(chapter: &mut IRChapter, base_path: &str) {
 
         // Resolve relative path to absolute archive path
         let resolved = resolve_relative_path(base_path, path);
-        resolved.to_string_lossy().to_string()
+        // Normalize to forward slashes (archive paths, not filesystem paths)
+        resolved.to_string_lossy().replace('\\', "/")
     });
 }
