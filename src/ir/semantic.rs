@@ -1,7 +1,7 @@
 //! Sparse semantic attributes for IR nodes.
 //!
 //! Most nodes don't have href, src, or alt attributes.
-//! Using HashMaps is more memory-efficient than Option<String> on every Node.
+//! Using HashMaps is more memory-efficient than `Option<String>` on every Node.
 
 use std::collections::HashMap;
 
@@ -10,7 +10,7 @@ use super::node::NodeId;
 /// Sparse map for semantic attributes.
 ///
 /// Stores attributes only for nodes that have them, saving memory
-/// compared to storing Option<String> on every node.
+/// compared to storing `Option<String>` on every node.
 #[derive(Debug, Default, Clone)]
 pub struct SemanticMap {
     /// href attribute (for links).
@@ -29,7 +29,7 @@ pub struct SemanticMap {
     epub_type: HashMap<NodeId, String>,
     /// WAI-ARIA role attribute.
     aria_role: HashMap<NodeId, String>,
-    /// datetime attribute (for <time> elements).
+    /// datetime attribute (for `<time>` elements).
     datetime: HashMap<NodeId, String>,
     /// start attribute (for ordered lists, ol@start).
     list_start: HashMap<NodeId, u32>,

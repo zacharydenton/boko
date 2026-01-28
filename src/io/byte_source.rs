@@ -69,7 +69,7 @@ impl ByteSource for FileSource {
 
 // --- Implementation: In-Memory ---
 
-/// An in-memory ByteSource backed by a Vec<u8>.
+/// An in-memory ByteSource backed by a `Vec<u8>`.
 pub struct MemorySource {
     data: Vec<u8>,
 }

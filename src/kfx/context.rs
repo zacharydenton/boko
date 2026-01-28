@@ -291,7 +291,7 @@ pub struct AnchorPosition {
 pub struct ExternalAnchor {
     /// The anchor symbol name (e.g., "a0", "a1")
     pub symbol: String,
-    /// The external URI (e.g., "https://standardebooks.org/")
+    /// The external URI (e.g., `https://standardebooks.org/`)
     pub uri: String,
 }
 
@@ -345,7 +345,7 @@ impl AnchorRegistry {
     /// to use in the `link_to` field of style_events.
     ///
     /// The href can be:
-    /// - External URL: "https://example.com/" (creates uri-based anchor immediately)
+    /// - External URL: `https://example.com/` (creates uri-based anchor immediately)
     /// - Full path: "chapter2.xhtml#note-1"
     /// - Fragment only: "#note-1"
     /// - Path without fragment: "chapter2.xhtml"

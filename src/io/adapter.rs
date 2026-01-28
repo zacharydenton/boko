@@ -2,7 +2,7 @@ use super::byte_source::ByteSource;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
-/// Wraps an Arc<ByteSource> into a stateful `Read + Seek` stream.
+/// Wraps an `Arc<ByteSource>` into a stateful `Read + Seek` stream.
 /// Used to pass our ByteSource into libraries like `zip::ZipArchive`.
 pub struct ByteSourceCursor {
     inner: Arc<dyn ByteSource>,
