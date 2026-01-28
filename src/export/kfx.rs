@@ -1062,14 +1062,16 @@ fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
         href
     };
 
-    // Look up the fragment ID for this path
-    if let Some(fragment_id) = ctx.get_fragment_for_path(base_path) {
-        return (fragment_id, 0);
+    // Look up the first content ID for this path (the first container in the storyline)
+    // This is the correct target for TOC navigation - pointing to actual content,
+    // not the section page_template ID.
+    if let Some(&content_id) = ctx.first_content_ids.get(base_path) {
+        return (content_id, 0);
     }
 
-    // Fallback: try first chapter fragment
-    if let Some(&frag_id) = ctx.chapter_fragments.values().next() {
-        (frag_id, 0)
+    // Fallback: try first content ID from any chapter
+    if let Some(&content_id) = ctx.first_content_ids.values().next() {
+        (content_id, 0)
     } else {
         (200, 0) // Default to start if no chapters
     }
