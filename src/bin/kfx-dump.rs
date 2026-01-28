@@ -91,10 +91,11 @@ fn main() -> IonResult<()> {
                 "container" => report_container(&data)?,
                 "features" => report_features(&data)?,
                 "metadata" => report_metadata(&data)?,
+                "reading_orders" => report_reading_orders(&data)?,
                 "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, features, metadata, toc",
+                        "Unknown field report: {}. Supported: anchors, container, features, metadata, reading_orders, toc",
                         other
                     );
                     std::process::exit(1);
@@ -3113,5 +3114,186 @@ fn report_metadata(data: &[u8]) -> IonResult<()> {
     }
 
     eprintln!("No book_metadata entity found");
+    Ok(())
+}
+
+/// Report reading orders from a KFX file
+fn report_reading_orders(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find metadata entity (type 258) which contains reading_orders
+    let metadata_type = KfxSymbol::Metadata as u32;
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != metadata_type {
+            continue;
+        }
+
+        // Found metadata entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            // Helper to resolve symbol name
+            let resolve_sym = |id: u64| -> &str {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE.get(id as usize).copied().unwrap_or("?")
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .map(|s| s.as_str())
+                        .unwrap_or("?")
+                }
+            };
+
+            println!("=== Reading Orders ===\n");
+
+            // Extract reading_orders field
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+
+                    if field_name == "reading_orders" {
+                        if let boko::kfx::ion::IonValue::List(orders) = field_value {
+                            for (idx, order) in orders.iter().enumerate() {
+                                if let boko::kfx::ion::IonValue::Struct(order_fields) = order {
+                                    let mut order_name = String::new();
+                                    let mut sections: Vec<String> = Vec::new();
+
+                                    for (oid, oval) in order_fields {
+                                        let oname = resolve_sym(*oid);
+                                        match oname {
+                                            "reading_order_name" => {
+                                                if let boko::kfx::ion::IonValue::Symbol(s) = oval {
+                                                    order_name = resolve_sym(*s).to_string();
+                                                } else if let boko::kfx::ion::IonValue::String(s) =
+                                                    oval
+                                                {
+                                                    order_name = s.clone();
+                                                }
+                                            }
+                                            "sections" => {
+                                                if let boko::kfx::ion::IonValue::List(secs) = oval {
+                                                    for sec in secs {
+                                                        if let boko::kfx::ion::IonValue::Symbol(s) =
+                                                            sec
+                                                        {
+                                                            sections
+                                                                .push(resolve_sym(*s).to_string());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+
+                                    println!(
+                                        "{}. {} ({} sections)",
+                                        idx + 1,
+                                        order_name,
+                                        sections.len()
+                                    );
+                                    for (sidx, sec) in sections.iter().enumerate() {
+                                        println!("   {:3}. {}", sidx + 1, sec);
+                                    }
+                                    println!();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No metadata entity found");
     Ok(())
 }
