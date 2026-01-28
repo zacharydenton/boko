@@ -90,12 +90,13 @@ fn main() -> IonResult<()> {
                 "anchors" => report_anchors(&data)?,
                 "container" => report_container(&data)?,
                 "features" => report_features(&data)?,
+                "document" => report_document(&data)?,
                 "metadata" => report_metadata(&data)?,
                 "reading_orders" => report_reading_orders(&data)?,
                 "toc" => report_toc(&data)?,
                 other => {
                     eprintln!(
-                        "Unknown field report: {}. Supported: anchors, container, features, metadata, reading_orders, toc",
+                        "Unknown field report: {}. Supported: anchors, container, document, features, metadata, reading_orders, toc",
                         other
                     );
                     std::process::exit(1);
@@ -3296,4 +3297,192 @@ fn report_reading_orders(data: &[u8]) -> IonResult<()> {
 
     eprintln!("No metadata entity found");
     Ok(())
+}
+
+/// Report document data from a KFX file
+fn report_document(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data =
+        &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data)
+    else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) =
+        parse_container_info_for_doc_symbols(container_info_data)
+    {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len() as u64;
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // Find document_data entity (type 538)
+    let document_data_type = KfxSymbol::DocumentData as u32;
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else {
+            continue;
+        };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else {
+            continue;
+        };
+        let Some(entity_len) = read_u32_le(data, entry_offset + 16).map(|v| v as usize) else {
+            continue;
+        };
+
+        if type_idnum != document_data_type {
+            continue;
+        }
+
+        // Found document_data entity
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else {
+            continue;
+        };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+
+        if let Ok(value) = parser.parse() {
+            // Helper to resolve symbol name
+            let resolve_sym = |id: u64| -> String {
+                if id < base_symbol_count {
+                    KFX_SYMBOL_TABLE
+                        .get(id as usize)
+                        .copied()
+                        .unwrap_or("?")
+                        .to_string()
+                } else {
+                    let ext_idx = (id as usize) - (base_symbol_count as usize);
+                    extended_symbols
+                        .get(ext_idx)
+                        .cloned()
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+
+            println!("=== Document Data ===\n");
+
+            // Extract and display document properties
+            if let boko::kfx::ion::IonValue::Struct(fields) = &value {
+                for (field_id, field_value) in fields {
+                    let field_name = resolve_sym(*field_id);
+
+                    // Skip reading_orders (already has its own report)
+                    if field_name == "reading_orders" {
+                        continue;
+                    }
+
+                    let value_str = format_ion_value_simple(field_value, &resolve_sym);
+                    println!("{:<25} {}", format!("{}:", field_name), value_str);
+                }
+            }
+        }
+
+        return Ok(());
+    }
+
+    eprintln!("No document_data entity found");
+    Ok(())
+}
+
+/// Format an IonValue simply for display
+fn format_ion_value_simple<F>(value: &boko::kfx::ion::IonValue, resolve_sym: &F) -> String
+where
+    F: Fn(u64) -> String,
+{
+    use boko::kfx::ion::IonValue;
+    match value {
+        IonValue::Null => "null".to_string(),
+        IonValue::Bool(b) => b.to_string(),
+        IonValue::Int(i) => i.to_string(),
+        IonValue::Float(f) => format!("{}", f),
+        IonValue::Decimal(d) => d.clone(),
+        IonValue::String(s) => format!("\"{}\"", s),
+        IonValue::Symbol(s) => resolve_sym(*s).to_string(),
+        IonValue::Blob(b) => format!("<blob {} bytes>", b.len()),
+        IonValue::List(items) => {
+            let parts: Vec<String> = items
+                .iter()
+                .take(5)
+                .map(|v| format_ion_value_simple(v, resolve_sym))
+                .collect();
+            if items.len() > 5 {
+                format!("[{}, ... ({} more)]", parts.join(", "), items.len() - 5)
+            } else {
+                format!("[{}]", parts.join(", "))
+            }
+        }
+        IonValue::Struct(fields) => {
+            let parts: Vec<String> = fields
+                .iter()
+                .take(3)
+                .map(|(k, v)| {
+                    format!("{}: {}", resolve_sym(*k), format_ion_value_simple(v, resolve_sym))
+                })
+                .collect();
+            if fields.len() > 3 {
+                format!("{{ {}, ... }}", parts.join(", "))
+            } else {
+                format!("{{ {} }}", parts.join(", "))
+            }
+        }
+        IonValue::Annotated(_, inner) => format_ion_value_simple(inner, resolve_sym),
+    }
 }
