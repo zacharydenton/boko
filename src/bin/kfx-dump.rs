@@ -22,6 +22,11 @@ struct Args {
     /// Show statistics (entity counts by type)
     #[arg(short, long)]
     stat: bool,
+
+    /// Print detailed report for specified field/fragment (can be specified multiple times)
+    /// Supported: anchors
+    #[arg(short = 'f', long = "field")]
+    field: Vec<String>,
 }
 
 /// Resolved entity information for better output
@@ -65,6 +70,25 @@ fn main() -> IonResult<()> {
     let args = Args::parse();
 
     let data = fs::read(&args.file).expect("Failed to read file");
+
+    // Handle field reports
+    if !args.field.is_empty() {
+        if data.len() < 4 || &data[0..4] != b"CONT" {
+            eprintln!("Field reports require a KFX container file");
+            std::process::exit(1);
+        }
+
+        for field in &args.field {
+            match field.as_str() {
+                "anchors" => report_anchors(&data)?,
+                other => {
+                    eprintln!("Unknown field report: {}. Supported: anchors", other);
+                    std::process::exit(1);
+                }
+            }
+        }
+        return Ok(());
+    }
 
     // Check for KFX container format (starts with "CONT")
     if data.len() >= 4 && &data[0..4] == b"CONT" {
@@ -537,6 +561,593 @@ fn format_size(bytes: usize) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+/// Collected anchor information for reporting
+#[derive(Debug)]
+struct AnchorInfo {
+    name: String,
+    source_text: Option<String>,  // Text of the link that references this anchor
+    destination: AnchorDestination,
+}
+
+#[derive(Debug)]
+enum AnchorDestination {
+    Internal { id: i64, offset: Option<i64>, text: Option<String> },
+    External { uri: String },
+    Target,  // This anchor is a target (no position/uri - it's pointed TO)
+}
+
+/// Info about a link_to reference in a storyline
+#[derive(Debug, Clone)]
+struct LinkToRef {
+    anchor_name: String,
+    content_name: String,  // Content entity name (e.g., "content_1")
+    content_index: i64,    // Index within content_list array
+    offset: i64,
+    length: i64,
+}
+
+/// Report all anchors from a KFX container
+fn report_anchors(data: &[u8]) -> IonResult<()> {
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if data.len() < 18 || &data[0..4] != b"CONT" {
+        eprintln!("Not a KFX container");
+        return Ok(());
+    }
+
+    // Parse container header
+    let Some(header_len) = read_u32_le(data, 6).map(|v| v as usize) else {
+        eprintln!("Failed to read header length");
+        return Ok(());
+    };
+    let Some(container_info_offset) = read_u32_le(data, 10).map(|v| v as usize) else {
+        eprintln!("Failed to read container info offset");
+        return Ok(());
+    };
+    let Some(container_info_length) = read_u32_le(data, 14).map(|v| v as usize) else {
+        eprintln!("Failed to read container info length");
+        return Ok(());
+    };
+
+    if container_info_offset + container_info_length > data.len() {
+        eprintln!("Container info out of bounds");
+        return Ok(());
+    }
+
+    let container_info_data = &data[container_info_offset..container_info_offset + container_info_length];
+
+    // Extract extended symbols
+    let extended_symbols = if let Some((doc_sym_offset, doc_sym_length)) = parse_container_info_for_doc_symbols(container_info_data) {
+        if doc_sym_offset + doc_sym_length <= data.len() {
+            extract_doc_symbols(&data[doc_sym_offset..doc_sym_offset + doc_sym_length])
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let base_symbol_count = KFX_SYMBOL_TABLE.len();
+
+    // Get index table location
+    let Some((index_offset, index_length)) = parse_container_info_for_index(container_info_data) else {
+        eprintln!("Could not find index table");
+        return Ok(());
+    };
+
+    let entry_size = 24;
+    let num_entries = index_length / entry_size;
+
+    // First pass: collect content entities (content_name → list of strings)
+    let mut content_map: HashMap<String, Vec<String>> = HashMap::new();
+    // For destination text lookup by fragment ID
+    let mut content_by_id: HashMap<i64, String> = HashMap::new();
+    // Map fragment ID → (content_name, content_index) for resolving anchor destinations
+    let mut fragment_content_map: HashMap<i64, (String, i64)> = HashMap::new();
+    // Second pass: collect link_to references from storylines
+    let mut link_to_refs: Vec<LinkToRef> = Vec::new();
+    // Third pass: collect anchors
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(id_idnum) = read_u32_le(data, entry_offset) else { continue };
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+
+        // Parse ENTY format
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else { continue };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+        let value = match parser.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Collect content entities
+        if type_idnum == KfxSymbol::Content as u32 {
+            if let Some((name, texts)) = extract_content_texts(&value, &extended_symbols, base_symbol_count) {
+                // Also build concatenated text for destination lookup
+                let full_text = texts.join("");
+                content_by_id.insert(id_idnum as i64, full_text);
+                content_map.insert(name, texts);
+            }
+        }
+
+        // Collect link_to references and fragment content mappings from storylines
+        if type_idnum == KfxSymbol::Storyline as u32 {
+            extract_link_to_refs(&value, &extended_symbols, base_symbol_count, &mut link_to_refs);
+            extract_fragment_content_refs(&value, &extended_symbols, base_symbol_count, &mut fragment_content_map);
+        }
+    }
+
+    // Build anchor_name → source text mapping
+    let mut anchor_source_text: HashMap<String, String> = HashMap::new();
+    for link_ref in &link_to_refs {
+        if let Some(content_texts) = content_map.get(&link_ref.content_name) {
+            if let Some(content_text) = content_texts.get(link_ref.content_index as usize) {
+                let start = link_ref.offset as usize;
+                // offset and length are in characters
+                let text: String = content_text.chars().skip(start).take(link_ref.length as usize).collect();
+                anchor_source_text.insert(link_ref.anchor_name.clone(), text);
+            }
+        }
+    }
+
+    // Now collect anchors with full info
+    let mut anchors: Vec<AnchorInfo> = Vec::new();
+
+    for i in 0..num_entries {
+        let entry_offset = index_offset + i * entry_size;
+        if entry_offset + entry_size > data.len() {
+            break;
+        }
+
+        let Some(type_idnum) = read_u32_le(data, entry_offset + 4) else { continue };
+        let Some(entity_offset) = read_u64_le(data, entry_offset + 8).map(|v| v as usize) else { continue };
+        let Some(entity_len) = read_u64_le(data, entry_offset + 16).map(|v| v as usize) else { continue };
+
+        // Check if this is an anchor entity (type = 266)
+        if type_idnum != KfxSymbol::Anchor as u32 {
+            continue;
+        }
+
+        let abs_offset = header_len + entity_offset;
+        if abs_offset + entity_len > data.len() {
+            continue;
+        }
+
+        let entity_data = &data[abs_offset..abs_offset + entity_len];
+
+        // Parse ENTY format
+        if entity_data.len() < 10 || &entity_data[0..4] != b"ENTY" {
+            continue;
+        }
+
+        let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) else { continue };
+        if entity_header_len >= entity_data.len() {
+            continue;
+        }
+
+        let ion_data = &entity_data[entity_header_len..];
+        let mut parser = IonParser::new(ion_data);
+        let value = match parser.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Extract anchor info
+        if let Some(anchor) = extract_anchor_info(&value, &extended_symbols, base_symbol_count, &content_map, &fragment_content_map, &anchor_source_text) {
+            anchors.push(anchor);
+        }
+    }
+
+    // Print report
+    println!("=== Anchors ({} total) ===\n", anchors.len());
+
+    for anchor in &anchors {
+        let source = anchor.source_text.as_deref().unwrap_or("-");
+        match &anchor.destination {
+            AnchorDestination::Internal { id, offset, text } => {
+                let position = match offset {
+                    Some(off) => format!("{}:{}", id, off),
+                    None => format!("{}", id),
+                };
+                if let Some(dest_text) = text {
+                    let dest_preview: String = dest_text.chars().take(40).collect();
+                    let ellipsis = if dest_text.len() > 40 { "..." } else { "" };
+                    println!("{:<30} {:>10} → {} \"{}{}\"",
+                        anchor.name, format!("\"{}\"", source), position, dest_preview, ellipsis);
+                } else {
+                    println!("{:<30} {:>10} → {}",
+                        anchor.name, format!("\"{}\"", source), position);
+                }
+            }
+            AnchorDestination::External { uri } => {
+                println!("{:<30} {:>10} → {}", anchor.name, format!("\"{}\"", source), uri);
+            }
+            AnchorDestination::Target => {
+                println!("{:<30} {:>10} (target)", anchor.name, format!("\"{}\"", source));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract name and content_list texts from a content entity
+fn extract_content_texts(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+) -> Option<(String, Vec<String>)> {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    let fields = match inner {
+        IonValue::Struct(f) => f,
+        _ => return None,
+    };
+
+    let mut name: Option<String> = None;
+    let mut texts: Vec<String> = Vec::new();
+
+    for (field_id, field_value) in fields {
+        if *field_id == KfxSymbol::Name as u64 {
+            name = ion_value_to_string(field_value, extended_symbols, base_symbol_count);
+        }
+        if *field_id == KfxSymbol::ContentList as u64 {
+            if let IonValue::List(items) = field_value {
+                for item in items {
+                    if let IonValue::String(s) = item {
+                        texts.push(s.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    name.map(|n| (n, texts))
+}
+
+/// Extract fragment ID → content references from a storyline
+fn extract_fragment_content_refs(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    refs: &mut HashMap<i64, (String, i64)>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    let fields = match inner {
+        IonValue::Struct(f) => f,
+        _ => return,
+    };
+
+    for (field_id, field_value) in fields {
+        if *field_id == KfxSymbol::ContentList as u64 {
+            extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs);
+        }
+    }
+}
+
+/// Recursively extract fragment ID → content refs from content_list
+fn extract_fragment_content_from_list(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    refs: &mut HashMap<i64, (String, i64)>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if let IonValue::List(items) = value {
+        for item in items {
+            let inner = match item {
+                IonValue::Annotated(_, inner) => inner.as_ref(),
+                _ => item,
+            };
+
+            if let IonValue::Struct(fields) = inner {
+                let mut fragment_id: Option<i64> = None;
+                let mut content_name: Option<String> = None;
+                let mut content_index: Option<i64> = None;
+
+                for (field_id, field_value) in fields {
+                    // Get fragment ID
+                    if *field_id == KfxSymbol::Id as u64 {
+                        if let IonValue::Int(i) = field_value {
+                            fragment_id = Some(*i);
+                        }
+                    }
+
+                    // Get content reference
+                    if *field_id == KfxSymbol::Content as u64 {
+                        if let IonValue::Struct(content_fields) = field_value {
+                            for (cf_id, cf_value) in content_fields {
+                                if *cf_id == KfxSymbol::Name as u64 {
+                                    content_name = ion_value_to_string(cf_value, extended_symbols, base_symbol_count);
+                                }
+                                if *cf_id == KfxSymbol::Index as u64 {
+                                    if let IonValue::Int(i) = cf_value {
+                                        content_index = Some(*i);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Recurse into nested content_list
+                    if *field_id == KfxSymbol::ContentList as u64 {
+                        extract_fragment_content_from_list(field_value, extended_symbols, base_symbol_count, refs);
+                    }
+                }
+
+                // If we found all info, add to map
+                if let (Some(fid), Some(cname), Some(cindex)) = (fragment_id, content_name, content_index) {
+                    refs.insert(fid, (cname, cindex));
+                }
+            }
+        }
+    }
+}
+
+/// Extract link_to references from a storyline
+fn extract_link_to_refs(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    refs: &mut Vec<LinkToRef>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    let fields = match inner {
+        IonValue::Struct(f) => f,
+        _ => return,
+    };
+
+    for (field_id, field_value) in fields {
+        if *field_id == KfxSymbol::ContentList as u64 {
+            extract_link_to_from_content_list(field_value, extended_symbols, base_symbol_count, refs);
+        }
+    }
+}
+
+/// Recursively extract link_to refs from storyline content_list
+fn extract_link_to_from_content_list(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    refs: &mut Vec<LinkToRef>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if let IonValue::List(items) = value {
+        for item in items {
+            let inner = match item {
+                IonValue::Annotated(_, inner) => inner.as_ref(),
+                _ => item,
+            };
+
+            if let IonValue::Struct(fields) = inner {
+                let mut content_name: Option<String> = None;
+                let mut content_index: Option<i64> = None;
+                let mut inline_refs: Vec<(String, i64, i64)> = Vec::new(); // (anchor_name, offset, length)
+
+                for (field_id, field_value) in fields {
+                    // Look for content: { name: ..., index: ... } - the text reference
+                    if *field_id == KfxSymbol::Content as u64 {
+                        if let IonValue::Struct(content_fields) = field_value {
+                            for (cf_id, cf_value) in content_fields {
+                                if *cf_id == KfxSymbol::Name as u64 {
+                                    content_name = ion_value_to_string(cf_value, extended_symbols, base_symbol_count);
+                                }
+                                if *cf_id == KfxSymbol::Index as u64 {
+                                    if let IonValue::Int(i) = cf_value {
+                                        content_index = Some(*i);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Look for style_events with inline elements (link_to, offset, length)
+                    if *field_id == KfxSymbol::StyleEvents as u64 {
+                        extract_inline_link_to(field_value, extended_symbols, base_symbol_count, &mut inline_refs);
+                    }
+
+                    // Recurse for nested content_list (nested storyline fragments)
+                    if *field_id == KfxSymbol::ContentList as u64 {
+                        extract_link_to_from_content_list(field_value, extended_symbols, base_symbol_count, refs);
+                    }
+                }
+
+                // If we found content info and inline refs, add them
+                if let (Some(cname), Some(cindex)) = (content_name, content_index) {
+                    for (anchor_name, offset, length) in inline_refs {
+                        refs.push(LinkToRef {
+                            anchor_name,
+                            content_name: cname.clone(),
+                            content_index: cindex,
+                            offset,
+                            length,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Extract inline link_to references (offset, length, link_to)
+fn extract_inline_link_to(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    refs: &mut Vec<(String, i64, i64)>,
+) {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    if let IonValue::List(items) = value {
+        for item in items {
+            let inner = match item {
+                IonValue::Annotated(_, inner) => inner.as_ref(),
+                _ => item,
+            };
+
+            if let IonValue::Struct(fields) = inner {
+                let mut link_to: Option<String> = None;
+                let mut offset: Option<i64> = None;
+                let mut length: Option<i64> = None;
+
+                for (field_id, field_value) in fields {
+                    if *field_id == KfxSymbol::LinkTo as u64 {
+                        link_to = ion_value_to_string(field_value, extended_symbols, base_symbol_count);
+                    }
+                    if *field_id == KfxSymbol::Offset as u64 {
+                        if let IonValue::Int(i) = field_value {
+                            offset = Some(*i);
+                        }
+                    }
+                    if *field_id == KfxSymbol::Length as u64 {
+                        if let IonValue::Int(i) = field_value {
+                            length = Some(*i);
+                        }
+                    }
+                }
+
+                if let (Some(anchor_name), Some(off), Some(len)) = (link_to, offset, length) {
+                    refs.push((anchor_name, off, len));
+                }
+            }
+        }
+    }
+}
+
+/// Extract anchor info from an Ion value
+fn extract_anchor_info(
+    value: &boko::kfx::ion::IonValue,
+    extended_symbols: &[String],
+    base_symbol_count: usize,
+    content_map: &HashMap<String, Vec<String>>,
+    fragment_content_map: &HashMap<i64, (String, i64)>,
+    anchor_source_text: &HashMap<String, String>,
+) -> Option<AnchorInfo> {
+    use boko::kfx::ion::IonValue;
+    use boko::kfx::symbols::KfxSymbol;
+
+    let inner = match value {
+        IonValue::Annotated(_, inner) => inner.as_ref(),
+        _ => value,
+    };
+
+    let fields = match inner {
+        IonValue::Struct(f) => f,
+        _ => return None,
+    };
+
+    let mut anchor_name: Option<String> = None;
+    let mut position_id: Option<i64> = None;
+    let mut position_offset: Option<i64> = None;
+    let mut uri: Option<String> = None;
+
+    for (field_id, field_value) in fields {
+        match *field_id as u32 {
+            id if id == KfxSymbol::AnchorName as u32 => {
+                anchor_name = ion_value_to_string(field_value, extended_symbols, base_symbol_count);
+            }
+            id if id == KfxSymbol::Position as u32 => {
+                // position is a struct with id and offset
+                if let IonValue::Struct(pos_fields) = field_value {
+                    for (pos_field_id, pos_field_value) in pos_fields {
+                        match *pos_field_id as u32 {
+                            pid if pid == KfxSymbol::Id as u32 => {
+                                if let IonValue::Int(i) = pos_field_value {
+                                    position_id = Some(*i);
+                                }
+                            }
+                            pid if pid == KfxSymbol::Offset as u32 => {
+                                if let IonValue::Int(i) = pos_field_value {
+                                    position_offset = Some(*i);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            id if id == KfxSymbol::Uri as u32 => {
+                if let IonValue::String(s) = field_value {
+                    uri = Some(s.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let name = anchor_name.unwrap_or_else(|| "(unnamed)".to_string());
+    let source_text = anchor_source_text.get(&name).cloned();
+
+    let destination = if let Some(u) = uri {
+        AnchorDestination::External { uri: u }
+    } else if let Some(id) = position_id {
+        // Try to get destination text by looking up fragment → content mapping
+        let text = fragment_content_map.get(&id).and_then(|(content_name, content_index)| {
+            content_map.get(content_name).and_then(|texts| {
+                texts.get(*content_index as usize).map(|text| {
+                    let start = position_offset.unwrap_or(0) as usize;
+                    let preview: String = text.chars().skip(start).take(60).collect();
+                    preview
+                }).filter(|s| !s.is_empty())
+            })
+        });
+        AnchorDestination::Internal { id, offset: position_offset, text }
+    } else {
+        AnchorDestination::Target
+    };
+
+    Some(AnchorInfo { name, source_text, destination })
 }
 
 /// Parse container info Ion struct to extract index table offset/length
