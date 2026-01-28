@@ -418,8 +418,8 @@ fn dump_kfx_stats(data: &[u8]) -> IonResult<()> {
 
     // Print header
     println!(
-        "{:<25} {:>8} {:>12}  {}",
-        "Type", "Count", "Size", "Details"
+        "{:<25} {:>8} {:>12}  Details",
+        "Type", "Count", "Size"
     );
     println!("{}", "-".repeat(70));
 
@@ -481,17 +481,15 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
     match type_name {
         "location_map" => {
             // locations list inside a wrapper struct
-            if let IonValue::List(items) = inner {
-                if let Some(IonValue::Struct(fields)) = items.first() {
+            if let IonValue::List(items) = inner
+                && let Some(IonValue::Struct(fields)) = items.first() {
                     for (fid, fval) in fields {
-                        if *fid == KfxSymbol::Locations as u64 {
-                            if let IonValue::List(locations) = fval {
+                        if *fid == KfxSymbol::Locations as u64
+                            && let IonValue::List(locations) = fval {
                                 return Some(format!("{} locations", locations.len()));
                             }
-                        }
                     }
                 }
-            }
         }
         "position_id_map" => {
             // List of {pid, eid} structs
@@ -506,11 +504,10 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
                 for item in items {
                     if let IonValue::Struct(fields) = item {
                         for (fid, fval) in fields {
-                            if *fid == KfxSymbol::Contains as u64 {
-                                if let IonValue::List(contains) = fval {
+                            if *fid == KfxSymbol::Contains as u64
+                                && let IonValue::List(contains) = fval {
                                     total_contains += contains.len();
                                 }
-                            }
                         }
                     }
                 }
@@ -530,8 +527,8 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
             if let IonValue::Struct(fields) = nav_struct {
                 for (fid, fval) in fields {
                     // NavContainers = 392
-                    if *fid == 392 {
-                        if let IonValue::List(containers) = fval {
+                    if *fid == 392
+                        && let IonValue::List(containers) = fval {
                             let mut details = Vec::new();
                             for container in containers {
                                 // Unwrap annotation (nav_container::)
@@ -543,8 +540,8 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
                                     let mut nav_type = None;
                                     let mut entry_count = 0;
                                     for (cfid, cfval) in cfields {
-                                        if *cfid == KfxSymbol::NavType as u64 {
-                                            if let IonValue::Symbol(sym) = cfval {
+                                        if *cfid == KfxSymbol::NavType as u64
+                                            && let IonValue::Symbol(sym) = cfval {
                                                 nav_type = Some(match *sym as u32 {
                                                     s if s == KfxSymbol::Toc as u32 => "toc",
                                                     s if s == KfxSymbol::Landmarks as u32 => {
@@ -559,12 +556,10 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
                                                     _ => "other",
                                                 });
                                             }
-                                        }
-                                        if *cfid == KfxSymbol::Entries as u64 {
-                                            if let IonValue::List(entries) = cfval {
+                                        if *cfid == KfxSymbol::Entries as u64
+                                            && let IonValue::List(entries) = cfval {
                                                 entry_count = count_nav_entries(entries);
                                             }
-                                        }
                                     }
                                     if let Some(nt) = nav_type {
                                         details.push(format!("{}:{}", nt, entry_count));
@@ -573,7 +568,6 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
                             }
                             return Some(details.join(", "));
                         }
-                    }
                 }
             }
         }
@@ -581,23 +575,21 @@ fn extract_singleton_details(entity_data: &[u8], type_name: &str) -> Option<Stri
             // container_list with entity name lists (uses Contains field)
             if let IonValue::Struct(fields) = inner {
                 for (fid, fval) in fields {
-                    if *fid == KfxSymbol::ContainerList as u64 {
-                        if let IonValue::List(containers) = fval {
+                    if *fid == KfxSymbol::ContainerList as u64
+                        && let IonValue::List(containers) = fval {
                             let mut total_entities = 0;
                             for container in containers {
                                 if let IonValue::Struct(cfields) = container {
                                     for (cfid, cfval) in cfields {
-                                        if *cfid == KfxSymbol::Contains as u64 {
-                                            if let IonValue::List(names) = cfval {
+                                        if *cfid == KfxSymbol::Contains as u64
+                                            && let IonValue::List(names) = cfval {
                                                 total_entities += names.len();
                                             }
-                                        }
                                     }
                                 }
                             }
                             return Some(format!("{} entity refs", total_entities));
                         }
-                    }
                 }
             }
         }
@@ -616,11 +608,10 @@ fn count_nav_entries(entries: &[boko::kfx::ion::IonValue]) -> usize {
     for entry in entries {
         if let IonValue::Struct(fields) = entry {
             for (fid, fval) in fields {
-                if *fid == KfxSymbol::Entries as u64 {
-                    if let IonValue::List(children) = fval {
+                if *fid == KfxSymbol::Entries as u64
+                    && let IonValue::List(children) = fval {
                         count += count_nav_entries(children);
                     }
-                }
             }
         }
     }
@@ -782,8 +773,8 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
         };
 
         // Collect content entities
-        if type_idnum == KfxSymbol::Content as u32 {
-            if let Some((name, texts)) =
+        if type_idnum == KfxSymbol::Content as u32
+            && let Some((name, texts)) =
                 extract_content_texts(&value, &extended_symbols, base_symbol_count)
             {
                 // Also build concatenated text for destination lookup
@@ -791,7 +782,6 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
                 content_by_id.insert(id_idnum as i64, full_text);
                 content_map.insert(name, texts);
             }
-        }
 
         // Collect link_to references and fragment content mappings from storylines
         if type_idnum == KfxSymbol::Storyline as u32 {
@@ -815,8 +805,8 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
     // Build anchor_name → source text mapping
     let mut anchor_source_text: HashMap<String, String> = HashMap::new();
     for link_ref in &link_to_refs {
-        if let Some(content_texts) = content_map.get(&link_ref.content_name) {
-            if let Some(content_text) = content_texts.get(link_ref.content_index as usize) {
+        if let Some(content_texts) = content_map.get(&link_ref.content_name)
+            && let Some(content_text) = content_texts.get(link_ref.content_index as usize) {
                 let start = link_ref.offset as usize;
                 // offset and length are in characters
                 let text: String = content_text
@@ -826,7 +816,6 @@ fn report_anchors(data: &[u8]) -> IonResult<()> {
                     .collect();
                 anchor_source_text.insert(link_ref.anchor_name.clone(), text);
             }
-        }
     }
 
     // Now collect anchors with full info
@@ -1063,13 +1052,12 @@ fn report_toc(data: &[u8]) -> IonResult<()> {
         };
 
         // Collect content entities
-        if type_idnum == KfxSymbol::Content as u32 {
-            if let Some((name, texts)) =
+        if type_idnum == KfxSymbol::Content as u32
+            && let Some((name, texts)) =
                 extract_content_texts(&value, &extended_symbols, base_symbol_count)
             {
                 content_map.insert(name, texts);
             }
-        }
 
         // Collect fragment content mappings and container types from storylines
         if type_idnum == KfxSymbol::Storyline as u32 {
@@ -1322,11 +1310,10 @@ fn extract_toc_entries(
                     // representation is a struct with label field
                     if let IonValue::Struct(rep_fields) = field_value {
                         for (rep_field_id, rep_field_value) in rep_fields {
-                            if *rep_field_id as u32 == KfxSymbol::Label as u32 {
-                                if let IonValue::String(s) = rep_field_value {
+                            if *rep_field_id as u32 == KfxSymbol::Label as u32
+                                && let IonValue::String(s) = rep_field_value {
                                     label = s.clone();
                                 }
-                            }
                         }
                     }
                 }
@@ -1453,15 +1440,14 @@ fn extract_content_texts(
         if *field_id == KfxSymbol::Name as u64 {
             name = ion_value_to_string(field_value, extended_symbols, base_symbol_count);
         }
-        if *field_id == KfxSymbol::ContentList as u64 {
-            if let IonValue::List(items) = field_value {
+        if *field_id == KfxSymbol::ContentList as u64
+            && let IonValue::List(items) = field_value {
                 for item in items {
                     if let IonValue::String(s) = item {
                         texts.push(s.clone());
                     }
                 }
             }
-        }
     }
 
     name.map(|n| (n, texts))
@@ -1527,23 +1513,21 @@ fn extract_fragment_content_from_list(
 
                 for (field_id, field_value) in fields {
                     // Get fragment ID
-                    if *field_id == KfxSymbol::Id as u64 {
-                        if let IonValue::Int(i) = field_value {
+                    if *field_id == KfxSymbol::Id as u64
+                        && let IonValue::Int(i) = field_value {
                             fragment_id = Some(*i);
                         }
-                    }
 
                     // Get container type
-                    if *field_id == KfxSymbol::Type as u64 {
-                        if let IonValue::Symbol(sym_id) = field_value {
+                    if *field_id == KfxSymbol::Type as u64
+                        && let IonValue::Symbol(sym_id) = field_value {
                             container_type =
                                 Some(resolve_symbol(*sym_id, extended_symbols, base_symbol_count));
                         }
-                    }
 
                     // Get content reference
-                    if *field_id == KfxSymbol::Content as u64 {
-                        if let IonValue::Struct(content_fields) = field_value {
+                    if *field_id == KfxSymbol::Content as u64
+                        && let IonValue::Struct(content_fields) = field_value {
                             for (cf_id, cf_value) in content_fields {
                                 if *cf_id == KfxSymbol::Name as u64 {
                                     content_name = ion_value_to_string(
@@ -1552,14 +1536,12 @@ fn extract_fragment_content_from_list(
                                         base_symbol_count,
                                     );
                                 }
-                                if *cf_id == KfxSymbol::Index as u64 {
-                                    if let IonValue::Int(i) = cf_value {
+                                if *cf_id == KfxSymbol::Index as u64
+                                    && let IonValue::Int(i) = cf_value {
                                         content_index = Some(*i);
                                     }
-                                }
                             }
                         }
-                    }
 
                     // Recurse into nested content_list
                     if *field_id == KfxSymbol::ContentList as u64 {
@@ -1645,8 +1627,8 @@ fn extract_link_to_from_content_list(
 
                 for (field_id, field_value) in fields {
                     // Look for content: { name: ..., index: ... } - the text reference
-                    if *field_id == KfxSymbol::Content as u64 {
-                        if let IonValue::Struct(content_fields) = field_value {
+                    if *field_id == KfxSymbol::Content as u64
+                        && let IonValue::Struct(content_fields) = field_value {
                             for (cf_id, cf_value) in content_fields {
                                 if *cf_id == KfxSymbol::Name as u64 {
                                     content_name = ion_value_to_string(
@@ -1655,14 +1637,12 @@ fn extract_link_to_from_content_list(
                                         base_symbol_count,
                                     );
                                 }
-                                if *cf_id == KfxSymbol::Index as u64 {
-                                    if let IonValue::Int(i) = cf_value {
+                                if *cf_id == KfxSymbol::Index as u64
+                                    && let IonValue::Int(i) = cf_value {
                                         content_index = Some(*i);
                                     }
-                                }
                             }
                         }
-                    }
 
                     // Look for style_events with inline elements (link_to, offset, length)
                     if *field_id == KfxSymbol::StyleEvents as u64 {
@@ -1729,16 +1709,14 @@ fn extract_inline_link_to(
                         link_to =
                             ion_value_to_string(field_value, extended_symbols, base_symbol_count);
                     }
-                    if *field_id == KfxSymbol::Offset as u64 {
-                        if let IonValue::Int(i) = field_value {
+                    if *field_id == KfxSymbol::Offset as u64
+                        && let IonValue::Int(i) = field_value {
                             offset = Some(*i);
                         }
-                    }
-                    if *field_id == KfxSymbol::Length as u64 {
-                        if let IonValue::Int(i) = field_value {
+                    if *field_id == KfxSymbol::Length as u64
+                        && let IonValue::Int(i) = field_value {
                             length = Some(*i);
                         }
-                    }
                 }
 
                 if let (Some(anchor_name), Some(off), Some(len)) = (link_to, offset, length) {
@@ -2019,9 +1997,9 @@ fn build_maps(
             let entity_data = &data[abs_offset..abs_offset + entity_len];
 
             // Check for ENTY format
-            if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY" {
-                if let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize) {
-                    if entity_header_len < entity_data.len() {
+            if entity_data.len() >= 10 && &entity_data[0..4] == b"ENTY"
+                && let Some(entity_header_len) = read_u32_le(entity_data, 6).map(|v| v as usize)
+                    && entity_header_len < entity_data.len() {
                         let ion_data = &entity_data[entity_header_len..];
 
                         let mut parser = IonParser::new(ion_data);
@@ -2030,15 +2008,12 @@ fn build_maps(
                                 extract_name_from_ion(&value, extended_symbols, base_symbol_count);
 
                             // For storyline entities, extract fragment IDs from content_list
-                            if type_idnum == KfxSymbol::Storyline as u32 {
-                                if let Some(story_name) = &name {
+                            if type_idnum == KfxSymbol::Storyline as u32
+                                && let Some(story_name) = &name {
                                     extract_fragment_ids(&value, story_name, &mut fragment_map);
                                 }
-                            }
                         }
                     }
-                }
-            }
         }
 
         entity_map.insert(id_idnum as u64, EntityInfo { entity_type, name });
@@ -2105,11 +2080,10 @@ fn extract_id_from_content_item(
 
     if let IonValue::Struct(fields) = inner {
         for (field_id, field_value) in fields {
-            if *field_id == KfxSymbol::Id as u64 {
-                if let IonValue::Int(id) = field_value {
+            if *field_id == KfxSymbol::Id as u64
+                && let IonValue::Int(id) = field_value {
                     fragment_map.insert(*id as u64, story_name.to_string());
                 }
-            }
             // Recurse into nested content_lists
             if *field_id == KfxSymbol::ContentList as u64 {
                 extract_fragment_ids_from_list(field_value, story_name, fragment_map);
@@ -2200,8 +2174,8 @@ fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
     if let IonValue::Struct(fields) = inner {
         for (field_id, field_value) in fields {
             // Symbol ID 7 = "symbols"
-            if *field_id == 7 {
-                if let IonValue::List(items) = field_value {
+            if *field_id == 7
+                && let IonValue::List(items) = field_value {
                     return items
                         .iter()
                         .filter_map(|item| {
@@ -2213,7 +2187,6 @@ fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
                         })
                         .collect();
                 }
-            }
         }
     }
 
@@ -2434,15 +2407,14 @@ fn element_to_ion_text_inner(
                         }
                     }
                     // Resolve integer entity references (reading_order bounds)
-                    else if is_int_entity_ref_field(field) {
-                        if let Some(info) = maps.entity_map.get(&(i as u64)) {
+                    else if is_int_entity_ref_field(field)
+                        && let Some(info) = maps.entity_map.get(&(i as u64)) {
                             if let Some(name) = &info.name {
                                 result.push_str(&format!(" /* {}:{} */", info.entity_type, name));
                             } else {
                                 result.push_str(&format!(" /* {} */", info.entity_type));
                             }
                         }
-                    }
                 }
             } else if let Some(i) = elem.as_int() {
                 result.push_str(&format!("{}", i));

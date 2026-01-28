@@ -468,11 +468,10 @@ fn convert(
     };
 
     // Validate input format
-    if let Some(fmt) = input_format {
-        if !fmt.can_import() {
+    if let Some(fmt) = input_format
+        && !fmt.can_import() {
             return Err(format!("{:?} cannot be used as input format", fmt));
         }
-    }
 
     // Determine output format
     let output_format = if let Some(fmt) = to_format {
@@ -777,11 +776,10 @@ fn dump_ir_tree(book: &mut Book, path: &str, opts: &DumpOptions) -> Result<(), S
 
 fn dump_node_tree(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: usize) {
     // Check depth limit
-    if let Some(max_depth) = opts.depth {
-        if depth > max_depth {
+    if let Some(max_depth) = opts.depth
+        && depth > max_depth {
             return;
         }
-    }
 
     let node = chapter.node(id).unwrap();
     let indent = "  ".repeat(depth);
