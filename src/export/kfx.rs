@@ -1807,18 +1807,22 @@ fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
 
     while location_char_pos < total_chars {
         // Find the content fragment that contains this character position
-        let content_id = content_ranges
+        // and calculate the offset within that content item
+        let (content_id, offset_within_content) = content_ranges
             .iter()
             .find(|(_, start, end)| location_char_pos >= *start && location_char_pos < *end)
-            .map(|(id, _, _)| *id)
+            .map(|(id, start, _)| (*id, location_char_pos - start))
             .unwrap_or_else(|| {
                 // Fallback to last content fragment if somehow out of range
-                content_ranges.last().map(|(id, _, _)| *id).unwrap_or(0)
+                content_ranges
+                    .last()
+                    .map(|(id, start, _)| (*id, location_char_pos.saturating_sub(*start)))
+                    .unwrap_or((0, 0))
             });
 
         let entry = IonValue::Struct(vec![
             (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
-            (KfxSymbol::Offset as u64, IonValue::Int(0)),
+            (KfxSymbol::Offset as u64, IonValue::Int(offset_within_content as i64)),
         ]);
         location_entries.push(entry);
         location_char_pos += CHARS_PER_LOCATION;
