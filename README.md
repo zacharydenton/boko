@@ -1,5 +1,9 @@
 # boko
 
+[![CI](https://github.com/zacharydenton/boko/actions/workflows/ci.yml/badge.svg)](https://github.com/zacharydenton/boko/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/boko.svg)](https://crates.io/crates/boko)
+[![docs.rs](https://docs.rs/boko/badge.svg)](https://docs.rs/boko)
+
 A fast Rust library and CLI for converting between ebook formats.
 
 ## Features
