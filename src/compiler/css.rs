@@ -617,15 +617,15 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
     }
 
     // Try ID token (which is how cssparser parses hex colors like #ff0000)
-    if let Ok(Token::IDHash(hash)) = input.try_parse(|i| i.next().cloned())
-        && let Some(color) = parse_hex_color(hash.as_ref())
-    {
-        return Some(color);
-    }
-
-    // Try hash token
-    if let Ok(Token::Hash(hash)) = input.try_parse(|i| i.next().cloned())
-        && let Some(color) = parse_hex_color(hash.as_ref())
+    // Or Hash token (for colors starting with digits like #222299)
+    // We must check the token type INSIDE try_parse, otherwise try_parse won't reset
+    // the position when we get the wrong token variant.
+    if let Ok(hash) = input.try_parse(|i| -> Result<_, ParseError<'_, ()>> {
+        match i.next()? {
+            Token::IDHash(h) | Token::Hash(h) => Ok(h.clone()),
+            _ => Err(i.new_custom_error(())),
+        }
+    }) && let Some(color) = parse_hex_color(hash.as_ref())
     {
         return Some(color);
     }
@@ -1732,3 +1732,4 @@ mod tests {
         }
     }
 }
+

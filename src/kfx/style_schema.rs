@@ -1326,15 +1326,20 @@ impl ValueTransform {
                 let color = parse_css_color(raw)?;
                 match output_format {
                     ColorFormat::PackedInt => {
-                        let packed =
-                            ((color.0 as i64) << 16) | ((color.1 as i64) << 8) | (color.2 as i64);
+                        // KFX uses ARGB format with 0xFF alpha for opaque colors
+                        let packed = (0xFF_i64 << 24)
+                            | ((color.0 as i64) << 16)
+                            | ((color.1 as i64) << 8)
+                            | (color.2 as i64);
                         Some(KfxValue::Integer(packed))
                     }
                     ColorFormat::RgbStruct => {
                         // Would need a KfxValue variant for this
-                        Some(KfxValue::Integer(
-                            ((color.0 as i64) << 16) | ((color.1 as i64) << 8) | (color.2 as i64),
-                        ))
+                        let packed = (0xFF_i64 << 24)
+                            | ((color.0 as i64) << 16)
+                            | ((color.1 as i64) << 8)
+                            | (color.2 as i64);
+                        Some(KfxValue::Integer(packed))
                     }
                 }
             }
@@ -3144,12 +3149,14 @@ mod tests {
         let schema = StyleSchema::standard();
         let rule = schema.get("color").unwrap();
 
-        // Colors should output packed integers, not strings
+        // Colors should output packed ARGB integers with 0xFF alpha
+        // 0xFFFF0000 = 4294901760
         let result = rule.transform.apply("#ff0000");
-        assert!(matches!(result, Some(KfxValue::Integer(0xFF0000))));
+        assert!(matches!(result, Some(KfxValue::Integer(4294901760))));
 
+        // 0xFF0080FF = 4278223103
         let result = rule.transform.apply("rgb(0, 128, 255)");
-        assert!(matches!(result, Some(KfxValue::Integer(0x0080FF))));
+        assert!(matches!(result, Some(KfxValue::Integer(4278223103))));
     }
 
     #[test]
