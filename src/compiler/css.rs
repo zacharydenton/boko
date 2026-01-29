@@ -245,7 +245,7 @@ impl Declaration {
 
             // Font properties
             "font-family" => parse_font_family(input).map(Self::FontFamily),
-            "font-size" => parse_length(input).map(Self::FontSize),
+            "font-size" => parse_font_size(input).map(Self::FontSize),
             "font-weight" => parse_font_weight(input).map(Self::FontWeight),
             "font-style" => parse_font_style(input).map(Self::FontStyle),
             "font-variant" | "font-variant-caps" => {
@@ -758,6 +758,45 @@ fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
         Token::Ident(ident) => match ident.as_ref() {
             "auto" => Some(Length::Auto),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Parse font-size value (handles lengths, percentages, and keywords).
+///
+/// Supports absolute keywords: xx-small, x-small, small, medium, large, x-large, xx-large
+/// Supports relative keywords: smaller, larger
+fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
+    match input.next().ok()? {
+        Token::Dimension { value, unit, .. } => {
+            let length = match unit.as_ref() {
+                "px" => Length::Px(*value),
+                "em" => Length::Em(*value),
+                "rem" => Length::Rem(*value),
+                "%" => Length::Percent(*value),
+                "pt" => Length::Px(*value * 96.0 / 72.0), // Convert pt to px
+                _ => return None,
+            };
+            Some(length)
+        }
+        Token::Percentage { unit_value, .. } => Some(Length::Percent(*unit_value * 100.0)),
+        Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
+        Token::Ident(ident) => match ident.as_ref() {
+            // Absolute size keywords (based on 16px default)
+            // Values from CSS spec: https://www.w3.org/TR/css-fonts-3/#absolute-size-value
+            "xx-small" => Some(Length::Rem(0.5625)),  // 9px / 16px
+            "x-small" => Some(Length::Rem(0.625)),    // 10px / 16px
+            "small" => Some(Length::Rem(0.8125)),     // 13px / 16px
+            "medium" => Some(Length::Rem(1.0)),       // 16px / 16px
+            "large" => Some(Length::Rem(1.125)),      // 18px / 16px
+            "x-large" => Some(Length::Rem(1.5)),      // 24px / 16px
+            "xx-large" => Some(Length::Rem(2.0)),     // 32px / 16px
+            "xxx-large" => Some(Length::Rem(3.0)),    // 48px / 16px (CSS4)
+            // Relative size keywords (relative to parent, use em)
+            "smaller" => Some(Length::Em(0.833)),     // ~1/1.2
+            "larger" => Some(Length::Em(1.2)),
             _ => None,
         },
         _ => None,
@@ -1723,6 +1762,55 @@ mod tests {
             assert!((*v - 16.0).abs() < 0.001);
         } else {
             panic!("Expected px length");
+        }
+    }
+
+    #[test]
+    fn test_parse_font_size_keywords() {
+        // Test absolute size keywords
+        let css = ".a { font-size: small; } .b { font-size: large; } .c { font-size: x-small; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        // small = 0.8125rem
+        if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[0].declarations[0] {
+            assert!((*v - 0.8125).abs() < 0.001, "small should be 0.8125rem, got {}", v);
+        } else {
+            panic!("Expected rem length for 'small'");
+        }
+
+        // large = 1.125rem
+        if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[1].declarations[0] {
+            assert!((*v - 1.125).abs() < 0.001, "large should be 1.125rem, got {}", v);
+        } else {
+            panic!("Expected rem length for 'large'");
+        }
+
+        // x-small = 0.625rem
+        if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[2].declarations[0] {
+            assert!((*v - 0.625).abs() < 0.001, "x-small should be 0.625rem, got {}", v);
+        } else {
+            panic!("Expected rem length for 'x-small'");
+        }
+    }
+
+    #[test]
+    fn test_parse_font_size_relative_keywords() {
+        // Test relative size keywords
+        let css = ".a { font-size: smaller; } .b { font-size: larger; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        // smaller = 0.833em (relative to parent)
+        if let Declaration::FontSize(Length::Em(v)) = &stylesheet.rules[0].declarations[0] {
+            assert!((*v - 0.833).abs() < 0.001, "smaller should be 0.833em, got {}", v);
+        } else {
+            panic!("Expected em length for 'smaller'");
+        }
+
+        // larger = 1.2em
+        if let Declaration::FontSize(Length::Em(v)) = &stylesheet.rules[1].declarations[0] {
+            assert!((*v - 1.2).abs() < 0.001, "larger should be 1.2em, got {}", v);
+        } else {
+            panic!("Expected em length for 'larger'");
         }
     }
 
