@@ -124,6 +124,20 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         role = mapped_role;
     }
 
+    // Check for layout_hints to detect Figure and Caption elements (schema-driven).
+    if let Some(layout_hints) = get_field(fields, sym!(LayoutHints))
+        && let Some(hints_list) = layout_hints.as_list()
+    {
+        for hint in hints_list {
+            if let Some(hint_id) = hint.as_symbol() {
+                if let Some(mapped_role) = schema().role_for_layout_hint(hint_id as u32) {
+                    role = mapped_role;
+                    break;
+                }
+            }
+        }
+    }
+
     // Get element ID
     let id = get_field(fields, sym!(Id)).and_then(|v| v.as_int());
 

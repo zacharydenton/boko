@@ -245,6 +245,8 @@ pub struct KfxSchema {
     span_rules: Vec<SpanRule>,
     /// Bidirectional landmark mapping: (IR LandmarkType, KFX symbol)
     landmark_mapping: Vec<(LandmarkType, KfxSymbol)>,
+    /// Layout hint → Role mapping (for import: layout_hints: [figure] → Role::Figure)
+    layout_hint_mapping: HashMap<u32, Role>,
 }
 
 /// Rule for interpreting style_event spans.
@@ -287,11 +289,26 @@ impl KfxSchema {
             export_strategy_table: HashMap::new(),
             span_rules: Vec::new(),
             landmark_mapping: Vec::new(),
+            layout_hint_mapping: HashMap::new(),
         };
         schema.register_element_rules();
         schema.register_span_rules();
         schema.register_landmark_rules();
+        schema.register_layout_hint_rules();
         schema
+    }
+
+    /// Register layout_hint → Role mappings for import.
+    ///
+    /// When importing KFX, elements with `layout_hints: [figure]` etc.
+    /// are recognized and mapped back to their IR Role.
+    fn register_layout_hint_rules(&mut self) {
+        // layout_hints: [figure] → Role::Figure
+        self.layout_hint_mapping
+            .insert(KfxSymbol::Figure as u32, Role::Figure);
+        // layout_hints: [caption] → Role::Caption
+        self.layout_hint_mapping
+            .insert(KfxSymbol::Caption as u32, Role::Caption);
     }
 
     /// Register element (block-level) rules.
@@ -450,6 +467,26 @@ impl KfxSchema {
                 semantic_type: "block_quote",
             },
         );
+
+        // Figure - container for images with captions
+        // Uses type: text with layout_hints: [figure] (added in storyline.rs)
+        self.export_strategy_table.insert(
+            Role::Figure,
+            Strategy::Structure {
+                role: Role::Figure,
+                kfx_type: KfxSymbol::Text,
+            },
+        );
+
+        // Caption - figcaption/caption element
+        // Uses type: text with layout_hints: [caption] (added in storyline.rs)
+        self.export_strategy_table.insert(
+            Role::Caption,
+            Strategy::Structure {
+                role: Role::Caption,
+                kfx_type: KfxSymbol::Text,
+            },
+        );
     }
 
     /// Register span (inline) rules for style_events.
@@ -577,6 +614,14 @@ impl KfxSchema {
             }
         }
         None
+    }
+
+    /// Look up the IR Role for a given layout_hints symbol.
+    ///
+    /// Used during import to recognize elements like `layout_hints: [figure]`
+    /// and map them back to their IR Role (e.g., Role::Figure).
+    pub fn role_for_layout_hint(&self, hint_symbol: u32) -> Option<Role> {
+        self.layout_hint_mapping.get(&hint_symbol).copied()
     }
 
     /// Resolve a KFX element to IR Role.
@@ -974,6 +1019,23 @@ mod tests {
         ));
         assert_eq!(strategy.kfx_type(), KfxSymbol::Text);
         assert_eq!(strategy.semantic_type(), Some("block_quote"));
+    }
+
+    #[test]
+    fn test_layout_hint_to_role_mapping() {
+        let schema = KfxSchema::new();
+        // layout_hints: [figure] → Role::Figure
+        assert_eq!(
+            schema.role_for_layout_hint(KfxSymbol::Figure as u32),
+            Some(Role::Figure)
+        );
+        // layout_hints: [caption] → Role::Caption
+        assert_eq!(
+            schema.role_for_layout_hint(KfxSymbol::Caption as u32),
+            Some(Role::Caption)
+        );
+        // Unknown hint returns None
+        assert_eq!(schema.role_for_layout_hint(9999), None);
     }
 
     #[test]
