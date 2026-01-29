@@ -710,8 +710,9 @@ fn walk_node_for_export(
         .unwrap_or(false);
 
     // Check if this is an inline role that should become a span (style_event)
-    // Exception: inline-block elements should become block containers
-    if sch.is_inline_role(node.role) && !has_block_display {
+    // Links are ALWAYS emitted as spans - KFX requires link_to to be in style_events
+    // (even for block-display links like TOC entries)
+    if node.role == Role::Link || (sch.is_inline_role(node.role) && !has_block_display) {
         emit_span_for_export(chapter, node_id, node, sch, ctx, stream);
         return;
     }
