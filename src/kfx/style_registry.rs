@@ -330,10 +330,12 @@ impl<'a> StyleBuilder<'a> {
 
     /// Apply a single (non-shorthand) property.
     fn apply_single(&mut self, property: &str, value: &str) {
-        if let Some(rule) = self.schema.get(property)
-            && let Some(kfx_value) = rule.transform.apply(value)
-        {
-            self.style.set(rule.kfx_symbol, kfx_value);
+        if let Some(rules) = self.schema.get(property) {
+            for rule in rules {
+                if let Some(kfx_value) = rule.transform.apply(value) {
+                    self.style.set(rule.kfx_symbol, kfx_value);
+                }
+            }
         }
     }
 
@@ -359,30 +361,6 @@ impl<'a> StyleBuilder<'a> {
                     self.apply_single(rule.ir_key, &css_value);
                 }
             }
-        }
-
-        // Post-processing: yj.vertical_align for top/middle/bottom
-        // The schema only supports one rule per key, so we handle this separately.
-        // This emits yj.vertical_align for table cell alignment.
-        use crate::kfx::style_schema::KfxValue;
-        match ir_style.vertical_align {
-            ir_style::VerticalAlign::Top => {
-                self.style
-                    .set(KfxSymbol::YjVerticalAlign, KfxValue::Symbol(KfxSymbol::Top));
-            }
-            ir_style::VerticalAlign::Middle => {
-                self.style.set(
-                    KfxSymbol::YjVerticalAlign,
-                    KfxValue::Symbol(KfxSymbol::Center),
-                );
-            }
-            ir_style::VerticalAlign::Bottom => {
-                self.style.set(
-                    KfxSymbol::YjVerticalAlign,
-                    KfxValue::Symbol(KfxSymbol::Bottom),
-                );
-            }
-            _ => {}
         }
 
         self
@@ -469,6 +447,7 @@ fn expand_font_shorthand(value: &str) -> Option<Vec<(String, String)>> {
     }
 }
 
+/// Convert an IR Length to a KFX Dimensioned value, preserving the original unit.
 // ============================================================================
 // Tests
 // ============================================================================

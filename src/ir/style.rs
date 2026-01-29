@@ -277,6 +277,17 @@ enum_property! {
 }
 
 enum_property! {
+    /// CSS border-collapse values for tables.
+    pub enum BorderCollapse {
+        /// Borders are separated (CSS default for tables).
+        #[default]
+        Separate => "separate",
+        /// Adjacent borders are collapsed into a single border.
+        Collapse => "collapse",
+    }
+}
+
+enum_property! {
     /// Text alignment.
     pub enum TextAlign {
         #[default]
@@ -547,6 +558,10 @@ pub struct ComputedStyle {
     // Phase 10: Text wrapping
     pub word_break: WordBreak,
     pub overflow_wrap: OverflowWrap,
+
+    // Phase 11: Table properties
+    pub border_collapse: BorderCollapse,
+    pub border_spacing: Length,
 }
 
 impl ComputedStyle {

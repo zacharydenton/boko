@@ -16,9 +16,10 @@ use selectors::parser::Selector;
 
 use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
-    BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle, DecorationStyle, Display,
-    Float, FontStyle, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, OverflowWrap,
-    StylePool, TextAlign, TextTransform, VerticalAlign, Visibility, WordBreak,
+    BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle,
+    DecorationStyle, Display, Float, FontStyle, FontWeight, Hyphens, Length, ListStylePosition,
+    ListStyleType, OverflowWrap, StylePool, TextAlign, TextTransform, VerticalAlign, Visibility,
+    WordBreak,
 };
 
 // ============================================================================
@@ -131,6 +132,10 @@ pub enum Declaration {
     // List properties
     ListStyleType(ListStyleType),
     ListStylePosition(ListStylePosition),
+
+    // Table properties
+    BorderCollapse(BorderCollapse),
+    BorderSpacing(Length),
 }
 
 /// Vertical alignment value.
@@ -275,6 +280,12 @@ impl Declaration {
             "list-style-position" => {
                 parse_list_style_position(input).map(Declaration::ListStylePosition)
             }
+
+            // Table properties
+            "border-collapse" => {
+                parse_border_collapse(input).map(Declaration::BorderCollapse)
+            }
+            "border-spacing" => parse_length(input).map(Declaration::BorderSpacing),
 
             // Shorthands (margin/padding) are handled separately
             "margin" | "padding" => None,
@@ -1072,6 +1083,15 @@ fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosi
     }
 }
 
+fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapse> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.as_ref() {
+        "collapse" => Some(BorderCollapse::Collapse),
+        "separate" => Some(BorderCollapse::Separate),
+        _ => None,
+    }
+}
+
 fn parse_visibility(input: &mut Parser<'_, '_>) -> Option<Visibility> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
@@ -1492,6 +1512,10 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         // List properties
         Declaration::ListStyleType(lst) => style.list_style_type = *lst,
         Declaration::ListStylePosition(p) => style.list_style_position = *p,
+
+        // Table properties
+        Declaration::BorderCollapse(bc) => style.border_collapse = *bc,
+        Declaration::BorderSpacing(l) => style.border_spacing = *l,
     }
 }
 

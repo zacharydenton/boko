@@ -100,6 +100,10 @@ pub enum ValueTransform {
         /// Minimum value (KFX enforces min of 1 for orphans/widows)
         min_value: Option<i64>,
     },
+
+    /// Preserve the original CSS unit as a KFX dimensioned value.
+    /// Example: "10px" → { value: 10, unit: px }, "1.5em" → { value: 1.5, unit: em }
+    PreserveUnit,
 }
 
 /// KFX value representation for transforms.
@@ -279,6 +283,9 @@ pub enum IrField {
     Widows,
     // Phase 11: Text wrapping
     WordBreak,
+    // Phase 12: Table properties
+    BorderCollapse,
+    BorderSpacing,
 }
 
 /// Declarative definition for how a style property maps from IR to KFX.
@@ -306,8 +313,8 @@ pub struct StylePropertyRule {
 
 /// The master schema for style property mappings.
 pub struct StyleSchema {
-    /// Fast lookup from IR key -> Rule
-    rules: HashMap<&'static str, StylePropertyRule>,
+    /// Fast lookup from IR key -> Rules (multiple rules per key supported)
+    rules: HashMap<&'static str, Vec<StylePropertyRule>>,
 }
 
 impl Default for StyleSchema {
@@ -326,22 +333,28 @@ impl StyleSchema {
 
     /// Register a property rule.
     pub fn register(&mut self, rule: StylePropertyRule) {
-        self.rules.insert(rule.ir_key, rule);
+        self.rules.entry(rule.ir_key).or_default().push(rule);
     }
 
-    /// Look up a rule by IR key.
-    pub fn get(&self, ir_key: &str) -> Option<&StylePropertyRule> {
-        self.rules.get(ir_key)
+    /// Look up rules by IR key.
+    pub fn get(&self, ir_key: &str) -> Option<&[StylePropertyRule]> {
+        self.rules.get(ir_key).map(|v| v.as_slice())
     }
 
-    /// Get all rules.
+    /// Look up the first rule by IR key (convenience for single-rule properties).
+    #[cfg(test)]
+    pub fn get_first(&self, ir_key: &str) -> Option<&StylePropertyRule> {
+        self.rules.get(ir_key).and_then(|v| v.first())
+    }
+
+    /// Get all rules (flattened).
     pub fn rules(&self) -> impl Iterator<Item = &StylePropertyRule> {
-        self.rules.values()
+        self.rules.values().flatten()
     }
 
     /// Get rules that have IR field mappings (for schema-driven IR extraction).
     pub fn ir_mapped_rules(&self) -> impl Iterator<Item = &StylePropertyRule> {
-        self.rules.values().filter(|r| r.ir_field.is_some())
+        self.rules.values().flatten().filter(|r| r.ir_field.is_some())
     }
 
     /// Get the standard KFX style schema (cached).
@@ -629,9 +642,19 @@ impl StyleSchema {
             context: StyleContext::InlineSafe,
         });
 
-        // NOTE: yj.vertical_align for top/middle/bottom is handled separately
-        // in StyleBuilder::ingest_ir_style() since the schema only supports
-        // one rule per key.
+        // vertical-align → yj.vertical_align (for table cell alignment)
+        // Multiple rules per key are now supported.
+        schema.register(StylePropertyRule {
+            ir_key: "vertical-align",
+            ir_field: None, // Don't extract twice from IR
+            kfx_symbol: KfxSymbol::YjVerticalAlign,
+            transform: ValueTransform::Map(vec![
+                ("top".into(), KfxValue::Symbol(KfxSymbol::Top)),
+                ("middle".into(), KfxValue::Symbol(KfxSymbol::Center)),
+                ("bottom".into(), KfxValue::Symbol(KfxSymbol::Bottom)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
 
         // ====================================================================
         // Phase 1: High-Priority Text Properties
@@ -1240,6 +1263,40 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
+        // ====================================================================
+        // Phase 12: Table Properties
+        // ====================================================================
+
+        // border-collapse → table_border_collapse
+        schema.register(StylePropertyRule {
+            ir_key: "border-collapse",
+            ir_field: Some(IrField::BorderCollapse),
+            kfx_symbol: KfxSymbol::TableBorderCollapse,
+            transform: ValueTransform::Map(vec![
+                ("separate".into(), KfxValue::Symbol(KfxSymbol::Separate)),
+                ("collapse".into(), KfxValue::Symbol(KfxSymbol::Collapse)),
+            ]),
+            context: StyleContext::BlockOnly,
+        });
+
+        // border-spacing → border_spacing_vertical
+        schema.register(StylePropertyRule {
+            ir_key: "border-spacing",
+            ir_field: Some(IrField::BorderSpacing),
+            kfx_symbol: KfxSymbol::BorderSpacingVertical,
+            transform: ValueTransform::PreserveUnit,
+            context: StyleContext::BlockOnly,
+        });
+
+        // border-spacing → border_spacing_horizontal (same value to both)
+        schema.register(StylePropertyRule {
+            ir_key: "border-spacing",
+            ir_field: None, // Don't extract twice from IR
+            kfx_symbol: KfxSymbol::BorderSpacingHorizontal,
+            transform: ValueTransform::PreserveUnit,
+            context: StyleContext::BlockOnly,
+        });
+
         schema
     }
 }
@@ -1428,6 +1485,22 @@ impl ValueTransform {
                 Some(KfxValue::StructField {
                     field: *field,
                     value: clamped,
+                })
+            }
+
+            ValueTransform::PreserveUnit => {
+                let (num, css_unit) = parse_css_length(raw)?;
+                let kfx_unit = match css_unit.as_str() {
+                    "px" => KfxSymbol::Px,
+                    "em" => KfxSymbol::Em,
+                    "rem" => KfxSymbol::Rem,
+                    "%" => KfxSymbol::Percent,
+                    "pt" => KfxSymbol::Pt,
+                    _ => KfxSymbol::Px, // Default fallback
+                };
+                Some(KfxValue::Dimensioned {
+                    value: num,
+                    unit: kfx_unit,
                 })
             }
         }
@@ -2079,6 +2152,21 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        // Phase 12: Table properties
+        IrField::BorderCollapse => {
+            if ir_style.border_collapse != default.border_collapse {
+                Some(ir_style.border_collapse.to_css_string())
+            } else {
+                None
+            }
+        }
+        IrField::BorderSpacing => {
+            if ir_style.border_spacing != default.border_spacing {
+                Some(ir_style.border_spacing.to_css_string())
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -2091,6 +2179,7 @@ impl StyleSchema {
     pub fn get_by_kfx_symbol(&self, kfx_symbol: u64) -> Option<&StylePropertyRule> {
         self.rules
             .values()
+            .flatten()
             .find(|r| r.kfx_symbol as u64 == kfx_symbol)
     }
 }
@@ -2138,10 +2227,9 @@ impl ValueTransform {
                 None
             }
 
-            ValueTransform::Dimensioned { unit }
-            | ValueTransform::ConvertToDimensioned {
-                target_unit: unit, ..
-            } => {
+            ValueTransform::Dimensioned { .. }
+            | ValueTransform::ConvertToDimensioned { .. }
+            | ValueTransform::PreserveUnit => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers) or Float
                 let fields = value.as_struct()?;
@@ -2157,15 +2245,8 @@ impl ValueTransform {
                     id if id == KfxSymbol::Rem as u32 => "rem",
                     id if id == KfxSymbol::Percent as u32 => "%",
                     id if id == KfxSymbol::Px as u32 => "px",
-                    _ => {
-                        // Use the expected unit from the rule
-                        match *unit as u32 {
-                            id if id == KfxSymbol::Em as u32 => "em",
-                            id if id == KfxSymbol::Rem as u32 => "rem",
-                            id if id == KfxSymbol::Percent as u32 => "%",
-                            _ => "em",
-                        }
-                    }
+                    id if id == KfxSymbol::Pt as u32 => "pt",
+                    _ => "em", // Default fallback
                 };
 
                 Some(format!("{}{}", num, unit_str))
@@ -2582,6 +2663,18 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 _ => ir_style::WordBreak::Normal,
             };
         }
+        // Phase 12: Table properties
+        IrField::BorderCollapse => {
+            ir_style.border_collapse = match css_value {
+                "collapse" => ir_style::BorderCollapse::Collapse,
+                _ => ir_style::BorderCollapse::Separate,
+            };
+        }
+        IrField::BorderSpacing => {
+            if let Some(len) = parse_css_length_to_ir(css_value) {
+                ir_style.border_spacing = len;
+            }
+        }
     }
 }
 
@@ -2753,16 +2846,16 @@ mod tests {
     fn test_schema_lookup() {
         let schema = StyleSchema::standard();
 
-        assert!(schema.get("font-weight").is_some());
-        assert!(schema.get("font-style").is_some());
-        assert!(schema.get("text-align").is_some());
-        assert!(schema.get("nonexistent").is_none());
+        assert!(schema.get_first("font-weight").is_some());
+        assert!(schema.get_first("font-style").is_some());
+        assert!(schema.get_first("text-align").is_some());
+        assert!(schema.get_first("nonexistent").is_none());
     }
 
     #[test]
     fn test_font_weight_transform() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("font-weight").unwrap();
+        let rule = schema.get_first("font-weight").unwrap();
 
         let result = rule.transform.apply("bold");
         assert!(matches!(result, Some(KfxValue::Symbol(KfxSymbol::Bold))));
@@ -3066,7 +3159,7 @@ mod tests {
     #[test]
     fn test_font_weight_full_range_symbols() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("font-weight").unwrap();
+        let rule = schema.get_first("font-weight").unwrap();
 
         // Verify all numeric weights map to correct symbols
         assert!(matches!(
@@ -3110,7 +3203,7 @@ mod tests {
     #[test]
     fn test_font_style_oblique_distinct() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("font-style").unwrap();
+        let rule = schema.get_first("font-style").unwrap();
 
         // Oblique should map to Oblique, NOT Italic (per Amazon's ElementEnums.data)
         assert!(matches!(
@@ -3126,7 +3219,7 @@ mod tests {
     #[test]
     fn test_text_alignment_start_end_distinct() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("text-align").unwrap();
+        let rule = schema.get_first("text-align").unwrap();
 
         // Start/End should be distinct from Left/Right for RTL support
         assert!(matches!(
@@ -3150,7 +3243,7 @@ mod tests {
     #[test]
     fn test_color_packed_integer() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("color").unwrap();
+        let rule = schema.get_first("color").unwrap();
 
         // Colors should output packed ARGB integers with 0xFF alpha
         // 0xFFFF0000 = 4294901760
@@ -3165,7 +3258,7 @@ mod tests {
     #[test]
     fn test_baseline_style_field() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("vertical-align").unwrap();
+        let rule = schema.get_first("vertical-align").unwrap();
 
         // Should use BaselineStyle symbol, not TextBaseline
         assert_eq!(rule.kfx_symbol, KfxSymbol::BaselineStyle);
@@ -3187,7 +3280,7 @@ mod tests {
     #[test]
     fn test_inverse_font_weight_symbol_to_css() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("font-weight").unwrap();
+        let rule = schema.get_first("font-weight").unwrap();
 
         // Bold symbol → "bold" CSS string
         let kfx_value = IonValue::Symbol(KfxSymbol::Bold as u64);
@@ -3204,7 +3297,7 @@ mod tests {
     #[test]
     fn test_inverse_dimensioned_value() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("margin-top").unwrap();
+        let rule = schema.get_first("margin-top").unwrap();
 
         // {value: 1.5, unit: em} → "1.5em" (Float)
         let kfx_value = IonValue::Struct(vec![
@@ -3233,7 +3326,7 @@ mod tests {
     #[test]
     fn test_inverse_color_packed_to_hex() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("color").unwrap();
+        let rule = schema.get_first("color").unwrap();
 
         // 0xFF0000 → "#ff0000"
         let kfx_value = IonValue::Int(0xFF0000);
@@ -3377,7 +3470,7 @@ mod tests {
     #[test]
     fn test_letter_spacing_transform() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("letter-spacing").unwrap();
+        let rule = schema.get_first("letter-spacing").unwrap();
 
         // 0.1em should convert to dimensioned value
         let result = rule.transform.apply("0.1em");
@@ -3387,7 +3480,7 @@ mod tests {
     #[test]
     fn test_text_transform_mapping() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("text-transform").unwrap();
+        let rule = schema.get_first("text-transform").unwrap();
 
         assert!(matches!(
             rule.transform.apply("uppercase"),
@@ -3410,7 +3503,7 @@ mod tests {
     #[test]
     fn test_hyphens_mapping() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("hyphens").unwrap();
+        let rule = schema.get_first("hyphens").unwrap();
 
         assert!(matches!(
             rule.transform.apply("auto"),
@@ -3429,7 +3522,7 @@ mod tests {
     #[test]
     fn test_white_space_nobreak() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("white-space").unwrap();
+        let rule = schema.get_first("white-space").unwrap();
 
         assert!(matches!(
             rule.transform.apply("nowrap"),
@@ -3445,7 +3538,7 @@ mod tests {
     fn test_break_properties() {
         let schema = StyleSchema::standard();
 
-        let rule = schema.get("break-before").unwrap();
+        let rule = schema.get_first("break-before").unwrap();
         assert!(matches!(
             rule.transform.apply("always"),
             Some(KfxValue::Symbol(KfxSymbol::Always))
@@ -3459,7 +3552,7 @@ mod tests {
             Some(KfxValue::Symbol(KfxSymbol::Auto))
         ));
 
-        let rule = schema.get("break-inside").unwrap();
+        let rule = schema.get_first("break-inside").unwrap();
         assert!(matches!(
             rule.transform.apply("avoid"),
             Some(KfxValue::Symbol(KfxSymbol::Avoid))
@@ -3469,7 +3562,7 @@ mod tests {
     #[test]
     fn test_float_mapping() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("float").unwrap();
+        let rule = schema.get_first("float").unwrap();
 
         assert!(matches!(
             rule.transform.apply("left"),
@@ -3488,7 +3581,7 @@ mod tests {
     #[test]
     fn test_border_style_mapping() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("border-top-style").unwrap();
+        let rule = schema.get_first("border-top-style").unwrap();
 
         assert!(matches!(
             rule.transform.apply("solid"),
@@ -3519,7 +3612,7 @@ mod tests {
     #[test]
     fn test_list_style_position() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("list-style-position").unwrap();
+        let rule = schema.get_first("list-style-position").unwrap();
 
         assert!(matches!(
             rule.transform.apply("inside"),
@@ -3534,7 +3627,7 @@ mod tests {
     #[test]
     fn test_visibility_mapping() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("visibility").unwrap();
+        let rule = schema.get_first("visibility").unwrap();
 
         assert!(matches!(
             rule.transform.apply("visible"),
@@ -3729,5 +3822,131 @@ mod tests {
 
         let result = extract_ir_field(&style, IrField::BoxAlign);
         assert_eq!(result, None);
+    }
+
+    // ========================================================================
+    // Phase 12: Table Properties
+    // ========================================================================
+
+    #[test]
+    fn test_border_collapse_mapping() {
+        let schema = StyleSchema::standard();
+        let rule = schema.get_first("border-collapse").unwrap();
+
+        assert_eq!(rule.kfx_symbol, KfxSymbol::TableBorderCollapse);
+        assert!(matches!(
+            rule.transform.apply("collapse"),
+            Some(KfxValue::Symbol(KfxSymbol::Collapse))
+        ));
+        assert!(matches!(
+            rule.transform.apply("separate"),
+            Some(KfxValue::Symbol(KfxSymbol::Separate))
+        ));
+    }
+
+    #[test]
+    fn test_border_spacing_multiple_rules() {
+        let schema = StyleSchema::standard();
+
+        // border-spacing should have two rules (vertical and horizontal)
+        let rules = schema.get("border-spacing").unwrap();
+        assert_eq!(rules.len(), 2);
+
+        // Both rules should use PreserveUnit transform
+        let symbols: Vec<_> = rules.iter().map(|r| r.kfx_symbol).collect();
+        assert!(symbols.contains(&KfxSymbol::BorderSpacingVertical));
+        assert!(symbols.contains(&KfxSymbol::BorderSpacingHorizontal));
+
+        // Both should transform "10px" to dimensioned value
+        for rule in rules {
+            let result = rule.transform.apply("10px");
+            assert!(matches!(
+                result,
+                Some(KfxValue::Dimensioned { value, unit }) if value == 10.0 && unit == KfxSymbol::Px
+            ));
+        }
+    }
+
+    #[test]
+    fn test_vertical_align_multiple_rules() {
+        let schema = StyleSchema::standard();
+
+        // vertical-align should have two rules (baseline_style and yj.vertical_align)
+        let rules = schema.get("vertical-align").unwrap();
+        assert_eq!(rules.len(), 2);
+
+        let symbols: Vec<_> = rules.iter().map(|r| r.kfx_symbol).collect();
+        assert!(symbols.contains(&KfxSymbol::BaselineStyle));
+        assert!(symbols.contains(&KfxSymbol::YjVerticalAlign));
+
+        // "super" should only match baseline_style rule
+        let super_results: Vec<_> = rules
+            .iter()
+            .filter_map(|r| r.transform.apply("super"))
+            .collect();
+        assert_eq!(super_results.len(), 1);
+        assert!(matches!(
+            super_results[0],
+            KfxValue::Symbol(KfxSymbol::Superscript)
+        ));
+
+        // "top" should only match yj.vertical_align rule
+        let top_results: Vec<_> = rules
+            .iter()
+            .filter_map(|r| r.transform.apply("top"))
+            .collect();
+        assert_eq!(top_results.len(), 1);
+        assert!(matches!(top_results[0], KfxValue::Symbol(KfxSymbol::Top)));
+    }
+
+    #[test]
+    fn test_extract_ir_field_border_collapse() {
+        use crate::ir::{BorderCollapse, ComputedStyle};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::BorderCollapse), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.border_collapse = BorderCollapse::Collapse;
+        assert_eq!(
+            extract_ir_field(&styled, IrField::BorderCollapse),
+            Some("collapse".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_ir_field_border_spacing() {
+        use crate::ir::{ComputedStyle, Length};
+
+        let default = ComputedStyle::default();
+        assert_eq!(extract_ir_field(&default, IrField::BorderSpacing), None);
+
+        let mut styled = ComputedStyle::default();
+        styled.border_spacing = Length::Px(5.0);
+        assert_eq!(
+            extract_ir_field(&styled, IrField::BorderSpacing),
+            Some("5px".to_string())
+        );
+    }
+
+    #[test]
+    fn test_preserve_unit_transform() {
+        let schema = StyleSchema::standard();
+        let rules = schema.get("border-spacing").unwrap();
+        let rule = &rules[0];
+
+        // Test various units are preserved
+        assert!(matches!(
+            rule.transform.apply("10px"),
+            Some(KfxValue::Dimensioned { value, unit }) if value == 10.0 && unit == KfxSymbol::Px
+        ));
+        assert!(matches!(
+            rule.transform.apply("1.5em"),
+            Some(KfxValue::Dimensioned { value, unit }) if value == 1.5 && unit == KfxSymbol::Em
+        ));
+        assert!(matches!(
+            rule.transform.apply("50%"),
+            Some(KfxValue::Dimensioned { value, unit }) if value == 50.0 && unit == KfxSymbol::Percent
+        ));
     }
 }
