@@ -158,10 +158,8 @@ pub trait Importer: Send + Sync {
                 // Resolve relative font paths to canonical paths
                 for mut font_face in stylesheet.font_faces {
                     // Resolve the src path relative to the CSS file location
-                    let resolved = resolve_relative_path(
-                        css_path.to_string_lossy().as_ref(),
-                        &font_face.src,
-                    );
+                    let resolved =
+                        resolve_relative_path(css_path.to_string_lossy().as_ref(), &font_face.src);
                     font_face.src = resolved.to_string_lossy().to_string();
                     font_faces.push(font_face);
                 }

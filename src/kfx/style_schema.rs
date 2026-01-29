@@ -354,7 +354,10 @@ impl StyleSchema {
 
     /// Get rules that have IR field mappings (for schema-driven IR extraction).
     pub fn ir_mapped_rules(&self) -> impl Iterator<Item = &StylePropertyRule> {
-        self.rules.values().flatten().filter(|r| r.ir_field.is_some())
+        self.rules
+            .values()
+            .flatten()
+            .filter(|r| r.ir_field.is_some())
     }
 
     /// Get the standard KFX style schema (cached).

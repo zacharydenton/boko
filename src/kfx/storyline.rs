@@ -129,11 +129,11 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         && let Some(hints_list) = layout_hints.as_list()
     {
         for hint in hints_list {
-            if let Some(hint_id) = hint.as_symbol() {
-                if let Some(mapped_role) = schema().role_for_layout_hint(hint_id as u32) {
-                    role = mapped_role;
-                    break;
-                }
+            if let Some(hint_id) = hint.as_symbol()
+                && let Some(mapped_role) = schema().role_for_layout_hint(hint_id as u32)
+            {
+                role = mapped_role;
+                break;
             }
         }
     }
@@ -177,8 +177,8 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         content_ref,
         style_events,
         kfx_attrs: Vec::new(),
-        style_symbol: None, // Symbol ID (for export)
-        style_name,         // Style name (for import lookup)
+        style_symbol: None,             // Symbol ID (for export)
+        style_name,                     // Style name (for import lookup)
         needs_container_wrapper: false, // Only used during export
     }));
 
@@ -680,7 +680,7 @@ fn walk_node_for_export(
     let has_block_display = chapter
         .styles
         .get(node.style)
-        .map(|s| crate::kfx::style_schema::is_block_display(s))
+        .map(crate::kfx::style_schema::is_block_display)
         .unwrap_or(false);
 
     // Check if this is an inline role that should become a span (style_event)
@@ -706,7 +706,7 @@ fn walk_node_for_export(
     elem.needs_container_wrapper = chapter
         .styles
         .get(node.style)
-        .map(|s| needs_container_wrapper(s))
+        .map(needs_container_wrapper)
         .unwrap_or(false);
 
     // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
@@ -1196,12 +1196,11 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                     // If this was an inner wrapper text element, we need to also
                     // close the outer container (which consumes the same EndElement token)
-                    if is_inner {
-                        if let Some(outer_completed) = stack.pop()
-                            && let Some(outer_parent) = stack.last_mut()
-                        {
-                            outer_parent.add_child(outer_completed.build(ctx));
-                        }
+                    if is_inner
+                        && let Some(outer_completed) = stack.pop()
+                        && let Some(outer_parent) = stack.last_mut()
+                    {
+                        outer_parent.add_child(outer_completed.build(ctx));
                     }
                 }
             }
@@ -1508,7 +1507,8 @@ mod tests {
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| Some("Chapter 1".to_string()));
+        let chapter =
+            build_ir_from_tokens(&stream, &[], None, |_, _| Some("Chapter 1".to_string()));
 
         let heading_id = chapter.children(chapter.root()).next().unwrap();
         let heading = chapter.node(heading_id).unwrap();
@@ -1545,7 +1545,8 @@ mod tests {
         stream.end_element();
 
         // Text is "Hello, world!" - span at offset 7, length 5 = "world"
-        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| Some("Hello, world!".to_string()));
+        let chapter =
+            build_ir_from_tokens(&stream, &[], None, |_, _| Some("Hello, world!".to_string()));
 
         // Should have: root -> para -> [text("Hello, "), link("world"), text("!")]
         let para_id = chapter.children(chapter.root()).next().unwrap();

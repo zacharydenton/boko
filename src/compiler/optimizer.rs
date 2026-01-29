@@ -740,13 +740,13 @@ fn is_table_header_row(chapter: &IRChapter, row_id: NodeId) -> bool {
     let mut all_header = true;
 
     for cell_id in chapter.children(row_id) {
-        if let Some(cell) = chapter.node(cell_id) {
-            if cell.role == Role::TableCell {
-                has_cells = true;
-                if !chapter.semantics.is_header_cell(cell_id) {
-                    all_header = false;
-                    break;
-                }
+        if let Some(cell) = chapter.node(cell_id)
+            && cell.role == Role::TableCell
+        {
+            has_cells = true;
+            if !chapter.semantics.is_header_cell(cell_id) {
+                all_header = false;
+                break;
             }
         }
     }

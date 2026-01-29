@@ -178,22 +178,47 @@ impl Declaration {
     fn parse_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<Vec<Self>> {
         Some(match name {
             "margin" => Self::parse_length_rect(input, |t, r, b, l| {
-                [Self::MarginTop(t), Self::MarginRight(r), Self::MarginBottom(b), Self::MarginLeft(l)]
+                [
+                    Self::MarginTop(t),
+                    Self::MarginRight(r),
+                    Self::MarginBottom(b),
+                    Self::MarginLeft(l),
+                ]
             }),
             "padding" => Self::parse_length_rect(input, |t, r, b, l| {
-                [Self::PaddingTop(t), Self::PaddingRight(r), Self::PaddingBottom(b), Self::PaddingLeft(l)]
+                [
+                    Self::PaddingTop(t),
+                    Self::PaddingRight(r),
+                    Self::PaddingBottom(b),
+                    Self::PaddingLeft(l),
+                ]
             }),
             "border-width" => Self::parse_length_rect(input, |t, r, b, l| {
-                [Self::BorderTopWidth(t), Self::BorderRightWidth(r), Self::BorderBottomWidth(b), Self::BorderLeftWidth(l)]
+                [
+                    Self::BorderTopWidth(t),
+                    Self::BorderRightWidth(r),
+                    Self::BorderBottomWidth(b),
+                    Self::BorderLeftWidth(l),
+                ]
             }),
             "border-style" => parse_border_style_shorthand_values(input)
                 .map(|(t, r, b, l)| {
-                    vec![Self::BorderTopStyle(t), Self::BorderRightStyle(r), Self::BorderBottomStyle(b), Self::BorderLeftStyle(l)]
+                    vec![
+                        Self::BorderTopStyle(t),
+                        Self::BorderRightStyle(r),
+                        Self::BorderBottomStyle(b),
+                        Self::BorderLeftStyle(l),
+                    ]
                 })
                 .unwrap_or_default(),
             "border-color" => parse_color_shorthand_values(input)
                 .map(|(t, r, b, l)| {
-                    vec![Self::BorderTopColor(t), Self::BorderRightColor(r), Self::BorderBottomColor(b), Self::BorderLeftColor(l)]
+                    vec![
+                        Self::BorderTopColor(t),
+                        Self::BorderRightColor(r),
+                        Self::BorderBottomColor(b),
+                        Self::BorderLeftColor(l),
+                    ]
                 })
                 .unwrap_or_default(),
             "border" => parse_border_shorthand(input),
@@ -223,7 +248,9 @@ impl Declaration {
             "font-size" => parse_length(input).map(Self::FontSize),
             "font-weight" => parse_font_weight(input).map(Self::FontWeight),
             "font-style" => parse_font_style(input).map(Self::FontStyle),
-            "font-variant" | "font-variant-caps" => parse_font_variant(input).map(Self::FontVariant),
+            "font-variant" | "font-variant-caps" => {
+                parse_font_variant(input).map(Self::FontVariant)
+            }
 
             // Text properties
             "text-align" => parse_text_align(input).map(Self::TextAlign),
@@ -281,7 +308,9 @@ impl Declaration {
             // Page breaks
             "break-before" | "page-break-before" => parse_break_value(input).map(Self::BreakBefore),
             "break-after" | "page-break-after" => parse_break_value(input).map(Self::BreakAfter),
-            "break-inside" | "page-break-inside" => parse_break_inside(input).map(Self::BreakInside),
+            "break-inside" | "page-break-inside" => {
+                parse_break_inside(input).map(Self::BreakInside)
+            }
 
             // Border style (individual sides)
             "border-top-style" => parse_border_style_value(input).map(Self::BorderTopStyle),
@@ -885,33 +914,32 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
     // Parse up to 3 values in any order
     for _ in 0..3 {
         // Try border-style first (keywords)
-        if style.is_none() {
-            if let Ok(s) = input.try_parse(|i| {
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| {
                 parse_border_style_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
-            }) {
-                style = Some(s);
-                continue;
-            }
+            })
+        {
+            style = Some(s);
+            continue;
         }
 
         // Try color (keywords or hex/rgb)
-        if color.is_none() {
-            if let Ok(c) = input
-                .try_parse(|i| parse_color(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
-            {
-                color = Some(c);
-                continue;
-            }
+        if color.is_none()
+            && let Ok(c) =
+                input.try_parse(|i| parse_color(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
+        {
+            color = Some(c);
+            continue;
         }
 
         // Try width (length values)
-        if width.is_none() {
-            if let Ok(w) = input.try_parse(|i| {
+        if width.is_none()
+            && let Ok(w) = input.try_parse(|i| {
                 parse_border_width_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
-            }) {
-                width = Some(w);
-                continue;
-            }
+            })
+        {
+            width = Some(w);
+            continue;
         }
 
         // No more values
@@ -1300,9 +1328,12 @@ fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<crate::ir::FontFa
 
     // Require both font-family and src
     match (font_family, src) {
-        (Some(family), Some(source)) => {
-            Some(crate::ir::FontFace::new(family, font_weight, font_style, source))
-        }
+        (Some(family), Some(source)) => Some(crate::ir::FontFace::new(
+            family,
+            font_weight,
+            font_style,
+            source,
+        )),
         _ => None,
     }
 }
@@ -2323,8 +2354,24 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(top, Color { r: 255, g: 0, b: 0, a: 255 });
-        assert_eq!(left, Color { r: 0, g: 0, b: 255, a: 255 });
+        assert_eq!(
+            top,
+            Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(
+            left,
+            Color {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255
+            }
+        );
     }
 
     // ========================================================================
@@ -2422,10 +2469,20 @@ mod tests {
                 .expect("should have color");
 
             assert_eq!(width, Length::Px(2.0), "width should be 2px for: {}", css);
-            assert_eq!(style, BorderStyle::Solid, "style should be solid for: {}", css);
+            assert_eq!(
+                style,
+                BorderStyle::Solid,
+                "style should be solid for: {}",
+                css
+            );
             assert_eq!(
                 color,
-                Color { r: 136, g: 136, b: 136, a: 255 },
+                Color {
+                    r: 136,
+                    g: 136,
+                    b: 136,
+                    a: 255
+                },
                 "color should be #888 for: {}",
                 css
             );
@@ -2455,4 +2512,3 @@ mod tests {
         }
     }
 }
-
