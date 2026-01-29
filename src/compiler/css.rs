@@ -243,22 +243,19 @@ impl Declaration {
                 parse_break_inside(input).map(Declaration::BreakInside)
             }
 
-            // Border style
-            "border-style" => parse_border_style(input).map(Declaration::BorderStyle),
+            // Border style (individual sides only; shorthand handled separately)
             "border-top-style" => parse_border_style(input).map(Declaration::BorderTopStyle),
             "border-right-style" => parse_border_style(input).map(Declaration::BorderRightStyle),
             "border-bottom-style" => parse_border_style(input).map(Declaration::BorderBottomStyle),
             "border-left-style" => parse_border_style(input).map(Declaration::BorderLeftStyle),
 
-            // Border width
-            "border-width" => parse_length(input).map(Declaration::BorderWidth),
+            // Border width (individual sides only; shorthand handled separately)
             "border-top-width" => parse_length(input).map(Declaration::BorderTopWidth),
             "border-right-width" => parse_length(input).map(Declaration::BorderRightWidth),
             "border-bottom-width" => parse_length(input).map(Declaration::BorderBottomWidth),
             "border-left-width" => parse_length(input).map(Declaration::BorderLeftWidth),
 
-            // Border color
-            "border-color" => parse_color(input).map(Declaration::BorderColor),
+            // Border color (individual sides only; shorthand handled separately)
             "border-top-color" => parse_color(input).map(Declaration::BorderTopColor),
             "border-right-color" => parse_color(input).map(Declaration::BorderRightColor),
             "border-bottom-color" => parse_color(input).map(Declaration::BorderBottomColor),
@@ -287,8 +284,8 @@ impl Declaration {
             }
             "border-spacing" => parse_length(input).map(Declaration::BorderSpacing),
 
-            // Shorthands (margin/padding) are handled separately
-            "margin" | "padding" => None,
+            // Shorthands are handled separately in parse_value
+            "margin" | "padding" | "border-style" | "border-width" | "border-color" => None,
 
             // Unknown properties
             _ => {
@@ -317,6 +314,39 @@ impl Declaration {
             ]),
             _ => None,
         }
+    }
+
+    /// Parse border-style shorthand, returning expanded declarations.
+    pub fn parse_border_style_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
+        let (top, right, bottom, left) = parse_border_style_shorthand_values(input)?;
+        Some([
+            Declaration::BorderTopStyle(top),
+            Declaration::BorderRightStyle(right),
+            Declaration::BorderBottomStyle(bottom),
+            Declaration::BorderLeftStyle(left),
+        ])
+    }
+
+    /// Parse border-width shorthand, returning expanded declarations.
+    pub fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
+        let (top, right, bottom, left) = parse_box_shorthand_values(input)?;
+        Some([
+            Declaration::BorderTopWidth(top),
+            Declaration::BorderRightWidth(right),
+            Declaration::BorderBottomWidth(bottom),
+            Declaration::BorderLeftWidth(left),
+        ])
+    }
+
+    /// Parse border-color shorthand, returning expanded declarations.
+    pub fn parse_border_color_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
+        let (top, right, bottom, left) = parse_color_shorthand_values(input)?;
+        Some([
+            Declaration::BorderTopColor(top),
+            Declaration::BorderRightColor(right),
+            Declaration::BorderBottomColor(bottom),
+            Declaration::BorderLeftColor(left),
+        ])
     }
 }
 
@@ -603,6 +633,48 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
             return Ok(());
         }
 
+        // Handle border-style shorthand expansion
+        if name.as_ref() == "border-style"
+            && let Some(decls) = Declaration::parse_border_style_shorthand(input)
+        {
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            let target = if important {
+                &mut *self.important_declarations
+            } else {
+                &mut *self.declarations
+            };
+            target.extend(decls);
+            return Ok(());
+        }
+
+        // Handle border-width shorthand expansion
+        if name.as_ref() == "border-width"
+            && let Some(decls) = Declaration::parse_border_width_shorthand(input)
+        {
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            let target = if important {
+                &mut *self.important_declarations
+            } else {
+                &mut *self.declarations
+            };
+            target.extend(decls);
+            return Ok(());
+        }
+
+        // Handle border-color shorthand expansion
+        if name.as_ref() == "border-color"
+            && let Some(decls) = Declaration::parse_border_color_shorthand(input)
+        {
+            let important = input.try_parse(cssparser::parse_important).is_ok();
+            let target = if important {
+                &mut *self.important_declarations
+            } else {
+                &mut *self.declarations
+            };
+            target.extend(decls);
+            return Ok(());
+        }
+
         // Parse regular declarations
         if let Some(decl) = Declaration::parse(&name, input) {
             let important = input.try_parse(cssparser::parse_important).is_ok();
@@ -790,6 +862,49 @@ fn parse_box_shorthand_values(
     // 2 values: top/bottom, left/right
     // 3 values: top, left/right, bottom
     // 4 values: top, right, bottom, left
+    expand_shorthand_4(values)
+}
+
+/// Parse border-style shorthand with 1-4 values.
+/// Returns (top, right, bottom, left) following CSS box model rules.
+fn parse_border_style_shorthand_values(
+    input: &mut Parser<'_, '_>,
+) -> Option<(BorderStyle, BorderStyle, BorderStyle, BorderStyle)> {
+    let mut values = Vec::with_capacity(4);
+
+    // Parse up to 4 border-style values
+    while values.len() < 4 {
+        if let Some(style) = parse_border_style_value(input) {
+            values.push(style);
+        } else {
+            break;
+        }
+    }
+
+    expand_shorthand_4(values)
+}
+
+/// Parse border-color shorthand with 1-4 values.
+/// Returns (top, right, bottom, left) following CSS box model rules.
+fn parse_color_shorthand_values(
+    input: &mut Parser<'_, '_>,
+) -> Option<(Color, Color, Color, Color)> {
+    let mut values = Vec::with_capacity(4);
+
+    // Parse up to 4 color values
+    while values.len() < 4 {
+        if let Some(color) = parse_color(input) {
+            values.push(color);
+        } else {
+            break;
+        }
+    }
+
+    expand_shorthand_4(values)
+}
+
+/// Expand 1-4 values to (top, right, bottom, left) following CSS shorthand rules.
+fn expand_shorthand_4<T: Copy>(values: Vec<T>) -> Option<(T, T, T, T)> {
     match values.len() {
         1 => {
             let v = values[0];
@@ -804,6 +919,23 @@ fn parse_box_shorthand_values(
             Some((t, lr, b, lr))
         }
         4 => Some((values[0], values[1], values[2], values[3])),
+        _ => None,
+    }
+}
+
+/// Parse a single border-style value (used by shorthand parser).
+fn parse_border_style_value(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
+    let token = input.try_parse(|i| i.expect_ident_cloned()).ok()?;
+    match token.as_ref() {
+        "none" | "hidden" => Some(BorderStyle::None),
+        "solid" => Some(BorderStyle::Solid),
+        "dotted" => Some(BorderStyle::Dotted),
+        "dashed" => Some(BorderStyle::Dashed),
+        "double" => Some(BorderStyle::Double),
+        "groove" => Some(BorderStyle::Groove),
+        "ridge" => Some(BorderStyle::Ridge),
+        "inset" => Some(BorderStyle::Inset),
+        "outset" => Some(BorderStyle::Outset),
         _ => None,
     }
 }
@@ -2029,6 +2161,178 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ========================================================================
+    // Border Shorthand Tests
+    // ========================================================================
+
+    #[test]
+    fn test_border_style_shorthand_two_values() {
+        // border-style: solid none means top/bottom=solid, left/right=none
+        let css = "div { border-style: solid none; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.rules.len(), 1);
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 4, "Should expand to 4 declarations");
+
+        // Check each side
+        let top = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderTopStyle(s) => Some(*s),
+                _ => None,
+            })
+            .expect("border-top-style should exist");
+        let bottom = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderBottomStyle(s) => Some(*s),
+                _ => None,
+            })
+            .expect("border-bottom-style should exist");
+        let left = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderLeftStyle(s) => Some(*s),
+                _ => None,
+            })
+            .expect("border-left-style should exist");
+        let right = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderRightStyle(s) => Some(*s),
+                _ => None,
+            })
+            .expect("border-right-style should exist");
+
+        assert_eq!(top, BorderStyle::Solid, "top should be solid");
+        assert_eq!(bottom, BorderStyle::Solid, "bottom should be solid");
+        assert_eq!(left, BorderStyle::None, "left should be none");
+        assert_eq!(right, BorderStyle::None, "right should be none");
+    }
+
+    #[test]
+    fn test_border_style_shorthand_one_value() {
+        // border-style: dashed means all sides=dashed
+        let css = "div { border-style: dashed; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 4);
+
+        for decl in decls {
+            match decl {
+                Declaration::BorderTopStyle(s)
+                | Declaration::BorderRightStyle(s)
+                | Declaration::BorderBottomStyle(s)
+                | Declaration::BorderLeftStyle(s) => {
+                    assert_eq!(*s, BorderStyle::Dashed);
+                }
+                _ => panic!("Unexpected declaration type"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_border_style_shorthand_four_values() {
+        // border-style: solid dotted dashed double (top, right, bottom, left)
+        let css = "div { border-style: solid dotted dashed double; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 4);
+
+        let top = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderTopStyle(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap();
+        let right = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderRightStyle(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap();
+        let bottom = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderBottomStyle(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap();
+        let left = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderLeftStyle(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(top, BorderStyle::Solid);
+        assert_eq!(right, BorderStyle::Dotted);
+        assert_eq!(bottom, BorderStyle::Dashed);
+        assert_eq!(left, BorderStyle::Double);
+    }
+
+    #[test]
+    fn test_border_width_shorthand_two_values() {
+        // border-width: 3px 0 means top/bottom=3px, left/right=0
+        let css = "div { border-width: 3px 0; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 4);
+
+        let top = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderTopWidth(l) => Some(*l),
+                _ => None,
+            })
+            .unwrap();
+        let left = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderLeftWidth(l) => Some(*l),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(top, Length::Px(3.0));
+        assert_eq!(left, Length::Px(0.0));
+    }
+
+    #[test]
+    fn test_border_color_shorthand_two_values() {
+        // border-color: red blue means top/bottom=red, left/right=blue
+        let css = "div { border-color: #ff0000 #0000ff; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 4);
+
+        let top = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderTopColor(c) => Some(*c),
+                _ => None,
+            })
+            .unwrap();
+        let left = decls
+            .iter()
+            .find_map(|d| match d {
+                Declaration::BorderLeftColor(c) => Some(*c),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(top, Color { r: 255, g: 0, b: 0, a: 255 });
+        assert_eq!(left, Color { r: 0, g: 0, b: 255, a: 255 });
     }
 }
 
