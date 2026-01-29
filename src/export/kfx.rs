@@ -372,6 +372,11 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
+    // 2j-2. Font entity fragments ($262)
+    // These link font_family names to resource locations (from @font-face rules)
+    let font_frags = build_font_fragments(book, &mut ctx);
+    fragments.extend(font_frags);
+
     // 2k. Navigation maps for reader functionality
     fragments.push(build_position_map_fragment(&ctx, &anchor_ids_by_fragment));
     fragments.push(build_position_id_map_fragment(&ctx));
@@ -1574,6 +1579,103 @@ fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> 
 
     // Create raw fragment for binary resources
     KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &raw_name, data.to_vec())
+}
+
+/// Build font entity fragments ($262) from @font-face rules.
+///
+/// Font entities link font_family names (e.g., "cover-Ubuntu") to resource locations.
+/// This enables Kindle to properly render custom fonts.
+fn build_font_fragments(book: &mut Book, ctx: &mut ExportContext) -> Vec<KfxFragment> {
+    use crate::ir::{FontStyle, FontWeight};
+
+    let mut fragments = Vec::new();
+    let font_faces = book.font_faces();
+
+    for font_face in font_faces {
+        // Check if the font file exists as a resource
+        let resource_name = match ctx.resource_registry.get_name(&font_face.src) {
+            Some(name) => name.to_string(),
+            None => {
+                // Try without leading path components
+                let filename = std::path::Path::new(&font_face.src)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&font_face.src);
+
+                // Search for matching resource
+                let mut found = None;
+                for (href, _) in ctx.resource_registry.iter() {
+                    if href.ends_with(filename) {
+                        found = ctx.resource_registry.get_name(href).map(|s| s.to_string());
+                        break;
+                    }
+                }
+                match found {
+                    Some(name) => name,
+                    None => continue, // Skip if font file not found
+                }
+            }
+        };
+
+        // Build location path
+        let location = format!("resource/{}", resource_name);
+
+        // Use original font family name (no "cover-" prefix)
+        // This matches how styles reference fonts and is source-faithful
+        let font_family = font_face.font_family.clone();
+
+        // Convert font_weight to KFX symbol
+        let weight_symbol = match font_face.font_weight {
+            FontWeight(w) if w >= 700 => KfxSymbol::Bold,
+            _ => KfxSymbol::Normal,
+        };
+
+        // Convert font_style to KFX symbol
+        let style_symbol = match font_face.font_style {
+            FontStyle::Italic | FontStyle::Oblique => KfxSymbol::Italic,
+            FontStyle::Normal => KfxSymbol::Normal,
+        };
+
+        // Build font entity ION structure
+        let ion = IonValue::Struct(vec![
+            (
+                KfxSymbol::FontFamily as u64,
+                IonValue::String(font_family.clone()),
+            ),
+            (
+                KfxSymbol::FontStyle as u64,
+                IonValue::Symbol(style_symbol as u64),
+            ),
+            (KfxSymbol::Location as u64, IonValue::String(location)),
+            (
+                KfxSymbol::FontWeight as u64,
+                IonValue::Symbol(weight_symbol as u64),
+            ),
+            (
+                KfxSymbol::FontStretch as u64,
+                IonValue::Symbol(KfxSymbol::Normal as u64),
+            ),
+        ]);
+
+        // Generate unique fragment name for this font face
+        let frag_name = format!(
+            "font-{}-{}-{}",
+            font_face.font_family,
+            if font_face.font_weight.0 >= 700 {
+                "bold"
+            } else {
+                "normal"
+            },
+            match font_face.font_style {
+                FontStyle::Italic | FontStyle::Oblique => "italic",
+                FontStyle::Normal => "normal",
+            }
+        );
+
+        fragments.push(KfxFragment::new(KfxSymbol::Font, &frag_name, ion));
+    }
+
+    fragments
 }
 
 /// Build anchor fragments ($266) for all recorded anchors.

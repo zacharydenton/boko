@@ -312,6 +312,8 @@ impl Declaration {
 #[derive(Debug, Default, Clone)]
 pub struct Stylesheet {
     pub rules: Vec<CssRule>,
+    /// @font-face rules defining font family to file mappings.
+    pub font_faces: Vec<crate::ir::FontFace>,
 }
 
 /// A CSS rule with selectors and declarations.
@@ -386,8 +388,12 @@ impl Stylesheet {
         let mut input = ParserInput::new(css);
         let mut parser = Parser::new(&mut input);
         let mut rules = Vec::new();
+        let mut font_faces = Vec::new();
 
-        let mut rule_parser = TopLevelRuleParser { rules: &mut rules };
+        let mut rule_parser = TopLevelRuleParser {
+            rules: &mut rules,
+            font_faces: &mut font_faces,
+        };
         let stylesheet_parser = StyleSheetParser::new(&mut parser, &mut rule_parser);
 
         for result in stylesheet_parser {
@@ -395,7 +401,7 @@ impl Stylesheet {
             let _ = result;
         }
 
-        Self { rules }
+        Self { rules, font_faces }
     }
 
     /// Check if the stylesheet is empty.
@@ -407,29 +413,42 @@ impl Stylesheet {
 /// Parser for top-level stylesheet rules.
 struct TopLevelRuleParser<'a> {
     rules: &'a mut Vec<CssRule>,
+    font_faces: &'a mut Vec<crate::ir::FontFace>,
 }
 
+/// Prelude for @font-face rules (empty, just a marker).
+struct FontFacePrelude;
+
 impl<'i> AtRuleParser<'i> for TopLevelRuleParser<'_> {
-    type Prelude = ();
+    type Prelude = FontFacePrelude;
     type AtRule = ();
     type Error = ();
 
     fn parse_prelude<'t>(
         &mut self,
-        _name: cssparser::CowRcStr<'i>,
+        name: cssparser::CowRcStr<'i>,
         _input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
-        // Skip at-rules for now
-        Err(_input.new_custom_error(()))
+        if name.eq_ignore_ascii_case("font-face") {
+            // @font-face has no prelude, just a block
+            Ok(FontFacePrelude)
+        } else {
+            // Skip other at-rules
+            Err(_input.new_custom_error(()))
+        }
     }
 
     fn parse_block<'t>(
         &mut self,
         _prelude: Self::Prelude,
         _start: &cssparser::ParserState,
-        _input: &mut Parser<'i, 't>,
+        input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
-        Err(_input.new_custom_error(()))
+        // Parse @font-face declarations
+        if let Some(font_face) = parse_font_face_block(input) {
+            self.font_faces.push(font_face);
+        }
+        Ok(())
     }
 }
 
@@ -1060,6 +1079,113 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
         "border-box" => Some(BoxSizing::BorderBox),
         _ => None,
     }
+}
+
+// ============================================================================
+// @font-face Parsing
+// ============================================================================
+
+/// Parse a @font-face block and return a FontFace if successful.
+///
+/// @font-face rules have the form:
+/// ```css
+/// @font-face {
+///     font-family: "Ubuntu";
+///     font-weight: bold;
+///     font-style: normal;
+///     src: url(../fonts/Ubuntu-B.ttf);
+/// }
+/// ```
+fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<crate::ir::FontFace> {
+    let mut font_family: Option<String> = None;
+    let mut font_weight = FontWeight::NORMAL;
+    let mut font_style = FontStyle::Normal;
+    let mut src: Option<String> = None;
+
+    // Parse declarations within the @font-face block
+    loop {
+        // Try to parse a declaration
+        if let Ok(name) = input.expect_ident_cloned() {
+            let name_str = name.as_ref();
+            if input.expect_colon().is_ok() {
+                match name_str {
+                    "font-family" => {
+                        font_family = parse_font_face_family(input);
+                    }
+                    "font-weight" => {
+                        if let Some(w) = parse_font_weight(input) {
+                            font_weight = w;
+                        }
+                    }
+                    "font-style" => {
+                        if let Some(s) = parse_font_style(input) {
+                            font_style = s;
+                        }
+                    }
+                    "src" => {
+                        src = parse_font_face_src(input);
+                    }
+                    _ => {
+                        // Skip unknown properties
+                        while input.next().is_ok() {
+                            // Consume until we hit a semicolon or end of block
+                            if matches!(input.current_source_location().line, _) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Consume semicolon if present
+                let _ = input.try_parse(|i| i.expect_semicolon());
+            }
+        } else {
+            // No more declarations
+            break;
+        }
+    }
+
+    // Require both font-family and src
+    match (font_family, src) {
+        (Some(family), Some(source)) => {
+            Some(crate::ir::FontFace::new(family, font_weight, font_style, source))
+        }
+        _ => None,
+    }
+}
+
+/// Parse font-family value in @font-face (quoted or unquoted name).
+fn parse_font_face_family(input: &mut Parser<'_, '_>) -> Option<String> {
+    // Try quoted string first
+    if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
+        return Some(s.to_string());
+    }
+    // Try unquoted identifier
+    if let Ok(s) = input.try_parse(|i| i.expect_ident_cloned()) {
+        return Some(s.to_string());
+    }
+    None
+}
+
+/// Parse src value in @font-face: url(...) or local(...).
+fn parse_font_face_src(input: &mut Parser<'_, '_>) -> Option<String> {
+    // We support url() format only
+    if let Ok(url) = input.try_parse(|i| i.expect_url_or_string()) {
+        return Some(url.as_ref().to_string());
+    }
+    // Try parsing url() function with string argument
+    if let Ok(url) = input.try_parse(|i| -> Result<String, ParseError<'_, ()>> {
+        i.expect_function_matching("url")?;
+        let url_str = i.parse_nested_block(|nested| {
+            nested
+                .expect_string_cloned()
+                .map(|s| s.to_string())
+                .map_err(|e| e.into())
+        })?;
+        Ok(url_str)
+    }) {
+        return Some(url);
+    }
+    None
 }
 
 /// Create a new style with only CSS-inherited properties from parent.
@@ -1730,6 +1856,91 @@ mod tests {
                 panic!("overflow-wrap should be an OverflowWrap value");
             }
         }
+    }
+
+    // ========================================================================
+    // @font-face Tests
+    // ========================================================================
+
+    #[test]
+    fn test_font_face_basic() {
+        let css = r#"
+            @font-face {
+                font-family: "Ubuntu";
+                font-weight: normal;
+                font-style: normal;
+                src: url(../fonts/Ubuntu-M.ttf);
+            }
+        "#;
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.font_faces.len(), 1);
+        let ff = &stylesheet.font_faces[0];
+        assert_eq!(ff.font_family, "Ubuntu");
+        assert_eq!(ff.font_weight, FontWeight::NORMAL);
+        assert_eq!(ff.font_style, FontStyle::Normal);
+        assert_eq!(ff.src, "../fonts/Ubuntu-M.ttf");
+    }
+
+    #[test]
+    fn test_font_face_bold_italic() {
+        let css = r#"
+            @font-face {
+                font-family: Ubuntu;
+                font-weight: bold;
+                font-style: italic;
+                src: url(../fonts/Ubuntu-BI.ttf);
+            }
+        "#;
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.font_faces.len(), 1);
+        let ff = &stylesheet.font_faces[0];
+        assert_eq!(ff.font_family, "Ubuntu");
+        assert_eq!(ff.font_weight, FontWeight::BOLD);
+        assert_eq!(ff.font_style, FontStyle::Italic);
+        assert_eq!(ff.src, "../fonts/Ubuntu-BI.ttf");
+    }
+
+    #[test]
+    fn test_font_face_multiple() {
+        let css = r#"
+            @font-face {
+                font-family: "Ubuntu";
+                src: url(fonts/Ubuntu-M.ttf);
+            }
+            @font-face {
+                font-family: "UbuntuMono";
+                src: url(fonts/UbuntuMono-R.ttf);
+            }
+            p { color: red; }
+        "#;
+        let stylesheet = Stylesheet::parse(css);
+
+        // Should have 2 font-faces and 1 rule
+        assert_eq!(stylesheet.font_faces.len(), 2);
+        assert_eq!(stylesheet.rules.len(), 1);
+
+        assert_eq!(stylesheet.font_faces[0].font_family, "Ubuntu");
+        assert_eq!(stylesheet.font_faces[1].font_family, "UbuntuMono");
+    }
+
+    #[test]
+    fn test_font_face_defaults() {
+        // Font-face with only font-family and src (weight/style default to normal)
+        let css = r#"
+            @font-face {
+                font-family: "MyFont";
+                src: url(myfont.ttf);
+            }
+        "#;
+        let stylesheet = Stylesheet::parse(css);
+
+        assert_eq!(stylesheet.font_faces.len(), 1);
+        let ff = &stylesheet.font_faces[0];
+        assert_eq!(ff.font_family, "MyFont");
+        assert_eq!(ff.font_weight, FontWeight::NORMAL);
+        assert_eq!(ff.font_style, FontStyle::Normal);
     }
 }
 

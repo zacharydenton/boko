@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use crate::book::{Landmark, Metadata, TocEntry};
 use crate::compiler::{Origin, Stylesheet, compile_html_bytes, extract_stylesheets};
-use crate::ir::IRChapter;
+use crate::ir::{FontFace, IRChapter};
 
 /// Unique identifier for a chapter/spine item within a book.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -127,6 +127,49 @@ pub trait Importer: Send + Sync {
 
     /// Load an asset by path.
     fn load_asset(&mut self, path: &Path) -> std::io::Result<Vec<u8>>;
+
+    /// Collect all @font-face definitions from CSS files.
+    ///
+    /// Parses all CSS assets and extracts @font-face rules that map font family
+    /// names to font files. The returned font-faces have their `src` paths
+    /// resolved to canonical paths within the book archive.
+    ///
+    /// This is used by KFX export to create font entities linking font-family
+    /// names to resource locations.
+    fn font_faces(&mut self) -> Vec<FontFace> {
+        let mut font_faces = Vec::new();
+
+        // Find all CSS files
+        let css_paths: Vec<_> = self
+            .list_assets()
+            .into_iter()
+            .filter(|p| {
+                p.extension()
+                    .map(|e| e.eq_ignore_ascii_case("css"))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        for css_path in css_paths {
+            if let Ok(css_bytes) = self.load_asset(&css_path) {
+                let css_str = String::from_utf8_lossy(&css_bytes);
+                let stylesheet = Stylesheet::parse(&css_str);
+
+                // Resolve relative font paths to canonical paths
+                for mut font_face in stylesheet.font_faces {
+                    // Resolve the src path relative to the CSS file location
+                    let resolved = resolve_relative_path(
+                        css_path.to_string_lossy().as_ref(),
+                        &font_face.src,
+                    );
+                    font_face.src = resolved.to_string_lossy().to_string();
+                    font_faces.push(font_face);
+                }
+            }
+        }
+
+        font_faces
+    }
 
     /// Whether this importer requires normalized export for HTML-based formats.
     ///

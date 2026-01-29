@@ -404,6 +404,15 @@ impl Book {
         self.backend.list_assets()
     }
 
+    /// Collect all @font-face definitions from CSS files.
+    ///
+    /// Returns font-face rules that map font family names to font files.
+    /// Used by KFX export to create font entities linking font-family
+    /// names to resource locations.
+    pub fn font_faces(&mut self) -> Vec<crate::ir::FontFace> {
+        self.backend.font_faces()
+    }
+
     /// Whether this book requires normalized export for HTML-based formats.
     ///
     /// Returns true for binary formats (KFX) where the raw content is not HTML.

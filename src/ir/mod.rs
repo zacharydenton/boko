@@ -19,11 +19,13 @@
 //! assert_eq!(chapter.node(root).unwrap().role, Role::Root);
 //! ```
 
+mod font;
 mod links;
 mod node;
 mod semantic;
 mod style;
 
+pub use font::FontFace;
 pub use links::{InternalLocation, Link, LinkTarget};
 pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
