@@ -750,6 +750,10 @@ fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
                 "em" => Length::Em(*value),
                 "rem" => Length::Rem(*value),
                 "%" => Length::Percent(*value),
+                // ex = x-height, approximately 0.5em
+                "ex" => Length::Em(*value * 0.5),
+                // pt = points, 1pt = 96/72 px
+                "pt" => Length::Px(*value * 96.0 / 72.0),
                 _ => return None,
             };
             Some(length)
