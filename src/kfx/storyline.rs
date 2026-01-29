@@ -492,79 +492,106 @@ fn build_text_with_spans(
     // Filter out spans that are completely contained within larger spans at the same offset.
     // This handles the case of nested inlines where both outer and inner emit spans.
     // We keep the shorter (more specific) spans and discard the longer encompassing ones.
-    let filtered_spans: Vec<_> = sorted_spans
-        .iter()
-        .filter(|span| {
-            // Check if any other span at the same offset is shorter (more specific)
-            // If so, this span is redundant
-            !sorted_spans.iter().any(|other| {
-                other.offset == span.offset
-                    && other.length < span.length
-                    && other.offset + other.length <= span.offset + span.length
-            })
-        })
-        .copied()
-        .collect();
+    // Build a proper nested span tree to handle overlapping/nested spans.
+    // KFX style_events can have nested spans (e.g., Link containing Inline).
+    // Sort by offset, then by length DESCENDING (enclosing spans first).
+    let mut sorted_spans: Vec<_> = spans.iter().collect();
+    sorted_spans.sort_by(|a, b| {
+        a.offset
+            .cmp(&b.offset)
+            .then_with(|| b.length.cmp(&a.length)) // Larger spans first at same offset
+    });
 
-    let sorted_spans = filtered_spans;
+    // Helper to create a span node with style and semantics applied
+    let create_span_node = |chapter: &mut IRChapter, span: &SpanStart| -> NodeId {
+        let span_node = chapter.alloc_node(Node::new(span.role));
 
-    let mut pos = 0;
+        // Apply style from the styles map (if present)
+        if let Some(style_sym) = span.style_symbol
+            && let Some(style_name) = resolve_symbol(style_sym, doc_symbols)
+            && let Some(styles_map) = styles
+            && let Some(kfx_props) = styles_map.get(style_name)
+        {
+            let ir_style = kfx_style_to_ir(kfx_props);
+            let style_id = chapter.styles.intern(ir_style);
+            if let Some(node) = chapter.node_mut(span_node) {
+                node.style = style_id;
+            }
+        }
+
+        // Apply ALL semantic attributes from the generic map
+        apply_semantics_to_node(chapter, span_node, &span.semantics);
+
+        span_node
+    };
+
+    // Stack of (node_id, char_end_offset) for active spans
+    let mut span_stack: Vec<(NodeId, usize)> = vec![(parent, usize::MAX)];
+    let mut char_pos: usize = 0; // Current position in char offsets
 
     for span in sorted_spans {
-        // KFX style_events use character offsets, not byte offsets
-        // Convert char offset to byte offset for string slicing
-        let span_start = char_to_byte_offset(text, span.offset);
-        let span_end = char_to_byte_offset(text, span.offset + span.length);
+        let span_start = span.offset;
+        let span_end = span.offset + span.length;
 
-        // Add text before this span
-        if span_start > pos {
-            let before = &text[pos..span_start];
-            if !before.is_empty() {
+        // Pop any spans that have ended before this span starts
+        while span_stack.len() > 1 {
+            let (_, stack_end) = span_stack.last().unwrap();
+            if *stack_end <= span_start {
+                // This span has ended - add any remaining text to it first
+                if char_pos < *stack_end {
+                    let byte_start = char_to_byte_offset(text, char_pos);
+                    let byte_end = char_to_byte_offset(text, *stack_end);
+                    if byte_end > byte_start {
+                        let segment = &text[byte_start..byte_end];
+                        let range = chapter.append_text(segment);
+                        let text_node = chapter.alloc_node(Node::text(range));
+                        let (parent_id, _) = span_stack.last().unwrap();
+                        chapter.append_child(*parent_id, text_node);
+                    }
+                    char_pos = *stack_end;
+                }
+                span_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        // Add text between char_pos and span_start to current parent
+        if char_pos < span_start {
+            let byte_start = char_to_byte_offset(text, char_pos);
+            let byte_end = char_to_byte_offset(text, span_start);
+            if byte_end > byte_start {
+                let before = &text[byte_start..byte_end];
                 let range = chapter.append_text(before);
                 let text_node = chapter.alloc_node(Node::text(range));
-                chapter.append_child(parent, text_node);
+                let (current_parent, _) = span_stack.last().unwrap();
+                chapter.append_child(*current_parent, text_node);
             }
+            char_pos = span_start;
         }
 
-        // Add the span - role is already determined by schema
+        // Create this span and push onto stack
         if span_end > span_start {
-            let span_text = &text[span_start..span_end];
-
-            let span_node = chapter.alloc_node(Node::new(span.role));
-            chapter.append_child(parent, span_node);
-
-            // Apply style from the styles map (if present)
-            // Resolve: symbol ID → style name → style properties → IR style
-            if let Some(style_sym) = span.style_symbol
-                && let Some(style_name) = resolve_symbol(style_sym, doc_symbols)
-                && let Some(styles_map) = styles
-                && let Some(kfx_props) = styles_map.get(style_name)
-            {
-                let ir_style = kfx_style_to_ir(kfx_props);
-                let style_id = chapter.styles.intern(ir_style);
-                if let Some(node) = chapter.node_mut(span_node) {
-                    node.style = style_id;
-                }
-            }
-
-            // Apply ALL semantic attributes from the generic map
-            apply_semantics_to_node(chapter, span_node, &span.semantics);
-
-            let range = chapter.append_text(span_text);
-            let text_node = chapter.alloc_node(Node::text(range));
-            chapter.append_child(span_node, text_node);
+            let span_node = create_span_node(chapter, span);
+            let (current_parent, _) = span_stack.last().unwrap();
+            chapter.append_child(*current_parent, span_node);
+            span_stack.push((span_node, span_end));
         }
-
-        pos = span_end;
     }
 
-    // Add remaining text after last span
-    if pos < text.len() {
-        let after = &text[pos..];
-        if !after.is_empty() {
-            let range = chapter.append_text(after);
-            let text_node = chapter.alloc_node(Node::text(range));
-            chapter.append_child(parent, text_node);
+    // Close all remaining spans and add trailing text
+    while let Some((node_id, end_offset)) = span_stack.pop() {
+        let actual_end = end_offset.min(text.chars().count());
+        if char_pos < actual_end {
+            let byte_start = char_to_byte_offset(text, char_pos);
+            let byte_end = char_to_byte_offset(text, actual_end);
+            if byte_end > byte_start {
+                let segment = &text[byte_start..byte_end];
+                let range = chapter.append_text(segment);
+                let text_node = chapter.alloc_node(Node::text(range));
+                chapter.append_child(node_id, text_node);
+            }
+            char_pos = actual_end;
         }
     }
 }
@@ -701,19 +728,11 @@ fn walk_node_for_export(
         return;
     }
 
-    // Check if this element has block-like display (including inline-block)
-    // KFX doesn't support inline-block, so we emit it as a block container
-    let has_block_display = chapter
-        .styles
-        .get(node.style)
-        .map(crate::kfx::style_schema::is_block_display)
-        .unwrap_or(false);
-
-    // Check if this is an inline role that should become a span (style_event)
-    // Links are ALWAYS emitted as spans - KFX requires link_to to be in style_events
-    // (even for block-display links like TOC entries)
-    if node.role == Role::Link || (sch.is_inline_role(node.role) && !has_block_display) {
-        emit_span_for_export(chapter, node_id, node, sch, ctx, stream);
+    // Inline elements (Link, Inline): use the flattening algorithm.
+    // This produces non-overlapping style_events where each text segment
+    // carries the accumulated state from all ancestors.
+    if node.role == Role::Link || node.role == Role::Inline {
+        emit_inline_content_flat(chapter, node_id, sch, ctx, stream);
         return;
     }
 
@@ -803,80 +822,197 @@ fn walk_node_for_export(
     stream.push(KfxToken::EndElement);
 }
 
-/// Emit a span (inline) node as StartSpan/EndSpan tokens.
+// ============================================================================
+// Inline Content Flattening ("Push Down, Emit at Bottom")
+// ============================================================================
+//
+// This implements the correct algorithm for converting nested inline elements
+// (Link, Inline, Text) into flat, non-overlapping KFX style_events.
+//
+// Problem: HTML has nested inline elements like <a><span>1.</span>Easy...</a>
+// KFX needs flat style_events where each event covers a disjoint text range
+// and carries ALL applicable attributes from ancestors.
+//
+// Solution: Depth-first traversal with a context stack. We only emit events
+// at TEXT LEAVES, carrying the accumulated state from all ancestors.
+
+/// Active state during inline flattening - accumulated from ancestors.
+#[derive(Clone, Default)]
+struct InlineState {
+    /// Active link target (from Link ancestor), as anchor symbol string
+    link_to: Option<String>,
+    /// Active style (innermost wins)
+    style: Option<crate::ir::StyleId>,
+    /// Active epub:type for noteref detection
+    epub_type: Option<String>,
+    /// Active element ID (for anchor creation)
+    element_id: Option<String>,
+}
+
+/// A flattened text segment with its computed state.
+struct FlatSegment {
+    text: String,
+    state: InlineState,
+}
+
+/// Flatten inline content into segments with computed state.
 ///
-/// Inline roles like Link and Inline (bold/italic) should be emitted as spans,
-/// not nested containers, so they can be converted to KFX style_events.
-fn emit_span_for_export(
+/// This is the "Push Down, Emit at Bottom" algorithm:
+/// - Traverse the tree depth-first
+/// - Accumulate state (link_to, style) as we go down
+/// - Only emit segments when we hit Text leaves
+fn flatten_inline_content(
     chapter: &IRChapter,
     node_id: NodeId,
-    node: &crate::ir::Node,
+    state: InlineState,
+    segments: &mut Vec<FlatSegment>,
+) {
+    let node = match chapter.node(node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    // MERGE STATE: Calculate effective state for this node
+    let effective_state = InlineState {
+        // Links: propagate down (newest wins if nested)
+        link_to: chapter
+            .semantics
+            .href(node_id)
+            .map(|s| s.to_string())
+            .or(state.link_to),
+        // Styles: innermost wins (child overrides parent)
+        style: if node.role == Role::Inline || node.role == Role::Link {
+            Some(node.style)
+        } else {
+            state.style
+        },
+        // epub:type: propagate for noteref detection
+        epub_type: chapter
+            .semantics
+            .epub_type(node_id)
+            .map(|s| s.to_string())
+            .or(state.epub_type),
+        // Element ID: for anchor creation
+        element_id: chapter
+            .semantics
+            .id(node_id)
+            .map(|s| s.to_string())
+            .or(state.element_id),
+    };
+
+    match node.role {
+        // TEXT LEAVES: Emit segment with accumulated state
+        Role::Text => {
+            if !node.text.is_empty() {
+                let text = chapter.text(node.text);
+                if !text.is_empty() {
+                    segments.push(FlatSegment {
+                        text: text.to_string(),
+                        state: effective_state,
+                    });
+                }
+            }
+        }
+        // BREAK: Emit newline as text
+        Role::Break => {
+            segments.push(FlatSegment {
+                text: "\n".to_string(),
+                state: effective_state,
+            });
+        }
+        // CONTAINERS (Link, Inline, etc.): Recurse with accumulated state
+        _ => {
+            for child_id in chapter.children(node_id) {
+                flatten_inline_content(chapter, child_id, effective_state.clone(), segments);
+            }
+        }
+    }
+}
+
+/// Convert flattened segments into KfxTokens (Text + style info for style_events).
+///
+/// This emits the text and creates SpanStart markers that will become style_events.
+fn emit_flattened_segments(
+    segments: Vec<FlatSegment>,
+    chapter: &IRChapter,
+    _sch: &crate::kfx::schema::KfxSchema,
+    ctx: &mut ExportContext,
+    stream: &mut TokenStream,
+) {
+    for segment in segments {
+        let needs_style_event =
+            segment.state.link_to.is_some() || segment.state.style.is_some();
+
+        if needs_style_event {
+            // Build span with accumulated state
+            let mut span = SpanStart::new(
+                if segment.state.link_to.is_some() {
+                    Role::Link
+                } else {
+                    Role::Inline
+                },
+                0,
+                0,
+            );
+
+            // Set style (innermost)
+            if let Some(style_id) = segment.state.style {
+                let style_symbol = ctx.register_style_id(style_id, &chapter.styles);
+                span.style_symbol = Some(style_symbol);
+            }
+
+            // Build KFX attributes
+            let mut kfx_attrs = Vec::new();
+
+            // Add link_to if present
+            if let Some(ref href) = segment.state.link_to {
+                let mut href_value = href.clone();
+                let anchor_symbol = ctx.anchor_registry.register_link_target(&mut href_value);
+                kfx_attrs.push((sym!(LinkTo), anchor_symbol));
+            }
+
+            // Add yj.display for noterefs
+            if let Some(ref epub_type) = segment.state.epub_type {
+                if epub_type.split_whitespace().any(|t| t == "noteref") {
+                    // YjNote = 617
+                    kfx_attrs.push((sym!(YjDisplay), "617".to_string()));
+                }
+            }
+
+            span.kfx_attrs = kfx_attrs;
+
+            // Store element ID for anchor creation
+            if let Some(ref id) = segment.state.element_id {
+                span.set_semantic(SemanticTarget::Id, id.clone());
+            }
+
+            stream.push(KfxToken::StartSpan(span));
+            stream.push(KfxToken::Text(segment.text));
+            stream.push(KfxToken::EndSpan);
+        } else {
+            // Plain text, no style event needed
+            stream.push(KfxToken::Text(segment.text));
+        }
+    }
+}
+
+/// Emit inline content (Link, Inline, Text) using the flattening algorithm.
+///
+/// This replaces the old StartSpan/EndSpan nesting approach with proper
+/// "Push Down, Emit at Bottom" that produces non-overlapping style_events.
+fn emit_inline_content_flat(
+    chapter: &IRChapter,
+    node_id: NodeId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
 ) {
-    // Build span with semantics
-    let mut span = SpanStart::new(node.role, 0, 0); // offset/length calculated in tokens_to_ion
+    // Flatten the inline subtree into segments with computed state
+    let mut segments = Vec::new();
+    flatten_inline_content(chapter, node_id, InlineState::default(), &mut segments);
 
-    // Register the node's style and get a KFX style symbol
-    let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
-    span.style_symbol = Some(style_symbol);
-
-    // SCHEMA-DRIVEN attribute export for spans
-    // Includes conditional rules (e.g., noteref → YjDisplay: YjNote)
-    let export_ctx = crate::kfx::transforms::ExportContext {
-        spine_map: None,
-        resource_registry: Some(&ctx.resource_registry),
-    };
-    let mut kfx_attrs = sch.export_span_attributes(
-        node.role,
-        |target| match target {
-            SemanticTarget::Href => chapter.semantics.href(node_id).map(|s| s.to_string()),
-            SemanticTarget::Src => chapter.semantics.src(node_id).map(|s| s.to_string()),
-            SemanticTarget::Alt => chapter.semantics.alt(node_id).map(|s| s.to_string()),
-            SemanticTarget::Id => chapter.semantics.id(node_id).map(|s| s.to_string()),
-            SemanticTarget::EpubType => chapter.semantics.epub_type(node_id).map(|s| s.to_string()),
-        },
-        &export_ctx,
-    );
-
-    // Convert href values to anchor symbols via the AnchorRegistry.
-    // KFX uses indirect anchor references: link_to points to an anchor symbol,
-    // and anchor entities define where those symbols resolve to.
-    for (field_id, value) in &mut kfx_attrs {
-        if *field_id == sym!(LinkTo) {
-            // Register the link target and get an anchor symbol
-            let anchor_symbol = ctx.anchor_registry.register_link_target(value);
-            *value = anchor_symbol;
-        }
-    }
-
-    span.kfx_attrs = kfx_attrs;
-
-    // Populate semantics map
-    if let Some(href) = chapter.semantics.href(node_id) {
-        span.set_semantic(SemanticTarget::Href, href.to_string());
-    }
-    if let Some(id) = chapter.semantics.id(node_id) {
-        span.set_semantic(SemanticTarget::Id, id.to_string());
-    }
-
-    stream.push(KfxToken::StartSpan(span));
-
-    // Emit text content and children
-    if !node.text.is_empty() {
-        let text = chapter.text(node.text);
-        if !text.is_empty() {
-            stream.push(KfxToken::Text(text.to_string()));
-        }
-    }
-
-    // Walk children (may contain more text or nested spans)
-    for child in chapter.children(node_id) {
-        walk_node_for_export(chapter, child, sch, ctx, stream);
-    }
-
-    stream.push(KfxToken::EndSpan);
+    // Convert segments to tokens
+    emit_flattened_segments(segments, chapter, sch, ctx, stream);
 }
 
 /// Convert a TokenStream to KFX Ion structure (Storyline content_list).
@@ -1273,9 +1409,13 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     span_info.offset = start_offset;
                     span_info.length = length;
 
-                    // Add to the current element's style_events
-                    if let Some(current) = stack.last_mut() {
-                        current.add_style_event(span_info, ctx);
+                    // Add the span as a style_event (if non-empty)
+                    // Note: The flattening algorithm ensures spans are non-overlapping
+                    // and already have all accumulated attributes merged.
+                    if length > 0 {
+                        if let Some(current) = stack.last_mut() {
+                            current.add_style_event(span_info, ctx);
+                        }
                     }
                 }
             }
@@ -2167,5 +2307,169 @@ mod tests {
         style.border_style_top = BorderStyle::Solid;
         style.border_width_top = Length::Px(0.0);
         assert!(!needs_container_wrapper(&style));
+    }
+
+    #[test]
+    fn test_nested_spans_link_containing_inline() {
+        // Test that nested spans (Link containing Inline) are properly reconstructed.
+        // This is the TOC case: "1. Easy Concurrency..." where "1." is in an Inline inside a Link.
+        let mut stream = TokenStream::new();
+        let mut link_semantics = HashMap::new();
+        link_semantics.insert(SemanticTarget::Href, "#chapter1".to_string());
+
+        // Text: "1. Easy Concurrency"
+        // Link: offset 0, length 19 (entire text)
+        // Inline: offset 0, length 2 ("1.")
+        stream.push(KfxToken::StartElement(ElementStart {
+            role: Role::Paragraph,
+            id: None,
+            semantics: HashMap::new(),
+            content_ref: Some(ContentRef {
+                name: "content_1".to_string(),
+                index: 0,
+            }),
+            style_events: vec![
+                SpanStart {
+                    role: Role::Link,
+                    semantics: link_semantics,
+                    offset: 0,
+                    length: 19,
+                    style_symbol: None,
+                    kfx_attrs: Vec::new(),
+                },
+                SpanStart {
+                    role: Role::Inline,
+                    semantics: HashMap::new(),
+                    offset: 0,
+                    length: 2,
+                    style_symbol: None,
+                    kfx_attrs: Vec::new(),
+                },
+            ],
+            kfx_attrs: Vec::new(),
+            style_symbol: None,
+            style_name: None,
+            needs_container_wrapper: false,
+        }));
+        stream.end_element();
+
+        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| {
+            Some("1. Easy Concurrency".to_string())
+        });
+
+        // Expected structure:
+        // Paragraph
+        //   Link [href="#chapter1"]
+        //     Inline
+        //       Text: "1."
+        //     Text: " Easy Concurrency"
+        let para_id = chapter.children(chapter.root()).next().unwrap();
+        let para_children: Vec<_> = chapter.children(para_id).collect();
+
+        // Should have exactly one child: the Link
+        assert_eq!(para_children.len(), 1, "Paragraph should have one Link child");
+
+        let link_id = para_children[0];
+        let link_node = chapter.node(link_id).unwrap();
+        assert_eq!(link_node.role, Role::Link, "First child should be Link");
+        assert_eq!(
+            chapter.semantics.href(link_id),
+            Some("#chapter1"),
+            "Link should have href"
+        );
+
+        // Link should have two children: Inline and Text
+        let link_children: Vec<_> = chapter.children(link_id).collect();
+        assert_eq!(link_children.len(), 2, "Link should have Inline + Text children");
+
+        // First child: Inline containing "1."
+        let inline_id = link_children[0];
+        let inline_node = chapter.node(inline_id).unwrap();
+        assert_eq!(inline_node.role, Role::Inline, "First Link child should be Inline");
+
+        let inline_children: Vec<_> = chapter.children(inline_id).collect();
+        assert_eq!(inline_children.len(), 1, "Inline should have one Text child");
+        let inline_text = chapter.node(inline_children[0]).unwrap();
+        assert_eq!(chapter.text(inline_text.text), "1.");
+
+        // Second child: Text " Easy Concurrency"
+        let text_id = link_children[1];
+        let text_node = chapter.node(text_id).unwrap();
+        assert_eq!(text_node.role, Role::Text);
+        assert_eq!(chapter.text(text_node.text), " Easy Concurrency");
+    }
+
+    #[test]
+    fn test_flatten_inline_content_produces_non_overlapping_segments() {
+        // Test the "Push Down, Emit at Bottom" flattening algorithm.
+        // Given: Link > Inline > Text("1.") + Text("Easy...")
+        // Expect: Two non-overlapping segments, each with correct accumulated state.
+
+        let mut chapter = IRChapter::new();
+
+        // Create distinct styles (use different margin values to distinguish)
+        let link_style = chapter.styles.intern(ComputedStyle::default());
+        let mut inline_computed = ComputedStyle::default();
+        inline_computed.margin_top = Length::Px(10.0);
+        let inline_style = chapter.styles.intern(inline_computed);
+
+        // Build tree: Link > Inline > Text("1.") + Text(" Easy")
+        // Create text nodes
+        let text1_range = chapter.append_text("1.");
+        let mut text1 = Node::new(Role::Text);
+        text1.text = text1_range;
+        let text1_id = chapter.alloc_node(text1);
+
+        let text2_range = chapter.append_text(" Easy Concurrency");
+        let mut text2 = Node::new(Role::Text);
+        text2.text = text2_range;
+        let text2_id = chapter.alloc_node(text2);
+
+        // Create Inline containing text1
+        let mut inline_node = Node::new(Role::Inline);
+        inline_node.style = inline_style;
+        let inline_id = chapter.alloc_node(inline_node);
+        chapter.append_child(inline_id, text1_id);
+
+        // Create Link containing Inline and text2
+        let mut link_node = Node::new(Role::Link);
+        link_node.style = link_style;
+        let link_id = chapter.alloc_node(link_node);
+        chapter.append_child(link_id, inline_id);
+        chapter.append_child(link_id, text2_id);
+        chapter.semantics.set_href(link_id, "#chapter1".to_string());
+
+        // Flatten the Link subtree
+        let mut segments = Vec::new();
+        flatten_inline_content(&chapter, link_id, InlineState::default(), &mut segments);
+
+        // Should produce exactly 2 segments
+        assert_eq!(segments.len(), 2, "Should have 2 non-overlapping segments");
+
+        // First segment: "1." with Inline's style and Link's href
+        assert_eq!(segments[0].text, "1.");
+        assert_eq!(
+            segments[0].state.link_to,
+            Some("#chapter1".to_string()),
+            "First segment should have link_to from Link"
+        );
+        assert_eq!(
+            segments[0].state.style,
+            Some(inline_style),
+            "First segment should have Inline's style (innermost wins)"
+        );
+
+        // Second segment: " Easy Concurrency" with Link's style and Link's href
+        assert_eq!(segments[1].text, " Easy Concurrency");
+        assert_eq!(
+            segments[1].state.link_to,
+            Some("#chapter1".to_string()),
+            "Second segment should have link_to from Link"
+        );
+        assert_eq!(
+            segments[1].state.style,
+            Some(link_style),
+            "Second segment should have Link's style"
+        );
     }
 }
