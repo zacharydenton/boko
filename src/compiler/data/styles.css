@@ -1,0 +1,380 @@
+/**
+ * User Agent Stylesheet
+ *
+ * Default styles applied to HTML elements, matching browser defaults.
+ */
+
+/* ==========================================================================
+   Block Elements - Headings
+   ========================================================================== */
+
+h1 {
+  display: block;
+  margin-top: 0.67em;
+  margin-bottom: 0.67em;
+  font-size: 2em;
+  font-weight: bold;
+}
+
+h2 {
+  display: block;
+  margin-top: 0.83em;
+  margin-bottom: 0.83em;
+  font-size: 1.5em;
+  font-weight: bold;
+}
+
+h3 {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-size: 1.17em;
+  font-weight: bold;
+}
+
+h4 {
+  display: block;
+  margin-top: 1.33em;
+  margin-bottom: 1.33em;
+  font-size: 1em;
+  font-weight: bold;
+}
+
+h5 {
+  display: block;
+  margin-top: 1.67em;
+  margin-bottom: 1.67em;
+  font-size: 0.83em;
+  font-weight: bold;
+}
+
+h6 {
+  display: block;
+  margin-top: 2.33em;
+  margin-bottom: 2.33em;
+  font-size: 0.67em;
+  font-weight: bold;
+}
+
+/* ==========================================================================
+   Block Elements - Paragraphs & Sections
+   ========================================================================== */
+
+p {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+blockquote {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 40px;
+  margin-right: 40px;
+}
+
+figure {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  margin-left: 40px;
+  margin-right: 40px;
+}
+
+center {
+  display: block;
+  text-align: center;
+}
+
+hr {
+  display: block;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  /* Note: hr[size] attribute maps to height */
+}
+
+/* ==========================================================================
+   Block Elements - Lists
+   ========================================================================== */
+
+ul {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  list-style-type: disc;
+}
+
+ol {
+  display: block;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  list-style-type: decimal;
+}
+
+dl {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+dd {
+  margin-left: 40px;
+}
+
+/* Note: li[type] attribute mappings:
+   type="a" -> list-style-type: lower-alpha
+   type="A" -> list-style-type: upper-alpha
+   type="i" -> list-style-type: lower-roman
+   type="I" -> list-style-type: upper-roman
+   type="disc" -> list-style-type: disc
+   type="square" -> list-style-type: square
+   type="circle" -> list-style-type: circle
+   type="none" -> list-style-type: none
+*/
+
+/* ==========================================================================
+   Block Elements - Preformatted Text
+   ========================================================================== */
+
+pre {
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-family: monospace;
+}
+
+xmp {
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-family: monospace;
+}
+
+plaintext {
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-family: monospace;
+}
+
+listing {
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-family: monospace;
+}
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+
+table {
+  border-collapse: separate;
+  border-spacing: 2px;
+  border-color: grey;
+}
+
+th {
+  font-weight: bold;
+  text-align: center;
+}
+
+/* ==========================================================================
+   Inline Elements - Text Formatting
+   ========================================================================== */
+
+strong, b {
+  font-weight: bold;
+}
+
+em, i, cite, var, address, dfn {
+  font-style: italic;
+}
+
+u, ins {
+  text-decoration: underline;
+}
+
+s, strike, del {
+  text-decoration: line-through;
+}
+
+/* ==========================================================================
+   Inline Elements - Monospace
+   ========================================================================== */
+
+tt, code, kbd, samp {
+  font-family: monospace;
+}
+
+/* ==========================================================================
+   Inline Elements - Highlighting
+   ========================================================================== */
+
+mark {
+  background-color: yellow;
+  color: black;
+}
+
+/* ==========================================================================
+   Bidirectional Text
+   ========================================================================== */
+
+bdo {
+  unicode-bidi: isolate-override;
+}
+
+bdo[dir="ltr"] {
+  direction: ltr;
+  unicode-bidi: isolate-override;
+}
+
+bdo[dir="rtl"] {
+  direction: rtl;
+  unicode-bidi: isolate-override;
+}
+
+bdi {
+  unicode-bidi: isolate;
+}
+
+[dir="ltr"] {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+[dir="rtl"] {
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+
+/* ==========================================================================
+   Ruby Annotations (CJK)
+   ========================================================================== */
+
+/* -webkit-ruby-position: over | before */
+/* Maps to: ruby_position_horizontal: top, ruby_position_vertical: right */
+
+/* -webkit-ruby-position: under | after */
+/* Maps to: ruby_position_horizontal: bottom, ruby_position_vertical: left */
+
+/* ruby-align values:
+   start        -> ruby_text_align: start, ruby_base_align: start
+   center       -> ruby_text_align: center, ruby_base_align: center
+   space-around -> ruby_text_align: space_around, ruby_base_align: space_around
+   space-between -> ruby_text_align: space_between, ruby_base_align: space_between
+*/
+
+/* ==========================================================================
+   Text Emphasis (CJK)
+   ========================================================================== */
+
+/* -webkit-text-emphasis-position: over */
+/* Maps to: text_emphasis_position_horizontal: top, text_emphasis_position_vertical: right */
+
+/* -webkit-text-emphasis-position: under */
+/* Maps to: text_emphasis_position_horizontal: bottom, text_emphasis_position_vertical: left */
+
+/* ==========================================================================
+   Images
+   ========================================================================== */
+
+/* img[vspace] in px -> margin-top, margin-bottom */
+/* img[hspace] in px -> margin-left, margin-right */
+/* img[border] in px -> border-style: solid, border-width: Npx (all sides) */
+
+/* ==========================================================================
+   Legacy HTML Attributes
+   ========================================================================== */
+
+/* body[bgcolor] -> fill_color (via BGColorTransformer) */
+/* body[text] -> text_color */
+
+/* hr[size] in px -> height */
+/* hr[width] in px/% -> width */
+/* hr[align] -> box_align (left/center/right) */
+
+/* p[align], div[align], h1-h6[align] -> text-align */
+
+/* table[border] -> border on all sides */
+/* table[cellpadding] -> padding on cells */
+/* table[cellspacing] -> border-spacing */
+/* td/th[bgcolor] -> fill_color */
+/* td/th[width/height] -> width/height */
+/* td/th[colspan/rowspan] -> table cell spanning */
+/* td/th[valign] -> vertical-align */
+
+/* ol[start] -> list_start_offset */
+/* li[value] -> list_start_offset */
+
+/* ==========================================================================
+   Implementation Notes
+   ========================================================================== */
+
+/*
+ * Body Margins:
+ * - body margin-left/right are extracted to special attributes:
+ *   body-margin-left, body-margin-right
+ * - These are converter-internal properties that affect content area calculation
+ * - They support: %, px, pt, em, ex, in, cm units
+ *
+ * Font Weight Mapping:
+ * - CSS "bold" or "bolder" -> "ultra_bold"
+ * - numeric 100-900 maps to:
+ *   100: thin, 200: ultra_light, 300: light, 400: normal,
+ *   500: medium, 600: semi_bold, 700: bold, 800: ultra_bold, 900: heavy
+ *
+ * List Style Mapping:
+ * - "decimal" -> "numeric"
+ * - "lower-alpha"/"lower-latin" -> "alpha_lower"
+ * - "upper-alpha"/"upper-latin" -> "alpha_upper"
+ * - "lower-roman" -> "roman_lower"
+ * - "upper-roman" -> "roman_upper"
+ *
+ * Writing Mode:
+ * - Supports: horizontal-tb, vertical-rl, vertical-lr
+ *
+ * Text Combine (Tate-Chu-Yoko):
+ * - text-combine-upright for vertical text horizontal runs
+ */
+
+/* ==========================================================================
+   Additional HTML5 Elements
+   ========================================================================== */
+
+html, body, div, section, article, aside, nav, header, footer, main,
+address, figcaption, details, summary, hgroup {
+  display: block;
+}
+
+li {
+  display: list-item;
+}
+
+span, a, abbr, acronym, sub, sup, small, big, q, time, label, img {
+  display: inline;
+}
+
+sup {
+  vertical-align: super;
+}
+
+sub {
+  vertical-align: sub;
+}
+
+table {
+  display: table;
+}
+
+tr {
+  display: table-row;
+}
+
+td, th {
+  display: table-cell;
+}
+
+pre, xmp, plaintext, listing {
+  white-space: pre;
+}
+
+head, script, style, link, meta, title, template {
+  display: none;
+}

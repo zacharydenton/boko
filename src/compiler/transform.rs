@@ -7,67 +7,11 @@ use super::css::{Origin, Stylesheet, compute_styles};
 use super::element_ref::ElementRef;
 use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role, WhiteSpace};
 
-/// User-agent default stylesheet.
-///
-/// This is intentionally minimal - only display types and essential semantic
-/// mappings. All spacing (margins, padding) and sizing should come from the
-/// EPUB CSS. The target renderer (Kindle, etc.) has its own sensible defaults.
+/// User agent stylesheet (browser defaults).
+const UA_CSS: &str = include_str!("data/styles.css");
+
 pub fn user_agent_stylesheet() -> Stylesheet {
-    Stylesheet::parse(
-        r#"
-        /* Block elements */
-        html, body, div, section, article, aside, nav, header, footer, main,
-        address, blockquote, figure, figcaption, details, summary, p, pre, hr, hgroup {
-            display: block;
-        }
-
-        /* Headings */
-        h1, h2, h3, h4, h5, h6 {
-            display: block;
-            font-weight: bold;
-        }
-        h1 { font-size: 2em; }
-        h2 { font-size: 1.5em; }
-        h3 { font-size: 1.17em; }
-        h4 { font-size: 1em; }
-        h5 { font-size: 0.83em; }
-        h6 { font-size: 0.67em; }
-
-        /* Lists - display and list-style only, no padding/margins */
-        ul, ol { display: block; }
-        ul { list-style-type: disc; }
-        ol { list-style-type: decimal; }
-        li { display: list-item; }
-
-        /* Inline elements */
-        span, a, em, i, strong, b, cite, var, dfn, abbr, acronym,
-        code, kbd, samp, tt, sub, sup, small, big, q,
-        u, ins, s, strike, del, mark, time, label, img {
-            display: inline;
-        }
-
-        /* Semantic inline styles */
-        em, i, cite, var, dfn { font-style: italic; }
-        strong, b { font-weight: bold; }
-        code, kbd, samp, tt, pre { font-family: monospace; }
-        pre { white-space: pre; }
-        sup { vertical-align: super; }
-        sub { vertical-align: sub; }
-        u, ins { text-decoration: underline; }
-        s, strike, del { text-decoration: line-through; }
-
-        /* Tables */
-        table { display: table; }
-        tr { display: table-row; }
-        td, th { display: table-cell; }
-        th { font-weight: bold; }
-
-        /* Hidden elements */
-        head, script, style, link, meta, title, template {
-            display: none;
-        }
-    "#,
-    )
+    Stylesheet::parse(UA_CSS)
 }
 
 /// Map an HTML element to its semantic role.
