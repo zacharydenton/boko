@@ -677,6 +677,27 @@ impl KfxSchema {
         self.execute_strategy_for_role(strategy, get_attr)
     }
 
+    /// Check if any span indicator is present on an element and return the override role.
+    ///
+    /// This enables elements with span-like attributes (e.g., link_to) to be recognized
+    /// as the appropriate role (e.g., Link). Used after resolve_element_role to handle
+    /// cases like standalone Link elements that have type: text but also link_to.
+    pub fn check_span_role_override<F>(&self, has_field: F) -> Option<Role>
+    where
+        F: Fn(KfxSymbol) -> bool,
+    {
+        for rule in &self.span_rules {
+            if has_field(rule.indicator) {
+                // Found a matching span indicator - determine the role
+                let role = self.execute_strategy_for_role(&rule.strategy, |sym| {
+                    if has_field(sym) { Some(1) } else { None }
+                });
+                return Some(role);
+            }
+        }
+        None
+    }
+
     /// Find the matching span rule for a style_event.
     ///
     /// # Arguments
@@ -812,22 +833,38 @@ impl KfxSchema {
     {
         let mut attrs = Vec::new();
 
-        // Find the KFX type ID for this role
-        let kfx_type_id = match self.kfx_symbol_for_role(role) {
-            Some(id) => id,
-            None => return attrs,
-        };
+        // Apply element attribute rules if role has a KFX type mapping
+        if let Some(kfx_type_id) = self.kfx_symbol_for_role(role) {
+            for rule in self.element_attr_rules(kfx_type_id) {
+                if let Some(value) = get_semantic(rule.target) {
+                    let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
+                    let kfx_value = rule.transform.export(&parsed, export_ctx);
+                    attrs.push((rule.kfx_field as u64, kfx_value));
+                }
+            }
+        }
 
-        // Apply attribute rules in reverse (IR → KFX)
-        for rule in self.element_attr_rules(kfx_type_id) {
-            if let Some(value) = get_semantic(rule.target) {
-                // Wrap as ParsedAttribute::String for transformation
-                let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
+        // Also check span rules - roles like Link are defined there
+        // This enables standalone Link elements to export link_to
+        for span_rule in &self.span_rules {
+            let rule_matches = match &span_rule.strategy {
+                Strategy::Dynamic { trigger_role, .. } => *trigger_role == role,
+                Strategy::Structure { role: r, .. } => *r == role,
+                _ => false,
+            };
 
-                // Apply transformer's export direction
-                let kfx_value = rule.transform.export(&parsed, export_ctx);
-
-                attrs.push((rule.kfx_field as u64, kfx_value));
+            if rule_matches {
+                for attr_rule in &span_rule.attr_rules {
+                    // Skip if we already have this attribute from element rules
+                    if attrs.iter().any(|(id, _)| *id == attr_rule.kfx_field as u64) {
+                        continue;
+                    }
+                    if let Some(value) = get_semantic(attr_rule.target) {
+                        let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
+                        let kfx_value = attr_rule.transform.export(&parsed, export_ctx);
+                        attrs.push((attr_rule.kfx_field as u64, kfx_value));
+                    }
+                }
             }
         }
 

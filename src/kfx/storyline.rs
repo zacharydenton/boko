@@ -138,6 +138,14 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         }
     }
 
+    // Check for span indicators on elements (e.g., link_to → Link)
+    // This enables standalone Link elements to be recognized
+    if let Some(override_role) =
+        schema().check_span_role_override(|sym| get_field(fields, sym as u64).is_some())
+    {
+        role = override_role;
+    }
+
     // Get element ID
     let id = get_field(fields, sym!(Id)).and_then(|v| v.as_int());
 
@@ -211,7 +219,8 @@ fn get_semantic_type_annotation(
 /// Extract ALL semantic attributes for an element using schema rules.
 ///
 /// This is **fully generic** - it iterates all AttrRules from the schema
-/// and applies their transformers. No hardcoded SemanticTarget checks.
+/// and applies their transformers. Also checks span rules for attributes
+/// like link_to that may appear on standalone elements.
 fn extract_all_element_attrs(
     fields: &[(u64, IonValue)],
     kfx_type_id: u32,
@@ -224,20 +233,37 @@ fn extract_all_element_attrs(
         anchors: ctx.anchors,
     };
 
+    // Extract using element attr rules
     for rule in schema().element_attr_rules(kfx_type_id) {
         if let Some(raw_value) = get_field(fields, rule.kfx_field as u64)
             .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
         {
-            // Apply the transformer to convert the raw value
             let parsed = rule.transform.import(&raw_value, &import_ctx);
-
-            // Convert ParsedAttribute to string for storage
             let final_value = match parsed {
                 crate::kfx::transforms::ParsedAttribute::String(s) => s,
                 crate::kfx::transforms::ParsedAttribute::Link(link) => link.to_href(),
                 crate::kfx::transforms::ParsedAttribute::Anchor(id) => id,
             };
+            result.insert(rule.target, final_value);
+        }
+    }
 
+    // Also extract using span rules (for attributes like link_to on standalone elements)
+    let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u64).is_some();
+    for rule in schema().span_attr_rules(&has_field) {
+        // Skip if we already have this attribute
+        if result.contains_key(&rule.target) {
+            continue;
+        }
+        if let Some(raw_value) = get_field(fields, rule.kfx_field as u64)
+            .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))
+        {
+            let parsed = rule.transform.import(&raw_value, &import_ctx);
+            let final_value = match parsed {
+                crate::kfx::transforms::ParsedAttribute::String(s) => s,
+                crate::kfx::transforms::ParsedAttribute::Link(link) => link.to_href(),
+                crate::kfx::transforms::ParsedAttribute::Anchor(id) => id,
+            };
             result.insert(rule.target, final_value);
         }
     }
@@ -709,13 +735,13 @@ fn walk_node_for_export(
         .map(needs_container_wrapper)
         .unwrap_or(false);
 
-    // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
+    // SCHEMA-DRIVEN attribute export
     // Create a closure to get semantic values by target
     let export_ctx = crate::kfx::transforms::ExportContext {
         spine_map: None,
         resource_registry: Some(&ctx.resource_registry),
     };
-    let kfx_attrs = sch.export_attributes(
+    let mut kfx_attrs = sch.export_attributes(
         node.role,
         |target| match target {
             SemanticTarget::Href => chapter.semantics.href(node_id).map(|s| s.to_string()),
@@ -726,6 +752,14 @@ fn walk_node_for_export(
         },
         &export_ctx,
     );
+
+    // Convert link_to values to anchor symbols via the AnchorRegistry
+    for (field_id, value) in &mut kfx_attrs {
+        if *field_id == sym!(LinkTo) {
+            let anchor_symbol = ctx.anchor_registry.register_link_target(value);
+            *value = anchor_symbol;
+        }
+    }
 
     // Store the transformed KFX attributes for tokens_to_ion
     elem.kfx_attrs = kfx_attrs;
