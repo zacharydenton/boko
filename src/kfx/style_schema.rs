@@ -457,11 +457,7 @@ impl StyleSchema {
             ir_key: "text-indent",
             ir_field: Some(IrField::TextIndent),
             kfx_symbol: KfxSymbol::TextIndent,
-            // Convert CSS indent (px/em/%) to KFX em units
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -469,11 +465,7 @@ impl StyleSchema {
             ir_key: "line-height",
             ir_field: Some(IrField::LineHeight),
             kfx_symbol: KfxSymbol::LineHeight,
-            // Convert CSS line-height (px/em/%) to KFX em units
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -509,17 +501,14 @@ impl StyleSchema {
         // Spacing Properties (Margins)
         // ====================================================================
         //
-        // Margins use ConvertToDimensioned for proper px→em conversion.
-        // KFX expects em-based dimensions for consistent scaling.
+        // Margins use PreserveUnit to keep the original CSS units (px, em, %).
+        // This matches the source CSS more closely.
 
         schema.register(StylePropertyRule {
             ir_key: "margin-top",
             ir_field: Some(IrField::MarginTop),
             kfx_symbol: KfxSymbol::MarginTop,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -527,10 +516,7 @@ impl StyleSchema {
             ir_key: "margin-bottom",
             ir_field: Some(IrField::MarginBottom),
             kfx_symbol: KfxSymbol::MarginBottom,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -538,10 +524,7 @@ impl StyleSchema {
             ir_key: "margin-left",
             ir_field: Some(IrField::MarginLeft),
             kfx_symbol: KfxSymbol::MarginLeft,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -549,10 +532,7 @@ impl StyleSchema {
             ir_key: "margin-right",
             ir_field: Some(IrField::MarginRight),
             kfx_symbol: KfxSymbol::MarginRight,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -564,10 +544,7 @@ impl StyleSchema {
             ir_key: "padding-top",
             ir_field: Some(IrField::PaddingTop),
             kfx_symbol: KfxSymbol::PaddingTop,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -575,10 +552,7 @@ impl StyleSchema {
             ir_key: "padding-bottom",
             ir_field: Some(IrField::PaddingBottom),
             kfx_symbol: KfxSymbol::PaddingBottom,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -586,10 +560,7 @@ impl StyleSchema {
             ir_key: "padding-left",
             ir_field: Some(IrField::PaddingLeft),
             kfx_symbol: KfxSymbol::PaddingLeft,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -597,10 +568,7 @@ impl StyleSchema {
             ir_key: "padding-right",
             ir_field: Some(IrField::PaddingRight),
             kfx_symbol: KfxSymbol::PaddingRight,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -667,10 +635,7 @@ impl StyleSchema {
             ir_key: "letter-spacing",
             ir_field: Some(IrField::LetterSpacing),
             kfx_symbol: KfxSymbol::Letterspacing,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::InlineSafe,
         });
 
@@ -678,10 +643,7 @@ impl StyleSchema {
             ir_key: "word-spacing",
             ir_field: Some(IrField::WordSpacing),
             kfx_symbol: KfxSymbol::Wordspacing,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::InlineSafe,
         });
 
@@ -772,10 +734,7 @@ impl StyleSchema {
             ir_key: "width",
             ir_field: Some(IrField::Width),
             kfx_symbol: KfxSymbol::Width,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -783,10 +742,7 @@ impl StyleSchema {
             ir_key: "height",
             ir_field: Some(IrField::Height),
             kfx_symbol: KfxSymbol::Height,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -794,10 +750,7 @@ impl StyleSchema {
             ir_key: "max-width",
             ir_field: Some(IrField::MaxWidth),
             kfx_symbol: KfxSymbol::MaxWidth,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -805,10 +758,7 @@ impl StyleSchema {
             ir_key: "min-height",
             ir_field: Some(IrField::MinHeight),
             kfx_symbol: KfxSymbol::MinHeight,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -816,10 +766,7 @@ impl StyleSchema {
             ir_key: "min-width",
             ir_field: Some(IrField::MinWidth),
             kfx_symbol: KfxSymbol::MinWidth,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -827,10 +774,7 @@ impl StyleSchema {
             ir_key: "max-height",
             ir_field: Some(IrField::MaxHeight),
             kfx_symbol: KfxSymbol::MaxHeight,
-            transform: ValueTransform::ConvertToDimensioned {
-                base_pixels: DEFAULT_BASE_FONT_SIZE,
-                target_unit: KfxSymbol::Em,
-            },
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::BlockOnly,
         });
 
@@ -977,11 +921,8 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
-        // Border widths
-        let border_width_transform = ValueTransform::ConvertToDimensioned {
-            base_pixels: DEFAULT_BASE_FONT_SIZE,
-            target_unit: KfxSymbol::Em,
-        };
+        // Border widths - preserve original units (px, em, etc.)
+        let border_width_transform = ValueTransform::PreserveUnit;
 
         schema.register(StylePropertyRule {
             ir_key: "border-top-width",
@@ -1052,11 +993,8 @@ impl StyleSchema {
             context: StyleContext::BlockOnly,
         });
 
-        // Border radius
-        let border_radius_transform = ValueTransform::ConvertToDimensioned {
-            base_pixels: DEFAULT_BASE_FONT_SIZE,
-            target_unit: KfxSymbol::Em,
-        };
+        // Border radius - preserve original units
+        let border_radius_transform = ValueTransform::PreserveUnit;
 
         schema.register(StylePropertyRule {
             ir_key: "border-top-left-radius",
