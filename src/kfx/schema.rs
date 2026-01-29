@@ -468,6 +468,16 @@ impl KfxSchema {
             },
         );
 
+        // CodeBlock - <pre> elements
+        // Exports as type: text, imports back as Container (no round-trip marker yet)
+        self.export_strategy_table.insert(
+            Role::CodeBlock,
+            Strategy::Structure {
+                role: Role::CodeBlock,
+                kfx_type: KfxSymbol::Text,
+            },
+        );
+
         // Figure - container for images with captions
         // Uses type: text with layout_hints: [figure] (added in storyline.rs)
         self.export_strategy_table.insert(
