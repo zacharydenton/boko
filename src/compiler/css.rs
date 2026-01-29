@@ -222,6 +222,10 @@ impl Declaration {
                 })
                 .unwrap_or_default(),
             "border" => parse_border_shorthand(input),
+            "border-top" => parse_border_top_shorthand(input),
+            "border-right" => parse_border_right_shorthand(input),
+            "border-bottom" => parse_border_bottom_shorthand(input),
+            "border-left" => parse_border_left_shorthand(input),
             "list-style" => parse_list_style_shorthand(input),
             _ => return None,
         })
@@ -1017,6 +1021,127 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
         decls.push(Declaration::BorderLeftColor(c));
     }
 
+    decls
+}
+
+/// Parse border values (width, style, color) in any order, returning them as a tuple.
+fn parse_border_values(
+    input: &mut Parser<'_, '_>,
+) -> (Option<Length>, Option<BorderStyle>, Option<Color>) {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<Color> = None;
+
+    for _ in 0..3 {
+        if style.is_none()
+            && let Ok(s) = input.try_parse(|i| {
+                parse_border_style_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+            })
+        {
+            style = Some(s);
+            continue;
+        }
+
+        if color.is_none()
+            && let Ok(c) =
+                input.try_parse(|i| parse_color(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
+        {
+            color = Some(c);
+            continue;
+        }
+
+        if width.is_none()
+            && let Ok(w) = input.try_parse(|i| {
+                parse_border_width_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+            })
+        {
+            width = Some(w);
+            continue;
+        }
+
+        break;
+    }
+
+    (width, style, color)
+}
+
+/// Parse border-top shorthand (e.g., `border-top: 1px solid red`).
+fn parse_border_top_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let (width, style, color) = parse_border_values(input);
+    if width.is_none() && style.is_none() && color.is_none() {
+        return vec![];
+    }
+
+    let mut decls = Vec::with_capacity(3);
+    if let Some(w) = width {
+        decls.push(Declaration::BorderTopWidth(w));
+    }
+    if let Some(s) = style {
+        decls.push(Declaration::BorderTopStyle(s));
+    }
+    if let Some(c) = color {
+        decls.push(Declaration::BorderTopColor(c));
+    }
+    decls
+}
+
+/// Parse border-right shorthand.
+fn parse_border_right_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let (width, style, color) = parse_border_values(input);
+    if width.is_none() && style.is_none() && color.is_none() {
+        return vec![];
+    }
+
+    let mut decls = Vec::with_capacity(3);
+    if let Some(w) = width {
+        decls.push(Declaration::BorderRightWidth(w));
+    }
+    if let Some(s) = style {
+        decls.push(Declaration::BorderRightStyle(s));
+    }
+    if let Some(c) = color {
+        decls.push(Declaration::BorderRightColor(c));
+    }
+    decls
+}
+
+/// Parse border-bottom shorthand.
+fn parse_border_bottom_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let (width, style, color) = parse_border_values(input);
+    if width.is_none() && style.is_none() && color.is_none() {
+        return vec![];
+    }
+
+    let mut decls = Vec::with_capacity(3);
+    if let Some(w) = width {
+        decls.push(Declaration::BorderBottomWidth(w));
+    }
+    if let Some(s) = style {
+        decls.push(Declaration::BorderBottomStyle(s));
+    }
+    if let Some(c) = color {
+        decls.push(Declaration::BorderBottomColor(c));
+    }
+    decls
+}
+
+/// Parse border-left shorthand.
+fn parse_border_left_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let (width, style, color) = parse_border_values(input);
+    if width.is_none() && style.is_none() && color.is_none() {
+        return vec![];
+    }
+
+    let mut decls = Vec::with_capacity(3);
+    if let Some(w) = width {
+        decls.push(Declaration::BorderLeftWidth(w));
+    }
+    if let Some(s) = style {
+        decls.push(Declaration::BorderLeftStyle(s));
+    }
+    if let Some(c) = color {
+        decls.push(Declaration::BorderLeftColor(c));
+    }
     decls
 }
 
