@@ -222,6 +222,7 @@ impl Declaration {
                 })
                 .unwrap_or_default(),
             "border" => parse_border_shorthand(input),
+            "list-style" => parse_list_style_shorthand(input),
             _ => return None,
         })
     }
@@ -1279,6 +1280,74 @@ fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosi
         "outside" => Some(ListStylePosition::Outside),
         _ => None,
     }
+}
+
+/// Parse the list-style shorthand: list-style-type, list-style-position, list-style-image
+/// We only care about type and position (image is not supported).
+fn parse_list_style_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let mut list_style_type = None;
+    let mut list_style_position = None;
+
+    // Parse up to 3 values in any order
+    for _ in 0..3 {
+        if input.is_exhausted() {
+            break;
+        }
+
+        let state = input.state();
+        if let Ok(ident) = input.expect_ident_cloned() {
+            let ident_lower = ident.to_ascii_lowercase();
+            // Check for list-style-type values
+            let maybe_type = match ident_lower.as_ref() {
+                "none" => Some(ListStyleType::None),
+                "disc" => Some(ListStyleType::Disc),
+                "circle" => Some(ListStyleType::Circle),
+                "square" => Some(ListStyleType::Square),
+                "decimal" => Some(ListStyleType::Decimal),
+                "lower-alpha" | "lower-latin" => Some(ListStyleType::LowerAlpha),
+                "upper-alpha" | "upper-latin" => Some(ListStyleType::UpperAlpha),
+                "lower-roman" => Some(ListStyleType::LowerRoman),
+                "upper-roman" => Some(ListStyleType::UpperRoman),
+                _ => None,
+            };
+            if maybe_type.is_some() && list_style_type.is_none() {
+                list_style_type = maybe_type;
+                continue;
+            }
+
+            // Check for list-style-position values
+            let maybe_position = match ident_lower.as_ref() {
+                "inside" => Some(ListStylePosition::Inside),
+                "outside" => Some(ListStylePosition::Outside),
+                _ => None,
+            };
+            if maybe_position.is_some() && list_style_position.is_none() {
+                list_style_position = maybe_position;
+                continue;
+            }
+
+            // Unknown identifier, restore and break
+            input.reset(&state);
+            break;
+        } else {
+            // Not an identifier (could be url() for list-style-image), skip it
+            input.reset(&state);
+            // Try to skip one value
+            if input.expect_url().is_ok() || input.expect_function().is_ok() {
+                continue;
+            }
+            break;
+        }
+    }
+
+    let mut decls = Vec::new();
+    if let Some(t) = list_style_type {
+        decls.push(Declaration::ListStyleType(t));
+    }
+    if let Some(p) = list_style_position {
+        decls.push(Declaration::ListStylePosition(p));
+    }
+    decls
 }
 
 fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapse> {
