@@ -2633,6 +2633,17 @@ pub fn import_kfx_style(
     style
 }
 
+/// Check if a style should be treated as block-like for KFX export.
+///
+/// KFX doesn't have native `display: inline-block`. Elements with this
+/// display type should be emitted as block containers instead of inline spans.
+pub fn is_block_display(style: &ir_style::ComputedStyle) -> bool {
+    matches!(
+        style.display,
+        ir_style::Display::Block | ir_style::Display::InlineBlock
+    )
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

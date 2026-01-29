@@ -280,6 +280,7 @@ enum_property! {
         #[default]
         Block => "block",
         Inline => "inline",
+        InlineBlock => "inline-block",
         None => "none",
         ListItem => "list-item",
         TableCell => "table-cell",

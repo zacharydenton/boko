@@ -620,8 +620,17 @@ fn walk_node_for_export(
         return;
     }
 
+    // Check if this element has block-like display (including inline-block)
+    // KFX doesn't support inline-block, so we emit it as a block container
+    let has_block_display = chapter
+        .styles
+        .get(node.style)
+        .map(|s| crate::kfx::style_schema::is_block_display(s))
+        .unwrap_or(false);
+
     // Check if this is an inline role that should become a span (style_event)
-    if sch.is_inline_role(node.role) {
+    // Exception: inline-block elements should become block containers
+    if sch.is_inline_role(node.role) && !has_block_display {
         emit_span_for_export(chapter, node_id, node, sch, ctx, stream);
         return;
     }

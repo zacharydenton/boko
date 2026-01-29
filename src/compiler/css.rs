@@ -826,6 +826,7 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<Display> {
     match token.as_ref() {
         "block" => Some(Display::Block),
         "inline" => Some(Display::Inline),
+        "inline-block" => Some(Display::InlineBlock),
         "none" => Some(Display::None),
         "list-item" => Some(Display::ListItem),
         "table-cell" => Some(Display::TableCell),
