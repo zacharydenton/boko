@@ -257,6 +257,9 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
                 .and_then(|v| v.as_int())
                 .map(|n| n as usize)?;
 
+            // Get style symbol ID for later lookup
+            let style_symbol = get_field(fields, sym!(Style)).and_then(|v| v.as_symbol());
+
             // Create closure to check which fields are present
             let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u64).is_some();
 
@@ -271,7 +274,7 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
                 semantics,
                 offset,
                 length,
-                style_symbol: None, // Populated by import/style lookup
+                style_symbol,
                 kfx_attrs: Vec::new(),
             })
         })
@@ -326,8 +329,10 @@ where
 /// Uses a stack-based approach to handle nested elements.
 /// Applies semantics **generically** from the token's semantics map.
 /// The `styles` map is used to look up style definitions by name.
+/// The `doc_symbols` are used to resolve style symbol IDs to names.
 pub fn build_ir_from_tokens<F>(
     tokens: &TokenStream,
+    doc_symbols: &[String],
     styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
     mut content_lookup: F,
 ) -> IRChapter
@@ -373,7 +378,14 @@ where
                         chapter.append_child(node_id, text_node);
                     } else {
                         // Complex case: apply style events as spans
-                        build_text_with_spans(&mut chapter, node_id, &text, &elem.style_events);
+                        build_text_with_spans(
+                            &mut chapter,
+                            node_id,
+                            &text,
+                            &elem.style_events,
+                            doc_symbols,
+                            styles,
+                        );
                     }
                 }
 
@@ -434,7 +446,18 @@ fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
 }
 
 /// Build text nodes with inline spans applied.
-fn build_text_with_spans(chapter: &mut IRChapter, parent: NodeId, text: &str, spans: &[SpanStart]) {
+///
+/// The `doc_symbols` and `styles` parameters are used to resolve span styles:
+/// - `doc_symbols`: resolves style symbol IDs to style names
+/// - `styles`: maps style names to KFX style properties
+fn build_text_with_spans(
+    chapter: &mut IRChapter,
+    parent: NodeId,
+    text: &str,
+    spans: &[SpanStart],
+    doc_symbols: &[String],
+    styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
+) {
     // Sort spans by offset, then by length (shorter first for same offset)
     let mut sorted_spans: Vec<_> = spans.iter().collect();
     sorted_spans.sort_by_key(|s| (s.offset, s.length));
@@ -482,6 +505,20 @@ fn build_text_with_spans(chapter: &mut IRChapter, parent: NodeId, text: &str, sp
 
             let span_node = chapter.alloc_node(Node::new(span.role));
             chapter.append_child(parent, span_node);
+
+            // Apply style from the styles map (if present)
+            // Resolve: symbol ID → style name → style properties → IR style
+            if let Some(style_sym) = span.style_symbol
+                && let Some(style_name) = resolve_symbol(style_sym, doc_symbols)
+                && let Some(styles_map) = styles
+                && let Some(kfx_props) = styles_map.get(style_name)
+            {
+                let ir_style = kfx_style_to_ir(kfx_props);
+                let style_id = chapter.styles.intern(ir_style);
+                if let Some(node) = chapter.node_mut(span_node) {
+                    node.style = style_id;
+                }
+            }
 
             // Apply ALL semantic attributes from the generic map
             apply_semantics_to_node(chapter, span_node, &span.semantics);
@@ -555,7 +592,7 @@ where
     F: FnMut(&str, usize) -> Option<String>,
 {
     let tokens = tokenize_storyline(storyline, doc_symbols, anchors, styles);
-    build_ir_from_tokens(&tokens, styles, content_lookup)
+    build_ir_from_tokens(&tokens, doc_symbols, styles, content_lookup)
 }
 
 // ============================================================================
@@ -1173,7 +1210,7 @@ mod tests {
         stream.text("Hello");
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, None, |_, _| None);
+        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| None);
         assert_eq!(chapter.node_count(), 3); // root + para + text
     }
 
@@ -1195,7 +1232,7 @@ mod tests {
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, None, |_, _| None);
+        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| None);
 
         let children: Vec<_> = chapter.children(chapter.root()).collect();
         assert_eq!(children.len(), 1);
@@ -1223,7 +1260,7 @@ mod tests {
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, None, |name, idx| {
+        let chapter = build_ir_from_tokens(&stream, &[], None, |name, idx| {
             if name == "content_1" && idx == 0 {
                 Some("Hello, world!".to_string())
             } else {
@@ -1256,7 +1293,7 @@ mod tests {
         }));
         stream.end_element();
 
-        let chapter = build_ir_from_tokens(&stream, None, |_, _| Some("Chapter 1".to_string()));
+        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| Some("Chapter 1".to_string()));
 
         let heading_id = chapter.children(chapter.root()).next().unwrap();
         let heading = chapter.node(heading_id).unwrap();
@@ -1292,7 +1329,7 @@ mod tests {
         stream.end_element();
 
         // Text is "Hello, world!" - span at offset 7, length 5 = "world"
-        let chapter = build_ir_from_tokens(&stream, None, |_, _| Some("Hello, world!".to_string()));
+        let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| Some("Hello, world!".to_string()));
 
         // Should have: root -> para -> [text("Hello, "), link("world"), text("!")]
         let para_id = chapter.children(chapter.root()).next().unwrap();
