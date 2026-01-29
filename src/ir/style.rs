@@ -262,6 +262,23 @@ enum_property! {
 }
 
 enum_property! {
+    /// CSS white-space values.
+    pub enum WhiteSpace {
+        /// Normal whitespace handling: collapse whitespace, wrap lines.
+        #[default]
+        Normal => "normal",
+        /// Collapse whitespace but don't wrap lines.
+        Nowrap => "nowrap",
+        /// Preserve whitespace and newlines, don't wrap lines.
+        Pre => "pre",
+        /// Preserve whitespace and newlines, wrap lines.
+        PreWrap => "pre-wrap",
+        /// Collapse whitespace except newlines, wrap lines.
+        PreLine => "pre-line",
+    }
+}
+
+enum_property! {
     /// CSS vertical-align values for inline and table-cell elements.
     pub enum VerticalAlign {
         #[default]
@@ -499,8 +516,8 @@ pub struct ComputedStyle {
     // Hyphenation
     pub hyphens: Hyphens,
 
-    // No-break (white-space: nowrap)
-    pub no_break: bool,
+    // White-space handling
+    pub white_space: WhiteSpace,
 
     // Phase 2: Text decoration extensions
     pub underline_style: DecorationStyle,
@@ -806,9 +823,11 @@ impl ToCss for ComputedStyle {
             buf.push_str("; ");
         }
 
-        // White-space nowrap
-        if self.no_break {
-            buf.push_str("white-space: nowrap; ");
+        // White-space
+        if self.white_space != default.white_space {
+            buf.push_str("white-space: ");
+            self.white_space.to_css(buf);
+            buf.push_str("; ");
         }
 
         // Underline style (if different from boolean)

@@ -19,7 +19,7 @@ use crate::ir::{
     BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle,
     DecorationStyle, Display, Float, FontStyle, FontWeight, Hyphens, Length, ListStylePosition,
     ListStyleType, OverflowWrap, StylePool, TextAlign, TextTransform, VerticalAlign, Visibility,
-    WordBreak,
+    WhiteSpace, WordBreak,
 };
 
 // ============================================================================
@@ -51,7 +51,7 @@ pub enum Declaration {
     WordSpacing(Length),
     TextTransform(TextTransform),
     Hyphens(Hyphens),
-    WhiteSpace(bool), // true = nowrap
+    WhiteSpace(WhiteSpace),
     VerticalAlign(VerticalAlignValue),
 
     // Text decoration
@@ -1177,11 +1177,14 @@ fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
     }
 }
 
-fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<bool> {
+fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
-        "nowrap" | "pre" => Some(true),
-        "normal" | "pre-wrap" | "pre-line" => Some(false),
+        "normal" => Some(WhiteSpace::Normal),
+        "nowrap" => Some(WhiteSpace::Nowrap),
+        "pre" => Some(WhiteSpace::Pre),
+        "pre-wrap" => Some(WhiteSpace::PreWrap),
+        "pre-line" => Some(WhiteSpace::PreLine),
         _ => None,
     }
 }
@@ -1581,7 +1584,7 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         Declaration::WordSpacing(l) => style.word_spacing = *l,
         Declaration::TextTransform(t) => style.text_transform = *t,
         Declaration::Hyphens(h) => style.hyphens = *h,
-        Declaration::WhiteSpace(nowrap) => style.no_break = *nowrap,
+        Declaration::WhiteSpace(ws) => style.white_space = *ws,
         Declaration::VerticalAlign(v) => {
             style.vertical_align = match v {
                 VerticalAlignValue::Baseline => VerticalAlign::Baseline,

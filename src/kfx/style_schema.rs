@@ -230,7 +230,7 @@ pub enum IrField {
     WordSpacing,
     TextTransform,
     Hyphens,
-    NoBreak,
+    WhiteSpace,
     // Phase 2: Text decoration extensions
     UnderlineStyle,
     Overline,
@@ -674,7 +674,7 @@ impl StyleSchema {
 
         schema.register(StylePropertyRule {
             ir_key: "white-space",
-            ir_field: Some(IrField::NoBreak),
+            ir_field: Some(IrField::WhiteSpace),
             kfx_symbol: KfxSymbol::Nobreak,
             transform: ValueTransform::Map(vec![
                 ("nowrap".into(), KfxValue::Bool(true)),
@@ -1824,9 +1824,9 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
-        IrField::NoBreak => {
-            if ir_style.no_break {
-                Some("nowrap".to_string())
+        IrField::WhiteSpace => {
+            if ir_style.white_space != default.white_space {
+                Some(ir_style.white_space.to_css_string())
             } else {
                 None
             }
@@ -2378,8 +2378,15 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 _ => ir_style::Hyphens::None,
             };
         }
-        IrField::NoBreak => {
-            ir_style.no_break = css_value == "nowrap";
+        IrField::WhiteSpace => {
+            ir_style.white_space = match css_value {
+                "normal" => ir_style::WhiteSpace::Normal,
+                "nowrap" => ir_style::WhiteSpace::Nowrap,
+                "pre" => ir_style::WhiteSpace::Pre,
+                "pre-wrap" => ir_style::WhiteSpace::PreWrap,
+                "pre-line" => ir_style::WhiteSpace::PreLine,
+                _ => ir_style::WhiteSpace::Normal,
+            };
         }
         // Phase 2: Text decoration extensions
         IrField::UnderlineStyle => {

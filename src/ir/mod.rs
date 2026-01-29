@@ -33,7 +33,7 @@ pub use style::{
     BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle,
     DecorationStyle, Display, Float, FontStyle, FontVariant, FontWeight, Hyphens, Length,
     ListStylePosition, ListStyleType, OverflowWrap, StyleId, StylePool, TextAlign, TextTransform,
-    ToCss, VerticalAlign, Visibility, WordBreak,
+    ToCss, VerticalAlign, Visibility, WhiteSpace, WordBreak,
 };
 
 /// A chapter's content in normalized IR form.

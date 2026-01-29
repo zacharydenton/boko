@@ -5,7 +5,7 @@ use html5ever::LocalName;
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::css::{Origin, Stylesheet, compute_styles};
 use super::element_ref::ElementRef;
-use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role};
+use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role, WhiteSpace};
 
 /// User-agent default stylesheet.
 ///
@@ -50,6 +50,7 @@ pub fn user_agent_stylesheet() -> Stylesheet {
         em, i, cite, var, dfn { font-style: italic; }
         strong, b { font-weight: bold; }
         code, kbd, samp, tt, pre { font-family: monospace; }
+        pre { white-space: pre; }
         sup { vertical-align: super; }
         sub { vertical-align: sub; }
         u, ins { text-decoration: underline; }
@@ -261,7 +262,18 @@ impl<'a> TransformContext<'a> {
                     return;
                 }
 
-                let range = self.chapter.append_text(text);
+                // Check if whitespace should be preserved (pre, pre-wrap, pre-line)
+                let preserve_whitespace = parent_style
+                    .map(|s| matches!(s.white_space, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine))
+                    .unwrap_or(false);
+
+                // Normalize whitespace unless we're in a pre-like context
+                let text_content = if preserve_whitespace {
+                    text.to_string()
+                } else {
+                    normalize_whitespace(text)
+                };
+                let range = self.chapter.append_text(&text_content);
                 // Text nodes don't have styles - they inherit from parent element
                 let text_node = Node::text(range);
                 let ir_id = self.chapter.alloc_node(text_node);
@@ -398,6 +410,30 @@ impl<'a> TransformContext<'a> {
 pub fn transform(dom: &ArenaDom, stylesheets: &[(Stylesheet, Origin)]) -> IRChapter {
     let ctx = TransformContext::new(dom, stylesheets);
     ctx.transform()
+}
+
+/// Normalize whitespace in text content according to HTML rules.
+///
+/// Collapses runs of whitespace (spaces, tabs, newlines) to single spaces.
+/// This matches standard HTML text content normalization.
+fn normalize_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut prev_was_whitespace = false;
+
+    for c in text.chars() {
+        if c.is_whitespace() {
+            if !prev_was_whitespace {
+                result.push(' ');
+                prev_was_whitespace = true;
+            }
+            // Skip consecutive whitespace
+        } else {
+            result.push(c);
+            prev_was_whitespace = false;
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
