@@ -523,6 +523,30 @@ impl KfxSchema {
                 kfx_type: KfxSymbol::Text,
             },
         );
+
+        // Definition list structures (dl/dt/dd)
+        // These are commonly used for footnotes in EPUBs
+        self.export_strategy_table.insert(
+            Role::DefinitionList,
+            Strategy::Structure {
+                role: Role::DefinitionList,
+                kfx_type: KfxSymbol::Container,
+            },
+        );
+        self.export_strategy_table.insert(
+            Role::DefinitionTerm,
+            Strategy::Structure {
+                role: Role::DefinitionTerm,
+                kfx_type: KfxSymbol::Container,
+            },
+        );
+        self.export_strategy_table.insert(
+            Role::DefinitionDescription,
+            Strategy::Structure {
+                role: Role::DefinitionDescription,
+                kfx_type: KfxSymbol::Container,
+            },
+        );
     }
 
     /// Register span (inline) rules for style_events.
