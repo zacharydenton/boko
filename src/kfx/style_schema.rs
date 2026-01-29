@@ -586,6 +586,7 @@ impl StyleSchema {
             context: StyleContext::InlineSafe,
         });
 
+        // text_background_color: for inline text spans
         schema.register(StylePropertyRule {
             ir_key: "background-color",
             ir_field: Some(IrField::BackgroundColor),
@@ -593,7 +594,18 @@ impl StyleSchema {
             transform: ValueTransform::ParseColor {
                 output_format: ColorFormat::PackedInt,
             },
-            context: StyleContext::Any,
+            context: StyleContext::InlineSafe,
+        });
+
+        // fill_color: for block container backgrounds
+        schema.register(StylePropertyRule {
+            ir_key: "background-color",
+            ir_field: None, // Don't extract twice from IR
+            kfx_symbol: KfxSymbol::FillColor,
+            transform: ValueTransform::ParseColor {
+                output_format: ColorFormat::PackedInt,
+            },
+            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================

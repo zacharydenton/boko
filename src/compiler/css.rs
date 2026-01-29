@@ -247,6 +247,7 @@ impl Declaration {
             // Colors
             "color" => parse_color(input).map(Self::Color),
             "background-color" => parse_color(input).map(Self::BackgroundColor),
+            "background" => parse_background_shorthand(input).map(Self::BackgroundColor),
 
             // Font properties
             "font-family" => parse_font_family(input).map(Self::FontFamily),
@@ -695,6 +696,95 @@ fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
     }
 
     None
+}
+
+/// Parse the CSS `background` shorthand and extract just the color component.
+///
+/// The background shorthand can contain: color, image, position, repeat, size, attachment,
+/// origin, clip - in any order. We parse tokens in a loop and extract any color we find.
+/// See https://www.w3.org/TR/css-backgrounds-3/#background
+fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<Color> {
+    let mut color: Option<Color> = None;
+
+    // Try to parse each component in any order, like lightningcss does
+    loop {
+        // Try to parse a color if we haven't found one yet
+        if color.is_none()
+            && let Ok(c) =
+                input.try_parse(|i| parse_color(i).ok_or(i.new_custom_error::<_, ()>(())))
+        {
+            color = Some(c);
+            continue;
+        }
+
+        // Skip over url() functions (background-image)
+        if input.try_parse(|i| i.expect_url()).is_ok() {
+            continue;
+        }
+
+        // Skip over functions like linear-gradient() etc.
+        if input
+            .try_parse(|i: &mut Parser<'_, '_>| {
+                let _ = i.expect_function()?;
+                i.parse_nested_block(
+                    |nested: &mut Parser<'_, '_>| -> Result<(), ParseError<'_, ()>> {
+                        while nested.next().is_ok() {}
+                        Ok(())
+                    },
+                )
+            })
+            .is_ok()
+        {
+            continue;
+        }
+
+        // Skip over known keywords: repeat-x, repeat-y, no-repeat, cover, contain,
+        // fixed, scroll, local, padding-box, border-box, content-box, etc.
+        if input
+            .try_parse(|i| {
+                let ident = i.expect_ident()?;
+                match ident.as_ref() {
+                // repeat keywords
+                "repeat" | "repeat-x" | "repeat-y" | "no-repeat" | "space" | "round" |
+                // size keywords
+                "cover" | "contain" | "auto" |
+                // attachment keywords
+                "scroll" | "fixed" | "local" |
+                // box keywords (origin/clip)
+                "padding-box" | "border-box" | "content-box" |
+                // position keywords
+                "top" | "bottom" | "left" | "right" | "center" |
+                // none keyword
+                "none" => Ok(()),
+                _ => Err(i.new_custom_error::<_, ()>(())),
+            }
+            })
+            .is_ok()
+        {
+            continue;
+        }
+
+        // Skip over lengths and percentages (for position/size)
+        if input
+            .try_parse(|i| match i.next()? {
+                Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => Ok(()),
+                _ => Err(i.new_custom_error::<_, ()>(())),
+            })
+            .is_ok()
+        {
+            continue;
+        }
+
+        // Skip the "/" delimiter used between position and size
+        if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+            continue;
+        }
+
+        // Nothing matched, exit the loop
+        break;
+    }
+
+    color
 }
 
 fn parse_hex_color(hex: &str) -> Option<Color> {
@@ -2813,5 +2903,71 @@ mod tests {
                 _ => panic!("Unexpected declaration type: {:?}", decl),
             }
         }
+    }
+
+    #[test]
+    fn test_background_shorthand_color_only() {
+        let css = "div { background: #aabbbb; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 1);
+
+        match &decls[0] {
+            Declaration::BackgroundColor(c) => {
+                assert_eq!(c.r, 0xAA);
+                assert_eq!(c.g, 0xBB);
+                assert_eq!(c.b, 0xBB);
+            }
+            _ => panic!("Expected BackgroundColor, got {:?}", decls[0]),
+        }
+    }
+
+    #[test]
+    fn test_background_shorthand_with_other_values() {
+        // background with url and color - should extract color
+        let css = "div { background: url('image.png') #ff0000 no-repeat; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 1);
+
+        match &decls[0] {
+            Declaration::BackgroundColor(c) => {
+                assert_eq!(c.r, 255);
+                assert_eq!(c.g, 0);
+                assert_eq!(c.b, 0);
+            }
+            _ => panic!("Expected BackgroundColor, got {:?}", decls[0]),
+        }
+    }
+
+    #[test]
+    fn test_background_shorthand_color_at_end() {
+        // Color can appear at the end too
+        let css = "div { background: no-repeat center #00ff00; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 1);
+
+        match &decls[0] {
+            Declaration::BackgroundColor(c) => {
+                assert_eq!(c.r, 0);
+                assert_eq!(c.g, 255);
+                assert_eq!(c.b, 0);
+            }
+            _ => panic!("Expected BackgroundColor, got {:?}", decls[0]),
+        }
+    }
+
+    #[test]
+    fn test_background_shorthand_no_color() {
+        // background without color - should produce no declarations
+        let css = "div { background: url('image.png') no-repeat; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        assert_eq!(decls.len(), 0);
     }
 }
