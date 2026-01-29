@@ -161,192 +161,167 @@ pub struct TextDecorationValue {
 impl Declaration {
     /// Parse a CSS declaration from a property name and value parser.
     ///
-    /// Returns `None` if the property is unknown or the value fails to parse.
-    pub fn parse(name: &str, input: &mut Parser<'_, '_>) -> Option<Self> {
+    /// Returns a Vec of declarations. For most properties this is a single declaration,
+    /// but shorthands like `margin`, `border`, etc. expand to multiple declarations.
+    /// Returns an empty Vec if the property is unknown or the value fails to parse.
+    pub fn parse(name: &str, input: &mut Parser<'_, '_>) -> Vec<Self> {
+        // Try shorthand properties first (they expand to multiple declarations)
+        if let Some(decls) = Self::parse_shorthand(name, input) {
+            return decls;
+        }
+
+        // Single-value properties
+        Self::parse_single(name, input).into_iter().collect()
+    }
+
+    /// Parse shorthand properties that expand to multiple declarations.
+    fn parse_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<Vec<Self>> {
+        Some(match name {
+            "margin" => Self::parse_length_rect(input, |t, r, b, l| {
+                [Self::MarginTop(t), Self::MarginRight(r), Self::MarginBottom(b), Self::MarginLeft(l)]
+            }),
+            "padding" => Self::parse_length_rect(input, |t, r, b, l| {
+                [Self::PaddingTop(t), Self::PaddingRight(r), Self::PaddingBottom(b), Self::PaddingLeft(l)]
+            }),
+            "border-width" => Self::parse_length_rect(input, |t, r, b, l| {
+                [Self::BorderTopWidth(t), Self::BorderRightWidth(r), Self::BorderBottomWidth(b), Self::BorderLeftWidth(l)]
+            }),
+            "border-style" => parse_border_style_shorthand_values(input)
+                .map(|(t, r, b, l)| {
+                    vec![Self::BorderTopStyle(t), Self::BorderRightStyle(r), Self::BorderBottomStyle(b), Self::BorderLeftStyle(l)]
+                })
+                .unwrap_or_default(),
+            "border-color" => parse_color_shorthand_values(input)
+                .map(|(t, r, b, l)| {
+                    vec![Self::BorderTopColor(t), Self::BorderRightColor(r), Self::BorderBottomColor(b), Self::BorderLeftColor(l)]
+                })
+                .unwrap_or_default(),
+            "border" => parse_border_shorthand(input),
+            _ => return None,
+        })
+    }
+
+    /// Parse a 1-4 value Length rect shorthand (margin, padding, border-width).
+    fn parse_length_rect<F>(input: &mut Parser<'_, '_>, make_decls: F) -> Vec<Self>
+    where
+        F: FnOnce(Length, Length, Length, Length) -> [Self; 4],
+    {
+        parse_box_shorthand_values(input)
+            .map(|(t, r, b, l)| make_decls(t, r, b, l).into())
+            .unwrap_or_default()
+    }
+
+    /// Parse single-value properties.
+    fn parse_single(name: &str, input: &mut Parser<'_, '_>) -> Option<Self> {
         match name {
             // Colors
-            "color" => parse_color(input).map(Declaration::Color),
-            "background-color" => parse_color(input).map(Declaration::BackgroundColor),
+            "color" => parse_color(input).map(Self::Color),
+            "background-color" => parse_color(input).map(Self::BackgroundColor),
 
             // Font properties
-            "font-family" => parse_font_family(input).map(Declaration::FontFamily),
-            "font-size" => parse_length(input).map(Declaration::FontSize),
-            "font-weight" => parse_font_weight(input).map(Declaration::FontWeight),
-            "font-style" => parse_font_style(input).map(Declaration::FontStyle),
-            "font-variant" | "font-variant-caps" => {
-                parse_font_variant(input).map(Declaration::FontVariant)
-            }
+            "font-family" => parse_font_family(input).map(Self::FontFamily),
+            "font-size" => parse_length(input).map(Self::FontSize),
+            "font-weight" => parse_font_weight(input).map(Self::FontWeight),
+            "font-style" => parse_font_style(input).map(Self::FontStyle),
+            "font-variant" | "font-variant-caps" => parse_font_variant(input).map(Self::FontVariant),
 
             // Text properties
-            "text-align" => parse_text_align(input).map(Declaration::TextAlign),
-            "text-indent" => parse_length(input).map(Declaration::TextIndent),
-            "line-height" => parse_line_height(input).map(Declaration::LineHeight),
-            "letter-spacing" => parse_length(input).map(Declaration::LetterSpacing),
-            "word-spacing" => parse_length(input).map(Declaration::WordSpacing),
-            "text-transform" => parse_text_transform(input).map(Declaration::TextTransform),
-            "hyphens" => parse_hyphens(input).map(Declaration::Hyphens),
-            "white-space" => parse_white_space(input).map(Declaration::WhiteSpace),
-            "vertical-align" => parse_vertical_align(input).map(Declaration::VerticalAlign),
+            "text-align" => parse_text_align(input).map(Self::TextAlign),
+            "text-indent" => parse_length(input).map(Self::TextIndent),
+            "line-height" => parse_line_height(input).map(Self::LineHeight),
+            "letter-spacing" => parse_length(input).map(Self::LetterSpacing),
+            "word-spacing" => parse_length(input).map(Self::WordSpacing),
+            "text-transform" => parse_text_transform(input).map(Self::TextTransform),
+            "hyphens" => parse_hyphens(input).map(Self::Hyphens),
+            "white-space" => parse_white_space(input).map(Self::WhiteSpace),
+            "vertical-align" => parse_vertical_align(input).map(Self::VerticalAlign),
 
             // Text decoration
             "text-decoration" | "text-decoration-line" => {
-                parse_text_decoration(input).map(Declaration::TextDecoration)
+                parse_text_decoration(input).map(Self::TextDecoration)
             }
-            "text-decoration-style" => {
-                parse_decoration_style(input).map(Declaration::TextDecorationStyle)
-            }
-            "text-decoration-color" => parse_color(input).map(Declaration::TextDecorationColor),
+            "text-decoration-style" => parse_decoration_style(input).map(Self::TextDecorationStyle),
+            "text-decoration-color" => parse_color(input).map(Self::TextDecorationColor),
 
             // Box model - margins (individual)
-            "margin-top" => parse_length(input).map(Declaration::MarginTop),
-            "margin-right" => parse_length(input).map(Declaration::MarginRight),
-            "margin-bottom" => parse_length(input).map(Declaration::MarginBottom),
-            "margin-left" => parse_length(input).map(Declaration::MarginLeft),
+            "margin-top" => parse_length(input).map(Self::MarginTop),
+            "margin-right" => parse_length(input).map(Self::MarginRight),
+            "margin-bottom" => parse_length(input).map(Self::MarginBottom),
+            "margin-left" => parse_length(input).map(Self::MarginLeft),
 
             // Box model - padding (individual)
-            "padding-top" => parse_length(input).map(Declaration::PaddingTop),
-            "padding-right" => parse_length(input).map(Declaration::PaddingRight),
-            "padding-bottom" => parse_length(input).map(Declaration::PaddingBottom),
-            "padding-left" => parse_length(input).map(Declaration::PaddingLeft),
+            "padding-top" => parse_length(input).map(Self::PaddingTop),
+            "padding-right" => parse_length(input).map(Self::PaddingRight),
+            "padding-bottom" => parse_length(input).map(Self::PaddingBottom),
+            "padding-left" => parse_length(input).map(Self::PaddingLeft),
 
             // Dimensions
-            "width" => parse_length(input).map(Declaration::Width),
-            "height" => parse_length(input).map(Declaration::Height),
-            "max-width" => parse_length(input).map(Declaration::MaxWidth),
-            "max-height" => parse_length(input).map(Declaration::MaxHeight),
-            "min-width" => parse_length(input).map(Declaration::MinWidth),
-            "min-height" => parse_length(input).map(Declaration::MinHeight),
+            "width" => parse_length(input).map(Self::Width),
+            "height" => parse_length(input).map(Self::Height),
+            "max-width" => parse_length(input).map(Self::MaxWidth),
+            "max-height" => parse_length(input).map(Self::MaxHeight),
+            "min-width" => parse_length(input).map(Self::MinWidth),
+            "min-height" => parse_length(input).map(Self::MinHeight),
 
             // Display & positioning
-            "display" => parse_display(input).map(Declaration::Display),
-            "float" => parse_float(input).map(Declaration::Float),
-            "clear" => parse_clear(input).map(Declaration::Clear),
-            "visibility" => parse_visibility(input).map(Declaration::Visibility),
-            "box-sizing" => parse_box_sizing(input).map(Declaration::BoxSizing),
+            "display" => parse_display(input).map(Self::Display),
+            "float" => parse_float(input).map(Self::Float),
+            "clear" => parse_clear(input).map(Self::Clear),
+            "visibility" => parse_visibility(input).map(Self::Visibility),
+            "box-sizing" => parse_box_sizing(input).map(Self::BoxSizing),
 
             // Pagination control
-            "orphans" => parse_integer(input).map(Declaration::Orphans),
-            "widows" => parse_integer(input).map(Declaration::Widows),
+            "orphans" => parse_integer(input).map(Self::Orphans),
+            "widows" => parse_integer(input).map(Self::Widows),
 
             // Text wrapping
-            "word-break" => parse_word_break(input).map(Declaration::WordBreak),
-            "overflow-wrap" => parse_overflow_wrap(input).map(Declaration::OverflowWrap),
+            "word-break" => parse_word_break(input).map(Self::WordBreak),
+            "overflow-wrap" => parse_overflow_wrap(input).map(Self::OverflowWrap),
 
             // Page breaks
-            "break-before" | "page-break-before" => {
-                parse_break_value(input).map(Declaration::BreakBefore)
-            }
-            "break-after" | "page-break-after" => {
-                parse_break_value(input).map(Declaration::BreakAfter)
-            }
-            "break-inside" | "page-break-inside" => {
-                parse_break_inside(input).map(Declaration::BreakInside)
-            }
+            "break-before" | "page-break-before" => parse_break_value(input).map(Self::BreakBefore),
+            "break-after" | "page-break-after" => parse_break_value(input).map(Self::BreakAfter),
+            "break-inside" | "page-break-inside" => parse_break_inside(input).map(Self::BreakInside),
 
-            // Border style (individual sides only; shorthand handled separately)
-            "border-top-style" => parse_border_style(input).map(Declaration::BorderTopStyle),
-            "border-right-style" => parse_border_style(input).map(Declaration::BorderRightStyle),
-            "border-bottom-style" => parse_border_style(input).map(Declaration::BorderBottomStyle),
-            "border-left-style" => parse_border_style(input).map(Declaration::BorderLeftStyle),
+            // Border style (individual sides)
+            "border-top-style" => parse_border_style_value(input).map(Self::BorderTopStyle),
+            "border-right-style" => parse_border_style_value(input).map(Self::BorderRightStyle),
+            "border-bottom-style" => parse_border_style_value(input).map(Self::BorderBottomStyle),
+            "border-left-style" => parse_border_style_value(input).map(Self::BorderLeftStyle),
 
-            // Border width (individual sides only; shorthand handled separately)
-            "border-top-width" => parse_length(input).map(Declaration::BorderTopWidth),
-            "border-right-width" => parse_length(input).map(Declaration::BorderRightWidth),
-            "border-bottom-width" => parse_length(input).map(Declaration::BorderBottomWidth),
-            "border-left-width" => parse_length(input).map(Declaration::BorderLeftWidth),
+            // Border width (individual sides)
+            "border-top-width" => parse_length(input).map(Self::BorderTopWidth),
+            "border-right-width" => parse_length(input).map(Self::BorderRightWidth),
+            "border-bottom-width" => parse_length(input).map(Self::BorderBottomWidth),
+            "border-left-width" => parse_length(input).map(Self::BorderLeftWidth),
 
-            // Border color (individual sides only; shorthand handled separately)
-            "border-top-color" => parse_color(input).map(Declaration::BorderTopColor),
-            "border-right-color" => parse_color(input).map(Declaration::BorderRightColor),
-            "border-bottom-color" => parse_color(input).map(Declaration::BorderBottomColor),
-            "border-left-color" => parse_color(input).map(Declaration::BorderLeftColor),
+            // Border color (individual sides)
+            "border-top-color" => parse_color(input).map(Self::BorderTopColor),
+            "border-right-color" => parse_color(input).map(Self::BorderRightColor),
+            "border-bottom-color" => parse_color(input).map(Self::BorderBottomColor),
+            "border-left-color" => parse_color(input).map(Self::BorderLeftColor),
 
             // Border radius
-            "border-radius" => parse_length(input).map(Declaration::BorderRadius),
-            "border-top-left-radius" => parse_length(input).map(Declaration::BorderTopLeftRadius),
-            "border-top-right-radius" => parse_length(input).map(Declaration::BorderTopRightRadius),
-            "border-bottom-left-radius" => {
-                parse_length(input).map(Declaration::BorderBottomLeftRadius)
-            }
-            "border-bottom-right-radius" => {
-                parse_length(input).map(Declaration::BorderBottomRightRadius)
-            }
+            "border-radius" => parse_length(input).map(Self::BorderRadius),
+            "border-top-left-radius" => parse_length(input).map(Self::BorderTopLeftRadius),
+            "border-top-right-radius" => parse_length(input).map(Self::BorderTopRightRadius),
+            "border-bottom-left-radius" => parse_length(input).map(Self::BorderBottomLeftRadius),
+            "border-bottom-right-radius" => parse_length(input).map(Self::BorderBottomRightRadius),
 
             // List properties
-            "list-style-type" => parse_list_style_type(input).map(Declaration::ListStyleType),
-            "list-style-position" => {
-                parse_list_style_position(input).map(Declaration::ListStylePosition)
-            }
+            "list-style-type" => parse_list_style_type(input).map(Self::ListStyleType),
+            "list-style-position" => parse_list_style_position(input).map(Self::ListStylePosition),
 
             // Table properties
-            "border-collapse" => {
-                parse_border_collapse(input).map(Declaration::BorderCollapse)
-            }
-            "border-spacing" => parse_length(input).map(Declaration::BorderSpacing),
-
-            // Shorthands are handled separately in parse_value
-            "margin" | "padding" | "border-style" | "border-width" | "border-color" => None,
+            "border-collapse" => parse_border_collapse(input).map(Self::BorderCollapse),
+            "border-spacing" => parse_length(input).map(Self::BorderSpacing),
 
             // Unknown properties
             _ => {
-                // Consume remaining tokens for unknown properties
                 while input.next().is_ok() {}
                 None
             }
         }
-    }
-
-    /// Parse margin/padding shorthand, returning expanded declarations.
-    pub fn parse_box_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
-        let (top, right, bottom, left) = parse_box_shorthand_values(input)?;
-        match name {
-            "margin" => Some([
-                Declaration::MarginTop(top),
-                Declaration::MarginRight(right),
-                Declaration::MarginBottom(bottom),
-                Declaration::MarginLeft(left),
-            ]),
-            "padding" => Some([
-                Declaration::PaddingTop(top),
-                Declaration::PaddingRight(right),
-                Declaration::PaddingBottom(bottom),
-                Declaration::PaddingLeft(left),
-            ]),
-            _ => None,
-        }
-    }
-
-    /// Parse border-style shorthand, returning expanded declarations.
-    pub fn parse_border_style_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
-        let (top, right, bottom, left) = parse_border_style_shorthand_values(input)?;
-        Some([
-            Declaration::BorderTopStyle(top),
-            Declaration::BorderRightStyle(right),
-            Declaration::BorderBottomStyle(bottom),
-            Declaration::BorderLeftStyle(left),
-        ])
-    }
-
-    /// Parse border-width shorthand, returning expanded declarations.
-    pub fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
-        let (top, right, bottom, left) = parse_box_shorthand_values(input)?;
-        Some([
-            Declaration::BorderTopWidth(top),
-            Declaration::BorderRightWidth(right),
-            Declaration::BorderBottomWidth(bottom),
-            Declaration::BorderLeftWidth(left),
-        ])
-    }
-
-    /// Parse border-color shorthand, returning expanded declarations.
-    pub fn parse_border_color_shorthand(input: &mut Parser<'_, '_>) -> Option<[Declaration; 4]> {
-        let (top, right, bottom, left) = parse_color_shorthand_values(input)?;
-        Some([
-            Declaration::BorderTopColor(top),
-            Declaration::BorderRightColor(right),
-            Declaration::BorderBottomColor(bottom),
-            Declaration::BorderLeftColor(left),
-        ])
     }
 }
 
@@ -619,10 +594,8 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
         input: &mut Parser<'i, 't>,
         _start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
-        // Handle margin/padding shorthand expansion
-        if (name.as_ref() == "margin" || name.as_ref() == "padding")
-            && let Some(decls) = Declaration::parse_box_shorthand(&name, input)
-        {
+        let decls = Declaration::parse(&name, input);
+        if !decls.is_empty() {
             let important = input.try_parse(cssparser::parse_important).is_ok();
             let target = if important {
                 &mut *self.important_declarations
@@ -630,62 +603,7 @@ impl<'i> DeclarationParser<'i> for DeclarationListParser<'_> {
                 &mut *self.declarations
             };
             target.extend(decls);
-            return Ok(());
         }
-
-        // Handle border-style shorthand expansion
-        if name.as_ref() == "border-style"
-            && let Some(decls) = Declaration::parse_border_style_shorthand(input)
-        {
-            let important = input.try_parse(cssparser::parse_important).is_ok();
-            let target = if important {
-                &mut *self.important_declarations
-            } else {
-                &mut *self.declarations
-            };
-            target.extend(decls);
-            return Ok(());
-        }
-
-        // Handle border-width shorthand expansion
-        if name.as_ref() == "border-width"
-            && let Some(decls) = Declaration::parse_border_width_shorthand(input)
-        {
-            let important = input.try_parse(cssparser::parse_important).is_ok();
-            let target = if important {
-                &mut *self.important_declarations
-            } else {
-                &mut *self.declarations
-            };
-            target.extend(decls);
-            return Ok(());
-        }
-
-        // Handle border-color shorthand expansion
-        if name.as_ref() == "border-color"
-            && let Some(decls) = Declaration::parse_border_color_shorthand(input)
-        {
-            let important = input.try_parse(cssparser::parse_important).is_ok();
-            let target = if important {
-                &mut *self.important_declarations
-            } else {
-                &mut *self.declarations
-            };
-            target.extend(decls);
-            return Ok(());
-        }
-
-        // Parse regular declarations
-        if let Some(decl) = Declaration::parse(&name, input) {
-            let important = input.try_parse(cssparser::parse_important).is_ok();
-            let target = if important {
-                &mut *self.important_declarations
-            } else {
-                &mut *self.declarations
-            };
-            target.push(decl);
-        }
-
         Ok(())
     }
 }
@@ -940,6 +858,96 @@ fn parse_border_style_value(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
     }
 }
 
+/// Parse a single border-width value (length or keyword).
+fn parse_border_width_value(input: &mut Parser<'_, '_>) -> Option<Length> {
+    // Try keyword first
+    if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
+        let width = match token.as_ref() {
+            "thin" => Length::Px(1.0),
+            "medium" => Length::Px(3.0),
+            "thick" => Length::Px(5.0),
+            _ => return None,
+        };
+        return Some(width);
+    }
+
+    // Try length
+    parse_length(input)
+}
+
+/// Parse combined border shorthand (e.g., `border: 1px solid red`).
+/// Order-insensitive parsing of width, style, and color.
+fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let mut width: Option<Length> = None;
+    let mut style: Option<BorderStyle> = None;
+    let mut color: Option<Color> = None;
+
+    // Parse up to 3 values in any order
+    for _ in 0..3 {
+        // Try border-style first (keywords)
+        if style.is_none() {
+            if let Ok(s) = input.try_parse(|i| {
+                parse_border_style_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+            }) {
+                style = Some(s);
+                continue;
+            }
+        }
+
+        // Try color (keywords or hex/rgb)
+        if color.is_none() {
+            if let Ok(c) = input
+                .try_parse(|i| parse_color(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
+            {
+                color = Some(c);
+                continue;
+            }
+        }
+
+        // Try width (length values)
+        if width.is_none() {
+            if let Ok(w) = input.try_parse(|i| {
+                parse_border_width_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+            }) {
+                width = Some(w);
+                continue;
+            }
+        }
+
+        // No more values
+        break;
+    }
+
+    // Must have at least one value
+    if width.is_none() && style.is_none() && color.is_none() {
+        return vec![];
+    }
+
+    let mut decls = Vec::with_capacity(12);
+
+    // Expand to all four sides
+    if let Some(w) = width {
+        decls.push(Declaration::BorderTopWidth(w));
+        decls.push(Declaration::BorderRightWidth(w));
+        decls.push(Declaration::BorderBottomWidth(w));
+        decls.push(Declaration::BorderLeftWidth(w));
+    }
+    if let Some(s) = style {
+        decls.push(Declaration::BorderTopStyle(s));
+        decls.push(Declaration::BorderRightStyle(s));
+        decls.push(Declaration::BorderBottomStyle(s));
+        decls.push(Declaration::BorderLeftStyle(s));
+    }
+    if let Some(c) = color {
+        decls.push(Declaration::BorderTopColor(c));
+        decls.push(Declaration::BorderRightColor(c));
+        decls.push(Declaration::BorderBottomColor(c));
+        decls.push(Declaration::BorderLeftColor(c));
+    }
+
+    decls
+}
+
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight> {
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         let weight = match token.as_ref() {
@@ -1186,22 +1194,6 @@ fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakValue> {
     match token.as_ref() {
         "auto" => Some(BreakValue::Auto),
         "avoid" | "avoid-page" | "avoid-column" => Some(BreakValue::Avoid),
-        _ => None,
-    }
-}
-
-fn parse_border_style(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
-    let token = input.expect_ident_cloned().ok()?;
-    match token.as_ref() {
-        "none" | "hidden" => Some(BorderStyle::None),
-        "solid" => Some(BorderStyle::Solid),
-        "dotted" => Some(BorderStyle::Dotted),
-        "dashed" => Some(BorderStyle::Dashed),
-        "double" => Some(BorderStyle::Double),
-        "groove" => Some(BorderStyle::Groove),
-        "ridge" => Some(BorderStyle::Ridge),
-        "inset" => Some(BorderStyle::Inset),
-        "outset" => Some(BorderStyle::Outset),
         _ => None,
     }
 }
@@ -2333,6 +2325,134 @@ mod tests {
 
         assert_eq!(top, Color { r: 255, g: 0, b: 0, a: 255 });
         assert_eq!(left, Color { r: 0, g: 0, b: 255, a: 255 });
+    }
+
+    // ========================================================================
+    // Combined border shorthand tests
+    // ========================================================================
+
+    #[test]
+    fn test_border_combined_shorthand() {
+        // border: 1px solid red
+        let css = "div { border: 1px solid red; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        // Should expand to 12 declarations (4 width + 4 style + 4 color)
+        assert_eq!(decls.len(), 12);
+
+        // Check we have all expected types
+        let width_count = decls
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d,
+                    Declaration::BorderTopWidth(_)
+                        | Declaration::BorderRightWidth(_)
+                        | Declaration::BorderBottomWidth(_)
+                        | Declaration::BorderLeftWidth(_)
+                )
+            })
+            .count();
+        let style_count = decls
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d,
+                    Declaration::BorderTopStyle(_)
+                        | Declaration::BorderRightStyle(_)
+                        | Declaration::BorderBottomStyle(_)
+                        | Declaration::BorderLeftStyle(_)
+                )
+            })
+            .count();
+        let color_count = decls
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d,
+                    Declaration::BorderTopColor(_)
+                        | Declaration::BorderRightColor(_)
+                        | Declaration::BorderBottomColor(_)
+                        | Declaration::BorderLeftColor(_)
+                )
+            })
+            .count();
+
+        assert_eq!(width_count, 4, "should have 4 width declarations");
+        assert_eq!(style_count, 4, "should have 4 style declarations");
+        assert_eq!(color_count, 4, "should have 4 color declarations");
+    }
+
+    #[test]
+    fn test_border_shorthand_order_insensitive() {
+        // CSS allows border values in any order
+        let css1 = "div { border: solid 2px #888; }";
+        let css2 = "div { border: #888 solid 2px; }";
+        let css3 = "div { border: 2px #888 solid; }";
+
+        for css in [css1, css2, css3] {
+            let stylesheet = Stylesheet::parse(css);
+            let decls = &stylesheet.rules[0].declarations;
+
+            // All should produce 12 declarations
+            assert_eq!(decls.len(), 12, "should have 12 declarations for: {}", css);
+
+            // Check that we got the right values
+            let width = decls
+                .iter()
+                .find_map(|d| match d {
+                    Declaration::BorderTopWidth(w) => Some(*w),
+                    _ => None,
+                })
+                .expect("should have width");
+            let style = decls
+                .iter()
+                .find_map(|d| match d {
+                    Declaration::BorderTopStyle(s) => Some(*s),
+                    _ => None,
+                })
+                .expect("should have style");
+            let color = decls
+                .iter()
+                .find_map(|d| match d {
+                    Declaration::BorderTopColor(c) => Some(*c),
+                    _ => None,
+                })
+                .expect("should have color");
+
+            assert_eq!(width, Length::Px(2.0), "width should be 2px for: {}", css);
+            assert_eq!(style, BorderStyle::Solid, "style should be solid for: {}", css);
+            assert_eq!(
+                color,
+                Color { r: 136, g: 136, b: 136, a: 255 },
+                "color should be #888 for: {}",
+                css
+            );
+        }
+    }
+
+    #[test]
+    fn test_border_shorthand_partial() {
+        // border: solid (style only)
+        let css = "div { border: solid; }";
+        let stylesheet = Stylesheet::parse(css);
+
+        let decls = &stylesheet.rules[0].declarations;
+        // Should only expand style (4 declarations)
+        assert_eq!(decls.len(), 4);
+
+        for decl in decls {
+            match decl {
+                Declaration::BorderTopStyle(s)
+                | Declaration::BorderRightStyle(s)
+                | Declaration::BorderBottomStyle(s)
+                | Declaration::BorderLeftStyle(s) => {
+                    assert_eq!(*s, BorderStyle::Solid);
+                }
+                _ => panic!("Unexpected declaration type: {:?}", decl),
+            }
+        }
     }
 }
 
