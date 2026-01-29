@@ -798,17 +798,17 @@ fn dump_node_tree(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: us
 
     // Add style if not hidden and not default
     if !opts.no_styles && node.style.0 != 0 {
+        // Always show style ID
+        line.push_str(&format!(" [s{}]", node.style.0));
+
         if opts.styles {
-            // Expand styles to show CSS properties
+            // Also expand styles to show CSS properties
             if let Some(style) = chapter.styles.get(node.style) {
                 let css = style.to_css_string();
                 if !css.is_empty() {
                     line.push_str(&format!(" {{ {} }}", css.trim()));
                 }
             }
-        } else {
-            // Just show style ID
-            line.push_str(&format!(" [s{}]", node.style.0));
         }
     }
 

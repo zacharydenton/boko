@@ -911,6 +911,7 @@ impl KfxImporter {
                         .filter(|(k, _)| *k != sym!(StyleName)) // Exclude the name itself
                         .map(|(k, v)| (*k, v.clone()))
                         .collect();
+
                     self.styles.insert(name, props);
                 }
             }

@@ -275,7 +275,57 @@ impl<'a> IonParser<'a> {
                 Ok(IonValue::Float(value))
             }
 
-            IonType::Decimal | IonType::Timestamp => {
+            IonType::Decimal => {
+                if length == 0 {
+                    return Ok(IonValue::Decimal("0".to_string()));
+                }
+
+                let end = self.pos + length;
+
+                // Read exponent as VarInt (signed)
+                let (exponent, _) = self.read_varint()?;
+
+                // Read coefficient as signed Int (remaining bytes)
+                let coef_len = end.saturating_sub(self.pos);
+                let coefficient = if coef_len == 0 {
+                    0i64
+                } else {
+                    self.read_signed_int(coef_len)?
+                };
+
+                // Convert to decimal string
+                let value = if exponent == 0 {
+                    coefficient.to_string()
+                } else if exponent > 0 {
+                    // Positive exponent: shift left (multiply)
+                    let multiplier = 10i64.pow(exponent as u32);
+                    (coefficient * multiplier).to_string()
+                } else {
+                    // Negative exponent: we have decimal places
+                    let abs_exp = (-exponent) as usize;
+                    let coef_str = coefficient.abs().to_string();
+
+                    let decimal_str = if coef_str.len() <= abs_exp {
+                        // Need leading zeros: 5 with exp -3 -> 0.005
+                        let zeros = abs_exp - coef_str.len();
+                        format!("0.{}{}", "0".repeat(zeros), coef_str)
+                    } else {
+                        // Insert decimal point
+                        let split = coef_str.len() - abs_exp;
+                        format!("{}.{}", &coef_str[..split], &coef_str[split..])
+                    };
+
+                    if coefficient < 0 {
+                        format!("-{}", decimal_str)
+                    } else {
+                        decimal_str
+                    }
+                };
+
+                Ok(IonValue::Decimal(value))
+            }
+
+            IonType::Timestamp => {
                 // Skip - not used in KFX reading
                 self.pos += length;
                 Ok(IonValue::Null)
@@ -394,6 +444,79 @@ impl<'a> IonParser<'a> {
             result = (result << 8) | b as u64;
         }
         Ok(result)
+    }
+
+    /// Read a VarInt (signed, 7 bits per byte, MSB set on last byte).
+    /// Returns (value, bytes_read).
+    fn read_varint(&mut self) -> io::Result<(i64, usize)> {
+        if self.pos >= self.data.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of data",
+            ));
+        }
+
+        let first_byte = self.data[self.pos];
+        let is_negative = (first_byte & 0x40) != 0;
+
+        // First byte: bits 0-5 are value, bit 6 is sign, bit 7 is stop
+        let mut result: i64 = (first_byte & 0x3f) as i64;
+        let mut bytes_read = 1;
+        self.pos += 1;
+
+        // If stop bit not set, read more bytes
+        if (first_byte & 0x80) == 0 {
+            loop {
+                if self.pos >= self.data.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "unexpected end of data",
+                    ));
+                }
+                let byte = self.data[self.pos];
+                self.pos += 1;
+                bytes_read += 1;
+                result = (result << 7) | (byte & 0x7f) as i64;
+                if byte & 0x80 != 0 {
+                    break;
+                }
+            }
+        }
+
+        if is_negative {
+            result = -result;
+        }
+
+        Ok((result, bytes_read))
+    }
+
+    /// Read a signed integer (coefficient in decimal).
+    /// Sign is in the high bit of the first byte.
+    fn read_signed_int(&mut self, len: usize) -> io::Result<i64> {
+        if len == 0 {
+            return Ok(0);
+        }
+        if len > 8 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "integer too large (> 8 bytes)",
+            ));
+        }
+
+        let bytes = self.read_bytes(len)?;
+        let is_negative = (bytes[0] & 0x80) != 0;
+
+        // Clear sign bit and read magnitude
+        let mut magnitude: u64 = (bytes[0] & 0x7f) as u64;
+        for &b in &bytes[1..] {
+            magnitude = (magnitude << 8) | b as u64;
+        }
+
+        if is_negative {
+            Ok(-(magnitude as i64))
+        } else {
+            Ok(magnitude as i64)
+        }
     }
 }
 
@@ -956,5 +1079,39 @@ mod tests {
         let data = writer.into_bytes();
         // Should be type 5
         assert_eq!(data[0] >> 4, 5);
+    }
+
+    #[test]
+    fn test_decimal_roundtrip() {
+        // Test that we can write and read back decimal values
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_decimal("1.8");
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        if let IonValue::Decimal(s) = parser.parse().unwrap() {
+            let parsed: f64 = s.parse().unwrap();
+            assert!((parsed - 1.8).abs() < 0.0001, "expected ~1.8, got {}", parsed);
+        } else {
+            panic!("expected decimal");
+        }
+    }
+
+    #[test]
+    fn test_decimal_negative_exponent() {
+        // Test parsing a decimal with negative exponent (e.g., 0.45)
+        let mut writer = IonWriter::new();
+        writer.write_bvm();
+        writer.write_decimal("0.45");
+
+        let data = writer.into_bytes();
+        let mut parser = IonParser::new(&data);
+        if let IonValue::Decimal(s) = parser.parse().unwrap() {
+            let parsed: f64 = s.parse().unwrap();
+            assert!((parsed - 0.45).abs() < 0.0001, "expected ~0.45, got {}", parsed);
+        } else {
+            panic!("expected decimal");
+        }
     }
 }

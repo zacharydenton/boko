@@ -2234,12 +2234,19 @@ impl ValueTransform {
             | ValueTransform::ConvertToDimensioned { .. }
             | ValueTransform::PreserveUnit => {
                 // Parse {value: N, unit: sym} struct
-                // Value may be Int (whole numbers) or Float
+                // Value may be Int (whole numbers), Float, or Decimal (Amazon uses all three)
                 let fields = value.as_struct()?;
                 let value_field = get_field_by_symbol(fields, KfxSymbol::Value)?;
                 let num = value_field
                     .as_float()
-                    .or_else(|| value_field.as_int().map(|i| i as f64))?;
+                    .or_else(|| value_field.as_int().map(|i| i as f64))
+                    .or_else(|| {
+                        if let IonValue::Decimal(s) = value_field {
+                            s.parse::<f64>().ok()
+                        } else {
+                            None
+                        }
+                    })?;
                 let unit_sym = get_field_by_symbol(fields, KfxSymbol::Unit)?.as_symbol()? as u32;
 
                 // Convert unit symbol back to CSS unit string
@@ -2705,6 +2712,8 @@ fn parse_css_length_to_ir(s: &str) -> Option<ir_style::Length> {
         "em" => ir_style::Length::Em(value),
         "rem" => ir_style::Length::Rem(value),
         "%" => ir_style::Length::Percent(value),
+        // Convert pt to px: 1pt = 96/72 px ≈ 1.333px
+        "pt" => ir_style::Length::Px(value * 96.0 / 72.0),
         _ => ir_style::Length::Px(value),
     })
 }
@@ -3324,6 +3333,19 @@ mod tests {
             ),
         ]);
         assert_eq!(rule.transform.inverse(&kfx_value), Some("2em".to_string()));
+
+        // {value: "1.8", unit: pt} → "1.8pt" (Decimal - Amazon uses for border_weight)
+        let kfx_value = IonValue::Struct(vec![
+            (
+                KfxSymbol::Value as u64,
+                IonValue::Decimal("1.8".to_string()),
+            ),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Pt as u64),
+            ),
+        ]);
+        assert_eq!(rule.transform.inverse(&kfx_value), Some("1.8pt".to_string()));
     }
 
     #[test]
@@ -3951,5 +3973,93 @@ mod tests {
             rule.transform.apply("50%"),
             Some(KfxValue::Dimensioned { value, unit }) if value == 50.0 && unit == KfxSymbol::Percent
         ));
+    }
+
+    #[test]
+    fn test_import_border_width_from_kfx() {
+        use crate::ir::Length;
+        use crate::kfx::ion::IonValue;
+
+        let schema = StyleSchema::standard();
+
+        // Simulate KFX: border_weight_top: { value: 0.45, unit: pt }
+        // Note: In real KFX files, the struct uses field symbol IDs 4 (name) and similar,
+        // not the KfxSymbol::Value/Unit IDs. Let me check the schema...
+        let props = vec![(
+            KfxSymbol::BorderWeightTop as u64,
+            IonValue::Struct(vec![
+                (KfxSymbol::Value as u64, IonValue::Float(0.45)),
+                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Pt as u64)),
+            ]),
+        )];
+
+        let style = import_kfx_style(&schema, &props);
+
+        // Should import as a non-default length (0.45pt ≈ 0.6px)
+        assert!(
+            !matches!(style.border_width_top, Length::Auto),
+            "border_width_top should be set, got {:?}",
+            style.border_width_top
+        );
+
+        // Check it's approximately 0.6px (0.45 * 96/72 ≈ 0.6)
+        if let Length::Px(px) = style.border_width_top {
+            assert!(
+                (px - 0.6).abs() < 0.01,
+                "Expected ~0.6px, got {}px",
+                px
+            );
+        } else {
+            panic!(
+                "Expected Length::Px, got {:?}",
+                style.border_width_top
+            );
+        }
+    }
+
+    #[test]
+    fn test_import_border_width_verifies_schema_lookup() {
+        use crate::kfx::ion::IonValue;
+
+        // Debug test: verify the schema lookup works for BorderWeightTop
+        let schema = StyleSchema::standard();
+
+        // Check schema has the rule
+        let rule = schema.get_by_kfx_symbol(94); // BorderWeightTop
+        assert!(rule.is_some(), "Schema should have rule for symbol 94 (BorderWeightTop)");
+
+        let rule = rule.unwrap();
+        eprintln!("Rule ir_key: {}", rule.ir_key);
+        eprintln!("Rule kfx_symbol: {:?}", rule.kfx_symbol);
+        eprintln!("Rule ir_field: {:?}", rule.ir_field);
+
+        assert_eq!(rule.kfx_symbol, KfxSymbol::BorderWeightTop);
+
+        // Test the inverse transform
+        let kfx_value = IonValue::Struct(vec![
+            (KfxSymbol::Value as u64, IonValue::Float(0.45)),
+            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Pt as u64)),
+        ]);
+
+        let css_value = rule.transform.inverse(&kfx_value);
+        eprintln!("Inverse transform result: {:?}", css_value);
+        assert!(css_value.is_some(), "Inverse transform should succeed");
+        assert_eq!(css_value.unwrap(), "0.45pt");
+    }
+
+    #[test]
+    fn test_get_by_kfx_symbol_border_weight() {
+        let schema = StyleSchema::standard();
+
+        // Verify the schema has a rule for BorderWeightTop
+        let rule = schema.get_by_kfx_symbol(KfxSymbol::BorderWeightTop as u64);
+        assert!(
+            rule.is_some(),
+            "Schema should have a rule for BorderWeightTop"
+        );
+
+        let rule = rule.unwrap();
+        assert_eq!(rule.ir_key, "border-top-width");
+        assert_eq!(rule.ir_field, Some(IrField::BorderWidthTop));
     }
 }
