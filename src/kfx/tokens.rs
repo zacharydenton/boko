@@ -53,6 +53,10 @@ pub struct ElementStart {
     /// Style name reference (for import lookup).
     /// Populated during import from the element's `style` field.
     pub style_name: Option<String>,
+    /// Whether this element needs a container wrapper for borders to render.
+    /// KFX requires block elements with borders to be `type: container` with
+    /// nested `type: text` for content. Set during export by checking IR style.
+    pub needs_container_wrapper: bool,
 }
 
 impl ElementStart {
@@ -67,6 +71,7 @@ impl ElementStart {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }
     }
 
@@ -174,6 +179,7 @@ impl TokenStream {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }));
     }
 

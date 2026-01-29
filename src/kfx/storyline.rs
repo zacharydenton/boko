@@ -179,6 +179,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
         kfx_attrs: Vec::new(),
         style_symbol: None, // Symbol ID (for export)
         style_name,         // Style name (for import lookup)
+        needs_container_wrapper: false, // Only used during export
     }));
 
     // Recurse into children
@@ -599,8 +600,25 @@ where
 // EXPORT: IR → TokenStream → Ion
 // ============================================================================
 
-use crate::ir::Role;
+use crate::ir::{BorderStyle, ComputedStyle, Length, Role};
 use crate::kfx::context::ExportContext;
+
+/// Check if a style has borders that require container wrapping in KFX.
+///
+/// KFX requires block elements with borders to be wrapped in a `type: container`
+/// with nested `type: text` for the content. Without this wrapper, borders don't
+/// render on Kindle devices.
+fn needs_container_wrapper(style: &ComputedStyle) -> bool {
+    let has_top = style.border_style_top != BorderStyle::None
+        && !matches!(style.border_width_top, Length::Auto | Length::Px(0.0));
+    let has_bottom = style.border_style_bottom != BorderStyle::None
+        && !matches!(style.border_width_bottom, Length::Auto | Length::Px(0.0));
+    let has_left = style.border_style_left != BorderStyle::None
+        && !matches!(style.border_width_left, Length::Auto | Length::Px(0.0));
+    let has_right = style.border_style_right != BorderStyle::None
+        && !matches!(style.border_width_right, Length::Auto | Length::Px(0.0));
+    has_top || has_bottom || has_left || has_right
+}
 
 /// Convert an IR chapter to a TokenStream.
 ///
@@ -682,6 +700,14 @@ fn walk_node_for_export(
     // This converts IR ComputedStyle → KFX style and deduplicates
     let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
     elem.style_symbol = Some(style_symbol);
+
+    // Check if this element needs container wrapping for borders to render
+    // KFX requires type: container with nested type: text for borders
+    elem.needs_container_wrapper = chapter
+        .styles
+        .get(node.style)
+        .map(|s| needs_container_wrapper(s))
+        .unwrap_or(false);
 
     // SCHEMA-DRIVEN attribute export (FIX: no more hardcoded checks!)
     // Create a closure to get semantic values by target
@@ -841,162 +867,342 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
     for token in tokens {
         match token {
             KfxToken::StartElement(elem) => {
-                let mut fields = Vec::new();
+                // Check if this element needs container wrapping for borders to render
+                // KFX requires type: container with nested type: text for borders
+                if elem.needs_container_wrapper {
+                    // === CONTAINER WRAPPER PATH ===
+                    // Create outer container with type: container, layout: vertical
+                    // and all the semantic/style fields, then create inner text element
 
-                // Unique container ID - use the global generator to avoid collisions
-                let container_id = ctx.fragment_ids.next_id();
-                fields.push((sym!(Id), IonValue::Int(container_id as i64)));
+                    let mut outer_fields = Vec::new();
 
-                // Record this content ID for position_map (so navigation targets are resolvable)
-                ctx.record_content_id(container_id);
+                    // Unique container ID for outer wrapper
+                    let outer_id = ctx.fragment_ids.next_id();
+                    outer_fields.push((sym!(Id), IonValue::Int(outer_id as i64)));
 
-                // Create chapter-start anchor with first content fragment ID (if pending)
-                ctx.resolve_pending_chapter_start_anchor(container_id);
+                    // Record this content ID for position_map
+                    ctx.record_content_id(outer_id);
 
-                // Create fragment-based anchor if this element has an ID that's a TOC/link target
-                // Note: Kindle expects offset: 0 for all navigation entries (per reference KFX)
-                if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
-                    ctx.create_anchor_if_needed(anchor_id, container_id, 0);
-                }
+                    // Create chapter-start anchor with first content fragment ID (if pending)
+                    ctx.resolve_pending_chapter_start_anchor(outer_id);
 
-                // Style reference - use per-element style if available, else default
-                // Required for text rendering on Kindle
-                let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
-                fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+                    // Create fragment-based anchor if this element has an ID
+                    if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
+                        ctx.create_anchor_if_needed(anchor_id, outer_id, 0);
+                    }
 
-                // Type field (as symbol ID)
-                if let Some(kfx_type) = schema().kfx_type_for_role(elem.role) {
-                    fields.push((sym!(Type), IonValue::Symbol(kfx_type as u64)));
-                }
+                    // Style reference - outer container gets full style with borders
+                    let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
+                    outer_fields.push((sym!(Style), IonValue::Symbol(style_sym)));
 
-                // Add semantic type annotation if the strategy specifies one
-                // (e.g., BlockQuote → yj.semantics.type: block_quote)
-                if let Some(strategy) = schema().export_strategy(elem.role)
-                    && let Some(semantic_type) = strategy.semantic_type()
-                {
-                    // Both field name and value are local symbols
-                    let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
-                    let value_id = ctx.symbols.get_or_intern(semantic_type);
-                    fields.push((field_id, IonValue::Symbol(value_id)));
-                }
+                    // Type: container (not text) - this is key for borders to render
+                    outer_fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Container as u64)));
 
-                // Add heading level if this is a heading
-                if let Role::Heading(level) = elem.role {
-                    fields.push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
+                    // Layout: vertical (required for container)
+                    outer_fields.push((sym!(Layout), IonValue::Symbol(KfxSymbol::Vertical as u64)));
 
-                    // Record heading position with ACTUAL content fragment ID (Fix for navigation)
-                    ctx.record_heading_with_id(level, container_id);
-                }
+                    // Add semantic type annotation if the strategy specifies one
+                    if let Some(strategy) = schema().export_strategy(elem.role)
+                        && let Some(semantic_type) = strategy.semantic_type()
+                    {
+                        let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
+                        let value_id = ctx.symbols.get_or_intern(semantic_type);
+                        outer_fields.push((field_id, IonValue::Symbol(value_id)));
+                    }
 
-                // Add list_style for ordered lists
-                if elem.role == Role::OrderedList {
-                    fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric))));
-                }
+                    // Add heading level if this is a heading
+                    if let Role::Heading(level) = elem.role {
+                        outer_fields
+                            .push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
+                        ctx.record_heading_with_id(level, outer_id);
+                    }
 
-                // Add layout_hints based on element role and semantics
-                // This affects Kindle's rendering behavior for headings, figures, and captions
-                let layout_hint = match elem.role {
-                    // Headings (h1-h6) → treat_as_title
-                    Role::Heading(_) => Some(KfxSymbol::TreatAsTitle),
-                    // <figure> → figure
-                    Role::Figure => Some(KfxSymbol::Figure),
-                    // <figcaption>/<caption> → caption
-                    Role::Caption => Some(KfxSymbol::Caption),
-                    _ => {
-                        // Check epub:type for additional semantic hints
-                        if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
-                            // Check each epub:type value (space-separated)
-                            let has_title_type = epub_type.split_whitespace().any(|t| {
-                                matches!(
-                                    t,
-                                    "title" | "fulltitle" | "subtitle" | "covertitle" | "halftitle"
-                                )
-                            });
-                            let has_caption_type = epub_type
-                                .split_whitespace()
-                                .any(|t| matches!(t, "caption" | "figcaption"));
+                    // Add list_style for ordered lists
+                    if elem.role == Role::OrderedList {
+                        outer_fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric))));
+                    }
 
-                            if has_title_type {
-                                Some(KfxSymbol::TreatAsTitle)
-                            } else if has_caption_type {
-                                Some(KfxSymbol::Caption)
+                    // Add layout_hints
+                    let layout_hint = match elem.role {
+                        Role::Heading(_) => Some(KfxSymbol::TreatAsTitle),
+                        Role::Figure => Some(KfxSymbol::Figure),
+                        Role::Caption => Some(KfxSymbol::Caption),
+                        _ => {
+                            if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                                let has_title_type = epub_type.split_whitespace().any(|t| {
+                                    matches!(
+                                        t,
+                                        "title"
+                                            | "fulltitle"
+                                            | "subtitle"
+                                            | "covertitle"
+                                            | "halftitle"
+                                    )
+                                });
+                                let has_caption_type = epub_type
+                                    .split_whitespace()
+                                    .any(|t| matches!(t, "caption" | "figcaption"));
+
+                                if has_title_type {
+                                    Some(KfxSymbol::TreatAsTitle)
+                                } else if has_caption_type {
+                                    Some(KfxSymbol::Caption)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
-                        } else {
-                            None
+                        }
+                    };
+
+                    if let Some(hint) = layout_hint {
+                        outer_fields.push((
+                            sym!(LayoutHints),
+                            IonValue::List(vec![IonValue::Symbol(hint as u64)]),
+                        ));
+                    }
+
+                    // Add yj.classification for footnote/endnote popup support
+                    if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                        let types: Vec<&str> = epub_type.split_whitespace().collect();
+                        let is_footnote = types.contains(&"footnote");
+                        let is_endnote = types.contains(&"endnote") || types.contains(&"rearnote");
+                        let is_sidenote =
+                            types.contains(&"sidebar") || types.contains(&"marginalia");
+
+                        if is_endnote {
+                            outer_fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::YjEndnote as u64),
+                            ));
+                        } else if is_sidenote {
+                            outer_fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::YjSidenote as u64),
+                            ));
+                        } else if is_footnote {
+                            outer_fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::Footnote as u64),
+                            ));
                         }
                     }
-                };
 
-                if let Some(hint) = layout_hint {
-                    fields.push((
-                        sym!(LayoutHints),
-                        IonValue::List(vec![IonValue::Symbol(hint as u64)]),
-                    ));
-                }
+                    // Add schema-driven attributes from kfx_attrs
+                    for (field_id, value_str) in &elem.kfx_attrs {
+                        let is_symbol_field = *field_id == sym!(ResourceName)
+                            || *field_id == sym!(LinkTo)
+                            || value_str.starts_with('#')
+                            || value_str.contains('/');
 
-                // Add yj.classification for footnote/endnote popup support
-                // This marks the element so Kindle can show its content in a popup
-                // when a noteref link is tapped
-                //
-                // Mapping:
-                // - epub:type="footnote" → yj.chapternote ($618)
-                // - epub:type="endnote" or "rearnote" → yj.endnote ($619)
-                // - epub:type="sidebar" or "marginalia" → yj.sidenote ($620)
-                if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
-                    let types: Vec<&str> = epub_type.split_whitespace().collect();
-                    let is_footnote = types.contains(&"footnote");
-                    let is_endnote = types.contains(&"endnote") || types.contains(&"rearnote");
-                    let is_sidenote = types.contains(&"sidebar") || types.contains(&"marginalia");
+                        if is_symbol_field {
+                            let sym_id = ctx.symbols.get_or_intern(value_str);
+                            outer_fields.push((*field_id, IonValue::Symbol(sym_id)));
+                        } else {
+                            outer_fields.push((*field_id, IonValue::String(value_str.clone())));
+                        }
+                    }
 
-                    // Prefer endnote classification if both are present (common in EPUBs)
-                    if is_endnote {
+                    // Push outer container builder
+                    stack.push(IonBuilder::with_fields(outer_fields, outer_id));
+
+                    // Create inner text element
+                    let mut inner_fields = Vec::new();
+
+                    // Unique ID for inner text element
+                    let inner_id = ctx.fragment_ids.next_id();
+                    inner_fields.push((sym!(Id), IonValue::Int(inner_id as i64)));
+
+                    // Record inner content ID too
+                    ctx.record_content_id(inner_id);
+
+                    // Inner element uses default style (minimal, no borders)
+                    // This matches KPR behavior where inner text has separate style
+                    inner_fields.push((sym!(Style), IonValue::Symbol(ctx.default_style_symbol)));
+
+                    // Type: text - inner element holds the actual content
+                    inner_fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Text as u64)));
+
+                    // Push inner text builder and mark it as inner wrapper
+                    let mut inner_builder = IonBuilder::with_fields(inner_fields, inner_id);
+                    inner_builder.is_inner_wrapper_text = true;
+                    stack.push(inner_builder);
+                } else {
+                    // === NORMAL ELEMENT PATH (unchanged) ===
+                    let mut fields = Vec::new();
+
+                    // Unique container ID - use the global generator to avoid collisions
+                    let container_id = ctx.fragment_ids.next_id();
+                    fields.push((sym!(Id), IonValue::Int(container_id as i64)));
+
+                    // Record this content ID for position_map (so navigation targets are resolvable)
+                    ctx.record_content_id(container_id);
+
+                    // Create chapter-start anchor with first content fragment ID (if pending)
+                    ctx.resolve_pending_chapter_start_anchor(container_id);
+
+                    // Create fragment-based anchor if this element has an ID that's a TOC/link target
+                    // Note: Kindle expects offset: 0 for all navigation entries (per reference KFX)
+                    if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
+                        ctx.create_anchor_if_needed(anchor_id, container_id, 0);
+                    }
+
+                    // Style reference - use per-element style if available, else default
+                    // Required for text rendering on Kindle
+                    let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
+                    fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+
+                    // Type field (as symbol ID)
+                    if let Some(kfx_type) = schema().kfx_type_for_role(elem.role) {
+                        fields.push((sym!(Type), IonValue::Symbol(kfx_type as u64)));
+                    }
+
+                    // Add semantic type annotation if the strategy specifies one
+                    // (e.g., BlockQuote → yj.semantics.type: block_quote)
+                    if let Some(strategy) = schema().export_strategy(elem.role)
+                        && let Some(semantic_type) = strategy.semantic_type()
+                    {
+                        // Both field name and value are local symbols
+                        let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
+                        let value_id = ctx.symbols.get_or_intern(semantic_type);
+                        fields.push((field_id, IonValue::Symbol(value_id)));
+                    }
+
+                    // Add heading level if this is a heading
+                    if let Role::Heading(level) = elem.role {
+                        fields.push((sym!(YjSemanticsHeadingLevel), IonValue::Int(level as i64)));
+
+                        // Record heading position with ACTUAL content fragment ID (Fix for navigation)
+                        ctx.record_heading_with_id(level, container_id);
+                    }
+
+                    // Add list_style for ordered lists
+                    if elem.role == Role::OrderedList {
+                        fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric))));
+                    }
+
+                    // Add layout_hints based on element role and semantics
+                    // This affects Kindle's rendering behavior for headings, figures, and captions
+                    let layout_hint = match elem.role {
+                        // Headings (h1-h6) → treat_as_title
+                        Role::Heading(_) => Some(KfxSymbol::TreatAsTitle),
+                        // <figure> → figure
+                        Role::Figure => Some(KfxSymbol::Figure),
+                        // <figcaption>/<caption> → caption
+                        Role::Caption => Some(KfxSymbol::Caption),
+                        _ => {
+                            // Check epub:type for additional semantic hints
+                            if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                                // Check each epub:type value (space-separated)
+                                let has_title_type = epub_type.split_whitespace().any(|t| {
+                                    matches!(
+                                        t,
+                                        "title"
+                                            | "fulltitle"
+                                            | "subtitle"
+                                            | "covertitle"
+                                            | "halftitle"
+                                    )
+                                });
+                                let has_caption_type = epub_type
+                                    .split_whitespace()
+                                    .any(|t| matches!(t, "caption" | "figcaption"));
+
+                                if has_title_type {
+                                    Some(KfxSymbol::TreatAsTitle)
+                                } else if has_caption_type {
+                                    Some(KfxSymbol::Caption)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                    };
+
+                    if let Some(hint) = layout_hint {
                         fields.push((
-                            sym!(YjClassification),
-                            IonValue::Symbol(KfxSymbol::YjEndnote as u64),
-                        ));
-                    } else if is_sidenote {
-                        fields.push((
-                            sym!(YjClassification),
-                            IonValue::Symbol(KfxSymbol::YjSidenote as u64),
-                        ));
-                    } else if is_footnote {
-                        fields.push((
-                            sym!(YjClassification),
-                            IonValue::Symbol(KfxSymbol::Footnote as u64),
+                            sym!(LayoutHints),
+                            IonValue::List(vec![IonValue::Symbol(hint as u64)]),
                         ));
                     }
-                }
 
-                // Add schema-driven attributes from kfx_attrs
-                // The schema handles Image src→resource_name, Link href→link_to, etc.
-                for (field_id, value_str) in &elem.kfx_attrs {
-                    // Determine if this field should be a symbol or string
-                    // - ResourceName: always symbol (e.g., e0, e1)
-                    // - LinkTo: always symbol (anchor references)
-                    // - References with # or /: symbol
-                    // - Alt text, other strings: string
-                    let is_symbol_field = *field_id == sym!(ResourceName)
-                        || *field_id == sym!(LinkTo)
-                        || value_str.starts_with('#')
-                        || value_str.contains('/');
+                    // Add yj.classification for footnote/endnote popup support
+                    // This marks the element so Kindle can show its content in a popup
+                    // when a noteref link is tapped
+                    //
+                    // Mapping:
+                    // - epub:type="footnote" → yj.chapternote ($618)
+                    // - epub:type="endnote" or "rearnote" → yj.endnote ($619)
+                    // - epub:type="sidebar" or "marginalia" → yj.sidenote ($620)
+                    if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
+                        let types: Vec<&str> = epub_type.split_whitespace().collect();
+                        let is_footnote = types.contains(&"footnote");
+                        let is_endnote = types.contains(&"endnote") || types.contains(&"rearnote");
+                        let is_sidenote =
+                            types.contains(&"sidebar") || types.contains(&"marginalia");
 
-                    if is_symbol_field {
-                        let sym_id = ctx.symbols.get_or_intern(value_str);
-                        fields.push((*field_id, IonValue::Symbol(sym_id)));
-                    } else {
-                        fields.push((*field_id, IonValue::String(value_str.clone())));
+                        // Prefer endnote classification if both are present (common in EPUBs)
+                        if is_endnote {
+                            fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::YjEndnote as u64),
+                            ));
+                        } else if is_sidenote {
+                            fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::YjSidenote as u64),
+                            ));
+                        } else if is_footnote {
+                            fields.push((
+                                sym!(YjClassification),
+                                IonValue::Symbol(KfxSymbol::Footnote as u64),
+                            ));
+                        }
                     }
-                }
 
-                stack.push(IonBuilder::with_fields(fields, container_id));
+                    // Add schema-driven attributes from kfx_attrs
+                    // The schema handles Image src→resource_name, Link href→link_to, etc.
+                    for (field_id, value_str) in &elem.kfx_attrs {
+                        // Determine if this field should be a symbol or string
+                        // - ResourceName: always symbol (e.g., e0, e1)
+                        // - LinkTo: always symbol (anchor references)
+                        // - References with # or /: symbol
+                        // - Alt text, other strings: string
+                        let is_symbol_field = *field_id == sym!(ResourceName)
+                            || *field_id == sym!(LinkTo)
+                            || value_str.starts_with('#')
+                            || value_str.contains('/');
+
+                        if is_symbol_field {
+                            let sym_id = ctx.symbols.get_or_intern(value_str);
+                            fields.push((*field_id, IonValue::Symbol(sym_id)));
+                        } else {
+                            fields.push((*field_id, IonValue::String(value_str.clone())));
+                        }
+                    }
+
+                    stack.push(IonBuilder::with_fields(fields, container_id));
+                }
             }
             KfxToken::EndElement => {
-                if let Some(completed) = stack.pop()
-                    && let Some(parent) = stack.last_mut()
-                {
-                    parent.add_child(completed.build(ctx));
+                if let Some(completed) = stack.pop() {
+                    let is_inner = completed.is_inner_wrapper_text;
+                    if let Some(parent) = stack.last_mut() {
+                        parent.add_child(completed.build(ctx));
+                    }
+
+                    // If this was an inner wrapper text element, we need to also
+                    // close the outer container (which consumes the same EndElement token)
+                    if is_inner {
+                        if let Some(outer_completed) = stack.pop()
+                            && let Some(outer_parent) = stack.last_mut()
+                        {
+                            outer_parent.add_child(outer_completed.build(ctx));
+                        }
+                    }
                 }
             }
             KfxToken::Text(text) => {
@@ -1063,6 +1269,10 @@ struct IonBuilder {
     style_events: Vec<IonValue>,
     /// Container ID for this element (set during StartElement, used for length tracking)
     container_id: Option<u64>,
+    /// True if this is an inner text element inside a container wrapper.
+    /// When EndElement is reached for this builder, we need an extra EndElement
+    /// to close the outer container.
+    is_inner_wrapper_text: bool,
 }
 
 impl IonBuilder {
@@ -1074,6 +1284,7 @@ impl IonBuilder {
             accumulated_char_count: 0,
             style_events: Vec::new(),
             container_id: None,
+            is_inner_wrapper_text: false,
         }
     }
 
@@ -1085,6 +1296,7 @@ impl IonBuilder {
             accumulated_char_count: 0,
             style_events: Vec::new(),
             container_id: Some(container_id),
+            is_inner_wrapper_text: false,
         }
     }
 
@@ -1229,6 +1441,7 @@ mod tests {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }));
         stream.end_element();
 
@@ -1257,6 +1470,7 @@ mod tests {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }));
         stream.end_element();
 
@@ -1290,6 +1504,7 @@ mod tests {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }));
         stream.end_element();
 
@@ -1325,6 +1540,7 @@ mod tests {
             kfx_attrs: Vec::new(),
             style_symbol: None,
             style_name: None,
+            needs_container_wrapper: false,
         }));
         stream.end_element();
 
@@ -1723,5 +1939,197 @@ mod tests {
             KfxSymbol::YjEndnote as u64,
             "yj.classification should be yj.endnote ($619) for endnote elements"
         );
+    }
+
+    #[test]
+    fn test_heading_with_border_exports_as_container() {
+        // Test that elements with borders are wrapped in type: container
+        // with nested type: text for KFX border rendering
+        use crate::ir::{BorderStyle, ComputedStyle, Length};
+
+        let mut chapter = IRChapter::new();
+
+        // Create a heading with border style
+        let mut style = ComputedStyle::default();
+        style.border_style_top = BorderStyle::Solid;
+        style.border_width_top = Length::Px(2.0);
+        let style_id = chapter.styles.intern(style);
+
+        let mut h1 = Node::new(Role::Heading(1));
+        h1.style = style_id;
+        let h1_id = chapter.alloc_node(h1);
+        chapter.append_child(chapter.root(), h1_id);
+
+        // Add text content
+        let text_range = chapter.append_text("Title with Border");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(h1_id, text_id);
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Helper to find element type and nested content_list structure
+        fn find_container_structure(ion: &IonValue) -> Option<(u64, Option<u64>)> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    let mut elem_type = None;
+                    let mut inner_type = None;
+
+                    for (key, value) in fields {
+                        if *key == KfxSymbol::Type as u64 {
+                            if let IonValue::Symbol(sym) = value {
+                                elem_type = Some(*sym);
+                            }
+                        }
+                        if *key == KfxSymbol::ContentList as u64 {
+                            if let IonValue::List(items) = value {
+                                for item in items {
+                                    if let Some((inner_elem_type, _)) =
+                                        find_container_structure(item)
+                                    {
+                                        inner_type = Some(inner_elem_type);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if elem_type.is_some() {
+                        return Some((elem_type.unwrap(), inner_type));
+                    }
+                    None
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(result) = find_container_structure(item) {
+                            return Some(result);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        let structure = find_container_structure(&ion);
+        assert!(structure.is_some(), "Should find element structure");
+        let (outer_type, inner_type) = structure.unwrap();
+
+        // Outer element should be type: container
+        assert_eq!(
+            outer_type,
+            KfxSymbol::Container as u64,
+            "Heading with border should have type: container (not text)"
+        );
+
+        // Should have nested type: text child
+        assert!(
+            inner_type.is_some(),
+            "Container should have nested content_list with inner element"
+        );
+        assert_eq!(
+            inner_type.unwrap(),
+            KfxSymbol::Text as u64,
+            "Inner element should have type: text"
+        );
+    }
+
+    #[test]
+    fn test_heading_without_border_exports_as_text() {
+        // Test that elements without borders use normal type: text
+        let mut chapter = IRChapter::new();
+
+        // Create a heading without border style
+        let h1 = Node::new(Role::Heading(1));
+        let h1_id = chapter.alloc_node(h1);
+        chapter.append_child(chapter.root(), h1_id);
+
+        // Add text content
+        let text_range = chapter.append_text("Title without Border");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(h1_id, text_id);
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+        let ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Helper to find first element type
+        fn find_first_element_type(ion: &IonValue) -> Option<u64> {
+            match ion {
+                IonValue::Struct(fields) => {
+                    for (key, value) in fields {
+                        if *key == KfxSymbol::Type as u64 {
+                            if let IonValue::Symbol(sym) = value {
+                                return Some(*sym);
+                            }
+                        }
+                    }
+                    None
+                }
+                IonValue::List(items) => {
+                    for item in items {
+                        if let Some(result) = find_first_element_type(item) {
+                            return Some(result);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        let elem_type = find_first_element_type(&ion);
+        assert!(elem_type.is_some(), "Should find element type");
+
+        // Element without border should be type: text (normal heading)
+        assert_eq!(
+            elem_type.unwrap(),
+            KfxSymbol::Text as u64,
+            "Heading without border should have type: text"
+        );
+    }
+
+    #[test]
+    fn test_needs_container_wrapper_no_border() {
+        let style = ComputedStyle::default();
+        assert!(!needs_container_wrapper(&style));
+    }
+
+    #[test]
+    fn test_needs_container_wrapper_with_top_border() {
+        let mut style = ComputedStyle::default();
+        style.border_style_top = BorderStyle::Solid;
+        style.border_width_top = Length::Px(1.0);
+        assert!(needs_container_wrapper(&style));
+    }
+
+    #[test]
+    fn test_needs_container_wrapper_with_bottom_border() {
+        let mut style = ComputedStyle::default();
+        style.border_style_bottom = BorderStyle::Solid;
+        style.border_width_bottom = Length::Px(2.0);
+        assert!(needs_container_wrapper(&style));
+    }
+
+    #[test]
+    fn test_needs_container_wrapper_border_style_none() {
+        let mut style = ComputedStyle::default();
+        // Has width but no style - should NOT need wrapper
+        style.border_style_top = BorderStyle::None;
+        style.border_width_top = Length::Px(1.0);
+        assert!(!needs_container_wrapper(&style));
+    }
+
+    #[test]
+    fn test_needs_container_wrapper_border_width_zero() {
+        let mut style = ComputedStyle::default();
+        // Has style but zero width - should NOT need wrapper
+        style.border_style_top = BorderStyle::Solid;
+        style.border_width_top = Length::Px(0.0);
+        assert!(!needs_container_wrapper(&style));
     }
 }
