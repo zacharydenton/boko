@@ -616,6 +616,7 @@ impl StyleSchema {
         // Vertical Alignment (for superscript/subscript)
         // ====================================================================
 
+        // baseline_style: for inline super/sub positioning (text baseline shift)
         schema.register(StylePropertyRule {
             ir_key: "vertical-align",
             ir_field: Some(IrField::VerticalAlign),
@@ -627,6 +628,10 @@ impl StyleSchema {
             ]),
             context: StyleContext::InlineSafe,
         });
+
+        // NOTE: yj.vertical_align for top/middle/bottom is handled separately
+        // in StyleBuilder::ingest_ir_style() since the schema only supports
+        // one rule per key.
 
         // ====================================================================
         // Phase 1: High-Priority Text Properties
@@ -1756,10 +1761,8 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
         IrField::Color => ir_style.color.map(|c| c.to_css_string()),
         IrField::BackgroundColor => ir_style.background_color.map(|c| c.to_css_string()),
         IrField::VerticalAlign => {
-            if ir_style.vertical_align_super {
-                Some("super".to_string())
-            } else if ir_style.vertical_align_sub {
-                Some("sub".to_string())
+            if ir_style.vertical_align != ir_style::VerticalAlign::Baseline {
+                Some(ir_style.vertical_align.to_css_string())
             } else {
                 None
             }
@@ -2309,11 +2312,11 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 ir_style.background_color = Some(ir_style::Color::rgb(r, g, b));
             }
         }
-        IrField::VerticalAlign => match css_value {
-            "super" => ir_style.vertical_align_super = true,
-            "sub" => ir_style.vertical_align_sub = true,
-            _ => {}
-        },
+        IrField::VerticalAlign => {
+            if let Some(va) = ir_style::VerticalAlign::from_css(css_value) {
+                ir_style.vertical_align = va;
+            }
+        }
         IrField::TextDecorationUnderline => {
             ir_style.text_decoration_underline = css_value == "underline";
         }

@@ -262,6 +262,21 @@ enum_property! {
 }
 
 enum_property! {
+    /// CSS vertical-align values for inline and table-cell elements.
+    pub enum VerticalAlign {
+        #[default]
+        Baseline => "baseline",
+        Top => "top",
+        Middle => "middle",
+        Bottom => "bottom",
+        TextTop => "text-top",
+        TextBottom => "text-bottom",
+        Super => "super",
+        Sub => "sub",
+    }
+}
+
+enum_property! {
     /// Text alignment.
     pub enum TextAlign {
         #[default]
@@ -454,9 +469,8 @@ pub struct ComputedStyle {
     pub padding_left: Length,
     pub padding_right: Length,
 
-    // Vertical alignment for inline elements
-    pub vertical_align_super: bool,
-    pub vertical_align_sub: bool,
+    // Vertical alignment for inline and table-cell elements
+    pub vertical_align: VerticalAlign,
 
     // List properties
     pub list_style_type: ListStyleType,
@@ -570,13 +584,13 @@ impl ComputedStyle {
     /// Check if the style is superscript.
     #[inline]
     pub fn is_superscript(&self) -> bool {
-        self.vertical_align_super
+        self.vertical_align == VerticalAlign::Super
     }
 
     /// Check if the style is subscript.
     #[inline]
     pub fn is_subscript(&self) -> bool {
-        self.vertical_align_sub
+        self.vertical_align == VerticalAlign::Sub
     }
 
     /// Check if the style uses a monospace font.
@@ -729,10 +743,10 @@ impl ToCss for ComputedStyle {
         }
 
         // Vertical alignment
-        if self.vertical_align_super {
-            buf.push_str("vertical-align: super; ");
-        } else if self.vertical_align_sub {
-            buf.push_str("vertical-align: sub; ");
+        if self.vertical_align != default.vertical_align {
+            buf.push_str("vertical-align: ");
+            self.vertical_align.to_css(buf);
+            buf.push_str("; ");
         }
 
         // List style

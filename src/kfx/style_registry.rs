@@ -360,6 +360,31 @@ impl<'a> StyleBuilder<'a> {
                 }
             }
         }
+
+        // Post-processing: yj.vertical_align for top/middle/bottom
+        // The schema only supports one rule per key, so we handle this separately.
+        // This emits yj.vertical_align for table cell alignment.
+        use crate::kfx::style_schema::KfxValue;
+        match ir_style.vertical_align {
+            ir_style::VerticalAlign::Top => {
+                self.style
+                    .set(KfxSymbol::YjVerticalAlign, KfxValue::Symbol(KfxSymbol::Top));
+            }
+            ir_style::VerticalAlign::Middle => {
+                self.style.set(
+                    KfxSymbol::YjVerticalAlign,
+                    KfxValue::Symbol(KfxSymbol::Center),
+                );
+            }
+            ir_style::VerticalAlign::Bottom => {
+                self.style.set(
+                    KfxSymbol::YjVerticalAlign,
+                    KfxValue::Symbol(KfxSymbol::Bottom),
+                );
+            }
+            _ => {}
+        }
+
         self
     }
 

@@ -18,7 +18,7 @@ use super::element_ref::{BokoSelectors, ElementRef};
 use crate::ir::{
     BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle, DecorationStyle, Display,
     Float, FontStyle, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType, OverflowWrap,
-    StylePool, TextAlign, TextTransform, Visibility, WordBreak,
+    StylePool, TextAlign, TextTransform, VerticalAlign, Visibility, WordBreak,
 };
 
 // ============================================================================
@@ -137,6 +137,11 @@ pub enum Declaration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerticalAlignValue {
     Baseline,
+    Top,
+    Middle,
+    Bottom,
+    TextTop,
+    TextBottom,
     Super,
     Sub,
 }
@@ -896,9 +901,14 @@ fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecorationVal
 fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlignValue> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
+        "baseline" => Some(VerticalAlignValue::Baseline),
+        "top" => Some(VerticalAlignValue::Top),
+        "middle" => Some(VerticalAlignValue::Middle),
+        "bottom" => Some(VerticalAlignValue::Bottom),
+        "text-top" => Some(VerticalAlignValue::TextTop),
+        "text-bottom" => Some(VerticalAlignValue::TextBottom),
         "super" => Some(VerticalAlignValue::Super),
         "sub" => Some(VerticalAlignValue::Sub),
-        "baseline" | "middle" | "top" | "bottom" => Some(VerticalAlignValue::Baseline),
         _ => None,
     }
 }
@@ -1359,8 +1369,16 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         Declaration::Hyphens(h) => style.hyphens = *h,
         Declaration::WhiteSpace(nowrap) => style.no_break = *nowrap,
         Declaration::VerticalAlign(v) => {
-            style.vertical_align_super = *v == VerticalAlignValue::Super;
-            style.vertical_align_sub = *v == VerticalAlignValue::Sub;
+            style.vertical_align = match v {
+                VerticalAlignValue::Baseline => VerticalAlign::Baseline,
+                VerticalAlignValue::Top => VerticalAlign::Top,
+                VerticalAlignValue::Middle => VerticalAlign::Middle,
+                VerticalAlignValue::Bottom => VerticalAlign::Bottom,
+                VerticalAlignValue::TextTop => VerticalAlign::TextTop,
+                VerticalAlignValue::TextBottom => VerticalAlign::TextBottom,
+                VerticalAlignValue::Super => VerticalAlign::Super,
+                VerticalAlignValue::Sub => VerticalAlign::Sub,
+            };
         }
 
         // Text decoration
@@ -1941,6 +1959,52 @@ mod tests {
         assert_eq!(ff.font_family, "MyFont");
         assert_eq!(ff.font_weight, FontWeight::NORMAL);
         assert_eq!(ff.font_style, FontStyle::Normal);
+    }
+
+    // ========================================================================
+    // vertical-align Tests
+    // ========================================================================
+
+    #[test]
+    fn test_vertical_align_values() {
+        for (css_value, expected) in [
+            ("baseline", VerticalAlign::Baseline),
+            ("top", VerticalAlign::Top),
+            ("middle", VerticalAlign::Middle),
+            ("bottom", VerticalAlign::Bottom),
+            ("text-top", VerticalAlign::TextTop),
+            ("text-bottom", VerticalAlign::TextBottom),
+            ("super", VerticalAlign::Super),
+            ("sub", VerticalAlign::Sub),
+        ] {
+            let css = format!("td {{ vertical-align: {}; }}", css_value);
+            let stylesheet = Stylesheet::parse(&css);
+
+            assert_eq!(stylesheet.rules.len(), 1);
+            let decl = &stylesheet.rules[0].declarations[0];
+            if let Declaration::VerticalAlign(va) = decl {
+                let ir_va = match va {
+                    VerticalAlignValue::Baseline => VerticalAlign::Baseline,
+                    VerticalAlignValue::Top => VerticalAlign::Top,
+                    VerticalAlignValue::Middle => VerticalAlign::Middle,
+                    VerticalAlignValue::Bottom => VerticalAlign::Bottom,
+                    VerticalAlignValue::TextTop => VerticalAlign::TextTop,
+                    VerticalAlignValue::TextBottom => VerticalAlign::TextBottom,
+                    VerticalAlignValue::Super => VerticalAlign::Super,
+                    VerticalAlignValue::Sub => VerticalAlign::Sub,
+                };
+                assert_eq!(
+                    ir_va, expected,
+                    "vertical-align: {} should parse correctly",
+                    css_value
+                );
+            } else {
+                panic!(
+                    "vertical-align: {} should parse as VerticalAlign declaration",
+                    css_value
+                );
+            }
+        }
     }
 }
 

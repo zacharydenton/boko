@@ -32,7 +32,8 @@ pub use semantic::SemanticMap;
 pub use style::{
     BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle, DecorationStyle, Display,
     Float, FontStyle, FontVariant, FontWeight, Hyphens, Length, ListStylePosition, ListStyleType,
-    OverflowWrap, StyleId, StylePool, TextAlign, TextTransform, ToCss, Visibility, WordBreak,
+    OverflowWrap, StyleId, StylePool, TextAlign, TextTransform, ToCss, VerticalAlign, Visibility,
+    WordBreak,
 };
 
 /// A chapter's content in normalized IR form.

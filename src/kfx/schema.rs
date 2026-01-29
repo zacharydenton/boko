@@ -167,8 +167,8 @@ impl StyleModifier {
             StyleModifier::Italic => style.font_style = FontStyle::Italic,
             StyleModifier::Underline => style.text_decoration_underline = true,
             StyleModifier::Strikethrough => style.text_decoration_line_through = true,
-            StyleModifier::Superscript => style.vertical_align_super = true,
-            StyleModifier::Subscript => style.vertical_align_sub = true,
+            StyleModifier::Superscript => style.vertical_align = crate::ir::VerticalAlign::Super,
+            StyleModifier::Subscript => style.vertical_align = crate::ir::VerticalAlign::Sub,
         }
     }
 }
