@@ -280,6 +280,8 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
         // Default to figcaption; context-aware logic could choose caption for tables
         Role::Caption => ("figcaption", false, true),
         Role::Table => ("table", false, true),
+        Role::TableHead => ("thead", false, true),
+        Role::TableBody => ("tbody", false, true),
         Role::TableRow => ("tr", false, true),
         Role::TableCell => ("td", false, true),
         Role::Figure => ("figure", false, true),

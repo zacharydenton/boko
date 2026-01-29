@@ -129,6 +129,8 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
 
         // Tables
         "table" => Role::Table,
+        "thead" => Role::TableHead,
+        "tbody" => Role::TableBody,
         "tr" => Role::TableRow,
         "td" | "th" => Role::TableCell,
 

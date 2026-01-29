@@ -863,6 +863,8 @@ fn role_to_string(role: Role) -> String {
         Role::UnorderedList => "UnorderedList".to_string(),
         Role::ListItem => "ListItem".to_string(),
         Role::Table => "Table".to_string(),
+        Role::TableHead => "TableHead".to_string(),
+        Role::TableBody => "TableBody".to_string(),
         Role::TableRow => "TableRow".to_string(),
         Role::TableCell => "TableCell".to_string(),
         Role::Sidebar => "Sidebar".to_string(),

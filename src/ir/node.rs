@@ -50,9 +50,13 @@ pub enum Role {
     ListItem,
     /// Table structure.
     Table,
+    /// Table header section (`<thead>`).
+    TableHead,
+    /// Table body section (`<tbody>`).
+    TableBody,
     /// Table rows.
     TableRow,
-    /// Table cells (header vs data is in style).
+    /// Table cells (header vs data is tracked in SemanticMap::is_header_cell).
     TableCell,
     /// Sidebar/aside content.
     Sidebar,

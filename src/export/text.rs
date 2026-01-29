@@ -745,7 +745,7 @@ impl<W: Write> ExportContext<'_, W> {
                 self.end_block(role);
             }
 
-            Role::Container | Role::Root => {
+            Role::Container | Role::Root | Role::TableHead | Role::TableBody => {
                 self.walk_children(id)?;
             }
         }

@@ -425,6 +425,24 @@ impl KfxSchema {
             },
             vec![],
         );
+        // Table header section (<thead>) → type: header
+        self.register_element(
+            KfxSymbol::Header,
+            Strategy::Structure {
+                role: Role::TableHead,
+                kfx_type: KfxSymbol::Header,
+            },
+            vec![],
+        );
+        // Table body section (<tbody>) → type: body
+        self.register_element(
+            KfxSymbol::Body,
+            Strategy::Structure {
+                role: Role::TableBody,
+                kfx_type: KfxSymbol::Body,
+            },
+            vec![],
+        );
         self.register_element(
             KfxSymbol::TableRow,
             Strategy::Structure {
@@ -432,6 +450,14 @@ impl KfxSchema {
                 kfx_type: KfxSymbol::TableRow,
             },
             vec![],
+        );
+        // Table cells → type: text (both th and td)
+        self.export_strategy_table.insert(
+            Role::TableCell,
+            Strategy::Structure {
+                role: Role::TableCell,
+                kfx_type: KfxSymbol::Text,
+            },
         );
 
         // Sidebar
