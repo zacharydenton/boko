@@ -795,16 +795,16 @@ fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
         Token::Ident(ident) => match ident.as_ref() {
             // Absolute size keywords (based on 16px default)
             // Values from CSS spec: https://www.w3.org/TR/css-fonts-3/#absolute-size-value
-            "xx-small" => Some(Length::Rem(0.5625)),  // 9px / 16px
-            "x-small" => Some(Length::Rem(0.625)),    // 10px / 16px
-            "small" => Some(Length::Rem(0.8125)),     // 13px / 16px
-            "medium" => Some(Length::Rem(1.0)),       // 16px / 16px
-            "large" => Some(Length::Rem(1.125)),      // 18px / 16px
-            "x-large" => Some(Length::Rem(1.5)),      // 24px / 16px
-            "xx-large" => Some(Length::Rem(2.0)),     // 32px / 16px
-            "xxx-large" => Some(Length::Rem(3.0)),    // 48px / 16px (CSS4)
+            "xx-small" => Some(Length::Rem(0.5625)), // 9px / 16px
+            "x-small" => Some(Length::Rem(0.625)),   // 10px / 16px
+            "small" => Some(Length::Rem(0.8125)),    // 13px / 16px
+            "medium" => Some(Length::Rem(1.0)),      // 16px / 16px
+            "large" => Some(Length::Rem(1.125)),     // 18px / 16px
+            "x-large" => Some(Length::Rem(1.5)),     // 24px / 16px
+            "xx-large" => Some(Length::Rem(2.0)),    // 32px / 16px
+            "xxx-large" => Some(Length::Rem(3.0)),   // 48px / 16px (CSS4)
             // Relative size keywords (relative to parent, use em)
-            "smaller" => Some(Length::Em(0.833)),     // ~1/1.2
+            "smaller" => Some(Length::Em(0.833)), // ~1/1.2
             "larger" => Some(Length::Em(1.2)),
             _ => None,
         },
@@ -1525,44 +1525,38 @@ fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<crate::ir::FontFa
     let mut src: Option<String> = None;
 
     // Parse declarations within the @font-face block
-    loop {
-        // Try to parse a declaration
-        if let Ok(name) = input.expect_ident_cloned() {
-            let name_str = name.as_ref();
-            if input.expect_colon().is_ok() {
-                match name_str {
-                    "font-family" => {
-                        font_family = parse_font_face_family(input);
+    while let Ok(name) = input.expect_ident_cloned() {
+        let name_str = name.as_ref();
+        if input.expect_colon().is_ok() {
+            match name_str {
+                "font-family" => {
+                    font_family = parse_font_face_family(input);
+                }
+                "font-weight" => {
+                    if let Some(w) = parse_font_weight(input) {
+                        font_weight = w;
                     }
-                    "font-weight" => {
-                        if let Some(w) = parse_font_weight(input) {
-                            font_weight = w;
-                        }
+                }
+                "font-style" => {
+                    if let Some(s) = parse_font_style(input) {
+                        font_style = s;
                     }
-                    "font-style" => {
-                        if let Some(s) = parse_font_style(input) {
-                            font_style = s;
-                        }
-                    }
-                    "src" => {
-                        src = parse_font_face_src(input);
-                    }
-                    _ => {
-                        // Skip unknown properties
-                        while input.next().is_ok() {
-                            // Consume until we hit a semicolon or end of block
-                            if matches!(input.current_source_location().line, _) {
-                                break;
-                            }
+                }
+                "src" => {
+                    src = parse_font_face_src(input);
+                }
+                _ => {
+                    // Skip unknown properties
+                    while input.next().is_ok() {
+                        // Consume until we hit a semicolon or end of block
+                        if matches!(input.current_source_location().line, _) {
+                            break;
                         }
                     }
                 }
-                // Consume semicolon if present
-                let _ = input.try_parse(|i| i.expect_semicolon());
             }
-        } else {
-            // No more declarations
-            break;
+            // Consume semicolon if present
+            let _ = input.try_parse(|i| i.expect_semicolon());
         }
     }
 
@@ -1974,21 +1968,33 @@ mod tests {
 
         // small = 0.8125rem
         if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[0].declarations[0] {
-            assert!((*v - 0.8125).abs() < 0.001, "small should be 0.8125rem, got {}", v);
+            assert!(
+                (*v - 0.8125).abs() < 0.001,
+                "small should be 0.8125rem, got {}",
+                v
+            );
         } else {
             panic!("Expected rem length for 'small'");
         }
 
         // large = 1.125rem
         if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[1].declarations[0] {
-            assert!((*v - 1.125).abs() < 0.001, "large should be 1.125rem, got {}", v);
+            assert!(
+                (*v - 1.125).abs() < 0.001,
+                "large should be 1.125rem, got {}",
+                v
+            );
         } else {
             panic!("Expected rem length for 'large'");
         }
 
         // x-small = 0.625rem
         if let Declaration::FontSize(Length::Rem(v)) = &stylesheet.rules[2].declarations[0] {
-            assert!((*v - 0.625).abs() < 0.001, "x-small should be 0.625rem, got {}", v);
+            assert!(
+                (*v - 0.625).abs() < 0.001,
+                "x-small should be 0.625rem, got {}",
+                v
+            );
         } else {
             panic!("Expected rem length for 'x-small'");
         }
@@ -2002,14 +2008,22 @@ mod tests {
 
         // smaller = 0.833em (relative to parent)
         if let Declaration::FontSize(Length::Em(v)) = &stylesheet.rules[0].declarations[0] {
-            assert!((*v - 0.833).abs() < 0.001, "smaller should be 0.833em, got {}", v);
+            assert!(
+                (*v - 0.833).abs() < 0.001,
+                "smaller should be 0.833em, got {}",
+                v
+            );
         } else {
             panic!("Expected em length for 'smaller'");
         }
 
         // larger = 1.2em
         if let Declaration::FontSize(Length::Em(v)) = &stylesheet.rules[1].declarations[0] {
-            assert!((*v - 1.2).abs() < 0.001, "larger should be 1.2em, got {}", v);
+            assert!(
+                (*v - 1.2).abs() < 0.001,
+                "larger should be 1.2em, got {}",
+                v
+            );
         } else {
             panic!("Expected em length for 'larger'");
         }

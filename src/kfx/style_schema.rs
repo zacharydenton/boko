@@ -3290,7 +3290,10 @@ mod tests {
                 IonValue::Symbol(KfxSymbol::Pt as u64),
             ),
         ]);
-        assert_eq!(rule.transform.inverse(&kfx_value), Some("1.8pt".to_string()));
+        assert_eq!(
+            rule.transform.inverse(&kfx_value),
+            Some("1.8pt".to_string())
+        );
     }
 
     #[test]
@@ -3934,7 +3937,10 @@ mod tests {
             KfxSymbol::BorderWeightTop as u64,
             IonValue::Struct(vec![
                 (KfxSymbol::Value as u64, IonValue::Float(0.45)),
-                (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Pt as u64)),
+                (
+                    KfxSymbol::Unit as u64,
+                    IonValue::Symbol(KfxSymbol::Pt as u64),
+                ),
             ]),
         )];
 
@@ -3949,16 +3955,9 @@ mod tests {
 
         // Check it's approximately 0.6px (0.45 * 96/72 ≈ 0.6)
         if let Length::Px(px) = style.border_width_top {
-            assert!(
-                (px - 0.6).abs() < 0.01,
-                "Expected ~0.6px, got {}px",
-                px
-            );
+            assert!((px - 0.6).abs() < 0.01, "Expected ~0.6px, got {}px", px);
         } else {
-            panic!(
-                "Expected Length::Px, got {:?}",
-                style.border_width_top
-            );
+            panic!("Expected Length::Px, got {:?}", style.border_width_top);
         }
     }
 
@@ -3971,7 +3970,10 @@ mod tests {
 
         // Check schema has the rule
         let rule = schema.get_by_kfx_symbol(94); // BorderWeightTop
-        assert!(rule.is_some(), "Schema should have rule for symbol 94 (BorderWeightTop)");
+        assert!(
+            rule.is_some(),
+            "Schema should have rule for symbol 94 (BorderWeightTop)"
+        );
 
         let rule = rule.unwrap();
         eprintln!("Rule ir_key: {}", rule.ir_key);
@@ -3983,7 +3985,10 @@ mod tests {
         // Test the inverse transform
         let kfx_value = IonValue::Struct(vec![
             (KfxSymbol::Value as u64, IonValue::Float(0.45)),
-            (KfxSymbol::Unit as u64, IonValue::Symbol(KfxSymbol::Pt as u64)),
+            (
+                KfxSymbol::Unit as u64,
+                IonValue::Symbol(KfxSymbol::Pt as u64),
+            ),
         ]);
 
         let css_value = rule.transform.inverse(&kfx_value);

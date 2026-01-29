@@ -856,7 +856,10 @@ impl KfxSchema {
             if rule_matches {
                 for attr_rule in &span_rule.attr_rules {
                     // Skip if we already have this attribute from element rules
-                    if attrs.iter().any(|(id, _)| *id == attr_rule.kfx_field as u64) {
+                    if attrs
+                        .iter()
+                        .any(|(id, _)| *id == attr_rule.kfx_field as u64)
+                    {
                         continue;
                     }
                     if let Some(value) = get_semantic(attr_rule.target) {

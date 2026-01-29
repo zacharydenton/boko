@@ -250,7 +250,7 @@ fn extract_all_element_attrs(
 
     // Also extract using span rules (for attributes like link_to on standalone elements)
     let has_field = |symbol: KfxSymbol| get_field(fields, symbol as u64).is_some();
-    for rule in schema().span_attr_rules(&has_field) {
+    for rule in schema().span_attr_rules(has_field) {
         // Skip if we already have this attribute
         if result.contains_key(&rule.target) {
             continue;
@@ -940,8 +940,7 @@ fn emit_flattened_segments(
     stream: &mut TokenStream,
 ) {
     for segment in segments {
-        let needs_style_event =
-            segment.state.link_to.is_some() || segment.state.style.is_some();
+        let needs_style_event = segment.state.link_to.is_some() || segment.state.style.is_some();
 
         if needs_style_event {
             // Build span with accumulated state
@@ -966,17 +965,17 @@ fn emit_flattened_segments(
 
             // Add link_to if present
             if let Some(ref href) = segment.state.link_to {
-                let mut href_value = href.clone();
-                let anchor_symbol = ctx.anchor_registry.register_link_target(&mut href_value);
+                let href_value = href.clone();
+                let anchor_symbol = ctx.anchor_registry.register_link_target(&href_value);
                 kfx_attrs.push((sym!(LinkTo), anchor_symbol));
             }
 
             // Add yj.display for noterefs
-            if let Some(ref epub_type) = segment.state.epub_type {
-                if epub_type.split_whitespace().any(|t| t == "noteref") {
-                    // YjNote = 617
-                    kfx_attrs.push((sym!(YjDisplay), "617".to_string()));
-                }
+            if let Some(ref epub_type) = segment.state.epub_type
+                && epub_type.split_whitespace().any(|t| t == "noteref")
+            {
+                // YjNote = 617
+                kfx_attrs.push((sym!(YjDisplay), "617".to_string()));
             }
 
             span.kfx_attrs = kfx_attrs;
@@ -1412,10 +1411,10 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     // Add the span as a style_event (if non-empty)
                     // Note: The flattening algorithm ensures spans are non-overlapping
                     // and already have all accumulated attributes merged.
-                    if length > 0 {
-                        if let Some(current) = stack.last_mut() {
-                            current.add_style_event(span_info, ctx);
-                        }
+                    if length > 0
+                        && let Some(current) = stack.last_mut()
+                    {
+                        current.add_style_event(span_info, ctx);
                     }
                 }
             }
@@ -2367,7 +2366,11 @@ mod tests {
         let para_children: Vec<_> = chapter.children(para_id).collect();
 
         // Should have exactly one child: the Link
-        assert_eq!(para_children.len(), 1, "Paragraph should have one Link child");
+        assert_eq!(
+            para_children.len(),
+            1,
+            "Paragraph should have one Link child"
+        );
 
         let link_id = para_children[0];
         let link_node = chapter.node(link_id).unwrap();
@@ -2380,15 +2383,27 @@ mod tests {
 
         // Link should have two children: Inline and Text
         let link_children: Vec<_> = chapter.children(link_id).collect();
-        assert_eq!(link_children.len(), 2, "Link should have Inline + Text children");
+        assert_eq!(
+            link_children.len(),
+            2,
+            "Link should have Inline + Text children"
+        );
 
         // First child: Inline containing "1."
         let inline_id = link_children[0];
         let inline_node = chapter.node(inline_id).unwrap();
-        assert_eq!(inline_node.role, Role::Inline, "First Link child should be Inline");
+        assert_eq!(
+            inline_node.role,
+            Role::Inline,
+            "First Link child should be Inline"
+        );
 
         let inline_children: Vec<_> = chapter.children(inline_id).collect();
-        assert_eq!(inline_children.len(), 1, "Inline should have one Text child");
+        assert_eq!(
+            inline_children.len(),
+            1,
+            "Inline should have one Text child"
+        );
         let inline_text = chapter.node(inline_children[0]).unwrap();
         assert_eq!(chapter.text(inline_text.text), "1.");
 

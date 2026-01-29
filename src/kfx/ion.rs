@@ -1092,7 +1092,11 @@ mod tests {
         let mut parser = IonParser::new(&data);
         if let IonValue::Decimal(s) = parser.parse().unwrap() {
             let parsed: f64 = s.parse().unwrap();
-            assert!((parsed - 1.8).abs() < 0.0001, "expected ~1.8, got {}", parsed);
+            assert!(
+                (parsed - 1.8).abs() < 0.0001,
+                "expected ~1.8, got {}",
+                parsed
+            );
         } else {
             panic!("expected decimal");
         }
@@ -1109,7 +1113,11 @@ mod tests {
         let mut parser = IonParser::new(&data);
         if let IonValue::Decimal(s) = parser.parse().unwrap() {
             let parsed: f64 = s.parse().unwrap();
-            assert!((parsed - 0.45).abs() < 0.0001, "expected ~0.45, got {}", parsed);
+            assert!(
+                (parsed - 0.45).abs() < 0.0001,
+                "expected ~0.45, got {}",
+                parsed
+            );
         } else {
             panic!("expected decimal");
         }

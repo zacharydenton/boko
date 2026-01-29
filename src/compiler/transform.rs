@@ -208,7 +208,12 @@ impl<'a> TransformContext<'a> {
 
                 // Check if whitespace should be preserved (pre, pre-wrap, pre-line)
                 let preserve_whitespace = parent_style
-                    .map(|s| matches!(s.white_space, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine))
+                    .map(|s| {
+                        matches!(
+                            s.white_space,
+                            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+                        )
+                    })
                     .unwrap_or(false);
 
                 // Normalize whitespace unless we're in a pre-like context
