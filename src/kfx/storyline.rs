@@ -728,6 +728,13 @@ fn walk_node_for_export(
         return;
     }
 
+    // Definition lists: group dt+dd pairs into wrapper elements
+    // HTML has dt/dd as flat siblings, but KFX needs them grouped for float to work
+    if node.role == Role::DefinitionList {
+        emit_definition_list(chapter, node_id, sch, ctx, stream);
+        return;
+    }
+
     // Inline elements (Link, Inline): use the flattening algorithm.
     // This produces non-overlapping style_events where each text segment
     // carries the accumulated state from all ancestors.
@@ -993,6 +1000,118 @@ fn emit_flattened_segments(
             stream.push(KfxToken::Text(segment.text));
         }
     }
+}
+
+/// Emit a definition list with dt+dd pairs grouped together.
+///
+/// HTML `<dl>` has `<dt>` and `<dd>` as flat siblings, but KFX needs each
+/// dt+dd pair wrapped in a container for float:left to work properly.
+/// This matches KPR's output structure:
+///   Paragraph (wrapper)
+///     Container (dt with float:left)
+///       Paragraph (dt content)
+///         Link
+///     Paragraph (dd content)
+///       Link
+fn emit_definition_list(
+    chapter: &IRChapter,
+    node_id: NodeId,
+    sch: &crate::kfx::schema::KfxSchema,
+    ctx: &mut ExportContext,
+    stream: &mut TokenStream,
+) {
+    let node = match chapter.node(node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    // Emit the outer dl container (becomes Paragraph like KPR)
+    let mut dl_elem = ElementStart::new(Role::Paragraph);
+    let dl_style = ctx.register_style_id(node.style, &chapter.styles);
+    dl_elem.style_symbol = Some(dl_style);
+
+    stream.push(KfxToken::StartElement(dl_elem));
+
+    // Collect children and group dt+dd pairs
+    let children: Vec<NodeId> = chapter.children(node_id).collect();
+    let mut i = 0;
+
+    while i < children.len() {
+        let child_id = children[i];
+        let child = match chapter.node(child_id) {
+            Some(n) => n,
+            None => {
+                i += 1;
+                continue;
+            }
+        };
+
+        if child.role == Role::DefinitionTerm {
+            // Find the paired dd (if any) to get its style for the wrapper
+            let dd_info = if i + 1 < children.len() {
+                let next_id = children[i + 1];
+                chapter.node(next_id).and_then(|next| {
+                    if next.role == Role::DefinitionDescription {
+                        Some((next_id, next.style))
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+
+            // Start a wrapper Paragraph for this dt+dd pair
+            // Use a neutral style (from dd or default)
+            let mut wrapper_elem = ElementStart::new(Role::Paragraph);
+            let wrapper_style = if let Some((_, dd_style_id)) = dd_info {
+                ctx.register_style_id(dd_style_id, &chapter.styles)
+            } else {
+                ctx.default_style_symbol
+            };
+            wrapper_elem.style_symbol = Some(wrapper_style);
+            stream.push(KfxToken::StartElement(wrapper_elem));
+
+            // Emit the dt as a Container (with float:left style)
+            // Use DefinitionTerm role since it maps to KfxSymbol::Container
+            let dt_style = ctx.register_style_id(child.style, &chapter.styles);
+            let mut dt_elem = ElementStart::new(Role::DefinitionTerm);
+            dt_elem.style_symbol = Some(dt_style);
+            stream.push(KfxToken::StartElement(dt_elem));
+
+            // Emit dt's children wrapped in a Paragraph (like KPR)
+            let mut dt_inner = ElementStart::new(Role::Paragraph);
+            dt_inner.style_symbol = Some(dt_style);
+            stream.push(KfxToken::StartElement(dt_inner));
+
+            for dt_child in chapter.children(child_id) {
+                walk_node_for_export(chapter, dt_child, sch, ctx, stream);
+            }
+
+            stream.push(KfxToken::EndElement); // end dt inner Paragraph
+            stream.push(KfxToken::EndElement); // end dt Container
+
+            // Emit the paired dd content
+            if let Some((dd_id, _)) = dd_info {
+                // Emit dd's children directly (they're already Paragraphs)
+                for dd_child in chapter.children(dd_id) {
+                    walk_node_for_export(chapter, dd_child, sch, ctx, stream);
+                }
+
+                i += 1; // Skip the dd, we've processed it
+            }
+
+            // End the wrapper
+            stream.push(KfxToken::EndElement);
+        } else {
+            // Non-dt child (orphan dd or other), emit normally
+            walk_node_for_export(chapter, child_id, sch, ctx, stream);
+        }
+
+        i += 1;
+    }
+
+    stream.push(KfxToken::EndElement);
 }
 
 /// Emit inline content (Link, Inline, Text) using the flattening algorithm.
