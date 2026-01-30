@@ -1220,14 +1220,14 @@ impl StyleSchema {
         // Phase 12: Table Properties
         // ====================================================================
 
-        // border-collapse → table_border_collapse
+        // border-collapse → table_border_collapse (boolean: true=collapse, false=separate)
         schema.register(StylePropertyRule {
             ir_key: "border-collapse",
             ir_field: Some(IrField::BorderCollapse),
             kfx_symbol: KfxSymbol::TableBorderCollapse,
             transform: ValueTransform::Map(vec![
-                ("separate".into(), KfxValue::Symbol(KfxSymbol::Separate)),
-                ("collapse".into(), KfxValue::Symbol(KfxSymbol::Collapse)),
+                ("separate".into(), KfxValue::Bool(false)),
+                ("collapse".into(), KfxValue::Bool(true)),
             ]),
             context: StyleContext::BlockOnly,
         });
@@ -3819,13 +3819,14 @@ mod tests {
         let rule = schema.get_first("border-collapse").unwrap();
 
         assert_eq!(rule.kfx_symbol, KfxSymbol::TableBorderCollapse);
+        // KFX uses boolean: true = collapse, false = separate
         assert!(matches!(
             rule.transform.apply("collapse"),
-            Some(KfxValue::Symbol(KfxSymbol::Collapse))
+            Some(KfxValue::Bool(true))
         ));
         assert!(matches!(
             rule.transform.apply("separate"),
-            Some(KfxValue::Symbol(KfxSymbol::Separate))
+            Some(KfxValue::Bool(false))
         ));
     }
 
