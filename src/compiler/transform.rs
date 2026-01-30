@@ -335,15 +335,6 @@ impl<'a> TransformContext<'a> {
                                 }
                             }
                         }
-                        // Treat class="footnote" on anchors as epub:type="noteref"
-                        // Many EPUBs use this pattern instead of proper epub:type
-                        "class" if name.local.as_ref() == "a" => {
-                            if attr.value.split_whitespace().any(|c| c == "footnote") {
-                                self.chapter
-                                    .semantics
-                                    .set_epub_type(ir_id, "noteref".into());
-                            }
-                        }
                         _ => {}
                     }
                 }
@@ -584,33 +575,5 @@ mod tests {
             }
         }
         assert!(found_break, "Break node not found in blockquote verse");
-    }
-
-    #[test]
-    fn test_footnote_class_becomes_noteref() {
-        // Many EPUBs use class="footnote" instead of epub:type="noteref"
-        let dom = parse_html(
-            r##"<html><body>
-            <p>Text<sup><a class="footnote" href="#fn1">[1]</a></sup></p>
-            </body></html>"##,
-        );
-        let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
-
-        let chapter = transform(&dom, &stylesheets);
-
-        // Find link node and verify it has noteref epub_type
-        for id in chapter.iter_dfs() {
-            if chapter.node(id).unwrap().role == Role::Link {
-                let epub_type = chapter.semantics.epub_type(id);
-                assert_eq!(
-                    epub_type,
-                    Some("noteref"),
-                    "Link with class='footnote' should have epub_type='noteref'"
-                );
-                return;
-            }
-        }
-        panic!("Link not found");
     }
 }
