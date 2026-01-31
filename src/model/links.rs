@@ -44,7 +44,7 @@ pub enum AnchorTarget {
     Chapter(ChapterId),
 
     /// External URL.
-    /// Example: href="https://example.com" → External(String)
+    /// Example: `href="https://example.com"` → External(String)
     External(String),
 }
 

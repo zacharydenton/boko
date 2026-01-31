@@ -3,12 +3,12 @@
 //! This module provides utilities for rendering the internal book representation
 //! to Markdown format. The design separates pure rendering logic from I/O:
 //!
-//! - [`escape`]: Pure string transformation utilities for Markdown escaping
+//! - `escape`: Pure string transformation utilities for Markdown escaping
 //! - [`slugify`]: GitHub-style slug generation for heading anchors
-//! - [`render`]: Core IR → Markdown rendering
+//! - `render`: Core IR → Markdown rendering
 //!
-//! The export layer ([`crate::export::text`]) handles I/O orchestration, calling
-//! these pure functions to generate content.
+//! The export layer handles I/O orchestration, calling these pure functions
+//! to generate content.
 //!
 //! ## Design Notes
 //!

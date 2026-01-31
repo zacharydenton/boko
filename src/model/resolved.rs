@@ -11,7 +11,7 @@ use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Role};
 
 /// Book-level link resolution result with forward and reverse mappings.
 ///
-/// This struct is produced by [`Book::resolve_links()`] and provides:
+/// This struct is produced by `Book::resolve_links()` and provides:
 /// - Forward lookup: given a link node, find its target
 /// - Reverse lookup: given a target node, find all links pointing to it
 /// - Broken link detection: links that couldn't be resolved
