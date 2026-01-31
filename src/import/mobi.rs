@@ -158,7 +158,13 @@ impl Importer for MobiImporter {
         resolve_path_based_href(
             from_path,
             href,
-            |p| if p == "content.html" { Some(ChapterId(0)) } else { None },
+            |p| {
+                if p == "content.html" {
+                    Some(ChapterId(0))
+                } else {
+                    None
+                }
+            },
             |k| self.element_id_map.get(k).copied(),
         )
     }

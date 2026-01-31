@@ -549,12 +549,8 @@ impl Azw3Importer {
             .map(|f| (f.start_pos, f.file_number as u32))
             .collect();
 
-        let transformed = transform::transform_kindle_refs(
-            &content,
-            &self.kf8.elems,
-            html_text,
-            &file_starts,
-        );
+        let transformed =
+            transform::transform_kindle_refs(&content, &self.kf8.elems, html_text, &file_starts);
 
         // Strip Amazon-specific attributes (aid, data-Amzn*)
         let cleaned = transform::strip_kindle_attributes_fast(&transformed);

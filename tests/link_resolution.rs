@@ -1,7 +1,7 @@
 //! Test link resolution for different formats.
 
-use boko::model::AnchorTarget;
 use boko::Book;
+use boko::model::AnchorTarget;
 
 #[test]
 fn test_azw3_link_resolution() {
@@ -104,7 +104,10 @@ fn test_azw3_toc_resolution() {
     }
 
     let (total, with_fragment, with_target) = count_with_fragments(toc);
-    println!("TOC entries: {}, with fragment: {}, with target: {}", total, with_fragment, with_target);
+    println!(
+        "TOC entries: {}, with fragment: {}, with target: {}",
+        total, with_fragment, with_target
+    );
 
     // Print first few entries with fragments
     fn print_entries(entries: &[boko::model::TocEntry], depth: usize) {
@@ -116,7 +119,10 @@ fn test_azw3_toc_resolution() {
                 Some(AnchorTarget::External(u)) => format!("External({})", u),
                 None => "None".to_string(),
             };
-            println!("{}  {} -> {} [{}]", indent, entry.title, entry.href, target_str);
+            println!(
+                "{}  {} -> {} [{}]",
+                indent, entry.title, entry.href, target_str
+            );
             print_entries(&entry.children, depth + 1);
         }
     }

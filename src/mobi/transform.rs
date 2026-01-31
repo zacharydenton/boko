@@ -255,8 +255,7 @@ pub fn find_nearest_id_fast(
 
         // Find the last occurrence of each attribute type
         let last_id = find_last_attr_in_window(back_window, &id_finder, &id_finder_single, 4);
-        let last_name =
-            find_last_attr_in_window(back_window, &name_finder, &name_finder_single, 6);
+        let last_name = find_last_attr_in_window(back_window, &name_finder, &name_finder_single, 6);
         let last_aid = find_last_attr_in_window(back_window, &aid_finder, &aid_finder_single, 5);
 
         // Check if we hit a <body tag (stop searching)
@@ -313,9 +312,10 @@ fn find_attr_with_pos(
 
     if let Some(value_end) = window[value_start..].iter().position(|&b| b == quote_char) {
         let id_bytes = &window[value_start..value_start + value_end];
-        if id_bytes.iter().all(|&b| {
-            b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
-        }) {
+        if id_bytes
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.')
+        {
             return Some((pos, String::from_utf8_lossy(id_bytes).into_owned()));
         }
     }
@@ -431,11 +431,7 @@ fn clean_tag(tag: &[u8]) -> Vec<u8> {
 
         // Get attribute name
         let attr_start = i;
-        while i < tag.len()
-            && tag[i] != b'='
-            && tag[i] != b' '
-            && tag[i] != b'>'
-            && tag[i] != b'/'
+        while i < tag.len() && tag[i] != b'=' && tag[i] != b' ' && tag[i] != b'>' && tag[i] != b'/'
         {
             i += 1;
         }

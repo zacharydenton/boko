@@ -21,7 +21,9 @@ use crate::kfx::schema::schema;
 use crate::kfx::storyline::parse_storyline_to_ir;
 use crate::kfx::symbols::KfxSymbol;
 use crate::model::Chapter;
-use crate::model::{AnchorTarget, CollectionInfo, Contributor, GlobalNodeId, Landmark, Metadata, TocEntry};
+use crate::model::{
+    AnchorTarget, CollectionInfo, Contributor, GlobalNodeId, Landmark, Metadata, TocEntry,
+};
 
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
 macro_rules! sym {

@@ -38,6 +38,7 @@ pub mod dom;
 pub mod export;
 pub mod import;
 pub mod io;
+pub mod markdown;
 pub mod model;
 pub mod style;
 

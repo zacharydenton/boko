@@ -175,9 +175,7 @@ impl ResolvedLinksBuilder {
 /// 2. Calls importer's index_anchors() to build format-specific anchor maps
 /// 3. Walks all chapters, finds Link nodes, resolves via importer
 /// 4. Builds reverse maps for efficient lookup
-pub(crate) fn resolve_book_links(
-    book: &mut crate::model::Book,
-) -> std::io::Result<ResolvedLinks> {
+pub(crate) fn resolve_book_links(book: &mut crate::model::Book) -> std::io::Result<ResolvedLinks> {
     let mut builder = ResolvedLinksBuilder::new();
 
     // Step 1: Load all chapters
@@ -265,10 +263,7 @@ mod tests {
         let resolved = builder.build();
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved.get(source),
-            Some(&AnchorTarget::Internal(target))
-        );
+        assert_eq!(resolved.get(source), Some(&AnchorTarget::Internal(target)));
         assert!(resolved.is_internal_target(target));
         assert_eq!(resolved.links_to(target), &[source]);
     }
@@ -302,10 +297,7 @@ mod tests {
 
         let resolved = builder.build();
 
-        assert_eq!(
-            resolved.get(source),
-            Some(&AnchorTarget::External(url))
-        );
+        assert_eq!(resolved.get(source), Some(&AnchorTarget::External(url)));
     }
 
     #[test]

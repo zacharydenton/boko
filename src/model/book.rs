@@ -456,10 +456,18 @@ impl Book {
         }
 
         let mut targets = Vec::new();
-        collect_targets(self.backend.toc(), &*self.backend, ChapterId(0), &mut targets);
+        collect_targets(
+            self.backend.toc(),
+            &*self.backend,
+            ChapterId(0),
+            &mut targets,
+        );
 
         // Then apply the targets to the TOC entries
-        fn apply_targets(entries: &mut [TocEntry], targets: &mut impl Iterator<Item = Option<AnchorTarget>>) {
+        fn apply_targets(
+            entries: &mut [TocEntry],
+            targets: &mut impl Iterator<Item = Option<AnchorTarget>>,
+        ) {
             for entry in entries {
                 entry.target = targets.next().flatten();
                 apply_targets(&mut entry.children, targets);

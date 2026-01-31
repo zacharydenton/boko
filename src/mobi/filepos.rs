@@ -45,8 +45,7 @@ pub fn collect_filepos_targets(html: &[u8]) -> HashSet<usize> {
             }
 
             if val_end > start {
-                if let Ok(filepos) =
-                    String::from_utf8_lossy(&html[start..val_end]).parse::<usize>()
+                if let Ok(filepos) = String::from_utf8_lossy(&html[start..val_end]).parse::<usize>()
                 {
                     targets.insert(filepos);
                 }
@@ -170,10 +169,7 @@ pub fn transform_mobi_html(html: &[u8], assets: &[std::path::PathBuf]) -> Vec<u8
         // Look for recindex=" pattern
         if pos + 10 < with_anchors.len() && with_anchors[pos..].starts_with(b"recindex=\"") {
             let val_start = pos + 10;
-            if let Some(val_end_rel) = with_anchors[val_start..]
-                .iter()
-                .position(|&b| b == b'"')
-            {
+            if let Some(val_end_rel) = with_anchors[val_start..].iter().position(|&b| b == b'"') {
                 let val_end = val_start + val_end_rel;
                 let recindex =
                     String::from_utf8_lossy(&with_anchors[val_start..val_end]).to_string();
