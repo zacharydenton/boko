@@ -1709,7 +1709,10 @@ impl IonBuilder {
             }
 
             // If this element has accumulated text, create ONE content reference
-            if !self.accumulated_text.is_empty() {
+            // Skip if the only content is zero-width spaces (anchor markers from empty ID elements)
+            // These interfere with image display when mixed with image children
+            let has_real_text = self.accumulated_text.chars().any(|c| c != '\u{200B}');
+            if has_real_text {
                 let (content_idx, _offset) = ctx.append_text(&self.accumulated_text);
                 let content_ref = IonValue::Struct(vec![
                     (sym!(Name), IonValue::Symbol(ctx.current_content_name)),
@@ -1718,8 +1721,9 @@ impl IonBuilder {
                 self.fields.push((sym!(Content), content_ref));
             }
 
-            // Add style_events if any inline spans were collected
-            if !self.style_events.is_empty() {
+            // Add style_events if any inline spans were collected AND there's real text
+            // (style_events reference character offsets in the content, so skip if no content)
+            if !self.style_events.is_empty() && has_real_text {
                 self.fields
                     .push((sym!(StyleEvents), IonValue::List(self.style_events)));
             }

@@ -1863,10 +1863,11 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
             .unwrap_or(1)
             .max(1) as i64;
 
+        // Note: eid comes first, then pid - matching Amazon's format
+        // Note: offset field is omitted when zero (Amazon's format doesn't include it)
         let entry = IonValue::Struct(vec![
-            (KfxSymbol::Pid as u64, IonValue::Int(pid)),
             (KfxSymbol::Eid as u64, IonValue::Int(cover_id as i64)),
-            (KfxSymbol::Offset as u64, IonValue::Int(0)),
+            (KfxSymbol::Pid as u64, IonValue::Int(pid)),
         ]);
         entries.push(entry);
         pid += content_len;
@@ -1886,16 +1887,26 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
                     .unwrap_or(1)
                     .max(1) as i64;
 
+                // Note: eid comes first, then pid - matching Amazon's format
+                // Note: offset field is omitted when zero
                 let entry = IonValue::Struct(vec![
-                    (KfxSymbol::Pid as u64, IonValue::Int(pid)),
                     (KfxSymbol::Eid as u64, IonValue::Int(eid as i64)),
-                    (KfxSymbol::Offset as u64, IonValue::Int(0)),
+                    (KfxSymbol::Pid as u64, IonValue::Int(pid)),
                 ]);
                 entries.push(entry);
                 pid += content_len;
             }
         }
     }
+
+    // Add terminator entry with eid=0 and pid=max_pid
+    // This is required by Amazon's format to indicate the end of content
+    // and provides the max position ID for location count calculation
+    let terminator = IonValue::Struct(vec![
+        (KfxSymbol::Eid as u64, IonValue::Int(0)),
+        (KfxSymbol::Pid as u64, IonValue::Int(pid)),
+    ]);
+    entries.push(terminator);
 
     let ion = IonValue::List(entries);
     KfxFragment::singleton(KfxSymbol::PositionIdMap, ion)
@@ -2670,11 +2681,11 @@ mod tests {
 
         // Extract and verify the position_id_map entries
         if let crate::kfx::fragment::FragmentData::Ion(IonValue::List(entries)) = &frag.data {
-            // Should have 5 entries (100, 101, 102, 200, 201)
+            // Should have 6 entries (100, 101, 102, 200, 201) + 1 terminator (eid=0)
             assert_eq!(
                 entries.len(),
-                5,
-                "position_id_map should have one entry per content ID"
+                6,
+                "position_id_map should have one entry per content ID plus terminator"
             );
 
             // Extract all eids
