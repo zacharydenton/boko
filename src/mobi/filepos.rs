@@ -158,6 +158,12 @@ pub fn transform_mobi_html(html: &[u8], assets: &[std::path::PathBuf]) -> Vec<u8
                     pos = end;
                     continue;
                 }
+            } else {
+                // Empty or malformed filepos (no digits) - skip the entire attribute
+                // This removes `filepos=""` or `filepos=` leaving the anchor tag
+                // which will be cleaned up later or rendered as plain text
+                pos = end;
+                continue;
             }
         }
 
@@ -288,5 +294,62 @@ mod tests {
 
         // Should strip leading zeros in href
         assert!(result_str.contains("href=\"#filepos100\""));
+    }
+
+    #[test]
+    fn test_transform_empty_filepos_quoted() {
+        // Empty filepos with quotes should be removed, leaving plain anchor
+        let html = b"<a filepos=\"\">Link text</a>";
+        let result = transform_mobi_html(html, &[]);
+        let result_str = String::from_utf8_lossy(&result);
+
+        // The empty filepos="" attribute should be stripped
+        assert!(
+            !result_str.contains("filepos"),
+            "Empty filepos should be removed: {}",
+            result_str
+        );
+        // The link text should remain
+        assert!(
+            result_str.contains("Link text"),
+            "Link text should remain: {}",
+            result_str
+        );
+    }
+
+    #[test]
+    fn test_transform_empty_filepos_unquoted() {
+        // Empty filepos without quotes (malformed) should be handled
+        let html = b"<a filepos=>Link text</a>";
+        let result = transform_mobi_html(html, &[]);
+        let result_str = String::from_utf8_lossy(&result);
+
+        // The empty filepos= attribute should be stripped
+        assert!(
+            !result_str.contains("filepos"),
+            "Empty filepos should be removed: {}",
+            result_str
+        );
+        // The link text should remain
+        assert!(
+            result_str.contains("Link text"),
+            "Link text should remain: {}",
+            result_str
+        );
+    }
+
+    #[test]
+    fn test_transform_whitespace_only_filepos() {
+        // filepos with only whitespace should be handled
+        let html = b"<a filepos=\"  \">Link text</a>";
+        let result = transform_mobi_html(html, &[]);
+        let result_str = String::from_utf8_lossy(&result);
+
+        // The whitespace-only filepos should be stripped
+        assert!(
+            !result_str.contains("filepos"),
+            "Whitespace-only filepos should be removed: {}",
+            result_str
+        );
     }
 }

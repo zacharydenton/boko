@@ -555,9 +555,14 @@ impl<W: Write> ExportContext<'_, W> {
                     }
                 };
 
-                write!(self.writer, "[")?;
-                self.walk_children(id)?;
-                write!(self.writer, "]({})", anchor)?;
+                // Skip link formatting if anchor is empty (malformed/broken link)
+                if anchor.is_empty() {
+                    self.walk_children(id)?;
+                } else {
+                    write!(self.writer, "[")?;
+                    self.walk_children(id)?;
+                    write!(self.writer, "]({})", anchor)?;
+                }
             }
 
             Role::Image => {
@@ -1190,5 +1195,67 @@ mod tests {
 
         assert!(result.contains("[^1]"));
         assert!(result.contains("[^1]: This is a footnote"));
+    }
+
+    #[test]
+    fn test_link_with_empty_href_renders_text_only() {
+        let mut chapter = Chapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(NodeId::ROOT, p);
+
+        // Link with empty href (like from malformed MOBI filepos)
+        let link = chapter.alloc_node(Node::new(Role::Link));
+        chapter.append_child(p, link);
+        chapter.semantics.set_href(link, "");
+
+        let text_range = chapter.append_text("orphaned link text");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(link, text_node);
+
+        let result = export_to_string(&chapter);
+
+        // Should render text without link formatting (no []() wrapper)
+        assert!(
+            result.contains("orphaned link text"),
+            "Should contain the link text: {:?}",
+            result
+        );
+        assert!(
+            !result.contains("[orphaned link text]()"),
+            "Should NOT have empty link formatting: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_link_with_no_href_renders_text_only() {
+        let mut chapter = Chapter::new();
+
+        let p = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(NodeId::ROOT, p);
+
+        // Link with no href set at all
+        let link = chapter.alloc_node(Node::new(Role::Link));
+        chapter.append_child(p, link);
+        // Note: no set_href call
+
+        let text_range = chapter.append_text("link without href");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(link, text_node);
+
+        let result = export_to_string(&chapter);
+
+        // Should render text without link formatting
+        assert!(
+            result.contains("link without href"),
+            "Should contain the link text: {:?}",
+            result
+        );
+        assert!(
+            !result.contains("[link without href]()"),
+            "Should NOT have empty link formatting: {:?}",
+            result
+        );
     }
 }
