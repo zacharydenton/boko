@@ -1067,7 +1067,10 @@ fn build_toc_entries_with_positions(
 ) -> Vec<IonValue> {
     entries
         .iter()
-        .map(|entry| {
+        .filter_map(|entry| {
+            // Look up the content position for this TOC entry
+            let (fragment_id, offset) = resolve_toc_position(&entry.href, ctx)?;
+
             let mut fields = Vec::new();
 
             // Add representation with label
@@ -1076,16 +1079,6 @@ fn build_toc_entries_with_positions(
                 IonValue::String(entry.title.clone()),
             )]);
             fields.push((KfxSymbol::Representation as u64, representation));
-
-            // Look up the content position for this TOC entry
-            // TOC points directly to content fragment IDs (not anchor entities)
-            let (fragment_id, offset) = ctx
-                .anchor_registry
-                .get_anchor_position(&entry.href)
-                .unwrap_or_else(|| {
-                    // Fallback to resolve_toc_position if anchor not found
-                    resolve_toc_position(&entry.href, ctx)
-                });
 
             // Target position points directly to content fragment
             let target = IonValue::Struct(vec![
@@ -1097,39 +1090,29 @@ fn build_toc_entries_with_positions(
             // Add children if present
             if !entry.children.is_empty() {
                 let child_entries = build_toc_entries_with_positions(&entry.children, ctx);
-                fields.push((KfxSymbol::Entries as u64, IonValue::List(child_entries)));
+                if !child_entries.is_empty() {
+                    fields.push((KfxSymbol::Entries as u64, IonValue::List(child_entries)));
+                }
             }
 
             let nav_unit = IonValue::Struct(fields);
             // Annotate with nav_unit::
-            IonValue::Annotated(vec![KfxSymbol::NavUnit as u64], Box::new(nav_unit))
+            Some(IonValue::Annotated(vec![KfxSymbol::NavUnit as u64], Box::new(nav_unit)))
         })
         .collect()
 }
 
 /// Resolve a TOC href to (fragment_id, offset).
-/// Note: Kindle expects offset: 0 for all navigation entries (per reference KFX analysis).
-fn resolve_toc_position(href: &str, ctx: &ExportContext) -> (u64, usize) {
-    // Extract base path from href (ignore anchor since we use offset 0)
-    let base_path = if let Some(hash_pos) = href.find('#') {
-        &href[..hash_pos]
-    } else {
-        href
-    };
-
-    // Look up the first content ID for this path (the first container in the storyline)
-    // This is the correct target for TOC navigation - pointing to actual content,
-    // not the section page_template ID.
-    if let Some(&content_id) = ctx.first_content_ids.get(base_path) {
-        return (content_id, 0);
+/// Returns the fragment ID containing the anchor, with offset 0.
+/// We assume TOC entries should navigate to the start of the fragment
+/// containing the anchor position, not to a specific offset within it.
+fn resolve_toc_position(href: &str, ctx: &ExportContext) -> Option<(u64, usize)> {
+    if let Some((fragment_id, _)) = ctx.anchor_registry.get_anchor_position(href) {
+        return Some((fragment_id, 0));
     }
 
-    // Fallback: try first content ID from any chapter
-    if let Some(&content_id) = ctx.first_content_ids.values().next() {
-        (content_id, 0)
-    } else {
-        (200, 0) // Default to start if no chapters
-    }
+    eprintln!("Warning: TOC href not resolved: {}", href);
+    None
 }
 
 // ============================================================================

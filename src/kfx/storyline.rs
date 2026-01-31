@@ -929,8 +929,17 @@ fn flatten_inline_content(
         }
         // CONTAINERS (Link, Inline, etc.): Recurse with accumulated state
         _ => {
-            for child_id in chapter.children(node_id) {
-                flatten_inline_content(chapter, child_id, effective_state.clone(), segments);
+            let children: Vec<_> = chapter.children(node_id).collect();
+            if children.is_empty() && effective_state.element_id.is_some() {
+                // Empty element with ID (anchor marker) - emit zero-width space to carry the ID
+                segments.push(FlatSegment {
+                    text: "\u{200B}".to_string(), // Zero-width space
+                    state: effective_state,
+                });
+            } else {
+                for child_id in children {
+                    flatten_inline_content(chapter, child_id, effective_state.clone(), segments);
+                }
             }
         }
     }
@@ -1314,8 +1323,10 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     inner_fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Text as u64)));
 
                     // Push inner text builder and mark it as inner wrapper
+                    // Store outer_id so anchors inside use the top-level container for navigation
                     let mut inner_builder = IonBuilder::with_fields(inner_fields, inner_id);
                     inner_builder.is_inner_wrapper_text = true;
+                    inner_builder.outer_container_id = Some(outer_id);
                     stack.push(inner_builder);
                 } else {
                     // === NORMAL ELEMENT PATH (unchanged) ===
@@ -1506,12 +1517,16 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
 
                 // Create anchor for inline elements with IDs (e.g., noteref backlinks)
-                // Offset is relative to the current element's accumulated text
+                // For elements inside container wrappers, use the outer container's ID
+                // so TOC navigation targets the top-level element, not the nested text
                 if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id)
                     && let Some(parent) = stack.last()
-                    && let Some(container_id) = parent.container_id
                 {
-                    ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
+                    // Prefer outer_container_id (for wrapped elements) over container_id
+                    let target_id = parent.outer_container_id.or(parent.container_id);
+                    if let Some(container_id) = target_id {
+                        ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
+                    }
                 }
 
                 span_stack.push((current_offset, span.clone()));
@@ -1565,6 +1580,9 @@ struct IonBuilder {
     /// When EndElement is reached for this builder, we need an extra EndElement
     /// to close the outer container.
     is_inner_wrapper_text: bool,
+    /// For inner wrapper text elements, stores the outer container's ID.
+    /// Anchors inside wrapped elements should use this ID for correct TOC navigation.
+    outer_container_id: Option<u64>,
 }
 
 impl IonBuilder {
@@ -1577,6 +1595,7 @@ impl IonBuilder {
             style_events: Vec::new(),
             container_id: None,
             is_inner_wrapper_text: false,
+            outer_container_id: None,
         }
     }
 
@@ -1589,6 +1608,7 @@ impl IonBuilder {
             style_events: Vec::new(),
             container_id: Some(container_id),
             is_inner_wrapper_text: false,
+            outer_container_id: None,
         }
     }
 
@@ -1656,8 +1676,9 @@ impl IonBuilder {
         // Each element is a struct with type, content reference, and possibly nested content_list
         if !self.fields.is_empty() {
             // Record text length for this content ID (used by location_map)
+            // Must use char count, not byte count, since location_map divides by characters
             if let Some(container_id) = self.container_id {
-                ctx.record_content_length(container_id, self.accumulated_text.len());
+                ctx.record_content_length(container_id, self.accumulated_char_count);
             }
 
             // If this element has accumulated text, create ONE content reference
@@ -2604,6 +2625,87 @@ mod tests {
             segments[1].state.style,
             Some(link_style),
             "Second segment should have Link's style"
+        );
+    }
+
+    #[test]
+    fn test_anchor_inside_container_wrapper_uses_outer_id() {
+        // Test that anchors inside container-wrapped elements (like headings with borders)
+        // use the outer container's ID, not the inner text element's ID.
+        // This is critical for TOC navigation to work correctly.
+        use crate::import::ChapterId;
+        use crate::ir::{BorderStyle, ComputedStyle, Length};
+
+        let mut chapter = IRChapter::new();
+
+        // Create a heading with border style (triggers container wrapper)
+        let mut style = ComputedStyle::default();
+        style.border_style_bottom = BorderStyle::Solid;
+        style.border_width_bottom = Length::Px(1.0);
+        let style_id = chapter.styles.intern(style);
+
+        let mut h2 = Node::new(Role::Heading(2));
+        h2.style = style_id;
+        let h2_id = chapter.alloc_node(h2);
+        chapter.append_child(chapter.root(), h2_id);
+
+        // Add text content
+        let text_range = chapter.append_text("All the Tools You Need");
+        let mut text_node = Node::new(Role::Text);
+        text_node.text = text_range;
+        let text_id = chapter.alloc_node(text_node);
+        chapter.append_child(h2_id, text_id);
+
+        // Add an inline span with an ID (like <span id="p6"/>)
+        // This simulates how EPUB anchors are often placed
+        let span_node = Node::new(Role::Inline);
+        let span_id = chapter.alloc_node(span_node);
+        chapter.append_child(h2_id, span_id);
+        chapter.semantics.set_id(span_id, "p6".to_string());
+
+        let mut ctx = crate::kfx::context::ExportContext::new();
+
+        // Set up the context with a chapter ID and path
+        let chapter_id = ChapterId(1);
+        ctx.begin_chapter_export(chapter_id, "chapter1.xhtml");
+        ctx.register_needed_anchor("chapter1.xhtml#p6");
+
+        let _ion = build_storyline_ion(&chapter, &mut ctx);
+
+        // Get the anchor position for p6
+        let anchor_pos = ctx
+            .anchor_registry
+            .get_anchor_position("chapter1.xhtml#p6");
+
+        // The anchor position should exist and point to the outer container ID
+        assert!(
+            anchor_pos.is_some(),
+            "Anchor for p6 should be created"
+        );
+
+        let (fragment_id, _offset) = anchor_pos.unwrap();
+
+        // Get the list of content IDs recorded for this chapter
+        // Container wrapper creates 2 content IDs: outer container and inner text
+        // The first one (outer container) should be used for the anchor
+        let content_ids = ctx.content_ids_by_chapter.get(&chapter_id);
+        assert!(
+            content_ids.is_some(),
+            "Should have recorded content IDs for chapter"
+        );
+        let content_ids = content_ids.unwrap();
+        assert!(
+            content_ids.len() >= 2,
+            "Container wrapper should create at least 2 content IDs (outer + inner), got {}",
+            content_ids.len()
+        );
+
+        // The anchor should point to the first content ID (the outer container)
+        // not the second ID (the inner text element)
+        assert_eq!(
+            fragment_id, content_ids[0],
+            "Anchor should point to outer container ID ({}) not inner element ({})",
+            content_ids[0], content_ids[1]
         );
     }
 }

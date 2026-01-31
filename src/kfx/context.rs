@@ -568,7 +568,14 @@ pub struct ExportContext {
     pub current_content_name: u64,
 
     /// Position map: (ChapterId, NodeId) → Position.
-    /// Populated during Pass 1 for TOC and internal link generation.
+    /// Populated during Pass 1 survey for landmark resolution.
+    ///
+    /// Note: Position tracking uses two complementary systems:
+    /// 1. This `position_map`: section-level positions, populated in Pass 1
+    /// 2. `AnchorRegistry.anchor_positions`: content-level positions, populated in Pass 2
+    ///
+    /// These are intentionally separate because landmarks are resolved before
+    /// content generation, while TOC/anchor positions require actual content IDs.
     pub position_map: HashMap<(ChapterId, NodeId), Position>,
 
     /// Chapter to fragment ID mapping.
@@ -923,6 +930,10 @@ impl ExportContext {
         {
             self.first_content_ids
                 .insert(path.clone(), first_content_id);
+
+            // Also record as anchor position so TOC entries pointing to the chapter
+            // (without #fragment) can be resolved
+            self.anchor_registry.record_position(path, first_content_id, 0);
         }
 
         // Get section ID for position_map grouping

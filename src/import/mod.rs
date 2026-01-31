@@ -182,10 +182,17 @@ pub trait Importer: Send + Sync {
 ///
 /// For example, if base is "OEBPS/text/ch01.xhtml" and relative is "../styles/main.css",
 /// the result is "OEBPS/styles/main.css".
+///
+/// Fragment-only paths (e.g., "#anchor") are resolved to "base#anchor".
 fn resolve_relative_path(base: &str, relative: &str) -> PathBuf {
     // Handle absolute paths and URLs
     if relative.starts_with('/') || relative.contains("://") {
         return PathBuf::from(relative);
+    }
+
+    // Handle fragment-only paths (#anchor) - resolve to base file + fragment
+    if relative.starts_with('#') {
+        return PathBuf::from(format!("{}{}", base, relative));
     }
 
     // Get the directory of the base path
@@ -235,4 +242,44 @@ fn resolve_semantic_paths(chapter: &mut IRChapter, base_path: &str) {
         // Normalize to forward slashes (archive paths, not filesystem paths)
         resolved.to_string_lossy().replace('\\', "/")
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_fragment_only_path() {
+        // Fragment-only paths should resolve to base + fragment
+        let result = resolve_relative_path("f_0004.xhtml", "#FOOTNOTE-1");
+        assert_eq!(result.to_string_lossy(), "f_0004.xhtml#FOOTNOTE-1");
+
+        let result = resolve_relative_path("OEBPS/text/chapter.xhtml", "#anchor");
+        assert_eq!(result.to_string_lossy(), "OEBPS/text/chapter.xhtml#anchor");
+    }
+
+    #[test]
+    fn test_resolve_relative_path_with_fragment() {
+        // Relative paths with fragments should resolve normally
+        let result = resolve_relative_path("text/ch1.xhtml", "ch2.xhtml#section");
+        assert_eq!(result.to_string_lossy(), "text/ch2.xhtml#section");
+    }
+
+    #[test]
+    fn test_resolve_parent_directory() {
+        let result = resolve_relative_path("OEBPS/text/ch01.xhtml", "../styles/main.css");
+        assert_eq!(result.to_string_lossy(), "OEBPS/styles/main.css");
+    }
+
+    #[test]
+    fn test_resolve_absolute_path_unchanged() {
+        let result = resolve_relative_path("text/chapter.xhtml", "/absolute/path.css");
+        assert_eq!(result.to_string_lossy(), "/absolute/path.css");
+    }
+
+    #[test]
+    fn test_resolve_url_unchanged() {
+        let result = resolve_relative_path("text/chapter.xhtml", "https://example.com/");
+        assert_eq!(result.to_string_lossy(), "https://example.com/");
+    }
 }
