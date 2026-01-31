@@ -135,6 +135,86 @@ fn test_azw3_toc_resolution() {
         "Expected some TOC entries to have targets, got {}",
         with_target
     );
+
+    // Every TOC entry should have a unique href (catches insert_pos vs start_pos bug)
+    assert_unique_toc_hrefs(toc, "AZW3");
+}
+
+/// Helper to collect all TOC hrefs recursively.
+fn collect_toc_hrefs(entries: &[boko::model::TocEntry], hrefs: &mut Vec<String>) {
+    for entry in entries {
+        hrefs.push(entry.href.clone());
+        collect_toc_hrefs(&entry.children, hrefs);
+    }
+}
+
+/// Helper to assert all TOC entries have unique hrefs.
+fn assert_unique_toc_hrefs(toc: &[boko::model::TocEntry], format_name: &str) {
+    use std::collections::HashMap;
+
+    let mut all_hrefs = Vec::new();
+    collect_toc_hrefs(toc, &mut all_hrefs);
+
+    let mut href_counts: HashMap<&String, usize> = HashMap::new();
+    for href in &all_hrefs {
+        *href_counts.entry(href).or_default() += 1;
+    }
+    let unique_count = href_counts.len();
+    println!(
+        "{}: {} TOC entries, {} unique hrefs",
+        format_name,
+        all_hrefs.len(),
+        unique_count
+    );
+
+    assert_eq!(
+        all_hrefs.len(),
+        unique_count,
+        "{}: Every TOC entry should have a unique href",
+        format_name
+    );
+}
+
+#[test]
+fn test_epub_toc_resolution() {
+    let path = "tests/fixtures/epictetus.epub";
+    if !std::path::Path::new(path).exists() {
+        eprintln!("Skipping test - fixture not found: {}", path);
+        return;
+    }
+
+    let mut book = Book::open(path).expect("Should open EPUB");
+    let _ = book.resolve_links().expect("Should resolve links");
+
+    assert_unique_toc_hrefs(book.toc(), "EPUB");
+}
+
+#[test]
+fn test_mobi_toc_resolution() {
+    let path = "tests/fixtures/epictetus.mobi";
+    if !std::path::Path::new(path).exists() {
+        eprintln!("Skipping test - fixture not found: {}", path);
+        return;
+    }
+
+    let mut book = Book::open(path).expect("Should open MOBI");
+    let _ = book.resolve_links().expect("Should resolve links");
+
+    assert_unique_toc_hrefs(book.toc(), "MOBI");
+}
+
+#[test]
+fn test_kfx_toc_resolution() {
+    let path = "tests/fixtures/epictetus.kfx";
+    if !std::path::Path::new(path).exists() {
+        eprintln!("Skipping test - fixture not found: {}", path);
+        return;
+    }
+
+    let mut book = Book::open(path).expect("Should open KFX");
+    let _ = book.resolve_links().expect("Should resolve links");
+
+    assert_unique_toc_hrefs(book.toc(), "KFX");
 }
 
 #[test]

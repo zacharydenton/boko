@@ -216,25 +216,35 @@ pub fn find_nearest_id_fast(
     let aid_finder = memmem::Finder::new(b" aid=\"");
     let aid_finder_single = memmem::Finder::new(b" aid='");
 
-    // Search forward from pos to find the next anchor (within reasonable distance)
+    // Search forward from pos to find the closest anchor (within reasonable distance)
     let end_pos = (pos + 2000).min(file_end);
     if pos < end_pos {
         let search_window = &raw_text[pos..end_pos];
 
-        // Try id= first (highest priority)
-        if let Some(val) = find_attr_in_window(search_window, &id_finder, &id_finder_single, 4) {
-            return Some(val);
+        // Find the closest attribute of any type
+        let id_match = find_attr_with_pos(search_window, &id_finder, &id_finder_single, 4);
+        let name_match = find_attr_with_pos(search_window, &name_finder, &name_finder_single, 6);
+        let aid_match = find_attr_with_pos(search_window, &aid_finder, &aid_finder_single, 5);
+
+        // Collect all matches with their positions and whether they're aid
+        let mut candidates: Vec<(usize, String, bool)> = Vec::new();
+        if let Some((p, v)) = id_match {
+            candidates.push((p, v, false));
+        }
+        if let Some((p, v)) = name_match {
+            candidates.push((p, v, false));
+        }
+        if let Some((p, v)) = aid_match {
+            candidates.push((p, v, true));
         }
 
-        // Try name=
-        if let Some(val) = find_attr_in_window(search_window, &name_finder, &name_finder_single, 6)
-        {
-            return Some(val);
-        }
-
-        // Try aid= (convert to aid-{value})
-        if let Some(val) = find_attr_in_window(search_window, &aid_finder, &aid_finder_single, 5) {
-            return Some(format!("aid-{}", val));
+        // Pick the closest one
+        if let Some((_, val, is_aid)) = candidates.into_iter().min_by_key(|(p, _, _)| *p) {
+            if is_aid {
+                return Some(format!("aid-{}", val));
+            } else {
+                return Some(val);
+            }
         }
     }
 
@@ -287,13 +297,13 @@ pub fn find_nearest_id_fast(
     None
 }
 
-/// Find attribute value in a search window (forward search).
-fn find_attr_in_window(
+/// Find attribute value in a search window (forward search), returning position and value.
+fn find_attr_with_pos(
     window: &[u8],
     finder_double: &memmem::Finder,
     finder_single: &memmem::Finder,
     attr_len: usize, // length of " id=" or " name=" etc
-) -> Option<String> {
+) -> Option<(usize, String)> {
     let pos = finder_double
         .find(window)
         .or_else(|| finder_single.find(window))?;
@@ -306,7 +316,7 @@ fn find_attr_in_window(
         if id_bytes.iter().all(|&b| {
             b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b':' || b == b'.'
         }) {
-            return Some(String::from_utf8_lossy(id_bytes).into_owned());
+            return Some((pos, String::from_utf8_lossy(id_bytes).into_owned()));
         }
     }
 

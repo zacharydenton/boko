@@ -398,12 +398,13 @@ impl Azw3Importer {
         let mut toc_positions = HashMap::new();
         let toc = {
             let nodes = build_toc_from_ncx(&ncx, |entry| {
-                // KF8 uses pos_fid (elem_idx, offset) - calculate actual byte position
-                let (file_num, byte_pos) = if let Some((elem_idx, offset)) = entry.pos_fid
-                    && let Some(elem) = elems.get(elem_idx as usize)
+                // KF8 uses pos_fid (frag_idx, offset) - calculate actual byte position
+                // frag_idx is index into fragment/div table, offset is added to insert_pos
+                let (file_num, byte_pos) = if let Some((frag_idx, offset)) = entry.pos_fid
+                    && let Some(elem) = elems.get(frag_idx as usize)
                 {
-                    // Position is elem's start_pos + offset within that element
-                    (elem.file_number as usize, elem.start_pos + offset)
+                    // Position is elem's insert_pos + offset (like KindleUnpack)
+                    (elem.file_number as usize, elem.insert_pos + offset)
                 } else {
                     // Fall back to absolute position
                     let file_num = find_file_for_position(&files, entry.pos)
