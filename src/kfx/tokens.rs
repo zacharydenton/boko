@@ -13,7 +13,7 @@
 //! layer format-agnostic - all format-specific logic lives in the schema.
 
 use crate::kfx::schema::SemanticTarget;
-use crate::model::Role;
+use crate::model::{NodeId, Role};
 use std::collections::HashMap;
 
 /// A token in the KFX content stream.
@@ -36,6 +36,8 @@ pub enum KfxToken {
 pub struct ElementStart {
     /// The resolved IR role for this element.
     pub role: Role,
+    /// Original IR node ID (for anchor creation during export).
+    pub node_id: Option<NodeId>,
     /// KFX element ID (for anchors/links).
     pub id: Option<i64>,
     /// Semantic attributes (generic map, not typed fields).
@@ -64,6 +66,7 @@ impl ElementStart {
     pub fn new(role: Role) -> Self {
         Self {
             role,
+            node_id: None,
             id: None,
             semantics: HashMap::new(),
             content_ref: None,
@@ -100,6 +103,8 @@ pub struct ContentRef {
 pub struct SpanStart {
     /// IR Role determined by schema (Link, Inline, etc.)
     pub role: Role,
+    /// Original IR node ID (for anchor creation during export).
+    pub node_id: Option<NodeId>,
     /// Semantic attributes (generic map).
     pub semantics: HashMap<SemanticTarget, String>,
     /// Byte offset in parent text (for reconstruction).
@@ -123,6 +128,7 @@ impl SpanStart {
     pub fn new(role: Role, offset: usize, length: usize) -> Self {
         Self {
             role,
+            node_id: None,
             semantics: HashMap::new(),
             offset,
             length,
@@ -172,6 +178,7 @@ impl TokenStream {
     ) {
         self.tokens.push(KfxToken::StartElement(ElementStart {
             role,
+            node_id: None,
             id,
             semantics,
             content_ref,
@@ -194,6 +201,7 @@ impl TokenStream {
     pub fn start_span(&mut self, role: Role, semantics: HashMap<SemanticTarget, String>) {
         self.tokens.push(KfxToken::StartSpan(SpanStart {
             role,
+            node_id: None,
             semantics,
             offset: 0,
             length: 0,

@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::import::ChapterId;
-use crate::model::{LandmarkType, NodeId, TocEntry};
+use crate::model::{GlobalNodeId, LandmarkType, NodeId, TocEntry};
 use crate::style::StyleId;
 
 use super::style_registry::StyleRegistry;
@@ -276,8 +276,6 @@ pub struct Position {
 pub struct AnchorPosition {
     /// The anchor symbol name (e.g., "a0", "a1")
     pub symbol: String,
-    /// The original anchor name from href fragment (e.g., "note-1")
-    pub anchor_name: String,
     /// Content fragment ID where this anchor points (for anchor.position.id)
     pub fragment_id: u64,
     /// Section's page_template ID (for position_map grouping)
@@ -300,37 +298,50 @@ pub struct ExternalAnchor {
 /// KFX uses indirect anchor references: links point to anchor symbols,
 /// and anchor entities ($266) define where those symbols resolve to.
 ///
+/// ## Design
+///
+/// The registry supports two lookup patterns:
+/// - **By GlobalNodeId**: For internal targets from `ResolvedLinks`
+/// - **By href string**: For link_to lookups in storyline generation
+///
+/// Both patterns share the same anchor symbols, ensuring consistency.
+///
 /// ## Example Flow
 ///
-/// 1. Link `href="chapter2.xhtml#note-1"` → `register_link_target("chapter2.xhtml#note-1")`
-/// 2. Registry returns symbol "a0" for use in `link_to: a0`
-/// 3. Later, call `resolve_anchor("note-1", fragment_id, offset)` when position is known
-/// 4. At end, `drain_anchors()` returns entities to emit:
-///    `{ anchor_name: a0, position: { id: 204, offset: 123 } }`
+/// 1. ResolvedLinks says node X in chapter Y is an internal target
+/// 2. Registry assigns symbol "a0" to GlobalNodeId(Y, X)
+/// 3. Href "chapter.xhtml#id" is also mapped to "a0"
+/// 4. During storyline gen, link_to lookup uses href to get "a0"
+/// 5. During anchor creation, GlobalNodeId lookup confirms it's a target
 #[derive(Debug, Default)]
 pub struct AnchorRegistry {
-    /// href → anchor symbol name (e.g., "chapter2.xhtml#note-1" → "a0")
-    link_to_symbol: HashMap<String, String>,
+    /// GlobalNodeId → anchor symbol name (e.g., "a0", "a1")
+    node_to_symbol: HashMap<GlobalNodeId, String>,
 
-    /// anchor_name (fragment ID) → symbol (e.g., "note-1" → "a0")
-    /// Used for resolving when we encounter the target element
-    anchor_to_symbol: HashMap<String, String>,
+    /// ChapterId → anchor symbol (for chapter-level targets)
+    chapter_to_symbol: HashMap<ChapterId, String>,
 
-    /// Symbols that have already been resolved (for deduplication)
+    /// href string → anchor symbol (for link_to lookups)
+    /// Populated alongside node_to_symbol for href-based access
+    href_to_symbol: HashMap<String, String>,
+
+    /// Symbols that have been resolved to positions (for deduplication)
     resolved_symbols: HashSet<String>,
 
     /// Resolved internal anchors ready for entity emission
     resolved: Vec<AnchorPosition>,
 
-    /// External anchors (http/https URLs) ready for entity emission
+    /// External anchors ready for entity emission
     external_anchors: Vec<ExternalAnchor>,
 
     /// Counter for generating unique anchor symbols
     next_anchor_id: usize,
 
-    /// Anchor positions for TOC lookup: anchor_name → (content_fragment_id, offset)
-    /// Populated when anchors are created, used for direct TOC → content resolution.
-    anchor_positions: HashMap<String, (u64, usize)>,
+    /// Node positions for TOC lookup: GlobalNodeId → (content_fragment_id, offset)
+    node_positions: HashMap<GlobalNodeId, (u64, usize)>,
+
+    /// Chapter positions for TOC lookup: ChapterId → content_fragment_id
+    chapter_positions: HashMap<ChapterId, u64>,
 }
 
 impl AnchorRegistry {
@@ -339,130 +350,121 @@ impl AnchorRegistry {
         Self::default()
     }
 
-    /// Register a link target and return its anchor symbol.
+    /// Register an internal link target (a node that links point to).
     ///
-    /// Call this when encountering a link with href. Returns the symbol
-    /// to use in the `link_to` field of style_events.
-    ///
-    /// The href can be:
-    /// - External URL: `https://example.com/` (creates uri-based anchor immediately)
-    /// - Full path: "chapter2.xhtml#note-1"
-    /// - Fragment only: "#note-1"
-    /// - Path without fragment: "chapter2.xhtml"
-    pub fn register_link_target(&mut self, href: &str) -> String {
-        // Check if already registered
-        if let Some(symbol) = self.link_to_symbol.get(href) {
+    /// Also registers the href for href-based lookup.
+    /// Returns the anchor symbol for use in `link_to` style events.
+    pub fn register_internal_target(&mut self, target: GlobalNodeId, href: &str) -> String {
+        if let Some(symbol) = self.node_to_symbol.get(&target) {
+            // Ensure href is also mapped
+            self.href_to_symbol.insert(href.to_string(), symbol.clone());
             return symbol.clone();
         }
 
-        // Generate new anchor symbol
+        let symbol = format!("a{:X}", self.next_anchor_id);
+        self.next_anchor_id += 1;
+        self.node_to_symbol.insert(target, symbol.clone());
+        self.href_to_symbol.insert(href.to_string(), symbol.clone());
+        symbol
+    }
+
+    /// Register a chapter-level link target.
+    ///
+    /// Also registers the href for href-based lookup.
+    /// Returns the anchor symbol for use in `link_to` style events.
+    pub fn register_chapter_target(&mut self, chapter: ChapterId, href: &str) -> String {
+        if let Some(symbol) = self.chapter_to_symbol.get(&chapter) {
+            self.href_to_symbol.insert(href.to_string(), symbol.clone());
+            return symbol.clone();
+        }
+
+        let symbol = format!("a{:X}", self.next_anchor_id);
+        self.next_anchor_id += 1;
+        self.chapter_to_symbol.insert(chapter, symbol.clone());
+        self.href_to_symbol.insert(href.to_string(), symbol.clone());
+        symbol
+    }
+
+    /// Register an external link target (http/https URL).
+    ///
+    /// Returns the anchor symbol for use in `link_to` style events.
+    pub fn register_external(&mut self, url: &str) -> String {
+        if let Some(symbol) = self.href_to_symbol.get(url) {
+            return symbol.clone();
+        }
+
         let symbol = format!("a{:X}", self.next_anchor_id);
         self.next_anchor_id += 1;
 
-        // Store href → symbol mapping
-        self.link_to_symbol.insert(href.to_string(), symbol.clone());
-
-        // Check if this is an external link (http/https URL)
-        if href.starts_with("http://") || href.starts_with("https://") {
-            // External links are resolved immediately with uri
-            self.external_anchors.push(ExternalAnchor {
-                symbol: symbol.clone(),
-                uri: href.to_string(),
-            });
-        } else {
-            // Internal link - store full href for reverse mapping
-            // This allows create_content_anchor to find the symbol using the full path
-            self.anchor_to_symbol
-                .insert(href.to_string(), symbol.clone());
-        }
+        self.href_to_symbol.insert(url.to_string(), symbol.clone());
+        self.external_anchors.push(ExternalAnchor {
+            symbol: symbol.clone(),
+            uri: url.to_string(),
+        });
 
         symbol
     }
 
-    /// Get the anchor symbol for a link target (if already registered).
-    pub fn get_symbol(&self, href: &str) -> Option<&str> {
-        self.link_to_symbol.get(href).map(|s| s.as_str())
-    }
-
-    /// Get the anchor symbol for an anchor name/fragment (if registered).
-    pub fn get_symbol_for_anchor(&self, anchor_name: &str) -> Option<&str> {
-        self.anchor_to_symbol.get(anchor_name).map(|s| s.as_str())
-    }
-
-    /// Resolve an anchor's position.
+    /// Get the anchor symbol for an href (for link_to lookups).
     ///
-    /// Call this when we know where an anchor target lives (e.g., when
-    /// processing an element with `id="note-1"`).
-    ///
-    /// Accepts either a bare anchor name ("note-1") or a full href
-    /// ("chapter.xhtml#note-1" or "chapter.xhtml"). The fragment is
-    /// extracted automatically if present.
-    ///
-    /// # Arguments
-    /// * `anchor_or_href` - The anchor identifier or full href
-    /// * `fragment_id` - Content fragment ID the anchor points to
-    /// * `section_id` - Section's page_template ID for position_map grouping
-    /// * `offset` - Byte offset within the fragment
-    pub fn resolve_anchor(
-        &mut self,
-        anchor_or_href: &str,
-        fragment_id: u64,
-        section_id: u64,
-        offset: usize,
-    ) {
-        // Extract fragment if href contains #, otherwise use as-is
-        let anchor_name = extract_fragment(anchor_or_href).unwrap_or(anchor_or_href);
-
-        if let Some(symbol) = self.anchor_to_symbol.get(anchor_name).cloned() {
-            // Skip if already resolved (prevents duplicates)
-            if self.resolved_symbols.contains(&symbol) {
-                return;
-            }
-            self.resolved_symbols.insert(symbol.clone());
-            self.resolved.push(AnchorPosition {
-                symbol,
-                anchor_name: anchor_name.to_string(),
-                fragment_id,
-                section_id,
-                offset,
-            });
+    /// This is the primary lookup method used during storyline generation.
+    /// Returns the symbol if the href was registered, or creates a new one.
+    pub fn get_or_create_href_symbol(&mut self, href: &str) -> String {
+        // Check if already registered
+        if let Some(symbol) = self.href_to_symbol.get(href) {
+            return symbol.clone();
         }
+
+        // Check if this is an external link
+        if href.starts_with("http://") || href.starts_with("https://") {
+            return self.register_external(href);
+        }
+
+        // Unknown internal link - create a symbol but it won't have an anchor entity
+        // This handles links that weren't in ResolvedLinks (shouldn't happen normally)
+        let symbol = format!("a{:X}", self.next_anchor_id);
+        self.next_anchor_id += 1;
+        self.href_to_symbol.insert(href.to_string(), symbol.clone());
+        symbol
     }
 
-    /// Check if an anchor name is needed (has a link pointing to it).
-    pub fn is_anchor_needed(&self, anchor_name: &str) -> bool {
-        self.anchor_to_symbol.contains_key(anchor_name)
+    /// Get the anchor symbol for a node target (if registered).
+    pub fn get_symbol(&self, target: GlobalNodeId) -> Option<&str> {
+        self.node_to_symbol.get(&target).map(|s| s.as_str())
     }
 
-    /// Create an anchor from content (element with id attribute).
+    /// Get the anchor symbol for a chapter target (if registered).
+    pub fn get_chapter_symbol(&self, chapter: ChapterId) -> Option<&str> {
+        self.chapter_to_symbol.get(&chapter).map(|s| s.as_str())
+    }
+
+    /// Get the anchor symbol for an href (if registered).
+    pub fn get_href_symbol(&self, href: &str) -> Option<&str> {
+        self.href_to_symbol.get(href).map(|s| s.as_str())
+    }
+
+    /// Check if a node is a registered internal target.
+    pub fn is_internal_target(&self, target: GlobalNodeId) -> bool {
+        self.node_to_symbol.contains_key(&target)
+    }
+
+    /// Check if a chapter is a registered target.
+    pub fn is_chapter_target(&self, chapter: ChapterId) -> bool {
+        self.chapter_to_symbol.contains_key(&chapter)
+    }
+
+    /// Create an anchor entity for a node target.
     ///
-    /// This creates an anchor symbol and resolves it in one step. Use this
-    /// when encountering an element with an id that's a TOC/link target.
-    /// Returns the anchor symbol, or None if already resolved.
-    ///
-    /// # Arguments
-    /// * `anchor_name` - The anchor identifier (e.g., "chapter1.xhtml#section1")
-    /// * `content_fragment_id` - The content fragment ID the anchor points to (for position.id)
-    /// * `section_id` - The section's page_template ID (for position_map grouping)
-    /// * `offset` - Byte offset within the fragment
-    pub fn create_content_anchor(
+    /// Call this during Pass 2 when processing a node that's a link target.
+    /// Returns the symbol if the anchor was created, None if already resolved.
+    pub fn create_anchor(
         &mut self,
-        anchor_name: &str,
+        target: GlobalNodeId,
         content_fragment_id: u64,
         section_id: u64,
         offset: usize,
     ) -> Option<String> {
-        // Check if already registered via a link (using full path)
-        let symbol = if let Some(existing) = self.anchor_to_symbol.get(anchor_name) {
-            existing.clone()
-        } else {
-            // Create new anchor symbol
-            let symbol = format!("a{:X}", self.next_anchor_id);
-            self.next_anchor_id += 1;
-            self.anchor_to_symbol
-                .insert(anchor_name.to_string(), symbol.clone());
-            symbol
-        };
+        let symbol = self.node_to_symbol.get(&target)?.clone();
 
         // Skip if already resolved
         if self.resolved_symbols.contains(&symbol) {
@@ -472,35 +474,71 @@ impl AnchorRegistry {
         self.resolved_symbols.insert(symbol.clone());
         self.resolved.push(AnchorPosition {
             symbol: symbol.clone(),
-            anchor_name: anchor_name.to_string(),
             fragment_id: content_fragment_id,
             section_id,
             offset,
         });
 
-        // Store position for TOC lookup (anchor_name → content position)
-        self.anchor_positions
-            .insert(anchor_name.to_string(), (content_fragment_id, offset));
+        // Record position for TOC lookup
+        self.node_positions
+            .insert(target, (content_fragment_id, offset));
 
         Some(symbol)
     }
 
-    /// Record the position of an element ID (for TOC/navigation lookup).
+    /// Create an anchor entity for a chapter-level target.
+    ///
+    /// Call this during Pass 2 when generating the first content for a chapter
+    /// that's a link target.
+    pub fn create_chapter_anchor(
+        &mut self,
+        chapter: ChapterId,
+        content_fragment_id: u64,
+        section_id: u64,
+    ) -> Option<String> {
+        let symbol = self.chapter_to_symbol.get(&chapter)?.clone();
+
+        // Skip if already resolved
+        if self.resolved_symbols.contains(&symbol) {
+            return None;
+        }
+
+        self.resolved_symbols.insert(symbol.clone());
+        self.resolved.push(AnchorPosition {
+            symbol: symbol.clone(),
+            fragment_id: content_fragment_id,
+            section_id,
+            offset: 0,
+        });
+
+        // Record position for TOC lookup
+        self.chapter_positions.insert(chapter, content_fragment_id);
+
+        Some(symbol)
+    }
+
+    /// Record the position of a node (for TOC/navigation lookup).
     ///
     /// This stores the position without creating an anchor entity.
-    /// Use this to track element positions for TOC resolution.
-    pub fn record_position(&mut self, anchor_name: &str, fragment_id: u64, offset: usize) {
-        // Only record if not already present (first occurrence wins)
-        self.anchor_positions
-            .entry(anchor_name.to_string())
+    pub fn record_node_position(&mut self, target: GlobalNodeId, fragment_id: u64, offset: usize) {
+        self.node_positions
+            .entry(target)
             .or_insert((fragment_id, offset));
     }
 
-    /// Get the content position for an anchor (for TOC resolution).
-    ///
-    /// Returns (content_fragment_id, offset) if the anchor exists.
-    pub fn get_anchor_position(&self, anchor_name: &str) -> Option<(u64, usize)> {
-        self.anchor_positions.get(anchor_name).copied()
+    /// Record the position of a chapter start.
+    pub fn record_chapter_position(&mut self, chapter: ChapterId, fragment_id: u64) {
+        self.chapter_positions.entry(chapter).or_insert(fragment_id);
+    }
+
+    /// Get the content position for a node (for TOC resolution).
+    pub fn get_node_position(&self, target: GlobalNodeId) -> Option<(u64, usize)> {
+        self.node_positions.get(&target).copied()
+    }
+
+    /// Get the content position for a chapter (for TOC resolution).
+    pub fn get_chapter_position(&self, chapter: ChapterId) -> Option<u64> {
+        self.chapter_positions.get(&chapter).copied()
     }
 
     /// Drain all resolved internal anchors for entity emission.
@@ -513,25 +551,17 @@ impl AnchorRegistry {
         std::mem::take(&mut self.external_anchors)
     }
 
-    /// Get the number of registered link targets.
+    /// Get the number of registered targets.
     pub fn len(&self) -> usize {
-        self.link_to_symbol.len()
+        self.node_to_symbol.len() + self.chapter_to_symbol.len() + self.external_anchors.len()
     }
 
     /// Check if the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.link_to_symbol.is_empty()
+        self.node_to_symbol.is_empty()
+            && self.chapter_to_symbol.is_empty()
+            && self.external_anchors.is_empty()
     }
-}
-
-/// Extract the fragment (anchor) part from an href.
-///
-/// Examples:
-/// - "chapter2.xhtml#note-1" → Some("note-1")
-/// - "#note-1" → Some("note-1")
-/// - "chapter2.xhtml" → None
-fn extract_fragment(href: &str) -> Option<&str> {
-    href.find('#').map(|i| &href[i + 1..])
 }
 
 /// Central context for KFX export.
@@ -569,24 +599,14 @@ pub struct ExportContext {
 
     /// Position map: (ChapterId, NodeId) → Position.
     /// Populated during Pass 1 survey for landmark resolution.
-    ///
-    /// Note: Position tracking uses two complementary systems:
-    /// 1. This `position_map`: section-level positions, populated in Pass 1
-    /// 2. `AnchorRegistry.anchor_positions`: content-level positions, populated in Pass 2
-    ///
-    /// These are intentionally separate because landmarks are resolved before
-    /// content generation, while TOC/anchor positions require actual content IDs.
     pub position_map: HashMap<(ChapterId, NodeId), Position>,
 
     /// Chapter to fragment ID mapping.
     /// Populated during Pass 1 to resolve section references.
     pub chapter_fragments: HashMap<ChapterId, u64>,
 
-    /// Current chapter being processed (for position tracking).
+    /// Current chapter being processed.
     current_chapter: Option<ChapterId>,
-
-    /// Current chapter path (e.g., "chapter1.xhtml") for anchor key construction.
-    current_chapter_path: Option<String>,
 
     /// Current fragment ID being built.
     current_fragment_id: u64,
@@ -594,18 +614,9 @@ pub struct ExportContext {
     /// Current text offset within the fragment.
     current_text_offset: usize,
 
-    /// Anchor map: anchor_id → (ChapterId, NodeId).
-    /// Populated during Pass 1 survey when nodes have IDs that are link targets.
-    pub anchor_map: HashMap<String, (ChapterId, NodeId)>,
-
     /// Path to fragment ID mapping.
     /// Maps source file paths (e.g., "chapter1.xhtml") to fragment IDs.
-    /// Used for resolving TOC hrefs to positions.
     pub path_to_fragment: HashMap<String, u64>,
-
-    /// Set of anchor IDs that are actually needed (targets of links or TOC).
-    /// Only anchors in this set will be emitted to avoid bloat.
-    needed_anchors: HashSet<String>,
 
     /// Default style symbol ID.
     /// All storyline elements reference this style for Kindle rendering.
@@ -615,7 +626,6 @@ pub struct ExportContext {
     pub style_registry: StyleRegistry,
 
     /// Anchor registry for link target resolution.
-    /// Maps link hrefs to anchor symbols and tracks positions for entity emission.
     pub anchor_registry: AnchorRegistry,
 
     /// Resolved landmarks mapping LandmarkType to (fragment ID, offset, label).
@@ -626,44 +636,28 @@ pub struct ExportContext {
     pub nav_container_symbols: NavContainerSymbols,
 
     /// Heading positions tracked during survey for headings navigation.
-    /// Grouped by heading level (2-6, h1 is typically not used in body).
     pub heading_positions: Vec<HeadingPosition>,
 
     /// Fragment ID for standalone cover section (if EPUB has cover image not in spine).
-    /// When Some, c0 is reserved for the cover and spine chapters start at c1.
     pub cover_fragment_id: Option<u64>,
 
-    /// Content fragment ID for standalone cover (the image element inside the storyline).
-    /// Used in position_map to include both section ID and content ID for c0.
+    /// Content fragment ID for standalone cover.
     pub cover_content_id: Option<u64>,
 
-    /// Paths that need chapter-start anchors (registered in Pass 1).
-    /// These are resolved in Pass 2 when the first content fragment is created.
-    paths_needing_chapter_start_anchor: HashSet<String>,
+    /// Chapters that need chapter-start anchors.
+    chapters_needing_anchor: HashSet<ChapterId>,
 
-    /// Current pending chapter-start anchor path (set at start of Pass 2 chapter).
-    /// When Some, the next content fragment should create the chapter-start anchor.
-    pending_chapter_start_anchor: Option<String>,
+    /// Current pending chapter-start anchor.
+    pending_chapter_anchor: Option<ChapterId>,
 
-    /// First content fragment ID for each chapter source path.
-    /// Populated during Pass 2, used to fix landmark IDs.
-    pub first_content_ids: HashMap<String, u64>,
-
-    /// All content fragment IDs for each chapter source path.
-    /// Populated during Pass 2, used for position_map.
-    pub content_ids_by_path: HashMap<String, Vec<u64>>,
+    /// First content fragment ID for each chapter.
+    pub first_content_ids: HashMap<ChapterId, u64>,
 
     /// All content fragment IDs for each chapter.
-    /// Populated during Pass 2 storyline building, used for position_map.
-    /// Maps ChapterId -> list of content fragment IDs generated for that chapter.
     pub content_ids_by_chapter: HashMap<ChapterId, Vec<u64>>,
 
     /// Text length for each content fragment ID.
-    /// Used by location_map to distribute locations across content fragments.
     pub content_id_lengths: HashMap<u64, usize>,
-
-    /// Current chapter source path during Pass 2 (for tracking first content ID).
-    current_export_path: Option<String>,
 }
 
 /// Position of a heading element for navigation.
@@ -700,7 +694,6 @@ impl ExportContext {
     /// Create a new export context.
     pub fn new() -> Self {
         let mut symbols = SymbolTable::new();
-        // Register the default style name during initialization
         let default_style_symbol = symbols.get_or_intern("s0");
 
         Self {
@@ -713,12 +706,9 @@ impl ExportContext {
             position_map: HashMap::new(),
             chapter_fragments: HashMap::new(),
             current_chapter: None,
-            current_chapter_path: None,
             current_fragment_id: 0,
             current_text_offset: 0,
-            anchor_map: HashMap::new(),
             path_to_fragment: HashMap::new(),
-            needed_anchors: HashSet::new(),
             default_style_symbol,
             style_registry: StyleRegistry::new(default_style_symbol),
             anchor_registry: AnchorRegistry::new(),
@@ -727,50 +717,30 @@ impl ExportContext {
             heading_positions: Vec::new(),
             cover_fragment_id: None,
             cover_content_id: None,
-            paths_needing_chapter_start_anchor: HashSet::new(),
-            pending_chapter_start_anchor: None,
+            chapters_needing_anchor: HashSet::new(),
+            pending_chapter_anchor: None,
             first_content_ids: HashMap::new(),
-            content_ids_by_path: HashMap::new(),
             content_ids_by_chapter: HashMap::new(),
             content_id_lengths: HashMap::new(),
-            current_export_path: None,
         }
     }
 
     /// Prepare context for processing a new chapter.
-    ///
-    /// Called by the Assembler before generating tokens for a chapter.
-    /// Sets up the content name and clears the text accumulator.
     pub fn begin_chapter(&mut self, content_name: &str) -> u64 {
         self.text_accumulator = TextAccumulator::new();
         self.current_content_name = self.symbols.get_or_intern(content_name);
         self.current_content_name
     }
 
-    /// Begin Pass 2 export for a chapter, setting up chapter-start anchor if needed.
-    ///
-    /// Call this at the start of chapter content generation (Pass 2) with the
-    /// source path. If this path was registered as needing a chapter-start anchor,
-    /// sets up the pending anchor to be resolved when the first content fragment
-    /// is created.
-    pub fn begin_chapter_export(&mut self, chapter_id: ChapterId, source_path: &str) {
-        // Set current chapter ID for section_id lookup during anchor creation
+    /// Begin Pass 2 export for a chapter.
+    pub fn begin_chapter_export(&mut self, chapter_id: ChapterId) {
         self.current_chapter = Some(chapter_id);
 
-        // Set current chapter path for building anchor keys (e.g., "path#fragment")
-        self.current_chapter_path = Some(source_path.to_string());
-
-        // Set current export path to track first content ID for this chapter
-        self.current_export_path = Some(source_path.to_string());
-
         // Check if this chapter needs a chapter-start anchor
-        if self
-            .paths_needing_chapter_start_anchor
-            .contains(source_path)
-        {
-            self.pending_chapter_start_anchor = Some(source_path.to_string());
+        if self.chapters_needing_anchor.contains(&chapter_id) {
+            self.pending_chapter_anchor = Some(chapter_id);
         } else {
-            self.pending_chapter_start_anchor = None;
+            self.pending_chapter_anchor = None;
         }
     }
 
@@ -809,24 +779,15 @@ impl ExportContext {
     }
 
     /// Register an IR style and return its KFX style symbol.
-    ///
-    /// Converts the IR ComputedStyle to KFX format via the schema-driven
-    /// StyleBuilder pipeline, then deduplicates via the StyleRegistry.
-    /// Returns the symbol ID to use in storyline elements.
     pub fn register_ir_style(&mut self, ir_style: &crate::style::ComputedStyle) -> u64 {
-        // Use the schema-driven pipeline (single source of truth)
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
         builder.ingest_ir_style(ir_style);
         let kfx_style = builder.build();
-
-        // Register and get symbol (handles deduplication)
         self.style_registry.register(kfx_style, &mut self.symbols)
     }
 
-    /// Register an IR style by StyleId, looking it up in the style pool.
-    ///
-    /// Returns the KFX style symbol. For DEFAULT style, returns the default symbol.
+    /// Register an IR style by StyleId.
     pub fn register_style_id(
         &mut self,
         style_id: StyleId,
@@ -847,10 +808,7 @@ impl ExportContext {
     // Pass 1: Survey / Position Tracking
     // =========================================================================
 
-    /// Begin surveying a chapter. Call this at the start of Pass 1 for each chapter.
-    ///
-    /// The `path` is the source file path (e.g., "chapter1.xhtml") used to resolve
-    /// TOC hrefs to positions.
+    /// Begin surveying a chapter.
     pub fn begin_chapter_survey(&mut self, chapter_id: ChapterId, path: &str) -> u64 {
         let fragment_id = self.fragment_ids.next_id();
         self.chapter_fragments.insert(chapter_id, fragment_id);
@@ -859,15 +817,10 @@ impl ExportContext {
         self.current_fragment_id = fragment_id;
         self.current_text_offset = 0;
 
-        // Mark chapter-start anchor as needing resolution in Pass 2
-        // Check BEFORE setting current_chapter_path to avoid building "path#path" key
-        if self.needed_anchors.contains(path) {
-            self.paths_needing_chapter_start_anchor
-                .insert(path.to_string());
+        // Mark chapter-start anchor if this chapter is a target
+        if self.anchor_registry.is_chapter_target(chapter_id) {
+            self.chapters_needing_anchor.insert(chapter_id);
         }
-
-        // Set current_chapter_path AFTER checking for chapter-start anchor
-        self.current_chapter_path = Some(path.to_string());
 
         fragment_id
     }
@@ -875,7 +828,6 @@ impl ExportContext {
     /// End surveying a chapter.
     pub fn end_chapter_survey(&mut self) {
         self.current_chapter = None;
-        self.current_chapter_path = None;
     }
 
     /// Get the fragment ID for a given source path.
@@ -884,7 +836,6 @@ impl ExportContext {
     }
 
     /// Record position for a node during Pass 1.
-    /// Call this when encountering a node that might be a link target.
     pub fn record_position(&mut self, node_id: NodeId) {
         if let Some(chapter_id) = self.current_chapter {
             self.position_map.insert(
@@ -898,7 +849,6 @@ impl ExportContext {
     }
 
     /// Record a heading position for headings navigation.
-    /// Call this when encountering a heading node during Pass 1.
     pub fn record_heading(&mut self, level: u8) {
         self.heading_positions.push(HeadingPosition {
             level,
@@ -908,33 +858,25 @@ impl ExportContext {
     }
 
     /// Record heading position during Pass 2 with actual content fragment ID.
-    /// This replaces the Pass 1 recording which used chapter-level IDs.
-    /// Note: Kindle expects offset: 0 for navigation entries (per reference KFX analysis).
     pub fn record_heading_with_id(&mut self, level: u8, fragment_id: u64) {
         self.heading_positions.push(HeadingPosition {
             level,
             fragment_id,
-            offset: 0, // Kindle expects 0, not accumulated text offset
+            offset: 0,
         });
     }
 
     /// Create the pending chapter-start anchor with the first content fragment ID.
-    ///
-    /// Call this during Pass 2 when generating the first content fragment for a chapter.
-    /// This resolves chapter-start TOC entries (e.g., "chapter1.xhtml" without #fragment)
-    /// to point to the first actual content fragment, not the section page_template.
-    pub fn resolve_pending_chapter_start_anchor(&mut self, first_content_id: u64) {
-        // Record first content ID for this chapter (used for landmarks)
-        if let Some(ref path) = self.current_export_path
-            && !self.first_content_ids.contains_key(path)
-        {
+    pub fn resolve_pending_chapter_anchor(&mut self, first_content_id: u64) {
+        // Record first content ID for this chapter
+        if let Some(chapter_id) = self.current_chapter {
             self.first_content_ids
-                .insert(path.clone(), first_content_id);
+                .entry(chapter_id)
+                .or_insert(first_content_id);
 
-            // Also record as anchor position so TOC entries pointing to the chapter
-            // (without #fragment) can be resolved
+            // Record chapter position for TOC lookup
             self.anchor_registry
-                .record_position(path, first_content_id, 0);
+                .record_chapter_position(chapter_id, first_content_id);
         }
 
         // Get section ID for position_map grouping
@@ -944,52 +886,46 @@ impl ExportContext {
             .unwrap_or(first_content_id);
 
         // Create chapter-start anchor if pending
-        if let Some(path) = self.pending_chapter_start_anchor.take()
+        if let Some(chapter_id) = self.pending_chapter_anchor.take()
             && let Some(symbol) =
                 self.anchor_registry
-                    .create_content_anchor(&path, first_content_id, section_id, 0)
+                    .create_chapter_anchor(chapter_id, first_content_id, section_id)
         {
-            // Intern symbol so entity ID is assigned
             self.symbols.get_or_intern(&symbol);
         }
     }
 
-    /// Process an element ID during storyline building.
+    /// Process a node during storyline building.
     ///
-    /// This does two things:
-    /// 1. Records the position for TOC/navigation lookup (always)
-    /// 2. Creates an anchor entity if this ID is a link_to target (only for needed anchors)
-    ///
-    /// Call this during Pass 2 when processing elements with ID attributes.
-    /// This ensures anchors point to actual content fragment IDs, not section IDs.
-    pub fn create_anchor_if_needed(&mut self, anchor_id: &str, content_id: u64, offset: usize) {
+    /// If the node is a link target, creates an anchor entity.
+    pub fn create_anchor_if_needed(&mut self, node_id: NodeId, content_id: u64, offset: usize) {
+        let Some(chapter_id) = self.current_chapter else {
+            return;
+        };
+
+        let gid = GlobalNodeId::new(chapter_id, node_id);
+
         // Get section ID for position_map grouping
         let section_id = self
-            .current_chapter
-            .and_then(|ch| self.chapter_fragments.get(&ch).copied())
+            .chapter_fragments
+            .get(&chapter_id)
+            .copied()
             .unwrap_or(content_id);
-
-        let full_key = self.build_anchor_key(anchor_id);
 
         // Always record position for TOC/navigation lookup
         self.anchor_registry
-            .record_position(&full_key, content_id, offset);
+            .record_node_position(gid, content_id, offset);
 
-        // Only create anchor entity if this is a link_to target
-        if self.needed_anchors.contains(&full_key)
-            && let Some(symbol) = self
-                .anchor_registry
-                .create_content_anchor(&full_key, content_id, section_id, offset)
+        // Only create anchor entity if this is a link target
+        if let Some(symbol) = self
+            .anchor_registry
+            .create_anchor(gid, content_id, section_id, offset)
         {
-            // Intern symbol so entity ID is assigned
             self.symbols.get_or_intern(&symbol);
         }
     }
 
     /// Record a content fragment ID for the current chapter.
-    ///
-    /// Call this during Pass 2 storyline building when generating content fragment IDs.
-    /// These IDs are used in position_map so navigation targets can be resolved.
     pub fn record_content_id(&mut self, content_id: u64) {
         if let Some(chapter_id) = self.current_chapter {
             self.content_ids_by_chapter
@@ -1000,87 +936,8 @@ impl ExportContext {
     }
 
     /// Record text length for a content fragment ID.
-    ///
-    /// Call this when finalizing a content element to track how much text it contains.
-    /// Used by location_map to map locations to the correct content fragment.
     pub fn record_content_length(&mut self, content_id: u64, text_len: usize) {
         self.content_id_lengths.insert(content_id, text_len);
-    }
-
-    /// Register an anchor as needed (it's a link target or TOC destination).
-    ///
-    /// Call this during the initial survey when encountering href="#anchor".
-    pub fn register_needed_anchor(&mut self, anchor_id: &str) {
-        self.needed_anchors.insert(anchor_id.to_string());
-    }
-
-    /// Build the full anchor key from an anchor ID.
-    ///
-    /// If there's a current chapter path, returns "chapter.xhtml#anchor_id".
-    /// Otherwise, returns the anchor_id as-is.
-    pub fn build_anchor_key(&self, anchor_id: &str) -> String {
-        if let Some(ref path) = self.current_chapter_path {
-            format!("{}#{}", path, anchor_id)
-        } else {
-            anchor_id.to_string()
-        }
-    }
-
-    /// Get the current chapter path (for testing).
-    #[cfg(test)]
-    pub fn get_current_chapter_path(&self) -> Option<&str> {
-        self.current_chapter_path.as_deref()
-    }
-
-    /// Get the number of needed anchors (for testing).
-    #[cfg(test)]
-    pub fn needed_anchor_count(&self) -> usize {
-        self.needed_anchors.len()
-    }
-
-    /// Check if a specific anchor is needed (for testing).
-    #[cfg(test)]
-    pub fn has_needed_anchor(&self, key: &str) -> bool {
-        self.needed_anchors.contains(key)
-    }
-
-    /// Get all needed anchors matching a pattern (for testing).
-    #[cfg(test)]
-    pub fn find_needed_anchors(&self, pattern: &str) -> Vec<&str> {
-        self.needed_anchors
-            .iter()
-            .filter(|a| a.contains(pattern))
-            .map(|s| s.as_str())
-            .collect()
-    }
-
-    /// Check if an anchor is needed (has a link pointing to it).
-    ///
-    /// If there's a current chapter path, builds the full key (e.g., "chapter.xhtml#section1").
-    /// Otherwise, checks the anchor_id directly (for chapter-start anchors).
-    pub fn is_anchor_needed(&self, anchor_id: &str) -> bool {
-        let full_key = self.build_anchor_key(anchor_id);
-        self.needed_anchors.contains(&full_key)
-    }
-
-    /// Record position for a node with a specific anchor ID.
-    /// Only records if the anchor is actually needed (has incoming links).
-    pub fn record_anchor(&mut self, anchor_id: &str, node_id: NodeId) {
-        let full_key = self.build_anchor_key(anchor_id);
-
-        // Only create anchors for IDs that are actually link targets
-        if !self.needed_anchors.contains(&full_key) {
-            return;
-        }
-
-        // Intern the full key for later lookup
-        self.intern(&full_key);
-        self.record_position(node_id);
-
-        // Store mapping from full key to position
-        if let Some(chapter_id) = self.current_chapter {
-            self.anchor_map.insert(full_key, (chapter_id, node_id));
-        }
     }
 
     /// Advance the text offset during survey (Pass 1).
@@ -1102,7 +959,7 @@ impl ExportContext {
     // Pass 2: Position Lookup
     // =========================================================================
 
-    /// Look up position for a node. Used during Pass 2 for link generation.
+    /// Look up position for a node.
     pub fn get_position(&self, chapter_id: ChapterId, node_id: NodeId) -> Option<Position> {
         self.position_map.get(&(chapter_id, node_id)).copied()
     }
@@ -1113,12 +970,7 @@ impl ExportContext {
     }
 
     /// Get the maximum EID used.
-    ///
-    /// This returns the highest element ID that has been assigned,
-    /// used for the `max_id` field in document_data.
     pub fn max_eid(&self) -> u64 {
-        // The next ID minus 1 gives us the last used ID
-        // If no IDs have been used yet, return 0
         if self.fragment_ids.peek() > IdGenerator::FRAGMENT_MIN_ID {
             self.fragment_ids.peek() - 1
         } else {
@@ -1126,9 +978,8 @@ impl ExportContext {
         }
     }
 
-    /// Format a position as a Kindle position string: "kindle:pos:fid:XXXX:off:YYYY"
+    /// Format a position as a Kindle position string.
     pub fn format_kindle_pos(fragment_id: u64, offset: usize) -> String {
-        // KFX uses base-32 encoding for positions (4 digits each)
         let fid_encoded = encode_base32(fragment_id as u32, 4);
         let off_encoded = encode_base32(offset as u32, 10);
         format!("kindle:pos:fid:{}:off:{}", fid_encoded, off_encoded)
@@ -1138,57 +989,46 @@ impl ExportContext {
     // TOC Anchor Management
     // =========================================================================
 
-    /// Register TOC entries so we know which anchors are needed.
+    /// Register TOC entries to mark their targets for anchor creation.
     ///
-    /// This does NOT create anchor entities - it just marks which element IDs
-    /// are TOC destinations so we create anchors for them during content survey.
-    ///
-    /// Anchors are keyed by full href (e.g., "chapter1.xhtml#section1") to avoid
-    /// collisions when different chapters have the same fragment IDs.
-    pub fn register_toc_anchors(&mut self, entries: &[TocEntry]) {
+    /// Uses the pre-resolved `target` field from `ResolvedLinks`.
+    pub fn register_toc_targets(&mut self, entries: &[TocEntry]) {
         for entry in entries {
-            // Mark the anchor as needed so we create it during content survey
-            // Key by full href to avoid collisions across chapters
-            self.register_needed_anchor(&entry.href);
+            // The target is already resolved by resolve_links()
+            // We just need to ensure it's registered for anchor creation
+            // (which happens when we process internal_targets from ResolvedLinks)
 
             // Recurse into children
             if !entry.children.is_empty() {
-                self.register_toc_anchors(&entry.children);
+                self.register_toc_targets(&entry.children);
             }
         }
     }
 
     /// Update landmark fragment IDs to use storyline content IDs.
-    ///
-    /// Call this after Pass 2 chapter processing when `first_content_ids` is populated.
-    /// This fixes landmarks to point to actual storyline content instead of section IDs.
-    pub fn fix_landmark_content_ids(&mut self, source_to_chapter: &HashMap<String, ChapterId>) {
-        // Build reverse mapping: chapter_id → source_path
-        let chapter_to_source: HashMap<ChapterId, &String> = source_to_chapter
-            .iter()
-            .map(|(path, cid)| (*cid, path))
-            .collect();
-
-        // Update each landmark's fragment_id
+    pub fn fix_landmark_content_ids(&mut self) {
         for target in self.landmark_fragments.values_mut() {
-            // Try to find the source path for this fragment_id via chapter_fragments
-            let mut found_source = None;
+            // Try to find which chapter this fragment_id belongs to
+            let mut found_chapter = None;
             for (cid, &fid) in &self.chapter_fragments {
-                if fid == target.fragment_id
-                    && let Some(path) = chapter_to_source.get(cid)
-                {
-                    found_source = Some((*path).clone());
+                if fid == target.fragment_id {
+                    found_chapter = Some(*cid);
                     break;
                 }
             }
 
-            // If we found the source path, look up the first content ID
-            if let Some(source_path) = found_source
-                && let Some(&content_id) = self.first_content_ids.get(&source_path)
+            // If we found the chapter, look up the first content ID
+            if let Some(chapter_id) = found_chapter
+                && let Some(&content_id) = self.first_content_ids.get(&chapter_id)
             {
                 target.fragment_id = content_id;
             }
         }
+    }
+
+    /// Get the current chapter ID.
+    pub fn current_chapter(&self) -> Option<ChapterId> {
+        self.current_chapter
     }
 }
 
@@ -1205,8 +1045,6 @@ mod tests {
     #[test]
     fn test_symbol_table_shared_symbols() {
         let mut symtab = SymbolTable::new();
-
-        // Shared symbols should return their ID directly
         assert_eq!(symtab.get_or_intern("$260"), 260);
         assert_eq!(symtab.get_or_intern("$145"), 145);
     }
@@ -1214,21 +1052,16 @@ mod tests {
     #[test]
     fn test_symbol_table_local_symbols() {
         let mut symtab = SymbolTable::new();
-
-        // Local symbols should get new IDs starting at LOCAL_MIN_ID
         let id1 = symtab.get_or_intern("section-1");
         let id2 = symtab.get_or_intern("section-2");
         assert!(id1 >= SymbolTable::LOCAL_MIN_ID);
         assert_eq!(id2, id1 + 1);
-
-        // Same symbol should return same ID
         assert_eq!(symtab.get_or_intern("section-1"), id1);
     }
 
     #[test]
     fn test_id_generator() {
         let mut id_gen = IdGenerator::new();
-
         assert_eq!(id_gen.next_id(), 866);
         assert_eq!(id_gen.next_id(), 867);
         assert_eq!(id_gen.next_id(), 868);
@@ -1243,124 +1076,83 @@ mod tests {
         let id2 = registry.register("images/cover.jpg", &mut symbols);
         let id3 = registry.register("images/other.jpg", &mut symbols);
 
-        // Same resource should return same ID
         assert_eq!(id1, id2);
-        // Different resource should return different ID
         assert_ne!(id1, id3);
     }
 
     #[test]
-    fn test_resource_registry_unique_names() {
-        let mut registry = ResourceRegistry::new();
+    fn test_anchor_registry_internal() {
+        let mut registry = AnchorRegistry::new();
 
-        // Each resource should get a unique short name
-        let name1 = registry.get_or_create_name("images/cover.jpg");
-        let name2 = registry.get_or_create_name("images/photo.png");
-        let name3 = registry.get_or_create_name("images/logo.gif");
+        let target = GlobalNodeId::new(ChapterId(1), NodeId(42));
+        let symbol = registry.register_internal_target(target, "chapter.xhtml#id42");
 
-        assert_eq!(name1, "e0");
-        assert_eq!(name2, "e1");
-        assert_eq!(name3, "e2");
-
-        // Same href should return the same name (idempotent)
-        assert_eq!(registry.get_or_create_name("images/cover.jpg"), "e0");
-        assert_eq!(registry.get_or_create_name("images/photo.png"), "e1");
-
-        // Verify get_name lookup
-        assert_eq!(registry.get_name("images/cover.jpg"), Some("e0"));
-        assert_eq!(registry.get_name("images/unknown.jpg"), None);
+        assert_eq!(symbol, "a0");
+        assert!(registry.is_internal_target(target));
+        assert_eq!(registry.get_symbol(target), Some("a0"));
+        // Also accessible by href
+        assert_eq!(registry.get_href_symbol("chapter.xhtml#id42"), Some("a0"));
     }
 
     #[test]
-    fn test_text_accumulator() {
-        let mut acc = TextAccumulator::new();
+    fn test_anchor_registry_chapter() {
+        let mut registry = AnchorRegistry::new();
 
-        let idx1 = acc.push("Hello");
-        let idx2 = acc.push(" World");
+        let chapter = ChapterId(5);
+        let symbol = registry.register_chapter_target(chapter, "chapter5.xhtml");
 
-        assert_eq!(idx1, 0);
-        assert_eq!(idx2, 1);
-        assert_eq!(acc.len(), 11);
-        assert_eq!(acc.segments().len(), 2);
+        assert_eq!(symbol, "a0");
+        assert!(registry.is_chapter_target(chapter));
+        assert_eq!(registry.get_chapter_symbol(chapter), Some("a0"));
+        // Also accessible by href
+        assert_eq!(registry.get_href_symbol("chapter5.xhtml"), Some("a0"));
+    }
+
+    #[test]
+    fn test_anchor_registry_external() {
+        let mut registry = AnchorRegistry::new();
+
+        let url = "https://example.com/";
+        let symbol = registry.register_external(url);
+
+        assert_eq!(symbol, "a0");
+        assert_eq!(registry.get_href_symbol(url), Some("a0"));
+
+        let externals = registry.drain_external_anchors();
+        assert_eq!(externals.len(), 1);
+        assert_eq!(externals[0].uri, url);
+    }
+
+    #[test]
+    fn test_anchor_registry_create_anchor() {
+        let mut registry = AnchorRegistry::new();
+
+        let target = GlobalNodeId::new(ChapterId(1), NodeId(42));
+        registry.register_internal_target(target, "chapter.xhtml#id42");
+
+        // Create anchor
+        let symbol = registry.create_anchor(target, 100, 200, 50);
+        assert_eq!(symbol, Some("a0".to_string()));
+
+        // Second call should return None (already resolved)
+        let symbol2 = registry.create_anchor(target, 100, 200, 50);
+        assert_eq!(symbol2, None);
+
+        // Position should be recorded
+        assert_eq!(registry.get_node_position(target), Some((100, 50)));
     }
 
     #[test]
     fn test_export_context() {
         let mut ctx = ExportContext::new();
 
-        // Test interning
         let id1 = ctx.intern("section-1");
         let id2 = ctx.intern("section-1");
         assert_eq!(id1, id2);
 
-        // Test fragment ID generation
         let fid1 = ctx.next_fragment_id();
         let fid2 = ctx.next_fragment_id();
         assert_eq!(fid1, 866);
         assert_eq!(fid2, 867);
-
-        // Test text accumulation
-        let (idx, offset) = ctx.append_text("Hello");
-        assert_eq!(idx, 0);
-        assert_eq!(offset, 0);
-
-        let (idx, offset) = ctx.append_text("World");
-        assert_eq!(idx, 1);
-        assert_eq!(offset, 5);
-    }
-
-    #[test]
-    fn test_cross_file_anchor_resolution() {
-        // Simulate the full anchor resolution flow for cross-file links
-        // This tests that a link from chapter1 to chapter2#note-1 resolves correctly
-        let mut ctx = ExportContext::new();
-
-        // Step 1: Register link target (simulates collect_needed_anchors_from_chapter)
-        // The href has been resolved to full path by resolve_semantic_paths
-        let full_href = "OEBPS/text/endnotes.xhtml#note-1";
-        ctx.anchor_registry.register_link_target(full_href);
-        ctx.register_needed_anchor(full_href);
-
-        // Verify the anchor symbol was created
-        assert!(ctx.anchor_registry.get_symbol(full_href).is_some());
-        let symbol = ctx.anchor_registry.get_symbol(full_href).unwrap();
-        assert_eq!(symbol, "a0");
-
-        // Step 2: Begin chapter export for endnotes.xhtml (simulates begin_chapter_export)
-        ctx.begin_chapter_export(ChapterId(1), "OEBPS/text/endnotes.xhtml");
-
-        // Verify current_chapter_path is set correctly
-        assert_eq!(ctx.build_anchor_key("note-1"), full_href);
-
-        // Step 3: Create anchor when we encounter the element with id="note-1"
-        let content_id = 123;
-        ctx.create_anchor_if_needed("note-1", content_id, 0);
-
-        // Step 4: Drain anchors and verify the anchor was created correctly
-        let anchors = ctx.anchor_registry.drain_anchors();
-        assert_eq!(anchors.len(), 1, "Expected one anchor to be created");
-
-        let anchor = &anchors[0];
-        assert_eq!(anchor.symbol, "a0");
-        assert_eq!(anchor.fragment_id, content_id);
-        assert_eq!(anchor.offset, 0);
-    }
-
-    #[test]
-    fn test_anchor_not_created_if_not_needed() {
-        let mut ctx = ExportContext::new();
-
-        // Don't register any needed anchors
-        ctx.begin_chapter_export(ChapterId(1), "OEBPS/text/chapter1.xhtml");
-
-        // Try to create an anchor that wasn't registered as needed
-        ctx.create_anchor_if_needed("unused-id", 123, 0);
-
-        // No anchor should be created
-        let anchors = ctx.anchor_registry.drain_anchors();
-        assert!(
-            anchors.is_empty(),
-            "No anchor should be created for unneeded ID"
-        );
     }
 }

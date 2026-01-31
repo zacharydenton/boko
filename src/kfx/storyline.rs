@@ -180,6 +180,7 @@ fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut To
     // Emit StartElement token
     stream.push(KfxToken::StartElement(ElementStart {
         role,
+        node_id: None, // Only used during export
         id,
         semantics,
         content_ref,
@@ -298,6 +299,7 @@ fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> Vec<SpanSta
 
             Some(SpanStart {
                 role,
+                node_id: None, // Only used during export
                 semantics,
                 offset,
                 length,
@@ -754,6 +756,7 @@ fn walk_node_for_export(
 
     // Build element start with semantics
     let mut elem = ElementStart::new(node.role);
+    elem.node_id = Some(node_id);
 
     // Register the node's style and get a KFX style symbol
     // This converts IR ComputedStyle → KFX style and deduplicates
@@ -789,7 +792,7 @@ fn walk_node_for_export(
     // Convert link_to values to anchor symbols via the AnchorRegistry
     for (field_id, value) in &mut kfx_attrs {
         if *field_id == sym!(LinkTo) {
-            let anchor_symbol = ctx.anchor_registry.register_link_target(value);
+            let anchor_symbol = ctx.anchor_registry.get_or_create_href_symbol(value);
             *value = anchor_symbol;
         }
     }
@@ -860,6 +863,8 @@ struct InlineState {
     epub_type: Option<String>,
     /// Active element ID (for anchor creation)
     element_id: Option<String>,
+    /// Active node ID (for anchor creation with GlobalNodeId)
+    node_id: Option<NodeId>,
 }
 
 /// A flattened text segment with its computed state.
@@ -886,6 +891,8 @@ fn flatten_inline_content(
     };
 
     // MERGE STATE: Calculate effective state for this node
+    // Track both element_id (string) and node_id (for GlobalNodeId lookup)
+    let has_id = chapter.semantics.id(node_id).is_some();
     let effective_state = InlineState {
         // Links: propagate down (newest wins if nested)
         link_to: chapter
@@ -905,12 +912,14 @@ fn flatten_inline_content(
             .epub_type(node_id)
             .map(|s| s.to_string())
             .or(state.epub_type),
-        // Element ID: for anchor creation
+        // Element ID: for anchor creation (string ID)
         element_id: chapter
             .semantics
             .id(node_id)
             .map(|s| s.to_string())
             .or(state.element_id),
+        // Node ID: track which node has the ID (for GlobalNodeId lookup)
+        node_id: if has_id { Some(node_id) } else { state.node_id },
     };
 
     match node.role {
@@ -987,8 +996,7 @@ fn emit_flattened_segments(
 
             // Add link_to if present
             if let Some(ref href) = segment.state.link_to {
-                let href_value = href.clone();
-                let anchor_symbol = ctx.anchor_registry.register_link_target(&href_value);
+                let anchor_symbol = ctx.anchor_registry.get_or_create_href_symbol(href);
                 kfx_attrs.push((sym!(LinkTo), anchor_symbol));
             }
 
@@ -1002,10 +1010,11 @@ fn emit_flattened_segments(
 
             span.kfx_attrs = kfx_attrs;
 
-            // Store element ID for anchor creation
+            // Store element ID and node_id for anchor creation
             if let Some(ref id) = segment.state.element_id {
                 span.set_semantic(SemanticTarget::Id, id.clone());
             }
+            span.node_id = segment.state.node_id;
 
             stream.push(KfxToken::StartSpan(span));
             stream.push(KfxToken::Text(segment.text));
@@ -1188,11 +1197,13 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     ctx.record_content_id(outer_id);
 
                     // Create chapter-start anchor with first content fragment ID (if pending)
-                    ctx.resolve_pending_chapter_start_anchor(outer_id);
+                    ctx.resolve_pending_chapter_anchor(outer_id);
 
-                    // Create fragment-based anchor if this element has an ID
-                    if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
-                        ctx.create_anchor_if_needed(anchor_id, outer_id, 0);
+                    // Create fragment-based anchor if this element has an ID and a node_id
+                    if elem.get_semantic(SemanticTarget::Id).is_some()
+                        && let Some(node_id) = elem.node_id
+                    {
+                        ctx.create_anchor_if_needed(node_id, outer_id, 0);
                     }
 
                     // Style reference - outer container gets full style with borders
@@ -1346,12 +1357,14 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     ctx.record_content_id(container_id);
 
                     // Create chapter-start anchor with first content fragment ID (if pending)
-                    ctx.resolve_pending_chapter_start_anchor(container_id);
+                    ctx.resolve_pending_chapter_anchor(container_id);
 
                     // Create fragment-based anchor if this element has an ID that's a TOC/link target
                     // Note: Kindle expects offset: 0 for all navigation entries (per reference KFX)
-                    if let Some(anchor_id) = elem.get_semantic(SemanticTarget::Id) {
-                        ctx.create_anchor_if_needed(anchor_id, container_id, 0);
+                    if elem.get_semantic(SemanticTarget::Id).is_some()
+                        && let Some(node_id) = elem.node_id
+                    {
+                        ctx.create_anchor_if_needed(node_id, container_id, 0);
                     }
 
                     // Style reference - use per-element style if available, else default
@@ -1525,13 +1538,14 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // Create anchor for inline elements with IDs (e.g., noteref backlinks)
                 // For elements inside container wrappers, use the outer container's ID
                 // so TOC navigation targets the top-level element, not the nested text
-                if let Some(anchor_id) = span.get_semantic(SemanticTarget::Id)
+                if span.get_semantic(SemanticTarget::Id).is_some()
+                    && let Some(node_id) = span.node_id
                     && let Some(parent) = stack.last()
                 {
                     // Prefer outer_container_id (for wrapped elements) over container_id
                     let target_id = parent.outer_container_id.or(parent.container_id);
                     if let Some(container_id) = target_id {
-                        ctx.create_anchor_if_needed(anchor_id, container_id, current_offset);
+                        ctx.create_anchor_if_needed(node_id, container_id, current_offset);
                     }
                 }
 
@@ -1732,7 +1746,7 @@ pub fn build_storyline_ion(chapter: &Chapter, ctx: &mut ExportContext) -> IonVal
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::model::Role;
+    use crate::model::{GlobalNodeId, Role};
 
     #[test]
     fn test_tokenize_creates_proper_structure() {
@@ -1754,6 +1768,7 @@ mod tests {
 
         stream.push(KfxToken::StartElement(ElementStart {
             role: Role::Image,
+            node_id: None,
             id: Some(123),
             semantics,
             content_ref: None,
@@ -1780,6 +1795,7 @@ mod tests {
         let mut stream = TokenStream::new();
         stream.push(KfxToken::StartElement(ElementStart {
             role: Role::Paragraph,
+            node_id: None,
             id: None,
             semantics: HashMap::new(),
             content_ref: Some(ContentRef {
@@ -1814,6 +1830,7 @@ mod tests {
         let mut stream = TokenStream::new();
         stream.push(KfxToken::StartElement(ElementStart {
             role: Role::Heading(2),
+            node_id: None,
             id: None,
             semantics: HashMap::new(),
             content_ref: Some(ContentRef {
@@ -1844,6 +1861,7 @@ mod tests {
 
         stream.push(KfxToken::StartElement(ElementStart {
             role: Role::Paragraph,
+            node_id: None,
             id: None,
             semantics: HashMap::new(),
             content_ref: Some(ContentRef {
@@ -1852,6 +1870,7 @@ mod tests {
             }),
             style_events: vec![SpanStart {
                 role: Role::Link,
+                node_id: None,
                 semantics: span_semantics,
                 offset: 7,
                 length: 5,
@@ -2466,6 +2485,7 @@ mod tests {
         // Inline: offset 0, length 2 ("1.")
         stream.push(KfxToken::StartElement(ElementStart {
             role: Role::Paragraph,
+            node_id: None,
             id: None,
             semantics: HashMap::new(),
             content_ref: Some(ContentRef {
@@ -2475,6 +2495,7 @@ mod tests {
             style_events: vec![
                 SpanStart {
                     role: Role::Link,
+                    node_id: None,
                     semantics: link_semantics,
                     offset: 0,
                     length: 19,
@@ -2483,6 +2504,7 @@ mod tests {
                 },
                 SpanStart {
                     role: Role::Inline,
+                    node_id: None,
                     semantics: HashMap::new(),
                     offset: 0,
                     length: 2,
@@ -2670,15 +2692,19 @@ mod tests {
 
         let mut ctx = crate::kfx::context::ExportContext::new();
 
-        // Set up the context with a chapter ID and path
+        // Set up the context with a chapter ID
         let chapter_id = ChapterId(1);
-        ctx.begin_chapter_export(chapter_id, "chapter1.xhtml");
-        ctx.register_needed_anchor("chapter1.xhtml#p6");
+        ctx.begin_chapter_export(chapter_id);
+
+        // Register the span as a link target (simulating what resolve_links does)
+        let target = GlobalNodeId::new(chapter_id, span_id);
+        ctx.anchor_registry
+            .register_internal_target(target, "chapter1.xhtml#p6");
 
         let _ion = build_storyline_ion(&chapter, &mut ctx);
 
-        // Get the anchor position for p6
-        let anchor_pos = ctx.anchor_registry.get_anchor_position("chapter1.xhtml#p6");
+        // Get the node position for p6
+        let anchor_pos = ctx.anchor_registry.get_node_position(target);
 
         // The anchor position should exist and point to the outer container ID
         assert!(anchor_pos.is_some(), "Anchor for p6 should be created");

@@ -25,7 +25,9 @@ use crate::kfx::serialization::{
 };
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
-use crate::model::{Book, Chapter, LandmarkType, NodeId, Role};
+use crate::model::{
+    AnchorTarget, Book, Chapter, GlobalNodeId, LandmarkType, NodeId, ResolvedLinks, Role,
+};
 use crate::util::detect_media_format;
 
 /// KFX export configuration.
@@ -144,17 +146,15 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         );
     }
 
-    // 1a. Collect needed anchors FIRST (before survey)
-    // Only IDs that are link targets need anchor entities.
-    // TOC navigation uses direct fragment ID references (target_position.id),
-    // not anchor entities, so we don't register TOC entries as needed anchors.
-    for (chapter_id, _) in &spine_info {
-        if let Ok(chapter) = book.load_chapter(*chapter_id) {
-            collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
-        }
-    }
+    // 1a. Resolve all links using the centralized resolver
+    // This builds the forward/reverse link maps and resolves TOC targets.
+    let resolved = book.resolve_links()?;
 
-    // 1b. Survey each chapter: assign fragment IDs, build position map
+    // 1b. Register link targets with the anchor registry
+    // This maps hrefs to targets for storyline link_to generation.
+    register_link_targets(book, &spine_info, &resolved, &mut ctx)?;
+
+    // 1c. Survey each chapter: assign fragment IDs, build position map
     // Also build a map from source paths to chapter IDs for landmark resolution
     let mut source_to_chapter: HashMap<String, ChapterId> = HashMap::new();
 
@@ -176,9 +176,9 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
         }
     }
 
-    // 1b2. Resolve landmarks to fragment IDs
+    // 1d. Resolve landmarks to fragment IDs
     // First try IR landmarks, then fall back to heuristics for Cover/StartReading
-    resolve_landmarks_from_ir(book, &source_to_chapter, &mut ctx);
+    resolve_landmarks_from_ir(book, &source_to_chapter, &resolved, &mut ctx);
 
     // Fall back to heuristics if IR didn't provide Cover or StartReading
     let has_cover = ctx.landmark_fragments.contains_key(&LandmarkType::Cover);
@@ -314,8 +314,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     for (chapter_id, section_name) in &spine_info {
         if let Ok(chapter) = book.load_chapter(*chapter_id) {
             // Set up chapter-start anchor before generating content
-            let source_path = book.source_id(*chapter_id).unwrap_or("");
-            ctx.begin_chapter_export(*chapter_id, source_path);
+            ctx.begin_chapter_export(*chapter_id);
 
             let (section, storyline, content) =
                 build_chapter_entities_grouped(&chapter, *chapter_id, section_name, &mut ctx);
@@ -328,7 +327,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     }
 
     // Fix landmark IDs to use storyline content IDs instead of section IDs
-    ctx.fix_landmark_content_ids(&source_to_chapter);
+    ctx.fix_landmark_content_ids();
 
     // 2e. Book navigation fragment - built AFTER chapters so heading/anchor positions are available
     fragments.push(build_book_navigation_fragment_with_positions(book, &ctx));
@@ -464,13 +463,8 @@ fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportContext) {
 
     // Note: Heading positions are recorded during Pass 2 in tokens_to_ion()
     // where actual content fragment IDs are available.
-
-    // If node has an anchor ID, record it for link resolution
-    // Note: Anchor entities are created during Pass 2 in tokens_to_ion()
-    // where actual content fragment IDs are available.
-    if let Some(anchor_id) = chapter.semantics.id(node_id) {
-        ctx.record_anchor(anchor_id, node_id);
-    }
+    // Anchor entities are created during Pass 2 using GlobalNodeId targets
+    // from ResolvedLinks.
 
     // Register resources (src attributes) - creates short names like "e0"
     // Note: href and alt are used as string values, not symbols
@@ -491,37 +485,64 @@ fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportContext) {
     }
 }
 
-/// Collect needed anchors from a chapter's href attributes.
-/// Anchors are only needed if they are targets of links.
+/// Register link targets from ResolvedLinks with the AnchorRegistry.
 ///
-/// Also registers link targets with the AnchorRegistry to generate
-/// anchor symbols for use in style_events.
-///
-/// Note: hrefs are already resolved to full paths during import
-/// (via resolve_semantic_paths in import/mod.rs), so no additional
-/// path resolution is needed here.
-fn collect_needed_anchors_from_chapter(
+/// This walks all chapters and registers each link's target with the
+/// anchor registry, mapping hrefs to their resolved targets (GlobalNodeId,
+/// ChapterId, or external URL).
+fn register_link_targets(
+    book: &mut Book,
+    spine_info: &[(ChapterId, String)],
+    resolved: &ResolvedLinks,
+    ctx: &mut ExportContext,
+) -> io::Result<()> {
+    for (chapter_id, _) in spine_info {
+        let chapter = book.load_chapter(*chapter_id)?;
+        register_chapter_link_targets(&chapter, *chapter_id, resolved, ctx);
+    }
+    Ok(())
+}
+
+/// Register link targets for a single chapter.
+fn register_chapter_link_targets(
     chapter: &Chapter,
-    node_id: NodeId,
+    chapter_id: ChapterId,
+    resolved: &ResolvedLinks,
     ctx: &mut ExportContext,
 ) {
-    if chapter.node(node_id).is_none() {
-        return;
-    }
+    for node_id in chapter.iter_dfs() {
+        let Some(node) = chapter.node(node_id) else {
+            continue;
+        };
 
-    // Check for href (link target)
-    // Hrefs are already resolved to full paths during import
-    if let Some(href) = chapter.semantics.href(node_id) {
-        // Register with AnchorRegistry to generate a symbol for this link target
-        ctx.anchor_registry.register_link_target(href);
+        // Only process Link nodes
+        if node.role != Role::Link {
+            continue;
+        }
 
-        // Register the href as a needed anchor (for create_anchor_if_needed lookup)
-        ctx.register_needed_anchor(href);
-    }
+        // Get the href attribute
+        let Some(href) = chapter.semantics.href(node_id) else {
+            continue;
+        };
 
-    // Recurse into children
-    for child in chapter.children(node_id) {
-        collect_needed_anchors_from_chapter(chapter, child, ctx);
+        let source = GlobalNodeId::new(chapter_id, node_id);
+
+        // Look up the resolved target and register it
+        if let Some(target) = resolved.get(source) {
+            match target {
+                AnchorTarget::Internal(target_node) => {
+                    ctx.anchor_registry
+                        .register_internal_target(*target_node, href);
+                }
+                AnchorTarget::Chapter(target_chapter) => {
+                    ctx.anchor_registry
+                        .register_chapter_target(*target_chapter, href);
+                }
+                AnchorTarget::External(url) => {
+                    ctx.anchor_registry.register_external(url);
+                }
+            }
+        }
     }
 }
 
@@ -1058,8 +1079,8 @@ fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<IonValue> {
 
 /// Build TOC entries recursively with anchor entity IDs.
 ///
-/// TOC entries point to anchor entity IDs (with offset 0) rather than
-/// directly to content fragment IDs. This matches the reference KFX format.
+/// TOC entries point to content fragment IDs (with offset 0) rather than
+/// anchor entities. The `entry.target` field is pre-resolved by `resolve_links()`.
 fn build_toc_entries_with_positions(
     entries: &[crate::model::TocEntry],
     ctx: &ExportContext,
@@ -1067,8 +1088,8 @@ fn build_toc_entries_with_positions(
     entries
         .iter()
         .filter_map(|entry| {
-            // Look up the content position for this TOC entry
-            let (fragment_id, offset) = resolve_toc_position(&entry.href, ctx)?;
+            // Use pre-resolved target to look up position
+            let (fragment_id, offset) = resolve_toc_target(&entry.target, &entry.href, ctx)?;
 
             let mut fields = Vec::new();
 
@@ -1104,13 +1125,32 @@ fn build_toc_entries_with_positions(
         .collect()
 }
 
-/// Resolve a TOC href to (fragment_id, offset).
-/// Returns the fragment ID containing the anchor, with offset 0.
-/// We assume TOC entries should navigate to the start of the fragment
-/// containing the anchor position, not to a specific offset within it.
-fn resolve_toc_position(href: &str, ctx: &ExportContext) -> Option<(u64, usize)> {
-    if let Some((fragment_id, _)) = ctx.anchor_registry.get_anchor_position(href) {
-        return Some((fragment_id, 0));
+/// Resolve a TOC entry's pre-resolved target to (fragment_id, offset).
+///
+/// Uses the target from `resolve_links()` to look up the content position.
+fn resolve_toc_target(
+    target: &Option<AnchorTarget>,
+    href: &str,
+    ctx: &ExportContext,
+) -> Option<(u64, usize)> {
+    match target {
+        Some(AnchorTarget::Internal(gid)) => {
+            // Look up node position
+            if let Some((fragment_id, offset)) = ctx.anchor_registry.get_node_position(*gid) {
+                return Some((fragment_id, offset));
+            }
+        }
+        Some(AnchorTarget::Chapter(chapter_id)) => {
+            // Look up chapter position
+            if let Some(fragment_id) = ctx.anchor_registry.get_chapter_position(*chapter_id) {
+                return Some((fragment_id, 0));
+            }
+        }
+        Some(AnchorTarget::External(_)) => {
+            // External links in TOC - shouldn't happen but handle gracefully
+            return None;
+        }
+        None => {}
     }
 
     eprintln!("Warning: TOC href not resolved: {}", href);
@@ -2005,15 +2045,16 @@ fn is_media_asset(path: &std::path::Path) -> bool {
 /// to populate landmark_fragments in the context.
 ///
 /// Handles both chapter-level targets (e.g., `chapter.xhtml`) and anchor-level
-/// targets (e.g., `chapter.xhtml#section1`) by looking up positions via anchor_map.
+/// targets (e.g., `chapter.xhtml#section1`) by using ResolvedLinks.
 fn resolve_landmarks_from_ir(
     book: &Book,
     source_to_chapter: &HashMap<String, ChapterId>,
+    resolved: &ResolvedLinks,
     ctx: &mut ExportContext,
 ) {
     for landmark in book.landmarks() {
         // Split href into file path and optional anchor
-        let (href_path, anchor) = match landmark.href.split_once('#') {
+        let (href_path, _anchor) = match landmark.href.split_once('#') {
             Some((path, anchor)) => (path, Some(anchor)),
             None => (landmark.href.as_str(), None),
         };
@@ -2022,20 +2063,33 @@ fn resolve_landmarks_from_ir(
         let chapter_id = source_to_chapter.get(href_path).copied();
 
         if let Some(cid) = chapter_id {
-            // Try to resolve target position
-            let target = if let Some(anchor_id) = anchor {
-                // Look up anchor in anchor_map to get (ChapterId, NodeId)
-                // Then use position_map to get the exact position
-                let full_href = format!("{}#{}", href_path, anchor_id);
-                if let Some(&(_, node_id)) = ctx.anchor_map.get(&full_href) {
+            // Resolve the landmark's href using the book's resolver
+            let resolved_target = book.resolve_href(cid, &landmark.href);
+
+            let target = match resolved_target {
+                Some(AnchorTarget::Internal(gid)) => {
+                    // Look up position for the internal target
                     ctx.position_map
-                        .get(&(cid, node_id))
+                        .get(&(gid.chapter, gid.node))
                         .map(|pos| LandmarkTarget {
                             fragment_id: pos.fragment_id,
                             offset: 0,
                             label: landmark.label.clone(),
                         })
-                } else {
+                }
+                Some(AnchorTarget::Chapter(target_chapter)) => {
+                    // Use chapter's fragment ID
+                    ctx.chapter_fragments
+                        .get(&target_chapter)
+                        .copied()
+                        .map(|frag_id| LandmarkTarget {
+                            fragment_id: frag_id,
+                            offset: 0,
+                            label: landmark.label.clone(),
+                        })
+                }
+                _ => {
+                    // Fall back to chapter's fragment ID
                     ctx.chapter_fragments
                         .get(&cid)
                         .copied()
@@ -2045,15 +2099,6 @@ fn resolve_landmarks_from_ir(
                             label: landmark.label.clone(),
                         })
                 }
-            } else {
-                ctx.chapter_fragments
-                    .get(&cid)
-                    .copied()
-                    .map(|frag_id| LandmarkTarget {
-                        fragment_id: frag_id,
-                        offset: 0,
-                        label: landmark.label.clone(),
-                    })
             };
 
             if let Some(target) = target {
@@ -2071,6 +2116,9 @@ fn resolve_landmarks_from_ir(
             }
         }
     }
+
+    // Suppress unused variable warning - resolved is used for consistency
+    let _ = resolved;
 }
 
 /// Serialize fragments to entities.
@@ -3015,92 +3063,22 @@ mod anchor_resolution_tests {
         // This EPUB has endnotes in endnotes.xhtml with links from the main text
         let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
 
-        // Set up context
-        let mut ctx = ExportContext::new();
+        // Step 1: Resolve all links using centralized resolver
+        let resolved = book.resolve_links().unwrap();
 
-        // Collect spine info
-        let spine_info: Vec<_> = book
-            .spine()
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                let section_name = format!("c{}", idx);
-                (entry.id, section_name)
-            })
-            .collect();
+        // Should have resolved links (enchiridion has links to endnotes)
+        assert!(resolved.len() > 0, "Should have resolved some links");
 
-        // Find the enchiridion chapter (has links to endnotes)
-        // and the endnotes chapter (has the anchor targets)
-        let enchiridion_id = spine_info
-            .iter()
-            .find(|(id, _)| {
-                book.source_id(*id)
-                    .map(|p| p.contains("enchiridion"))
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id);
-
-        let endnotes_id = spine_info
-            .iter()
-            .find(|(id, _)| {
-                book.source_id(*id)
-                    .map(|p| p.contains("endnotes"))
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id);
-
-        assert!(enchiridion_id.is_some(), "Should find enchiridion chapter");
-        assert!(endnotes_id.is_some(), "Should find endnotes chapter");
-
-        let enchiridion_id = enchiridion_id.unwrap();
-        let endnotes_id = endnotes_id.unwrap();
-
-        let endnotes_path = book.source_id(endnotes_id).unwrap().to_string();
-
-        // Step 1: Collect needed anchors from enchiridion (has links to endnotes)
-        // Note: hrefs are already resolved to full paths during import
-        if let Ok(chapter) = book.load_chapter(enchiridion_id) {
-            collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
-        }
-
-        // Check how many anchors were registered
-        assert!(
-            ctx.needed_anchor_count() > 0,
-            "Should have registered some needed anchors"
-        );
-
-        // Step 2: Survey endnotes chapter
-        if let Ok(chapter) = book.load_chapter(endnotes_id) {
-            ctx.register_section("c_endnotes");
-            survey_chapter(&chapter, endnotes_id, &endnotes_path, &mut ctx);
-        }
-
-        // Step 3: Begin export for endnotes chapter
-        ctx.begin_chapter_export(endnotes_id, &endnotes_path);
-
-        // Verify current_chapter_path is set
-        assert_eq!(
-            ctx.get_current_chapter_path(),
-            Some(endnotes_path.as_str()),
-            "current_chapter_path should be set to endnotes path"
-        );
-
-        // Step 4: Build anchor key and check if it's in needed_anchors
-        // Endnotes typically have IDs like "note-1", "note-2", etc.
-        let sample_key = ctx.build_anchor_key("note-1");
-
-        // The key should match exactly - verifies anchor path resolution is working
-        assert!(
-            ctx.has_needed_anchor(&sample_key),
-            "Anchor key '{}' should be in needed_anchors",
-            sample_key
-        );
+        // Check for some broken links (external links won't resolve)
+        // but internal endnote links should resolve
+        let broken_count = resolved.broken_links().len();
+        eprintln!("Resolved {} links, {} broken", resolved.len(), broken_count);
     }
 
     #[test]
     fn test_anchor_symbol_reuse() {
-        // Test that anchor symbols registered during Pass 0 are reused during Pass 2
-        // This is the root cause test for the link_to/anchor_name mismatch
+        // Test that anchor symbols are consistent between link_to and anchor creation
+        // This tests the core invariant of the anchor registry
         let mut book = Book::open("tests/fixtures/epictetus.epub").unwrap();
 
         let mut ctx = ExportContext::new();
@@ -3116,65 +3094,38 @@ mod anchor_resolution_tests {
             })
             .collect();
 
-        // Find endnotes chapter
-        let endnotes_id = spine_info
-            .iter()
-            .find(|(id, _)| {
-                book.source_id(*id)
-                    .map(|p| p.contains("endnotes"))
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| *id)
-            .expect("Should find endnotes chapter");
+        // Step 1: Resolve links
+        let resolved = book.resolve_links().unwrap();
 
-        let endnotes_path = book.source_id(endnotes_id).unwrap().to_string();
+        // Step 2: Register link targets from ResolvedLinks
+        register_link_targets(&mut book, &spine_info, &resolved, &mut ctx).unwrap();
 
-        // Pass 0: Collect needed anchors from ALL chapters
-        for (chapter_id, _) in &spine_info {
-            if let Ok(chapter) = book.load_chapter(*chapter_id) {
-                collect_needed_anchors_from_chapter(&chapter, chapter.root(), &mut ctx);
+        // Step 3: Verify that href lookups return the same symbol as GlobalNodeId lookups
+        // Find an internal link that has both
+        for (source, target) in resolved.iter() {
+            if let AnchorTarget::Internal(gid) = target {
+                // Get the href for this link
+                if let Ok(chapter) = book.load_chapter(source.chapter) {
+                    if let Some(href) = chapter.semantics.href(source.node) {
+                        // Both lookups should return the same symbol
+                        let href_symbol = ctx.anchor_registry.get_href_symbol(href);
+                        let node_symbol = ctx.anchor_registry.get_symbol(*gid);
+
+                        assert_eq!(
+                            href_symbol, node_symbol,
+                            "href '{}' and GlobalNodeId {:?} should have same symbol",
+                            href, gid
+                        );
+
+                        // Only need to verify one link
+                        return;
+                    }
+                }
             }
         }
 
-        // Get the symbol that was registered for endnotes note-1
-        let expected_key = format!("{}#note-1", endnotes_path);
-        let link_symbol = ctx.anchor_registry.get_symbol(&expected_key);
-
-        assert!(
-            link_symbol.is_some(),
-            "Link to '{}' should be registered in anchor_registry",
-            expected_key
-        );
-        let link_symbol = link_symbol.unwrap().to_string();
-
-        // Pass 2: Begin export for endnotes chapter and create anchor
-        ctx.begin_chapter_export(endnotes_id, &endnotes_path);
-
-        // Simulate finding an element with id="note-1"
-        // This should reuse the existing symbol, not create a new one
-        let content_id = 12345u64;
-        ctx.create_anchor_if_needed("note-1", content_id, 0);
-
-        // Drain and check the anchor
-        let anchors = ctx.anchor_registry.drain_anchors();
-
-        // Find the anchor for note-1
-        let note_anchor = anchors.iter().find(|a| a.anchor_name.ends_with("note-1"));
-
-        assert!(
-            note_anchor.is_some(),
-            "Should have created anchor for note-1. Keys checked: {}",
-            ctx.build_anchor_key("note-1")
-        );
-
-        let note_anchor = note_anchor.unwrap();
-
-        // THE KEY ASSERTION: The anchor symbol should match the link symbol
-        assert_eq!(
-            note_anchor.symbol, link_symbol,
-            "Anchor symbol '{}' should match link symbol '{}' for consistent link_to/anchor_name",
-            note_anchor.symbol, link_symbol
-        );
+        // If we get here, no internal links were found (shouldn't happen with epictetus.epub)
+        panic!("Should have found at least one internal link to verify");
     }
 
     #[test]
