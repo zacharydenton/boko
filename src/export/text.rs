@@ -8,10 +8,13 @@
 //! - Tight/loose list detection
 //! - Footnote accumulation and end-of-document rendering
 //! - Dynamic code fence length
+//! - Internal link resolution with anchor targets
 
+use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 
-use crate::model::{Book, NodeId, Role};
+use crate::import::ChapterId;
+use crate::model::{AnchorTarget, Book, GlobalNodeId, NodeId, ResolvedLinks, Role};
 use crate::style::Display;
 
 use super::Exporter;
@@ -41,15 +44,124 @@ impl MarkdownExporter {
     }
 }
 
+/// Build a map of heading targets to their GitHub-style slugs.
+///
+/// For internal links pointing to headings, we use the heading text as a slug
+/// (e.g., "Chapter One" → "#chapter-one") instead of explicit anchor IDs.
+fn build_heading_slugs(
+    book: &mut Book,
+    resolved: &ResolvedLinks,
+    spine: &[crate::import::SpineEntry],
+) -> io::Result<HashMap<GlobalNodeId, String>> {
+    use std::collections::HashSet;
+
+    // Collect all internal link targets
+    let mut targets: HashSet<GlobalNodeId> = HashSet::new();
+    for (_, target) in resolved.iter() {
+        if let AnchorTarget::Internal(gid) = target {
+            targets.insert(*gid);
+        }
+    }
+
+    let mut heading_slugs = HashMap::new();
+
+    // Check each target - if it's a heading, compute and store its slug
+    for entry in spine {
+        let chapter = book.load_chapter_cached(entry.id)?;
+
+        for &target in &targets {
+            if target.chapter != entry.id {
+                continue;
+            }
+
+            if let Some(node) = chapter.node(target.node) {
+                if matches!(node.role, Role::Heading(_)) {
+                    let text = collect_heading_text(&chapter, target.node);
+                    let slug = slugify(&text);
+                    if !slug.is_empty() {
+                        heading_slugs.insert(target, slug);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(heading_slugs)
+}
+
+/// Collect text content from a heading node.
+fn collect_heading_text(chapter: &crate::model::Chapter, id: NodeId) -> String {
+    let mut result = String::new();
+    collect_text_recursive(chapter, id, &mut result);
+    result
+}
+
+fn collect_text_recursive(chapter: &crate::model::Chapter, id: NodeId, result: &mut String) {
+    let Some(node) = chapter.node(id) else {
+        return;
+    };
+
+    if node.role == Role::Text && !node.text.is_empty() {
+        let text = chapter.text(node.text);
+        let has_leading = text.starts_with(char::is_whitespace);
+        let has_trailing = text.ends_with(char::is_whitespace);
+        let words: Vec<&str> = text.split_whitespace().collect();
+
+        if !words.is_empty() {
+            if has_leading && !result.is_empty() && !result.ends_with(' ') {
+                result.push(' ');
+            }
+            result.push_str(&words.join(" "));
+            if has_trailing {
+                result.push(' ');
+            }
+        } else if !text.is_empty() && !result.is_empty() && !result.ends_with(' ') {
+            result.push(' ');
+        }
+    }
+
+    for child_id in chapter.children(id) {
+        collect_text_recursive(chapter, child_id, result);
+    }
+}
+
+/// Generate a GitHub-style slug from text.
+fn slugify(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else if c.is_whitespace() || c == '-' || c == '_' {
+                '-'
+            } else {
+                // Skip other characters
+                '\0'
+            }
+        })
+        .filter(|&c| c != '\0')
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 impl Exporter for MarkdownExporter {
     fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
         let _ = self.config; // Reserved for future use (line wrapping)
+
+        // Resolve all links first to enable internal link output
+        let resolved = book.resolve_links()?;
+
         let spine: Vec<_> = book.spine().to_vec();
+
+        // Build map of heading targets → slugs for GitHub-style anchor links
+        let heading_slugs = build_heading_slugs(book, &resolved, &spine)?;
+
         let mut first_chapter = true;
 
         for entry in spine {
-            let chapter_path = book.source_id(entry.id).map(|s| s.to_string());
-            let chapter = book.load_chapter(entry.id)?;
+            let chapter = book.load_chapter_cached(entry.id)?;
 
             if !first_chapter {
                 // Chapter separator
@@ -62,6 +174,9 @@ impl Exporter for MarkdownExporter {
             let mut ctx = ExportContext {
                 writer,
                 ir: &chapter,
+                chapter_id: entry.id,
+                resolved: &resolved,
+                heading_slugs: &heading_slugs,
                 line_prefix: String::new(),
                 list_stack: Vec::new(),
                 at_line_start: true,
@@ -69,7 +184,6 @@ impl Exporter for MarkdownExporter {
                 pending_newline: false,
                 last_block_role: None,
                 footnotes: Vec::new(),
-                chapter_path,
             };
 
             // Walk children of root
@@ -120,6 +234,12 @@ struct AccumulatedNote {
 struct ExportContext<'a, W: Write> {
     writer: &'a mut W,
     ir: &'a crate::model::Chapter,
+    /// Current chapter ID for building GlobalNodeId
+    chapter_id: ChapterId,
+    /// Resolved links for internal link output
+    resolved: &'a ResolvedLinks,
+    /// Map of heading targets to their slugs for GitHub-style anchor links
+    heading_slugs: &'a HashMap<GlobalNodeId, String>,
     /// Prefix to write at the start of each new line (blockquote markers, indentation)
     line_prefix: String,
     list_stack: Vec<ListContext>,
@@ -133,9 +253,6 @@ struct ExportContext<'a, W: Write> {
     last_block_role: Option<Role>,
     /// Accumulated footnotes for end-of-document rendering
     footnotes: Vec<AccumulatedNote>,
-    /// Current chapter's source path (for flattening cross-file links)
-    #[allow(dead_code)]
-    chapter_path: Option<String>,
 }
 
 impl<W: Write> ExportContext<'_, W> {
@@ -183,6 +300,27 @@ impl<W: Write> ExportContext<'_, W> {
             }
         }
         true
+    }
+
+    /// Write an HTML anchor if this node is targeted by internal links.
+    /// Headings don't need explicit anchors - they get automatic IDs from their text.
+    fn write_anchor_if_targeted(&mut self, node_id: NodeId) -> io::Result<()> {
+        let global_id = GlobalNodeId::new(self.chapter_id, node_id);
+        if self.resolved.is_internal_target(global_id) {
+            // Skip headings - they get automatic slug-based IDs
+            if let Some(node) = self.ir.node(node_id) {
+                if matches!(node.role, Role::Heading(_)) {
+                    return Ok(());
+                }
+            }
+            self.ensure_line_started()?;
+            write!(
+                self.writer,
+                "<a id=\"c{}n{}\"></a>",
+                self.chapter_id.0, node_id.0
+            )?;
+        }
+        Ok(())
     }
 
     /// Ensure we're ready to write content (write prefix if at line start)
@@ -255,6 +393,9 @@ impl<W: Write> ExportContext<'_, W> {
         let Some(node) = self.ir.node(id) else {
             return Ok(());
         };
+
+        // Output anchor if this node is a link target
+        self.write_anchor_if_targeted(id)?;
 
         let role = node.role;
 
@@ -393,29 +534,30 @@ impl<W: Write> ExportContext<'_, W> {
             Role::Link => {
                 self.ensure_line_started()?;
 
-                let href = self.ir.semantics.href(id);
-                let link = href.map(crate::model::Link::parse);
-
-                // Determine if this is an external link that needs URL display
-                let url_to_show = match &link {
-                    Some(crate::model::Link::External(url)) => Some(url.as_str()),
-                    Some(crate::model::Link::Unknown(raw))
-                        if raw.contains("://") || raw.starts_with("mailto:") =>
-                    {
-                        Some(raw.as_str())
+                // Look up resolved target
+                let global_id = GlobalNodeId::new(self.chapter_id, id);
+                let anchor = match self.resolved.get(global_id) {
+                    Some(AnchorTarget::External(url)) => url.clone(),
+                    Some(AnchorTarget::Internal(target)) => {
+                        // Use heading slug if target is a heading, otherwise use node ID
+                        if let Some(slug) = self.heading_slugs.get(target) {
+                            format!("#{}", slug)
+                        } else {
+                            format!("#c{}n{}", target.chapter.0, target.node.0)
+                        }
                     }
-                    _ => None,
+                    Some(AnchorTarget::Chapter(chapter_id)) => {
+                        format!("#c{}", chapter_id.0)
+                    }
+                    None => {
+                        // Broken link - use raw href
+                        self.ir.semantics.href(id).unwrap_or("").to_string()
+                    }
                 };
 
-                if let Some(url) = url_to_show {
-                    // Markdown link: [styled content](url)
-                    write!(self.writer, "[")?;
-                    self.walk_children(id)?;
-                    write!(self.writer, "]({})", url)?;
-                } else {
-                    // Internal link: just output styled content
-                    self.walk_children(id)?;
-                }
+                write!(self.writer, "[")?;
+                self.walk_children(id)?;
+                write!(self.writer, "]({})", anchor)?;
             }
 
             Role::Image => {
@@ -784,10 +926,15 @@ mod tests {
     fn export_to_string(chapter: &Chapter) -> String {
         let mut output = Vec::new();
         let mut cursor = Cursor::new(&mut output);
+        let resolved = ResolvedLinks::default();
+        let heading_slugs = HashMap::new();
 
         let mut ctx = ExportContext {
             writer: &mut cursor,
             ir: chapter,
+            chapter_id: ChapterId(0),
+            resolved: &resolved,
+            heading_slugs: &heading_slugs,
             line_prefix: String::new(),
             list_stack: Vec::new(),
             at_line_start: true,
@@ -795,7 +942,6 @@ mod tests {
             pending_newline: false,
             last_block_role: None,
             footnotes: Vec::new(),
-            chapter_path: None,
         };
 
         for child_id in chapter.children(NodeId::ROOT) {

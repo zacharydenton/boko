@@ -7,7 +7,7 @@ use std::path::Path;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use boko::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, TextExporter};
+use boko::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, MarkdownExporter};
 use boko::{Book, Format, Origin, Stylesheet, compile_html};
 
 const EPUB_BYTES: &[u8] = include_bytes!("../tests/fixtures/epictetus.epub");
@@ -126,7 +126,7 @@ fn bench_write_markdown(c: &mut Criterion) {
     c.bench_function("write_markdown", |b| {
         b.iter(|| {
             let mut output = Vec::new();
-            TextExporter::new()
+            MarkdownExporter::new()
                 .export(&mut book, &mut Cursor::new(&mut output))
                 .unwrap();
         });
