@@ -20,13 +20,13 @@
 
 mod arena;
 pub mod element_ref;
-pub mod optimizer;
+pub mod optimize;
 mod transform;
 mod tree_sink;
 
 pub use arena::{ArenaDom, ArenaNode, ArenaNodeData, ArenaNodeId};
 pub use element_ref::{BokoSelectors, ElementRef};
-pub use optimizer::optimize;
+pub use optimize::optimize;
 pub use transform::user_agent_stylesheet;
 
 // Re-export style types for convenience
@@ -82,7 +82,7 @@ pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> 
     let mut chapter = transform::transform(&dom, &all_stylesheets);
 
     // Optimize: merge adjacent text nodes with identical styles
-    optimizer::optimize(&mut chapter);
+    optimize::optimize(&mut chapter);
 
     chapter
 }

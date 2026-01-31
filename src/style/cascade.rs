@@ -8,11 +8,9 @@ use std::cmp::Ordering;
 
 use selectors::context::{MatchingContext, SelectorCaches};
 
-use super::declaration::{
-    CssRule, Declaration, Origin, Specificity, Stylesheet, VerticalAlignValue,
-};
+use super::declaration::Declaration;
+use super::parse::{CssRule, Origin, Specificity, Stylesheet};
 use super::types::{ComputedStyle, StylePool};
-use super::VerticalAlign;
 use crate::dom::element_ref::ElementRef;
 
 /// A matched rule with ordering information for the cascade.
@@ -195,18 +193,7 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         Declaration::TextTransform(t) => style.text_transform = *t,
         Declaration::Hyphens(h) => style.hyphens = *h,
         Declaration::WhiteSpace(ws) => style.white_space = *ws,
-        Declaration::VerticalAlign(v) => {
-            style.vertical_align = match v {
-                VerticalAlignValue::Baseline => VerticalAlign::Baseline,
-                VerticalAlignValue::Top => VerticalAlign::Top,
-                VerticalAlignValue::Middle => VerticalAlign::Middle,
-                VerticalAlignValue::Bottom => VerticalAlign::Bottom,
-                VerticalAlignValue::TextTop => VerticalAlign::TextTop,
-                VerticalAlignValue::TextBottom => VerticalAlign::TextBottom,
-                VerticalAlignValue::Super => VerticalAlign::Super,
-                VerticalAlignValue::Sub => VerticalAlign::Sub,
-            };
-        }
+        Declaration::VerticalAlign(v) => style.vertical_align = *v,
 
         // Text decoration
         Declaration::TextDecoration(d) => {

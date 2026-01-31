@@ -149,7 +149,7 @@ impl Importer for KfxImporter {
         );
 
         // Run optimization passes (KFX builds IR directly, not through compile_html)
-        crate::dom::optimizer::optimize(&mut chapter);
+        crate::dom::optimize::optimize(&mut chapter);
 
         Ok(chapter)
     }

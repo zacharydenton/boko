@@ -8,6 +8,7 @@
 
 mod cascade;
 mod declaration;
+pub(crate) mod parse;
 mod properties;
 mod types;
 
@@ -34,10 +35,11 @@ pub use properties::{
 // Re-export core style types
 pub use types::{ComputedStyle, StyleId, StylePool};
 
-// Re-export declaration and stylesheet types
-pub use declaration::{
-    CssRule, Declaration, Origin, Specificity, Stylesheet, TextDecorationValue, VerticalAlignValue,
-};
+// Re-export declaration type (kept minimal)
+pub use declaration::Declaration;
+
+// Re-export stylesheet types from parse module
+pub use parse::{CssRule, Origin, Specificity, Stylesheet, TextDecorationValue};
 
 // Re-export cascade function
 pub use cascade::compute_styles;
