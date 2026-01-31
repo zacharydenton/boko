@@ -45,7 +45,7 @@ pub use epub::{EpubConfig, EpubExporter};
 pub use html_synth::{SynthesisResult, escape_xml, synthesize_html, synthesize_xhtml_document};
 pub use kfx::{KfxConfig, KfxExporter};
 pub use normalize::{ChapterContent, GlobalStylePool, NormalizedContent, normalize_book};
-pub use text::{TextConfig, TextExporter, TextFormat};
+pub use text::{MarkdownConfig, MarkdownExporter};
 
 /// Trait for exporting books to specific formats.
 ///

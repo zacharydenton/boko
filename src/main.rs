@@ -438,8 +438,7 @@ fn print_toc_human(entries: &[TocEntry], depth: usize) {
 
 fn parse_format(fmt: &str) -> Result<Format, String> {
     match fmt.to_lowercase().as_str() {
-        "md" | "markdown" => Ok(Format::Markdown),
-        "txt" | "text" => Ok(Format::Text),
+        "md" | "markdown" | "txt" | "text" => Ok(Format::Markdown),
         "epub" => Ok(Format::Epub),
         "azw3" => Ok(Format::Azw3),
         "mobi" => Ok(Format::Mobi),

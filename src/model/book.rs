@@ -9,7 +9,7 @@ use std::io::{self, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
-use crate::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, TextExporter, TextFormat};
+use crate::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, MarkdownExporter};
 use crate::import::{
     Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry,
 };
@@ -32,8 +32,6 @@ pub enum Format {
     Mobi,
     /// KFX format (Kindle Format 10)
     Kfx,
-    /// Plain text (export only)
-    Text,
     /// Markdown (export only)
     Markdown,
 }
@@ -205,8 +203,7 @@ impl Format {
                 "azw3" => Some(Format::Azw3),
                 "mobi" => Some(Format::Mobi),
                 "kfx" => Some(Format::Kfx),
-                "txt" => Some(Format::Text),
-                "md" => Some(Format::Markdown),
+                "md" | "txt" => Some(Format::Markdown),
                 _ => None,
             })
     }
@@ -245,10 +242,10 @@ impl Book {
             Format::Azw3 => Box::new(Azw3Importer::open(path.as_ref())?),
             Format::Mobi => Box::new(MobiImporter::open(path.as_ref())?),
             Format::Kfx => Box::new(KfxImporter::open(path.as_ref())?),
-            Format::Text | Format::Markdown => {
+            Format::Markdown => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "Text and Markdown formats are export-only",
+                    "Markdown format is export-only",
                 ));
             }
         };
@@ -268,10 +265,10 @@ impl Book {
             Format::Azw3 => Box::new(Azw3Importer::from_source(source)?),
             Format::Mobi => Box::new(MobiImporter::from_source(source)?),
             Format::Kfx => Box::new(KfxImporter::from_source(source)?),
-            Format::Text | Format::Markdown => {
+            Format::Markdown => {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "Text and Markdown formats are export-only",
+                    "Markdown format is export-only",
                 ));
             }
         };
@@ -535,12 +532,7 @@ impl Book {
         match format {
             Format::Epub => EpubExporter::new().export(self, writer),
             Format::Azw3 => Azw3Exporter::new().export(self, writer),
-            Format::Text => TextExporter::new()
-                .format(TextFormat::Plain)
-                .export(self, writer),
-            Format::Markdown => TextExporter::new()
-                .format(TextFormat::Markdown)
-                .export(self, writer),
+            Format::Markdown => MarkdownExporter::new().export(self, writer),
             Format::Kfx => KfxExporter::new().export(self, writer),
             Format::Mobi => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
