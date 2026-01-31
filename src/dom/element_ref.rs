@@ -444,7 +444,7 @@ mod tests {
     use selectors::context::SelectorCaches;
 
     use super::*;
-    use crate::compiler::tree_sink::ArenaSink;
+    use crate::dom::tree_sink::ArenaSink;
     use html5ever::driver::ParseOpts;
     use html5ever::parse_document;
     use html5ever::tendril::TendrilSink;

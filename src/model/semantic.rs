@@ -302,7 +302,7 @@ impl SemanticMap {
     /// # Example
     ///
     /// ```
-    /// use boko::ir::{SemanticMap, NodeId};
+    /// use boko::model::{SemanticMap, NodeId};
     ///
     /// let mut semantics = SemanticMap::new();
     /// let node = NodeId(1);
@@ -332,7 +332,7 @@ impl SemanticMap {
     /// # Example
     ///
     /// ```
-    /// use boko::ir::{SemanticMap, NodeId};
+    /// use boko::model::{SemanticMap, NodeId};
     ///
     /// let mut semantics = SemanticMap::new();
     /// let node = NodeId(1);

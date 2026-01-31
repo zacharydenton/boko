@@ -1,6 +1,8 @@
 //! IR node types and roles.
 
-/// Unique identifier for a node within an IRChapter.
+use crate::style::StyleId;
+
+/// Unique identifier for a node within a Chapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(pub u32);
 
@@ -93,7 +95,7 @@ pub enum Role {
 /// Range into the global text buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TextRange {
-    /// Byte offset into IRChapter.text.
+    /// Byte offset into Chapter.text.
     pub start: u32,
     /// Length in bytes.
     pub len: u32,
@@ -115,8 +117,6 @@ impl TextRange {
         self.start + self.len
     }
 }
-
-use super::style::StyleId;
 
 /// A node in the IR tree.
 #[derive(Debug, Clone)]

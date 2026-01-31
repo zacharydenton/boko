@@ -1,11 +1,11 @@
-//! Transform ArenaDom to IRChapter.
+//! Transform ArenaDom to Chapter.
 
 use html5ever::LocalName;
 
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
-use super::css::{Origin, Stylesheet, compute_styles};
 use super::element_ref::ElementRef;
-use crate::ir::{ComputedStyle, Display, IRChapter, Node, NodeId, Role, WhiteSpace};
+use crate::model::{Chapter, Node, NodeId, Role};
+use crate::style::{compute_styles, ComputedStyle, Display, Origin, Stylesheet, WhiteSpace};
 
 /// User agent stylesheet (browser defaults).
 const UA_CSS: &str = include_str!("data/styles.css");
@@ -93,8 +93,8 @@ fn map_element_to_role(local_name: &LocalName) -> Role {
 struct TransformContext<'a> {
     dom: &'a ArenaDom,
     stylesheets: &'a [(Stylesheet, Origin)],
-    chapter: IRChapter,
-    /// Map from ArenaNodeId to IRChapter NodeId
+    chapter: Chapter,
+    /// Map from ArenaNodeId to Chapter NodeId
     node_map: std::collections::HashMap<ArenaNodeId, NodeId>,
 }
 
@@ -103,13 +103,13 @@ impl<'a> TransformContext<'a> {
         Self {
             dom,
             stylesheets,
-            chapter: IRChapter::new(),
+            chapter: Chapter::new(),
             node_map: std::collections::HashMap::new(),
         }
     }
 
     /// Transform the DOM to IR.
-    fn transform(mut self) -> IRChapter {
+    fn transform(mut self) -> Chapter {
         // Find the body element, or use document root
         let body = self.dom.find_by_tag("body").unwrap_or(self.dom.document());
 
@@ -310,8 +310,7 @@ impl<'a> TransformContext<'a> {
                             }
                         }
                         "colspan" if matches!(name.local.as_ref(), "td" | "th") => {
-                            if let Ok(span) = attr.value.parse::<u32>() {
-                                self.chapter.semantics.set_col_span(ir_id, span);
+                            if let Ok(span) = attr.value.parse::<u32>() {                                self.chapter.semantics.set_col_span(ir_id, span);
                             }
                         }
                         // Extract language from class for code elements
@@ -347,8 +346,8 @@ impl<'a> TransformContext<'a> {
     }
 }
 
-/// Transform an ArenaDom to IRChapter.
-pub fn transform(dom: &ArenaDom, stylesheets: &[(Stylesheet, Origin)]) -> IRChapter {
+/// Transform an ArenaDom to Chapter.
+pub fn transform(dom: &ArenaDom, stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
     let ctx = TransformContext::new(dom, stylesheets);
     ctx.transform()
 }
@@ -384,7 +383,7 @@ mod tests {
     use html5ever::tendril::TendrilSink;
 
     use super::*;
-    use crate::compiler::tree_sink::ArenaSink;
+    use crate::dom::tree_sink::ArenaSink;
 
     fn parse_html(html: &str) -> ArenaDom {
         let sink = ArenaSink::new();

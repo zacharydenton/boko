@@ -3,7 +3,7 @@
 //! This module provides a representation of CSS @font-face rules,
 //! which map font family names to font files with specific weight/style combinations.
 
-use super::{FontStyle, FontWeight};
+use crate::style::{FontStyle, FontWeight};
 
 /// A parsed @font-face rule.
 ///

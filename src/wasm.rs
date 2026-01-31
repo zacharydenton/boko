@@ -5,7 +5,7 @@
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
-use crate::book::{Book, Format};
+use crate::model::{Book, Format};
 
 /// Initialize panic hook for better error messages in the browser console.
 #[wasm_bindgen(start)]

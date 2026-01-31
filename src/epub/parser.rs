@@ -6,7 +6,7 @@ use std::io;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-use crate::book::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
+use crate::model::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
 
 /// Parsed OPF package data.
 pub struct OpfData {

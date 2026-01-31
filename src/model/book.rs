@@ -14,7 +14,7 @@ use crate::import::{
     Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry,
 };
 use crate::io::MemorySource;
-use crate::ir::IRChapter;
+use crate::model::Chapter;
 
 // ============================================================================
 // Data Types
@@ -188,7 +188,7 @@ pub struct Book {
     backend: Box<dyn Importer>,
     /// Cache of parsed IR chapters to avoid re-parsing during normalized export.
     /// Uses RwLock for thread-safe access and Arc for cheap cloning.
-    ir_cache: Arc<RwLock<BTreeMap<ChapterId, Arc<IRChapter>>>>,
+    ir_cache: Arc<RwLock<BTreeMap<ChapterId, Arc<Chapter>>>>,
 }
 
 impl Format {
@@ -332,7 +332,7 @@ impl Book {
     /// }
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
+    pub fn load_chapter(&mut self, id: ChapterId) -> io::Result<Chapter> {
         self.backend.load_chapter(id)
     }
 
@@ -340,7 +340,7 @@ impl Book {
     ///
     /// This method caches parsed IR chapters to avoid re-parsing when the same
     /// chapter is loaded multiple times (e.g., during normalized export).
-    /// Returns an `Arc<IRChapter>` for cheap cloning and thread-safe sharing.
+    /// Returns an `Arc<Chapter>` for cheap cloning and thread-safe sharing.
     ///
     /// # Example
     ///
@@ -357,7 +357,7 @@ impl Book {
     /// let chapter2 = book.load_chapter_cached(spine[0].id)?;
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn load_chapter_cached(&mut self, id: ChapterId) -> io::Result<Arc<IRChapter>> {
+    pub fn load_chapter_cached(&mut self, id: ChapterId) -> io::Result<Arc<Chapter>> {
         // Fast path: check read lock first
         {
             let cache = self
@@ -409,7 +409,7 @@ impl Book {
     /// Returns font-face rules that map font family names to font files.
     /// Used by KFX export to create font entities linking font-family
     /// names to resource locations.
-    pub fn font_faces(&mut self) -> Vec<crate::ir::FontFace> {
+    pub fn font_faces(&mut self) -> Vec<crate::model::FontFace> {
         self.backend.font_faces()
     }
 

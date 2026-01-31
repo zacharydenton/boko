@@ -6,9 +6,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::book::{LandmarkType, TocEntry};
 use crate::import::ChapterId;
-use crate::ir::{NodeId, StyleId};
+use crate::model::{LandmarkType, NodeId, TocEntry};
+use crate::style::StyleId;
 
 use super::style_registry::StyleRegistry;
 use super::symbols::KFX_SYMBOL_TABLE_SIZE;
@@ -813,7 +813,7 @@ impl ExportContext {
     /// Converts the IR ComputedStyle to KFX format via the schema-driven
     /// StyleBuilder pipeline, then deduplicates via the StyleRegistry.
     /// Returns the symbol ID to use in storyline elements.
-    pub fn register_ir_style(&mut self, ir_style: &crate::ir::ComputedStyle) -> u64 {
+    pub fn register_ir_style(&mut self, ir_style: &crate::style::ComputedStyle) -> u64 {
         // Use the schema-driven pipeline (single source of truth)
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
@@ -830,7 +830,7 @@ impl ExportContext {
     pub fn register_style_id(
         &mut self,
         style_id: StyleId,
-        style_pool: &crate::ir::StylePool,
+        style_pool: &crate::style::StylePool,
     ) -> u64 {
         if style_id == StyleId::DEFAULT {
             return self.default_style_symbol;

@@ -16,9 +16,8 @@ pub use mobi::MobiImporter;
 
 use std::path::{Path, PathBuf};
 
-use crate::book::{Landmark, Metadata, TocEntry};
-use crate::compiler::{Origin, Stylesheet, compile_html_bytes, extract_stylesheets};
-use crate::ir::{FontFace, IRChapter};
+use crate::dom::{compile_html_bytes, extract_stylesheets, Origin, Stylesheet};
+use crate::model::{Chapter, FontFace, Landmark, Metadata, TocEntry};
 
 /// Unique identifier for a chapter/spine item within a book.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -69,7 +68,7 @@ pub trait Importer: Send + Sync {
     /// 4. Compiles HTML + CSS to IR via `compile_html()`
     ///
     /// Implementations may override for format-specific optimizations.
-    fn load_chapter(&mut self, id: ChapterId) -> std::io::Result<IRChapter> {
+    fn load_chapter(&mut self, id: ChapterId) -> std::io::Result<Chapter> {
         // Load raw HTML
         let html_bytes = self.load_raw(id)?;
         let html_str = String::from_utf8_lossy(&html_bytes);
@@ -230,7 +229,7 @@ fn resolve_relative_path(base: &str, relative: &str) -> PathBuf {
 /// This canonicalizes paths like `../images/photo.jpg` relative to the
 /// chapter's source path (e.g., `OEBPS/text/ch1.html`) to absolute archive
 /// paths (e.g., `OEBPS/images/photo.jpg`).
-fn resolve_semantic_paths(chapter: &mut IRChapter, base_path: &str) {
+fn resolve_semantic_paths(chapter: &mut Chapter, base_path: &str) {
     chapter.semantics.resolve_paths(|path| {
         // Skip external URLs and data URIs
         if path.contains("://") || path.starts_with("data:") {

@@ -12,7 +12,7 @@
 //! not typed fields like `link_target` or `resource`. This keeps the token
 //! layer format-agnostic - all format-specific logic lives in the schema.
 
-use crate::ir::Role;
+use crate::model::Role;
 use crate::kfx::schema::SemanticTarget;
 use std::collections::HashMap;
 

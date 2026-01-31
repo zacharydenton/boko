@@ -28,9 +28,9 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 
-use crate::book::Book;
 use crate::import::ChapterId;
-use crate::ir::{IRChapter, NodeId, Role, StyleId, StylePool};
+use crate::model::{Book, Chapter, NodeId, Role};
+use crate::style::{StyleId, StylePool};
 
 use super::{generate_css, synthesize_xhtml_document};
 
@@ -73,7 +73,7 @@ impl GlobalStylePool {
     ///
     /// * `chapter_idx` - Index of the chapter (used for remap lookups)
     /// * `chapter` - The IR chapter containing styles to merge
-    pub fn merge(&mut self, chapter_idx: usize, chapter: &IRChapter) {
+    pub fn merge(&mut self, chapter_idx: usize, chapter: &Chapter) {
         // Ensure remaps vec is large enough
         while self.remaps.len() <= chapter_idx {
             self.remaps.push(HashMap::new());
@@ -169,7 +169,7 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
     // =========================================================================
 
     let mut global_styles = GlobalStylePool::new();
-    let mut ir_chapters: Vec<(ChapterId, String, Arc<IRChapter>)> = Vec::with_capacity(spine.len());
+    let mut ir_chapters: Vec<(ChapterId, String, Arc<Chapter>)> = Vec::with_capacity(spine.len());
 
     for (idx, entry) in spine.iter().enumerate() {
         let source_path = book
@@ -235,7 +235,7 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
 }
 
 /// Extract a title from the first heading in a chapter.
-fn extract_chapter_title(ir: &IRChapter) -> Option<String> {
+fn extract_chapter_title(ir: &Chapter) -> Option<String> {
     for node_id in ir.iter_dfs() {
         if let Some(node) = ir.node(node_id)
             && matches!(node.role, Role::Heading(_))
@@ -252,7 +252,7 @@ fn extract_chapter_title(ir: &IRChapter) -> Option<String> {
 }
 
 /// Recursively collect text content from a node and its descendants.
-fn collect_text_recursive(ir: &IRChapter, node_id: NodeId, buf: &mut String) {
+fn collect_text_recursive(ir: &Chapter, node_id: NodeId, buf: &mut String) {
     if let Some(node) = ir.node(node_id)
         && node.role == Role::Text
     {
@@ -268,7 +268,8 @@ fn collect_text_recursive(ir: &IRChapter, node_id: NodeId, buf: &mut String) {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::ir::{ComputedStyle, FontWeight, Node};
+    use crate::model::Node;
+    use crate::style::{ComputedStyle, FontWeight};
 
     #[test]
     fn test_global_style_pool_new() {
@@ -282,13 +283,13 @@ mod tests {
         let mut global = GlobalStylePool::new();
 
         // Create first chapter with a bold style
-        let mut chapter1 = IRChapter::new();
+        let mut chapter1 = Chapter::new();
         let mut bold = ComputedStyle::default();
         bold.font_weight = FontWeight::BOLD;
         let bold_id = chapter1.styles.intern(bold.clone());
 
         // Create second chapter with the same bold style
-        let mut chapter2 = IRChapter::new();
+        let mut chapter2 = Chapter::new();
         let bold_id2 = chapter2.styles.intern(bold);
 
         // Merge both chapters
@@ -317,7 +318,7 @@ mod tests {
     fn test_global_style_pool_used_styles() {
         let mut global = GlobalStylePool::new();
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
         let mut bold = ComputedStyle::default();
         bold.font_weight = FontWeight::BOLD;
         chapter.styles.intern(bold);
@@ -330,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_extract_chapter_title() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Add a heading with text
         let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
@@ -348,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_extract_chapter_title_no_heading() {
-        let chapter = IRChapter::new();
+        let chapter = Chapter::new();
         let title = extract_chapter_title(&chapter);
         assert_eq!(title, None);
     }

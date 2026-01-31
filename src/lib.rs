@@ -34,12 +34,12 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
-pub mod book;
-pub mod compiler;
+pub mod dom;
 pub mod export;
 pub mod import;
 pub mod io;
-pub mod ir;
+pub mod model;
+pub mod style;
 
 pub mod epub;
 pub mod kfx;
@@ -50,13 +50,16 @@ pub(crate) mod util;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-// Primary exports
-pub use book::{Book, Format, Metadata, Resource, TocEntry};
-pub use compiler::{Origin, Stylesheet, compile_html};
+// Primary exports from model
+pub use model::{Book, Chapter, Format, Metadata, Node, NodeId, Resource, Role, SemanticMap, TextRange, TocEntry};
+
+// Primary exports from style
+pub use style::{ComputedStyle, ListStyleType, Origin, StyleId, StylePool, Stylesheet, ToCss};
+
+// Primary exports from dom
+pub use dom::compile_html;
+
+// Primary exports from other modules
 pub use export::{Azw3Exporter, EpubExporter, Exporter, TextConfig, TextExporter, TextFormat};
 pub use import::{ChapterId, Importer, SpineEntry};
 pub use io::{ByteSource, FileSource};
-pub use ir::{
-    ComputedStyle, IRChapter, ListStyleType, Node, NodeId, Role, SemanticMap, StyleId, StylePool,
-    TextRange, ToCss,
-};

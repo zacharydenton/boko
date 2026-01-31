@@ -17,7 +17,7 @@
 //! 4. Extract ALL attributes using schema's AttrRules
 //! 5. Apply transformers to convert values
 
-use crate::ir::{IRChapter, Node, NodeId};
+use crate::model::{Chapter, Node, NodeId};
 use crate::kfx::container::get_field;
 use crate::kfx::ion::IonValue;
 use crate::kfx::schema::{SemanticTarget, schema};
@@ -362,11 +362,11 @@ pub fn build_ir_from_tokens<F>(
     doc_symbols: &[String],
     styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
     mut content_lookup: F,
-) -> IRChapter
+) -> Chapter
 where
     F: FnMut(&str, usize) -> Option<String>,
 {
-    let mut chapter = IRChapter::new();
+    let mut chapter = Chapter::new();
     let mut stack: Vec<NodeId> = vec![chapter.root()];
 
     for token in tokens {
@@ -444,7 +444,7 @@ where
 /// This is the **only place** that knows about SemanticTarget → IR mapping.
 /// It's a simple dispatcher, not format-specific logic.
 fn apply_semantics_to_node(
-    chapter: &mut IRChapter,
+    chapter: &mut Chapter,
     node_id: NodeId,
     semantics: &HashMap<SemanticTarget, String>,
 ) {
@@ -465,7 +465,7 @@ fn apply_semantics_to_node(
 ///
 /// This is schema-driven: iterates schema rules with KFX symbol mappings,
 /// applies inverse transforms to convert KFX values back to IR values.
-fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
+fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::style::ComputedStyle {
     use crate::kfx::style_schema::{StyleSchema, import_kfx_style};
 
     let schema = StyleSchema::standard();
@@ -478,7 +478,7 @@ fn kfx_style_to_ir(props: &[(u64, IonValue)]) -> crate::ir::ComputedStyle {
 /// - `doc_symbols`: resolves style symbol IDs to style names
 /// - `styles`: maps style names to KFX style properties
 fn build_text_with_spans(
-    chapter: &mut IRChapter,
+    chapter: &mut Chapter,
     parent: NodeId,
     text: &str,
     spans: &[SpanStart],
@@ -503,7 +503,7 @@ fn build_text_with_spans(
     });
 
     // Helper to create a span node with style and semantics applied
-    let create_span_node = |chapter: &mut IRChapter, span: &SpanStart| -> NodeId {
+    let create_span_node = |chapter: &mut Chapter, span: &SpanStart| -> NodeId {
         let span_node = chapter.alloc_node(Node::new(span.role));
 
         // Apply style from the styles map (if present)
@@ -641,7 +641,7 @@ pub fn parse_storyline_to_ir<F>(
     anchors: Option<&HashMap<String, String>>,
     styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
     content_lookup: F,
-) -> IRChapter
+) -> Chapter
 where
     F: FnMut(&str, usize) -> Option<String>,
 {
@@ -653,8 +653,9 @@ where
 // EXPORT: IR → TokenStream → Ion
 // ============================================================================
 
-use crate::ir::{BorderStyle, ComputedStyle, Length, Role};
 use crate::kfx::context::ExportContext;
+use crate::model::Role;
+use crate::style::{BorderStyle, ComputedStyle, Length};
 
 /// Check if a style has borders that require container wrapping in KFX.
 ///
@@ -676,7 +677,7 @@ fn needs_container_wrapper(style: &ComputedStyle) -> bool {
 /// Convert an IR chapter to a TokenStream.
 ///
 /// This is the first stage of export: walking the IR tree and emitting tokens.
-pub fn ir_to_tokens(chapter: &IRChapter, ctx: &mut ExportContext) -> TokenStream {
+pub fn ir_to_tokens(chapter: &Chapter, ctx: &mut ExportContext) -> TokenStream {
     let sch = schema();
     let mut stream = TokenStream::new();
 
@@ -690,7 +691,7 @@ pub fn ir_to_tokens(chapter: &IRChapter, ctx: &mut ExportContext) -> TokenStream
 /// Inline roles (Link, Inline) are emitted as StartSpan/EndSpan instead of
 /// StartElement/EndElement, enabling proper style_events generation.
 fn walk_node_for_export(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     node_id: NodeId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
@@ -849,7 +850,7 @@ struct InlineState {
     /// Active link target (from Link ancestor), as anchor symbol string
     link_to: Option<String>,
     /// Active style (innermost wins)
-    style: Option<crate::ir::StyleId>,
+    style: Option<crate::style::StyleId>,
     /// Active epub:type for noteref detection
     epub_type: Option<String>,
     /// Active element ID (for anchor creation)
@@ -869,7 +870,7 @@ struct FlatSegment {
 /// - Accumulate state (link_to, style) as we go down
 /// - Only emit segments when we hit Text leaves
 fn flatten_inline_content(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     node_id: NodeId,
     state: InlineState,
     segments: &mut Vec<FlatSegment>,
@@ -950,7 +951,7 @@ fn flatten_inline_content(
 /// This emits the text and creates SpanStart markers that will become style_events.
 fn emit_flattened_segments(
     segments: Vec<FlatSegment>,
-    chapter: &IRChapter,
+    chapter: &Chapter,
     _sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
@@ -1023,7 +1024,7 @@ fn emit_flattened_segments(
 ///     Paragraph (dd content)
 ///       Link
 fn emit_definition_list(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     node_id: NodeId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
@@ -1128,7 +1129,7 @@ fn emit_definition_list(
 /// This replaces the old StartSpan/EndSpan nesting approach with proper
 /// "Push Down, Emit at Bottom" that produces non-overlapping style_events.
 fn emit_inline_content_flat(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     node_id: NodeId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
@@ -1717,7 +1718,7 @@ impl IonBuilder {
 ///
 /// **Note**: This is now internal - use `build_chapter_entities` for the full
 /// three-entity architecture (Content, Storyline, Section).
-pub fn build_storyline_ion(chapter: &IRChapter, ctx: &mut ExportContext) -> IonValue {
+pub fn build_storyline_ion(chapter: &Chapter, ctx: &mut ExportContext) -> IonValue {
     let tokens = ir_to_tokens(chapter, ctx);
     tokens_to_ion(&tokens, ctx)
 }
@@ -1725,7 +1726,7 @@ pub fn build_storyline_ion(chapter: &IRChapter, ctx: &mut ExportContext) -> IonV
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Role;
+    use crate::model::Role;
 
     #[test]
     fn test_tokenize_creates_proper_structure() {
@@ -1907,7 +1908,7 @@ mod tests {
 
     #[test]
     fn test_apply_semantics_generic() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
         let node = Node::new(Role::Image);
         let node_id = chapter.alloc_node(node);
 
@@ -1927,7 +1928,7 @@ mod tests {
 
     #[test]
     fn test_ir_to_tokens_basic() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a text node with content
         let text_range = chapter.append_text("Hello");
@@ -1945,7 +1946,7 @@ mod tests {
 
     #[test]
     fn test_build_storyline_ion() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a paragraph with a text child
         let para = Node::new(Role::Paragraph);
@@ -1983,7 +1984,7 @@ mod tests {
     fn test_heading_level_export() {
         use crate::kfx::symbols::KfxSymbol;
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create an H2 heading
         let h2 = Node::new(Role::Heading(2));
@@ -2065,7 +2066,7 @@ mod tests {
     #[test]
     fn test_layout_hints_for_heading() {
         // Headings should emit layout_hints: [treat_as_title]
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
         let text_range = chapter.append_text("Chapter 1");
         let mut text_node = Node::new(Role::Text);
         text_node.text = text_range;
@@ -2131,7 +2132,7 @@ mod tests {
     #[test]
     fn test_layout_hints_for_figure() {
         // Figure elements should emit layout_hints: [figure]
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let figure = Node::new(Role::Figure);
         let figure_id = chapter.alloc_node(figure);
@@ -2193,7 +2194,7 @@ mod tests {
     fn test_yj_classification_for_footnote_popup() {
         // Elements with epub:type="endnote" or "footnote" should emit
         // yj.classification: yj.endnote ($615: $619) for popup support
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a list item that represents an endnote
         let text_range = chapter.append_text("This is footnote content");
@@ -2258,9 +2259,9 @@ mod tests {
     fn test_heading_with_border_exports_as_container() {
         // Test that elements with borders are wrapped in type: container
         // with nested type: text for KFX border rendering
-        use crate::ir::{BorderStyle, ComputedStyle, Length};
+        use crate::style::{BorderStyle, ComputedStyle, Length};
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a heading with border style
         let mut style = ComputedStyle::default();
@@ -2353,7 +2354,7 @@ mod tests {
     #[test]
     fn test_heading_without_border_exports_as_text() {
         // Test that elements without borders use normal type: text
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a heading without border style
         let h1 = Node::new(Role::Heading(1));
@@ -2558,7 +2559,7 @@ mod tests {
         // Given: Link > Inline > Text("1.") + Text("Easy...")
         // Expect: Two non-overlapping segments, each with correct accumulated state.
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create distinct styles (use different margin values to distinguish)
         let link_style = chapter.styles.intern(ComputedStyle::default());
@@ -2632,9 +2633,9 @@ mod tests {
         // use the outer container's ID, not the inner text element's ID.
         // This is critical for TOC navigation to work correctly.
         use crate::import::ChapterId;
-        use crate::ir::{BorderStyle, ComputedStyle, Length};
+        use crate::style::{BorderStyle, ComputedStyle, Length};
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a heading with border style (triggers container wrapper)
         let mut style = ComputedStyle::default();

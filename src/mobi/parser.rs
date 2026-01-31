@@ -303,7 +303,7 @@ pub fn is_metadata_record(data: &[u8]) -> bool {
 }
 
 /// A simple TOC node for intermediate representation.
-/// Importers convert this to `crate::book::TocEntry`.
+/// Importers convert this to `crate::model::TocEntry`.
 #[derive(Debug, Clone)]
 pub struct TocNode {
     pub title: String,

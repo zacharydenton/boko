@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use boko::compiler::{compile_html, Stylesheet, Origin};
+//! use boko::dom::{compile_html, Stylesheet, Origin};
 //!
 //! let html = "<html><body><p>Hello, World!</p></body></html>";
 //! let css = "p { color: blue; }";
@@ -19,23 +19,24 @@
 //! ```
 
 mod arena;
-mod css;
-mod element_ref;
+pub mod element_ref;
 pub mod optimizer;
 mod transform;
 mod tree_sink;
 
 pub use arena::{ArenaDom, ArenaNode, ArenaNodeData, ArenaNodeId};
-pub use css::{Declaration, Origin, Specificity, Stylesheet};
 pub use element_ref::{BokoSelectors, ElementRef};
 pub use optimizer::optimize;
 pub use transform::user_agent_stylesheet;
+
+// Re-export style types for convenience
+pub use crate::style::{Declaration, Origin, Specificity, Stylesheet};
 
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
 
-use crate::ir::IRChapter;
+use crate::model::Chapter;
 use tree_sink::ArenaSink;
 
 /// Compile HTML content to IR.
@@ -49,12 +50,12 @@ use tree_sink::ArenaSink;
 ///
 /// # Returns
 ///
-/// An `IRChapter` containing the normalized content tree.
+/// A `Chapter` containing the normalized content tree.
 ///
 /// # Example
 ///
 /// ```
-/// use boko::compiler::{compile_html, Stylesheet, Origin};
+/// use boko::dom::{compile_html, Stylesheet, Origin};
 ///
 /// let html = "<p class='intro'>Welcome!</p>";
 /// let css = ".intro { font-weight: bold; }";
@@ -62,7 +63,7 @@ use tree_sink::ArenaSink;
 /// let author = Stylesheet::parse(css);
 /// let chapter = compile_html(html, &[(author, Origin::Author)]);
 /// ```
-pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> IRChapter {
+pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
     // Parse HTML to ArenaDom
     let sink = ArenaSink::new();
     let result = parse_document(sink, ParseOpts::default())
@@ -91,7 +92,7 @@ pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> 
 /// Convenience wrapper that handles byte-to-string conversion with proper
 /// encoding detection. Supports UTF-8, Windows-1252, and other encodings
 /// via the XML declaration.
-pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin)]) -> IRChapter {
+pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
     // Extract encoding from XML declaration if present
     let hint_encoding = crate::util::extract_xml_encoding(html);
 
@@ -179,7 +180,7 @@ pub fn extract_stylesheets(html: &str) -> (Vec<String>, Vec<String>) {
 /// # Examples
 ///
 /// ```
-/// use boko::compiler::resolve_path;
+/// use boko::dom::resolve_path;
 ///
 /// assert_eq!(
 ///     resolve_path("OEBPS/text/ch1.html", "../images/logo.png"),
@@ -247,7 +248,7 @@ pub fn resolve_path(base: &str, rel: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Role;
+    use crate::model::Role;
 
     #[test]
     fn test_compile_simple_html() {
@@ -280,7 +281,7 @@ mod tests {
             let node = chapter.node(id).unwrap();
             if node.role == Role::Paragraph {
                 let style = chapter.styles.get(node.style).unwrap();
-                if style.font_weight == crate::ir::FontWeight::BOLD {
+                if style.font_weight == crate::style::FontWeight::BOLD {
                     return; // Found the styled paragraph
                 }
             }

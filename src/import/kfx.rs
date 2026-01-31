@@ -10,10 +10,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::book::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
+use crate::model::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
-use crate::ir::IRChapter;
+use crate::model::Chapter;
 use crate::kfx::container::{
     self, ContainerError, EntityLoc, extract_doc_symbols, get_field, get_symbol_text,
     parse_container_header, parse_container_info, parse_index_table, skip_enty_header,
@@ -117,7 +117,7 @@ impl Importer for KfxImporter {
         self.section_names.get(id.0 as usize).map(|s| s.as_str())
     }
 
-    fn load_chapter(&mut self, id: ChapterId) -> io::Result<IRChapter> {
+    fn load_chapter(&mut self, id: ChapterId) -> io::Result<Chapter> {
         // Ensure anchors and styles are indexed
         self.index_anchors()?;
         self.index_styles()?;
@@ -149,7 +149,7 @@ impl Importer for KfxImporter {
         );
 
         // Run optimization passes (KFX builds IR directly, not through compile_html)
-        crate::compiler::optimizer::optimize(&mut chapter);
+        crate::dom::optimizer::optimize(&mut chapter);
 
         Ok(chapter)
     }

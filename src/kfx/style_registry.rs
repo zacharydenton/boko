@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use crate::ir as ir_style;
+use crate::style as ir_style;
 use crate::kfx::ion::IonValue;
 use crate::kfx::style_schema::{KfxValue, StyleContext, StyleSchema, extract_ir_field};
 use crate::kfx::symbols::KfxSymbol;

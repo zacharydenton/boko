@@ -4,7 +4,7 @@
 //! categorised_metadata format. Adding new metadata fields requires only
 //! updating the schema, not changing export logic.
 
-use crate::book::Metadata;
+use crate::model::Metadata;
 
 /// Category for KFX metadata entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

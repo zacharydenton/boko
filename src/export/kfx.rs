@@ -6,10 +6,9 @@
 use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 
-use crate::book::{Book, LandmarkType};
 use crate::export::Exporter;
 use crate::import::ChapterId;
-use crate::ir::{IRChapter, NodeId, Role};
+use crate::model::{Book, Chapter, LandmarkType, NodeId, Role};
 use crate::kfx::auxiliary::build_auxiliary_data_fragment;
 use crate::kfx::context::{ExportContext, LandmarkTarget};
 use crate::kfx::cover::{
@@ -430,7 +429,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 ///
 /// NO ION GENERATION happens here.
 fn survey_chapter(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     chapter_id: ChapterId,
     source_path: &str,
     ctx: &mut ExportContext,
@@ -446,7 +445,7 @@ fn survey_chapter(
 }
 
 /// Recursively survey a node and its children.
-fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
+fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportContext) {
     let node = match chapter.node(node_id) {
         Some(n) => n,
         None => return,
@@ -502,7 +501,7 @@ fn survey_node(chapter: &IRChapter, node_id: NodeId, ctx: &mut ExportContext) {
 /// (via resolve_semantic_paths in import/mod.rs), so no additional
 /// path resolution is needed here.
 fn collect_needed_anchors_from_chapter(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     node_id: NodeId,
     ctx: &mut ExportContext,
 ) {
@@ -1062,7 +1061,7 @@ fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<IonValue> {
 /// TOC entries point to anchor entity IDs (with offset 0) rather than
 /// directly to content fragment IDs. This matches the reference KFX format.
 fn build_toc_entries_with_positions(
-    entries: &[crate::book::TocEntry],
+    entries: &[crate::model::TocEntry],
     ctx: &ExportContext,
 ) -> Vec<IonValue> {
     entries
@@ -1123,7 +1122,7 @@ fn resolve_toc_position(href: &str, ctx: &ExportContext) -> Option<(u64, usize)>
 ///
 /// Returns (section, storyline, Option<content>) so they can be grouped by type.
 fn build_chapter_entities_grouped(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     chapter_id: ChapterId,
     section_name: &str,
     ctx: &mut ExportContext,
@@ -1263,8 +1262,8 @@ fn build_chapter_entities_grouped(
 ///
 /// Cover pages have a flat structure with just the image directly in content_list,
 /// no container wrapper. Structure: [{ type: image, resource_name, style }]
-fn build_cover_storyline(chapter: &IRChapter, ctx: &mut ExportContext) -> IonValue {
-    use crate::ir::Role;
+fn build_cover_storyline(chapter: &Chapter, ctx: &mut ExportContext) -> IonValue {
+    use crate::model::Role;
 
     // Find the image node
     for node_id in chapter.iter_dfs() {
@@ -1328,7 +1327,7 @@ fn build_cover_storyline(chapter: &IRChapter, ctx: &mut ExportContext) -> IonVal
 /// Element semantics are handled by the Schema.
 #[allow(dead_code)]
 fn build_chapter_entities(
-    chapter: &IRChapter,
+    chapter: &Chapter,
     chapter_id: ChapterId,
     section_name: &str,
     ctx: &mut ExportContext,
@@ -1569,7 +1568,7 @@ fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> 
 /// Font entities link font_family names (e.g., "cover-Ubuntu") to resource locations.
 /// This enables Kindle to properly render custom fonts.
 fn build_font_fragments(book: &mut Book, ctx: &mut ExportContext) -> Vec<KfxFragment> {
-    use crate::ir::{FontStyle, FontWeight};
+    use crate::style::{FontStyle, FontWeight};
 
     let mut fragments = Vec::new();
     let font_faces = book.font_faces();
@@ -2690,7 +2689,7 @@ mod tests {
 #[allow(clippy::vec_init_then_push, clippy::needless_range_loop)]
 mod entity_structure_tests {
     use super::*;
-    use crate::book::Book;
+    use crate::model::Book;
     use crate::kfx::fragment::FragmentData;
 
     #[test]
@@ -2877,7 +2876,7 @@ mod entity_structure_tests {
 #[cfg(test)]
 mod section_type_tests {
     use super::*;
-    use crate::book::Book;
+    use crate::model::Book;
     use crate::kfx::cover::{needs_standalone_cover, normalize_cover_path};
     use crate::kfx::fragment::FragmentData;
 
@@ -2956,7 +2955,7 @@ mod section_type_tests {
 #[cfg(test)]
 mod resource_export_tests {
     use super::*;
-    use crate::book::Book;
+    use crate::model::Book;
 
     #[test]
     fn test_kfx_export_includes_images() {
@@ -3005,7 +3004,7 @@ mod resource_export_tests {
 #[cfg(test)]
 mod anchor_resolution_tests {
     use super::*;
-    use crate::book::Book;
+    use crate::model::Book;
 
     #[test]
     fn test_cross_file_anchor_resolution_flow() {

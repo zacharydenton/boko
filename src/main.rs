@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use boko::{Book, ChapterId, Format, IRChapter, NodeId, Role, ToCss, TocEntry};
+use boko::{Book, ChapterId, Chapter, Format, NodeId, Role, ToCss, TocEntry};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -683,7 +683,7 @@ fn dump_ir_json(book: &mut Book, path: &str, opts: &DumpOptions) -> Result<(), S
     Ok(())
 }
 
-fn dump_node_json(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: usize) -> NodeDump {
+fn dump_node_json(chapter: &Chapter, id: NodeId, opts: &DumpOptions, depth: usize) -> NodeDump {
     let node = chapter.node(id).unwrap();
 
     let text = if !opts.structure && node.role == Role::Text && !node.text.is_empty() {
@@ -782,7 +782,7 @@ fn dump_ir_tree(book: &mut Book, path: &str, opts: &DumpOptions) -> Result<(), S
     Ok(())
 }
 
-fn dump_node_tree(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: usize) {
+fn dump_node_tree(chapter: &Chapter, id: NodeId, opts: &DumpOptions, depth: usize) {
     // Check depth limit
     if let Some(max_depth) = opts.depth
         && depth > max_depth
@@ -840,7 +840,7 @@ fn dump_node_tree(chapter: &IRChapter, id: NodeId, opts: &DumpOptions, depth: us
     }
 }
 
-fn collect_styles(chapter: &IRChapter) -> Vec<StyleInfo> {
+fn collect_styles(chapter: &Chapter) -> Vec<StyleInfo> {
     chapter
         .styles
         .iter()

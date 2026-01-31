@@ -14,7 +14,7 @@
 //! 4. **Wrap Mixed Content** - Normalize inline/block siblings
 //! 5. **Pruner** - Remove empty containers (cascading)
 
-use crate::ir::{IRChapter, Node, NodeId, Role};
+use crate::model::{Chapter, Node, NodeId, Role};
 
 /// Run all optimization passes on a chapter.
 ///
@@ -25,7 +25,7 @@ use crate::ir::{IRChapter, Node, NodeId, Role};
 /// 4. Wrap mixed content normalizes inline/block siblings
 /// 5. Normalize table structure (add thead/tbody wrappers)
 /// 6. Pruner removes any containers emptied by previous passes
-pub fn optimize(chapter: &mut IRChapter) {
+pub fn optimize(chapter: &mut Chapter) {
     vacuum(chapter);
     merge_adjacent_spans(chapter);
     fuse_lists(chapter);
@@ -53,13 +53,13 @@ pub fn optimize(chapter: &mut IRChapter) {
 /// - Role is Text
 /// - Content is whitespace-only
 /// - Parent is a block container (not inline, not preformatted)
-fn vacuum(chapter: &mut IRChapter) {
+fn vacuum(chapter: &mut Chapter) {
     if chapter.node_count() > 0 {
         vacuum_children(chapter, NodeId::ROOT);
     }
 }
 
-fn vacuum_children(chapter: &mut IRChapter, parent_id: NodeId) {
+fn vacuum_children(chapter: &mut Chapter, parent_id: NodeId) {
     // 1. Recurse into children first (bottom-up)
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
     while let Some(child_id) = child_opt {
@@ -103,7 +103,7 @@ fn vacuum_children(chapter: &mut IRChapter, parent_id: NodeId) {
 }
 
 /// Check if a node should be vacuumed (removed as structural whitespace).
-fn should_vacuum(chapter: &IRChapter, node_id: NodeId) -> bool {
+fn should_vacuum(chapter: &Chapter, node_id: NodeId) -> bool {
     let node = match chapter.node(node_id) {
         Some(n) => n,
         None => return false,
@@ -188,13 +188,13 @@ fn is_structural_container(role: Option<Role>) -> bool {
 /// ```text
 /// **THE **
 /// ```
-fn merge_adjacent_spans(chapter: &mut IRChapter) {
+fn merge_adjacent_spans(chapter: &mut Chapter) {
     if chapter.node_count() > 0 {
         merge_children(chapter, NodeId::ROOT);
     }
 }
 
-fn merge_children(chapter: &mut IRChapter, parent_id: NodeId) {
+fn merge_children(chapter: &mut Chapter, parent_id: NodeId) {
     // 1. Recurse into children first (bottom-up)
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
     while let Some(child_id) = child_opt {
@@ -232,7 +232,7 @@ fn merge_children(chapter: &mut IRChapter, parent_id: NodeId) {
 }
 
 /// Check if two adjacent siblings can be merged.
-fn can_merge_spans(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> bool {
+fn can_merge_spans(chapter: &Chapter, left_id: NodeId, right_id: NodeId) -> bool {
     let (left, right) = match (chapter.node(left_id), chapter.node(right_id)) {
         (Some(l), Some(r)) => (l, r),
         _ => return false,
@@ -284,13 +284,13 @@ fn can_merge_spans(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> bo
 /// - Semantic structure
 ///
 /// We fuse adjacent lists by moving children from the second list to the first.
-fn fuse_lists(chapter: &mut IRChapter) {
+fn fuse_lists(chapter: &mut Chapter) {
     if chapter.node_count() > 0 {
         fuse_list_children(chapter, NodeId::ROOT);
     }
 }
 
-fn fuse_list_children(chapter: &mut IRChapter, parent_id: NodeId) {
+fn fuse_list_children(chapter: &mut Chapter, parent_id: NodeId) {
     // 1. Recurse into children first (bottom-up)
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
     while let Some(child_id) = child_opt {
@@ -317,7 +317,7 @@ fn fuse_list_children(chapter: &mut IRChapter, parent_id: NodeId) {
 }
 
 /// Check if two adjacent nodes are lists that can be fused.
-fn can_fuse_lists(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> bool {
+fn can_fuse_lists(chapter: &Chapter, left_id: NodeId, right_id: NodeId) -> bool {
     let (left, right) = match (chapter.node(left_id), chapter.node(right_id)) {
         (Some(l), Some(r)) => (l, r),
         _ => return false,
@@ -331,7 +331,7 @@ fn can_fuse_lists(chapter: &IRChapter, left_id: NodeId, right_id: NodeId) -> boo
 }
 
 /// Fuse two adjacent lists by moving children from right to left.
-fn fuse_list_pair(chapter: &mut IRChapter, left_id: NodeId, right_id: NodeId) {
+fn fuse_list_pair(chapter: &mut Chapter, left_id: NodeId, right_id: NodeId) {
     // Get right's children
     let right_first = chapter.node(right_id).and_then(|n| n.first_child);
 
@@ -405,13 +405,13 @@ fn fuse_list_pair(chapter: &mut IRChapter, left_id: NodeId, right_id: NodeId) {
 ///
 /// Before: BlockQuote > [Paragraph, Inline "cite"]
 /// After:  BlockQuote > [Paragraph, Container > [Inline "cite"]]
-fn wrap_mixed_content(chapter: &mut IRChapter) {
+fn wrap_mixed_content(chapter: &mut Chapter) {
     if chapter.node_count() > 0 {
         wrap_mixed_children(chapter, NodeId::ROOT);
     }
 }
 
-fn wrap_mixed_children(chapter: &mut IRChapter, parent_id: NodeId) {
+fn wrap_mixed_children(chapter: &mut Chapter, parent_id: NodeId) {
     // 1. Recurse into children first (bottom-up)
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
     while let Some(child_id) = child_opt {
@@ -461,7 +461,7 @@ fn is_inline_role(role: Role) -> bool {
 }
 
 /// Analyze children to detect if we have mixed inline/block content.
-fn analyze_children(chapter: &IRChapter, parent_id: NodeId) -> (bool, bool) {
+fn analyze_children(chapter: &Chapter, parent_id: NodeId) -> (bool, bool) {
     let mut has_inline = false;
     let mut has_block = false;
 
@@ -481,7 +481,7 @@ fn analyze_children(chapter: &IRChapter, parent_id: NodeId) -> (bool, bool) {
 }
 
 /// Find and wrap consecutive runs of inline children.
-fn wrap_inline_runs(chapter: &mut IRChapter, parent_id: NodeId) {
+fn wrap_inline_runs(chapter: &mut Chapter, parent_id: NodeId) {
     // Collect child info to avoid borrow issues
     let mut children_info: Vec<(NodeId, bool)> = Vec::new();
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
@@ -521,14 +521,12 @@ fn wrap_inline_runs(chapter: &mut IRChapter, parent_id: NodeId) {
 
 /// Wrap a single run of inline children in a Container.
 fn wrap_run(
-    chapter: &mut IRChapter,
+    chapter: &mut Chapter,
     parent_id: NodeId,
     children_info: &[(NodeId, bool)],
     start_idx: usize,
     end_idx: usize,
 ) {
-    use crate::ir::Node;
-
     // Create wrapper Container
     let wrapper_id = chapter.alloc_node(Node::new(Role::Container));
 
@@ -618,7 +616,7 @@ fn wrap_run(
 /// ```
 ///
 /// Tables that already have TableHead/TableBody are left unchanged.
-fn normalize_table_structure(chapter: &mut IRChapter) {
+fn normalize_table_structure(chapter: &mut Chapter) {
     // Collect all table nodes first to avoid borrow issues
     let tables: Vec<NodeId> = (0..chapter.node_count())
         .filter_map(|i| {
@@ -639,7 +637,7 @@ fn normalize_table_structure(chapter: &mut IRChapter) {
 }
 
 /// Normalize a single table's structure.
-fn normalize_single_table(chapter: &mut IRChapter, table_id: NodeId) {
+fn normalize_single_table(chapter: &mut Chapter, table_id: NodeId) {
     // Check if table already has TableHead or TableBody children
     let has_section_wrapper = chapter.children(table_id).any(|child_id| {
         chapter
@@ -735,7 +733,7 @@ fn normalize_single_table(chapter: &mut IRChapter, table_id: NodeId) {
 }
 
 /// Check if a table row contains only header cells (th).
-fn is_table_header_row(chapter: &IRChapter, row_id: NodeId) -> bool {
+fn is_table_header_row(chapter: &Chapter, row_id: NodeId) -> bool {
     let mut has_cells = false;
     let mut all_header = true;
 
@@ -772,13 +770,13 @@ fn is_table_header_row(chapter: &IRChapter, row_id: NodeId) -> bool {
 /// - Step 1: Visit span, it's empty, delete
 /// - Step 2: Visit div, now empty, delete
 /// - Result: Entire dead subtree vanishes
-fn prune_empty(chapter: &mut IRChapter) {
+fn prune_empty(chapter: &mut Chapter) {
     if chapter.node_count() > 0 {
         prune_children(chapter, NodeId::ROOT);
     }
 }
 
-fn prune_children(chapter: &mut IRChapter, parent_id: NodeId) {
+fn prune_children(chapter: &mut Chapter, parent_id: NodeId) {
     // 1. Recurse into children first (post-order - children before parent)
     let mut child_opt = chapter.node(parent_id).and_then(|n| n.first_child);
     while let Some(child_id) = child_opt {
@@ -812,7 +810,7 @@ fn prune_children(chapter: &mut IRChapter, parent_id: NodeId) {
 }
 
 /// Check if a node should be pruned (empty container).
-fn should_prune(chapter: &IRChapter, node_id: NodeId) -> bool {
+fn should_prune(chapter: &Chapter, node_id: NodeId) -> bool {
     let node = match chapter.node(node_id) {
         Some(n) => n,
         None => return false,
@@ -871,7 +869,7 @@ fn is_prunable_role(role: Role) -> bool {
 // ============================================================================
 
 /// Check if a node has any semantic attributes that prevent optimization.
-fn has_semantic_attrs(chapter: &IRChapter, node_id: NodeId) -> bool {
+fn has_semantic_attrs(chapter: &Chapter, node_id: NodeId) -> bool {
     let s = &chapter.semantics;
     s.href(node_id).is_some()
         || s.src(node_id).is_some()
@@ -896,7 +894,7 @@ fn has_semantic_attrs(chapter: &IRChapter, node_id: NodeId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Node;
+    use crate::style::{ComputedStyle, FontWeight};
 
     // ------------------------------------------------------------------------
     // Vacuum Tests
@@ -904,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_vacuum_removes_whitespace_in_structural_container() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Root > UnorderedList > [whitespace, ListItem, whitespace]
         // Lists are structural containers - whitespace between items is noise
@@ -935,7 +933,7 @@ mod tests {
 
     #[test]
     fn test_vacuum_preserves_whitespace_in_inline() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Root > Inline > [whitespace, Text]
         // Whitespace inside Inline should be preserved
@@ -958,7 +956,7 @@ mod tests {
 
     #[test]
     fn test_vacuum_preserves_whitespace_in_paragraph() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Root > Paragraph > [Inline "Hello", whitespace " ", Inline "World"]
         // This simulates: <p><span>Hello</span> <span>World</span></p>
@@ -993,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_vacuum_preserves_node_with_id() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Root > UnorderedList > [whitespace with ID, ListItem]
         // Even in a structural container, nodes with IDs should be preserved
@@ -1020,7 +1018,7 @@ mod tests {
 
     #[test]
     fn test_merge_adjacent_text_nodes() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Use Paragraph - it contains inline content where spaces matter
         let para = chapter.alloc_node(Node::new(Role::Paragraph));
@@ -1053,7 +1051,7 @@ mod tests {
 
     #[test]
     fn test_no_merge_different_styles() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Use Paragraph - it contains inline content
         let para = chapter.alloc_node(Node::new(Role::Paragraph));
@@ -1061,8 +1059,8 @@ mod tests {
 
         let range1 = chapter.append_text("Hello");
         let mut node1 = Node::text(range1);
-        let bold = chapter.styles.intern(crate::ir::ComputedStyle {
-            font_weight: crate::ir::FontWeight::BOLD,
+        let bold = chapter.styles.intern(ComputedStyle {
+            font_weight: FontWeight::BOLD,
             ..Default::default()
         });
         node1.style = bold;
@@ -1085,7 +1083,7 @@ mod tests {
 
     #[test]
     fn test_fuse_adjacent_unordered_lists() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create two adjacent ul elements
         let ul1 = chapter.alloc_node(Node::new(Role::UnorderedList));
@@ -1115,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_no_fuse_different_list_types() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
         chapter.append_child(NodeId::ROOT, ul);
@@ -1135,7 +1133,7 @@ mod tests {
 
     #[test]
     fn test_prune_empty_container() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let container = chapter.alloc_node(Node::new(Role::Container));
         chapter.append_child(NodeId::ROOT, container);
@@ -1148,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_prune_cascades() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Root > Container > Inline (empty)
         let container = chapter.alloc_node(Node::new(Role::Container));
@@ -1168,7 +1166,7 @@ mod tests {
 
     #[test]
     fn test_prune_preserves_id() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let container = chapter.alloc_node(Node::new(Role::Container));
         chapter.append_child(NodeId::ROOT, container);
@@ -1182,7 +1180,7 @@ mod tests {
 
     #[test]
     fn test_prune_preserves_content() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let container = chapter.alloc_node(Node::new(Role::Container));
         chapter.append_child(NodeId::ROOT, container);
@@ -1203,7 +1201,7 @@ mod tests {
 
     #[test]
     fn test_full_pipeline() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a structure with adjacent lists:
         // Root > Container > [ul1, ul2]
@@ -1242,7 +1240,7 @@ mod tests {
 
     #[test]
     fn test_wrap_mixed_content_in_blockquote() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: BlockQuote > [Paragraph "verse", Inline "cite"]
         // This simulates: <blockquote><p>verse</p><cite>author</cite></blockquote>
@@ -1288,7 +1286,7 @@ mod tests {
 
     #[test]
     fn test_no_wrap_when_only_block_children() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Container > [Paragraph, Paragraph]
         // All children are blocks, no wrapping needed
@@ -1315,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_no_wrap_when_only_inline_children() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: Paragraph > [Text, Inline, Text]
         // All children are inline, no wrapping needed

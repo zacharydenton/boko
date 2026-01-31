@@ -10,7 +10,7 @@ use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use crate::book::{Book, TocEntry};
+use crate::model::{Book, TocEntry};
 
 use super::Exporter;
 
@@ -307,7 +307,7 @@ struct ManifestItem {
 
 /// Generate content.opf from metadata and manifest.
 fn generate_opf(
-    metadata: &crate::book::Metadata,
+    metadata: &crate::model::Metadata,
     manifest: &[ManifestItem],
     spine_refs: &[String],
 ) -> String {
@@ -510,7 +510,7 @@ fn generate_opf(
 }
 
 /// Generate toc.ncx from TOC entries.
-fn generate_ncx(metadata: &crate::book::Metadata, toc: &[TocEntry]) -> String {
+fn generate_ncx(metadata: &crate::model::Metadata, toc: &[TocEntry]) -> String {
     let mut ncx = String::new();
 
     ncx.push_str(

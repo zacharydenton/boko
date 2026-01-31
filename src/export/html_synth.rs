@@ -7,10 +7,10 @@
 //! # Example
 //!
 //! ```
-//! use boko::ir::IRChapter;
+//! use boko::model::Chapter;
 //! use boko::export::{generate_css, synthesize_html};
 //!
-//! let chapter = IRChapter::new();
+//! let chapter = Chapter::new();
 //! let used_styles = vec![];
 //! let css = generate_css(&chapter.styles, &used_styles);
 //! let result = synthesize_html(&chapter, &css.class_map);
@@ -22,7 +22,8 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use crate::ir::{IRChapter, NodeId, Role, StyleId};
+use crate::model::{Chapter, NodeId, Role};
+use crate::style::StyleId;
 
 /// Result of HTML synthesis.
 #[derive(Debug, Clone)]
@@ -43,7 +44,7 @@ pub struct SynthesisResult {
 /// # Returns
 ///
 /// A `SynthesisResult` containing the XHTML body and referenced assets.
-pub fn synthesize_html(ir: &IRChapter, style_map: &HashMap<StyleId, String>) -> SynthesisResult {
+pub fn synthesize_html(ir: &Chapter, style_map: &HashMap<StyleId, String>) -> SynthesisResult {
     let mut ctx = SynthesisContext {
         out: String::new(),
         assets: HashSet::new(),
@@ -76,7 +77,7 @@ pub fn synthesize_html(ir: &IRChapter, style_map: &HashMap<StyleId, String>) -> 
 ///
 /// A complete XHTML document string.
 pub fn synthesize_xhtml_document(
-    ir: &IRChapter,
+    ir: &Chapter,
     style_map: &HashMap<StyleId, String>,
     title: &str,
     stylesheet_href: Option<&str>,
@@ -120,7 +121,7 @@ pub fn synthesize_xhtml_document(
 struct SynthesisContext<'a> {
     out: String,
     assets: HashSet<String>,
-    ir: &'a IRChapter,
+    ir: &'a Chapter,
     style_map: &'a HashMap<StyleId, String>,
     indent_level: usize,
 }
@@ -319,10 +320,11 @@ pub fn escape_xml(s: &str) -> String {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::ir::{ComputedStyle, FontWeight, Node};
+    use crate::model::Node;
+    use crate::style::{ComputedStyle, FontWeight};
 
-    fn make_test_chapter() -> IRChapter {
-        let mut chapter = IRChapter::new();
+    fn make_test_chapter() -> Chapter {
+        let mut chapter = Chapter::new();
 
         // Create a paragraph with text content
         let para = chapter.alloc_node(Node::new(Role::Paragraph));
@@ -350,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_synthesize_with_style_class() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a bold style
         let mut bold = ComputedStyle::default();
@@ -379,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_synthesize_link() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
@@ -398,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_synthesize_image_tracks_assets() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
@@ -417,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_synthesize_nested_structure() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create: <ul><li>Item 1</li><li>Item 2</li></ul>
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
@@ -473,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_void_elements() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Image (void element)
         let img = chapter.alloc_node(Node::new(Role::Image));
@@ -491,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_heading_levels() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         for level in 1u8..=6 {
             let h = chapter.alloc_node(Node::new(Role::Heading(level)));

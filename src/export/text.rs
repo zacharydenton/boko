@@ -12,8 +12,8 @@
 
 use std::io::{self, Seek, Write};
 
-use crate::book::Book;
-use crate::ir::{Display, NodeId, Role};
+use crate::model::{Book, NodeId, Role};
+use crate::style::Display;
 
 use super::Exporter;
 
@@ -140,7 +140,7 @@ struct AccumulatedNote {
 /// Context for the export walk.
 struct ExportContext<'a, W: Write> {
     writer: &'a mut W,
-    ir: &'a crate::ir::IRChapter,
+    ir: &'a crate::model::Chapter,
     format: TextFormat,
     /// Prefix to write at the start of each new line (blockquote markers, indentation)
     line_prefix: String,
@@ -461,12 +461,12 @@ impl<W: Write> ExportContext<'_, W> {
 
                 // Parse link from semantics.href (single source of truth)
                 let href = self.ir.semantics.href(id);
-                let link = href.map(crate::ir::Link::parse);
+                let link = href.map(crate::model::Link::parse);
 
                 // Determine if this is an external link that needs URL display
                 let url_to_show = match &link {
-                    Some(crate::ir::Link::External(url)) => Some(url.as_str()),
-                    Some(crate::ir::Link::Unknown(raw))
+                    Some(crate::model::Link::External(url)) => Some(url.as_str()),
+                    Some(crate::model::Link::Unknown(raw))
                         if raw.contains("://") || raw.starts_with("mailto:") =>
                     {
                         Some(raw.as_str())
@@ -1025,15 +1025,15 @@ fn escape_markdown(text: &str) -> String {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use crate::ir::{IRChapter, Node};
+    use crate::model::{Chapter, Node};
     use std::io::Cursor;
 
-    fn export_to_string(chapter: &IRChapter, format: TextFormat) -> String {
+    fn export_to_string(chapter: &Chapter, format: TextFormat) -> String {
         export_to_string_with_path(chapter, format, None)
     }
 
     fn export_to_string_with_path(
-        chapter: &IRChapter,
+        chapter: &Chapter,
         format: TextFormat,
         chapter_path: Option<&str>,
     ) -> String {
@@ -1071,7 +1071,7 @@ mod tests {
 
     #[test]
     fn test_simple_paragraph() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let para = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, para);
@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn test_heading_markdown() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
         chapter.append_child(NodeId::ROOT, h1);
@@ -1101,7 +1101,7 @@ mod tests {
 
     #[test]
     fn test_unordered_list_markdown() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
         chapter.append_child(NodeId::ROOT, ul);
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[test]
     fn test_ordered_list() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let ol = chapter.alloc_node(Node::new(Role::OrderedList));
         chapter.append_child(NodeId::ROOT, ol);
@@ -1141,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_link_markdown() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
@@ -1157,7 +1157,7 @@ mod tests {
 
     #[test]
     fn test_image_markdown() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
@@ -1170,7 +1170,7 @@ mod tests {
 
     #[test]
     fn test_image_plain() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
@@ -1182,7 +1182,7 @@ mod tests {
 
     #[test]
     fn test_image_has_blank_lines() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Heading before image
         let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
@@ -1216,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_blockquote_multiline() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let bq = chapter.alloc_node(Node::new(Role::BlockQuote));
         chapter.append_child(NodeId::ROOT, bq);
@@ -1248,7 +1248,7 @@ mod tests {
 
     #[test]
     fn test_list_with_blockquote() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let ol = chapter.alloc_node(Node::new(Role::OrderedList));
         chapter.append_child(NodeId::ROOT, ol);
@@ -1278,7 +1278,7 @@ mod tests {
 
     #[test]
     fn test_whitespace_preservation() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
@@ -1310,7 +1310,7 @@ mod tests {
 
     #[test]
     fn test_markdown_escaping() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[test]
     fn test_plain_no_escaping() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
@@ -1370,7 +1370,7 @@ mod tests {
 
     #[test]
     fn test_tight_list() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a tight list (items with simple text)
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
@@ -1398,7 +1398,7 @@ mod tests {
 
     #[test]
     fn test_loose_list() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create a loose list (items with multiple paragraphs)
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
@@ -1437,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_adjacent_lists_separator() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create two adjacent unordered lists
         for _ in 0..2 {
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn test_different_list_types_no_separator() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Create an unordered list followed by an ordered list
         let ul = chapter.alloc_node(Node::new(Role::UnorderedList));
@@ -1494,7 +1494,7 @@ mod tests {
 
     #[test]
     fn test_code_block_with_backticks() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let code = chapter.alloc_node(Node::new(Role::CodeBlock));
         chapter.append_child(NodeId::ROOT, code);
@@ -1516,9 +1516,9 @@ mod tests {
 
     #[test]
     fn test_inline_code_with_backtick() {
-        use crate::ir::ComputedStyle;
+        use crate::style::ComputedStyle;
 
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
@@ -1550,7 +1550,7 @@ mod tests {
 
     #[test]
     fn test_footnote_accumulation() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Paragraph with footnote
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
@@ -1585,7 +1585,7 @@ mod tests {
 
     #[test]
     fn test_footnote_plain_text() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
         chapter.append_child(NodeId::ROOT, p);
@@ -1613,7 +1613,7 @@ mod tests {
     #[test]
     fn test_anchor_id_not_output_yet() {
         // TODO: Update this test when internal link resolution is implemented
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         // Heading with ID
         let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
@@ -1637,7 +1637,7 @@ mod tests {
 
     #[test]
     fn test_internal_link_outputs_text_only() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);

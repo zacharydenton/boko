@@ -4,7 +4,8 @@ use std::io::Cursor;
 
 use boko::Book;
 use boko::export::{EpubConfig, EpubExporter, Exporter, GlobalStylePool, normalize_book};
-use boko::ir::{ComputedStyle, FontWeight, IRChapter, StyleId};
+use boko::model::Chapter;
+use boko::style::{ComputedStyle, FontStyle, FontWeight, StyleId};
 
 // ============================================================================
 // Unit Tests for GlobalStylePool
@@ -15,14 +16,14 @@ fn test_global_style_pool_merge_deduplicates() {
     let mut global = GlobalStylePool::new();
 
     // Create two chapters with identical bold styles
-    let mut chapter1 = IRChapter::new();
+    let mut chapter1 = Chapter::new();
     let bold = ComputedStyle {
         font_weight: FontWeight::BOLD,
         ..Default::default()
     };
     let bold_id1 = chapter1.styles.intern(bold.clone());
 
-    let mut chapter2 = IRChapter::new();
+    let mut chapter2 = Chapter::new();
     let bold_id2 = chapter2.styles.intern(bold);
 
     // Merge both chapters
@@ -42,16 +43,16 @@ fn test_global_style_pool_merge_deduplicates() {
 fn test_global_style_pool_different_styles_get_different_ids() {
     let mut global = GlobalStylePool::new();
 
-    let mut chapter1 = IRChapter::new();
+    let mut chapter1 = Chapter::new();
     let bold = ComputedStyle {
         font_weight: FontWeight::BOLD,
         ..Default::default()
     };
     let bold_id = chapter1.styles.intern(bold);
 
-    let mut chapter2 = IRChapter::new();
+    let mut chapter2 = Chapter::new();
     let italic = ComputedStyle {
-        font_style: boko::ir::FontStyle::Italic,
+        font_style: FontStyle::Italic,
         ..Default::default()
     };
     let italic_id = chapter2.styles.intern(italic);
@@ -82,7 +83,7 @@ fn test_global_style_pool_remap_unknown_returns_default() {
 fn test_global_style_pool_used_styles() {
     let mut global = GlobalStylePool::new();
 
-    let mut chapter = IRChapter::new();
+    let mut chapter = Chapter::new();
     let bold = ComputedStyle {
         font_weight: FontWeight::BOLD,
         ..Default::default()

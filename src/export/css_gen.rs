@@ -1,16 +1,17 @@
-//! CSS generation from IR StylePool.
+//! CSS generation from StylePool.
 //!
-//! This module converts the computed styles stored in an IR StylePool back into
+//! This module converts the computed styles stored in a StylePool back into
 //! CSS text for inclusion in exported ebooks. Rather than using inline styles
 //! (which bloat the file), we generate a deduplicated stylesheet with class names.
 //!
 //! # Example
 //!
 //! ```
-//! use boko::ir::{IRChapter, StyleId};
+//! use boko::model::Chapter;
+//! use boko::style::StyleId;
 //! use boko::export::generate_css;
 //!
-//! let chapter = IRChapter::new();
+//! let chapter = Chapter::new();
 //! let used_styles = vec![StyleId::DEFAULT];
 //! let artifact = generate_css(&chapter.styles, &used_styles);
 //!
@@ -21,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use crate::ir::{StyleId, StylePool, ToCss};
+use crate::style::{StyleId, StylePool, ToCss};
 
 /// Generated CSS artifact containing the stylesheet and class mapping.
 #[derive(Debug, Clone)]
@@ -106,7 +107,7 @@ pub fn generate_css_all(pool: &StylePool) -> CssArtifact {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Color, ComputedStyle, FontWeight, TextAlign};
+    use crate::style::{Color, ComputedStyle, FontWeight, TextAlign};
 
     #[test]
     fn test_generate_css_empty() {

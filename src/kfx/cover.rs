@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::ir::{IRChapter, Role};
+use crate::model::{Chapter, Role};
 use crate::kfx::context::ExportContext;
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
@@ -22,7 +22,7 @@ pub const COVER_SECTION_NAME: &str = "c0";
 /// - No text content (or whitespace-only text)
 ///
 /// This is used to detect cover pages that need special KFX formatting.
-pub fn is_image_only_chapter(chapter: &IRChapter) -> bool {
+pub fn is_image_only_chapter(chapter: &Chapter) -> bool {
     let mut image_count = 0;
     let mut has_text = false;
 
@@ -56,7 +56,7 @@ pub fn is_image_only_chapter(chapter: &IRChapter) -> bool {
 ///
 /// Returns the src attribute of the single image node, or None if
 /// the chapter doesn't contain exactly one image.
-pub fn get_chapter_image_path(chapter: &IRChapter) -> Option<String> {
+pub fn get_chapter_image_path(chapter: &Chapter) -> Option<String> {
     let mut image_path = None;
     let mut image_count = 0;
 
@@ -84,7 +84,7 @@ pub fn get_chapter_image_path(chapter: &IRChapter) -> Option<String> {
 /// # Arguments
 /// * `cover_image_path` - The cover image path from EPUB metadata
 /// * `first_chapter` - The first chapter in the spine
-pub fn needs_standalone_cover(cover_image_path: &str, first_chapter: &IRChapter) -> bool {
+pub fn needs_standalone_cover(cover_image_path: &str, first_chapter: &Chapter) -> bool {
     // Get the image from the first chapter (if it's image-only)
     let Some(first_image_path) = get_chapter_image_path(first_chapter) else {
         // First chapter doesn't have a single image, so we need standalone cover
@@ -234,7 +234,7 @@ pub fn normalize_cover_path(cover_path: &str, asset_paths: &[PathBuf]) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::book::Book;
+    use crate::model::Book;
 
     #[test]
     fn test_is_image_only_chapter_with_css_hidden_text() {

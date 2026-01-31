@@ -9,7 +9,7 @@ use std::path::Path;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
-use crate::book::{Book, Resource, TocEntry};
+use crate::model::{Book, Resource, TocEntry};
 use crate::mobi::index::{
     NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
     calculate_cncx_offsets,
@@ -78,7 +78,7 @@ struct BookContext {
     /// TOC entries
     toc: Vec<TocEntry>,
     /// Metadata
-    metadata: crate::book::Metadata,
+    metadata: crate::model::Metadata,
 }
 
 struct SpineItem {

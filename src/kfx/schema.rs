@@ -28,8 +28,8 @@
 //! 3. **Bidirectional**: Every import rule has export metadata
 //! 4. **Transformers**: Complex value conversions are encapsulated in traits
 
-use crate::book::LandmarkType;
-use crate::ir::{ComputedStyle, FontStyle, FontWeight, Role};
+use crate::model::{LandmarkType, Role};
+use crate::style::{ComputedStyle, FontStyle, FontWeight};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::{
     AttributeTransform, IdentityTransform, KfxLinkTransform, ResourceTransform,
@@ -167,8 +167,8 @@ impl StyleModifier {
             StyleModifier::Italic => style.font_style = FontStyle::Italic,
             StyleModifier::Underline => style.text_decoration_underline = true,
             StyleModifier::Strikethrough => style.text_decoration_line_through = true,
-            StyleModifier::Superscript => style.vertical_align = crate::ir::VerticalAlign::Super,
-            StyleModifier::Subscript => style.vertical_align = crate::ir::VerticalAlign::Sub,
+            StyleModifier::Superscript => style.vertical_align = crate::style::VerticalAlign::Super,
+            StyleModifier::Subscript => style.vertical_align = crate::style::VerticalAlign::Sub,
         }
     }
 }

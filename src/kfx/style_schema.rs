@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::ir::{self as ir_style, ToCss};
+use crate::style::{self as ir_style, ToCss};
 use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
 
@@ -2835,7 +2835,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_font_weight() {
-        use crate::ir::{ComputedStyle, FontWeight};
+        use crate::style::{ComputedStyle, FontWeight};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::FontWeight), None);
@@ -2850,7 +2850,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_font_style() {
-        use crate::ir::{ComputedStyle, FontStyle};
+        use crate::style::{ComputedStyle, FontStyle};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::FontStyle), None);
@@ -2865,7 +2865,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_color() {
-        use crate::ir::{Color, ComputedStyle};
+        use crate::style::{Color, ComputedStyle};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::Color), None);
@@ -2880,7 +2880,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_margin() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::MarginTop), None);
@@ -3330,7 +3330,7 @@ mod tests {
 
     #[test]
     fn test_import_kfx_style_full() {
-        use crate::ir::{FontWeight, TextAlign};
+        use crate::style::{FontWeight, TextAlign};
 
         let schema = StyleSchema::standard();
 
@@ -3362,7 +3362,7 @@ mod tests {
         // Verify fields were set correctly
         assert_eq!(ir_style.font_weight, FontWeight::BOLD);
         assert_eq!(ir_style.text_align, TextAlign::Center);
-        assert_eq!(ir_style.margin_top, crate::ir::Length::Em(2.0));
+        assert_eq!(ir_style.margin_top, crate::style::Length::Em(2.0));
     }
 
     #[test]
@@ -3626,7 +3626,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_letter_spacing() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::LetterSpacing), None);
@@ -3641,7 +3641,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_text_transform() {
-        use crate::ir::{ComputedStyle, TextTransform};
+        use crate::style::{ComputedStyle, TextTransform};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::TextTransform), None);
@@ -3656,7 +3656,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_break_before() {
-        use crate::ir::{BreakValue, ComputedStyle};
+        use crate::style::{BreakValue, ComputedStyle};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::BreakBefore), None);
@@ -3671,7 +3671,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_border_style() {
-        use crate::ir::{BorderStyle, ComputedStyle};
+        use crate::style::{BorderStyle, ComputedStyle};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::BorderStyleTop), None);
@@ -3686,7 +3686,7 @@ mod tests {
 
     #[test]
     fn test_apply_ir_field_text_transform() {
-        use crate::ir::{ComputedStyle, TextTransform};
+        use crate::style::{ComputedStyle, TextTransform};
 
         let mut style = ComputedStyle::default();
         apply_ir_field(&mut style, IrField::TextTransform, "uppercase");
@@ -3701,7 +3701,7 @@ mod tests {
 
     #[test]
     fn test_apply_ir_field_border_style() {
-        use crate::ir::{BorderStyle, ComputedStyle};
+        use crate::style::{BorderStyle, ComputedStyle};
 
         let mut style = ComputedStyle::default();
         apply_ir_field(&mut style, IrField::BorderStyleTop, "solid");
@@ -3716,7 +3716,7 @@ mod tests {
 
     #[test]
     fn test_negative_letter_spacing() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         // Negative letter-spacing is valid CSS
         let mut style = ComputedStyle::default();
@@ -3726,7 +3726,7 @@ mod tests {
 
     #[test]
     fn test_hyphens_default_is_manual() {
-        use crate::ir::{ComputedStyle, Hyphens};
+        use crate::style::{ComputedStyle, Hyphens};
 
         // Default is Manual so explicit hyphens: auto is emitted in KFX output
         let default = ComputedStyle::default();
@@ -3748,7 +3748,7 @@ mod tests {
 
     #[test]
     fn test_sizing_bounds_auto_emit_with_width() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         // When width is set, sizing_bounds should emit content-box (the CSS default)
         // This matches Amazon's converter behavior
@@ -3761,7 +3761,7 @@ mod tests {
 
     #[test]
     fn test_sizing_bounds_border_box() {
-        use crate::ir::{BoxSizing, ComputedStyle, Length};
+        use crate::style::{BoxSizing, ComputedStyle, Length};
 
         // Explicit border-box should emit border-box
         let mut style = ComputedStyle::default();
@@ -3774,7 +3774,7 @@ mod tests {
 
     #[test]
     fn test_sizing_bounds_not_emitted_without_dimensions() {
-        use crate::ir::ComputedStyle;
+        use crate::style::ComputedStyle;
 
         // No width/height = no sizing_bounds
         let style = ComputedStyle::default();
@@ -3785,7 +3785,7 @@ mod tests {
 
     #[test]
     fn test_box_align_from_margin_auto() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         // margin-left: auto + margin-right: auto → box_align: center
         let mut style = ComputedStyle::default();
@@ -3798,7 +3798,7 @@ mod tests {
 
     #[test]
     fn test_box_align_not_emitted_without_both_auto() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         // Only margin-left: auto is not enough
         let mut style = ComputedStyle::default();
@@ -3887,7 +3887,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_border_collapse() {
-        use crate::ir::{BorderCollapse, ComputedStyle};
+        use crate::style::{BorderCollapse, ComputedStyle};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::BorderCollapse), None);
@@ -3902,7 +3902,7 @@ mod tests {
 
     #[test]
     fn test_extract_ir_field_border_spacing() {
-        use crate::ir::{ComputedStyle, Length};
+        use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
         assert_eq!(extract_ir_field(&default, IrField::BorderSpacing), None);
@@ -3938,7 +3938,7 @@ mod tests {
 
     #[test]
     fn test_import_border_width_from_kfx() {
-        use crate::ir::Length;
+        use crate::style::Length;
         use crate::kfx::ion::IonValue;
 
         let schema = StyleSchema::standard();

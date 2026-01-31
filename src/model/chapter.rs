@@ -1,47 +1,23 @@
-//! Intermediate Representation (IR) for normalized ebook content.
+//! Chapter representation for normalized ebook content.
 //!
-//! The IR provides a format-agnostic tree structure for ebook chapters:
+//! The Chapter (formerly IRChapter) provides a format-agnostic tree structure
+//! for ebook chapters:
 //! - Nodes with semantic roles (paragraphs, headings, links, etc.)
 //! - Interned styles via StylePool
 //! - Sparse semantic attributes (href, src, alt)
 //! - Universal link representation (handles both EPUB IDs and Kindle offsets)
 //! - Global text buffer with range references
-//!
-//! # Example
-//!
-//! ```
-//! use boko::ir::{IRChapter, Node, NodeId, Role};
-//!
-//! // IRChapter is produced by compile_html()
-//! // Here we show manual construction for illustration:
-//! let mut chapter = IRChapter::new();
-//! let root = chapter.root();
-//! assert_eq!(chapter.node(root).unwrap().role, Role::Root);
-//! ```
 
-mod font;
-mod links;
-mod node;
-mod semantic;
-mod style;
-
-pub use font::FontFace;
-pub use links::{InternalLocation, Link, LinkTarget};
-pub use node::{Node, NodeId, Role, TextRange};
-pub use semantic::SemanticMap;
-pub use style::{
-    BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, Color, ComputedStyle,
-    DecorationStyle, Display, Float, FontStyle, FontVariant, FontWeight, Hyphens, Length,
-    ListStylePosition, ListStyleType, OverflowWrap, StyleId, StylePool, TextAlign, TextTransform,
-    ToCss, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-};
+use super::node::{Node, NodeId, Role, TextRange};
+use super::semantic::SemanticMap;
+use crate::style::StylePool;
 
 /// A chapter's content in normalized IR form.
 ///
 /// The IR tree uses a parent-pointer / first-child / next-sibling representation
 /// for efficient traversal and minimal memory overhead.
 #[derive(Debug, Clone)]
-pub struct IRChapter {
+pub struct Chapter {
     /// All nodes in the tree (index 0 is always the root).
     nodes: Vec<Node>,
     /// Style pool with deduplication.
@@ -52,13 +28,13 @@ pub struct IRChapter {
     text: String,
 }
 
-impl Default for IRChapter {
+impl Default for Chapter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IRChapter {
+impl Chapter {
     /// Create a new empty chapter with a root node.
     pub fn new() -> Self {
         Self {
@@ -170,11 +146,11 @@ impl IRChapter {
 
 /// Iterator over children of a node.
 pub struct ChildIter<'a> {
-    chapter: &'a IRChapter,
+    chapter: &'a Chapter,
     current: Option<NodeId>,
 }
 
-impl<'a> Iterator for ChildIter<'a> {
+impl Iterator for ChildIter<'_> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -190,11 +166,11 @@ impl<'a> Iterator for ChildIter<'a> {
 
 /// Depth-first iterator over all nodes.
 pub struct DfsIter<'a> {
-    chapter: &'a IRChapter,
+    chapter: &'a Chapter,
     stack: Vec<NodeId>,
 }
 
-impl<'a> Iterator for DfsIter<'a> {
+impl Iterator for DfsIter<'_> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -212,10 +188,11 @@ impl<'a> Iterator for DfsIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::{ComputedStyle, FontWeight};
 
     #[test]
     fn test_chapter_creation() {
-        let chapter = IRChapter::new();
+        let chapter = Chapter::new();
         assert_eq!(chapter.node_count(), 1);
         assert_eq!(chapter.root(), NodeId::ROOT);
 
@@ -226,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_text_buffer() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let range1 = chapter.append_text("Hello, ");
         let range2 = chapter.append_text("World!");
@@ -238,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_node_tree() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let para = chapter.alloc_node(Node::new(Role::Text));
         chapter.append_child(NodeId::ROOT, para);
@@ -259,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_dfs_iteration() {
-        let mut chapter = IRChapter::new();
+        let mut chapter = Chapter::new();
 
         let para1 = chapter.alloc_node(Node::new(Role::Text));
         let para2 = chapter.alloc_node(Node::new(Role::Text));

@@ -52,7 +52,7 @@ pub fn rewrite_html_references_fast(
     css_flow_map: &HashMap<String, usize>,
     resource_map: &HashMap<String, usize>,
     spine_hrefs: &std::collections::HashSet<&str>,
-    book_resources: &HashMap<String, crate::book::Resource>,
+    book_resources: &HashMap<String, crate::model::Resource>,
     link_counter_start: usize,
 ) -> RewriteResult {
     let mut output = Vec::with_capacity(html.len() + html.len() / 10); // ~10% overhead
@@ -188,7 +188,7 @@ fn process_img_tag(
     tag: &[u8],
     base_dir: &str,
     resource_map: &HashMap<String, usize>,
-    book_resources: &HashMap<String, crate::book::Resource>,
+    book_resources: &HashMap<String, crate::model::Resource>,
     output: &mut Vec<u8>,
 ) {
     if let Some(src_value) = extract_attribute_value(tag, b"src") {

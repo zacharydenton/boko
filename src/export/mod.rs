@@ -29,7 +29,7 @@
 
 use std::io::{self, Seek, Write};
 
-use crate::book::Book;
+use crate::model::Book;
 
 mod azw3;
 mod css_gen;
