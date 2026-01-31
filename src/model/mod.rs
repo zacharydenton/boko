@@ -13,6 +13,7 @@ mod chapter;
 mod font;
 mod links;
 mod node;
+mod resolved;
 mod semantic;
 
 // Re-export book types
@@ -30,7 +31,10 @@ pub use node::{Node, NodeId, Role, TextRange};
 pub use semantic::SemanticMap;
 
 // Re-export link types
-pub use links::{InternalLocation, Link, LinkTarget};
+pub use links::{AnchorTarget, GlobalNodeId, InternalLocation, Link, LinkTarget};
+
+// Re-export resolved links
+pub use resolved::ResolvedLinks;
 
 // Re-export font types
 pub use font::FontFace;

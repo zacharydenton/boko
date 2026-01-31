@@ -3,18 +3,19 @@
 //! MOBI6 files are legacy Kindle format with a single HTML stream.
 //! For KF8/AZW3 files, use Azw3Importer instead.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::import::{ChapterId, Importer, SpineEntry};
+use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
-    build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth,
+    build_toc_from_ncx, detect_image_type, filepos, is_metadata_record, palmdoc, parse_exth,
     parse_ncx_index, read_index, strip_trailing_data,
 };
-use crate::model::{Landmark, Metadata, TocEntry};
+use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// MOBI6 format importer with lazy loading.
 ///
@@ -47,6 +48,10 @@ pub struct MobiImporter {
 
     /// Cached decompressed content (loaded on first request).
     content_cache: Option<Vec<u8>>,
+
+    // --- Link resolution ---
+    /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
+    element_id_map: HashMap<String, GlobalNodeId>,
 }
 
 impl Importer for MobiImporter {
@@ -98,8 +103,9 @@ impl Importer for MobiImporter {
         let wrapped = wrap_text_as_html(&text, &self.metadata.title, &self.mobi);
 
         // Transform MOBI-specific attributes to standard HTML
+        // This adds id anchors at filepos target positions for link resolution
         let assets = self.discover_assets();
-        let content = transform_mobi_html(&wrapped, &assets);
+        let content = filepos::transform_mobi_html(&wrapped, &assets);
 
         self.content_cache = Some(content.clone());
         Ok(content)
@@ -125,6 +131,32 @@ impl Importer for MobiImporter {
             })?;
 
         self.load_image_record(idx)
+    }
+
+    fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+        self.element_id_map.clear();
+
+        // Build path#id → GlobalNodeId map from chapters (same format as EPUB)
+        // MOBI has a single chapter at "content.html"
+        for (chapter_id, chapter) in chapters {
+            for node_id in chapter.iter_dfs() {
+                if let Some(id) = chapter.semantics.id(node_id) {
+                    let key = format!("content.html#{}", id);
+                    self.element_id_map
+                        .insert(key, GlobalNodeId::new(*chapter_id, node_id));
+                }
+            }
+        }
+    }
+
+    fn resolve_href(&self, from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        let from_path = self.source_id(from_chapter)?;
+        resolve_path_based_href(
+            from_path,
+            href,
+            |p| if p == "content.html" { Some(ChapterId(0)) } else { None },
+            |k| self.element_id_map.get(k).copied(),
+        )
     }
 }
 
@@ -229,6 +261,7 @@ impl MobiImporter {
             landmarks: Vec::new(), // MOBI6 format doesn't have landmarks
             spine,
             content_cache: None,
+            element_id_map: HashMap::new(),
         })
     }
 
@@ -458,75 +491,6 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Transform MOBI-specific HTML attributes to standard HTML.
-///
-/// Converts:
-/// - `<img recindex="XXXXX">` to `<img src="images/image_XXXX.ext">`
-/// - `<a filepos=NNNNNNN>` to `<a href="#fileposNNNNNNN">`
-fn transform_mobi_html(html: &[u8], assets: &[PathBuf]) -> Vec<u8> {
-    use std::collections::HashMap;
-
-    // Build recindex -> asset path mapping
-    // recindex is 1-based, assets are 0-indexed
-    let mut recindex_map: HashMap<String, String> = HashMap::new();
-    for (i, asset) in assets.iter().enumerate() {
-        let recindex = format!("{:05}", i + 1);
-        recindex_map.insert(recindex, asset.to_string_lossy().to_string());
-    }
-
-    let mut output = Vec::with_capacity(html.len() + html.len() / 10);
-    let mut pos = 0;
-
-    while pos < html.len() {
-        // Look for recindex=" pattern
-        if pos + 10 < html.len() && &html[pos..pos + 10] == b"recindex=\"" {
-            // Found recindex, extract the value
-            let val_start = pos + 10;
-            if let Some(val_end_rel) = html[val_start..].iter().position(|&b| b == b'"') {
-                let val_end = val_start + val_end_rel;
-                let recindex = String::from_utf8_lossy(&html[val_start..val_end]).to_string();
-
-                if let Some(path) = recindex_map.get(&recindex) {
-                    // Replace with src="path"
-                    output.extend_from_slice(b"src=\"");
-                    output.extend_from_slice(path.as_bytes());
-                    output.push(b'"');
-                    pos = val_end + 1; // Skip past closing quote
-                    continue;
-                }
-            }
-        }
-
-        // Look for filepos= pattern (no quotes in MOBI)
-        if pos + 8 < html.len() && &html[pos..pos + 8] == b"filepos=" {
-            let val_start = pos + 8;
-            // Find end of number
-            let mut val_end = val_start;
-            while val_end < html.len() && html[val_end].is_ascii_digit() {
-                val_end += 1;
-            }
-
-            if val_end > val_start {
-                let filepos_str = String::from_utf8_lossy(&html[val_start..val_end]);
-                // Parse and convert to href="#fileposNNN"
-                if let Ok(filepos_num) = filepos_str.parse::<u64>() {
-                    output.extend_from_slice(b"href=\"#filepos");
-                    output.extend_from_slice(filepos_num.to_string().as_bytes());
-                    output.push(b'"');
-                    pos = val_end;
-                    continue;
-                }
-            }
-        }
-
-        // Copy byte as-is
-        output.push(html[pos]);
-        pos += 1;
-    }
-
-    output
-}
-
 /// Convert TocNode to TocEntry recursively.
 fn toc_node_to_entry(node: TocNode) -> TocEntry {
     let mut entry = TocEntry::new(&node.title, &node.href);
@@ -534,75 +498,4 @@ fn toc_node_to_entry(node: TocNode) -> TocEntry {
     entry
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transform_mobi_html_recindex() {
-        let assets = vec![
-            PathBuf::from("images/image_0000.jpg"),
-            PathBuf::from("images/image_0001.png"),
-        ];
-
-        // recindex is 1-based, so recindex="00001" maps to assets[0]
-        let html = b"<img recindex=\"00001\" width=\"100\">";
-        let result = transform_mobi_html(html, &assets);
-        let result_str = String::from_utf8_lossy(&result);
-
-        assert!(result_str.contains("src=\"images/image_0000.jpg\""));
-        assert!(!result_str.contains("recindex"));
-        assert!(result_str.contains("width=\"100\""));
-    }
-
-    #[test]
-    fn test_transform_mobi_html_filepos() {
-        let assets = vec![];
-
-        let html = b"<a filepos=0001234>link</a>";
-        let result = transform_mobi_html(html, &assets);
-        let result_str = String::from_utf8_lossy(&result);
-
-        assert!(result_str.contains("href=\"#filepos1234\""));
-        assert!(!result_str.contains("filepos="));
-    }
-
-    #[test]
-    fn test_transform_mobi_html_mixed() {
-        let assets = vec![PathBuf::from("images/image_0000.gif")];
-
-        let html = b"<p>Text <a filepos=0000100>link</a> and <img recindex=\"00001\"></p>";
-        let result = transform_mobi_html(html, &assets);
-        let result_str = String::from_utf8_lossy(&result);
-
-        assert!(result_str.contains("href=\"#filepos100\""));
-        assert!(result_str.contains("src=\"images/image_0000.gif\""));
-        assert!(result_str.contains("<p>Text"));
-        assert!(result_str.contains("</p>"));
-    }
-
-    #[test]
-    fn test_transform_mobi_html_no_changes() {
-        let assets = vec![];
-
-        // Standard HTML without MOBI-specific attributes
-        let html = b"<p>Hello <a href=\"#anchor\">world</a></p>";
-        let result = transform_mobi_html(html, &assets);
-
-        assert_eq!(result, html.to_vec());
-    }
-
-    #[test]
-    fn test_transform_mobi_html_preserves_content() {
-        let assets = vec![PathBuf::from("images/cover.jpg")];
-
-        let html = b"<body><h1>Title</h1><img recindex=\"00001\"><p>Content</p></body>";
-        let result = transform_mobi_html(html, &assets);
-        let result_str = String::from_utf8_lossy(&result);
-
-        assert!(result_str.contains("<body>"));
-        assert!(result_str.contains("<h1>Title</h1>"));
-        assert!(result_str.contains("<p>Content</p>"));
-        assert!(result_str.contains("</body>"));
-    }
-}
+// Tests for MOBI HTML transformation are in mobi::filepos module

@@ -9,6 +9,45 @@
 //! Links are stored as raw href strings in `SemanticMap.href` and parsed
 //! on-demand using `Link::parse()` when needed (e.g., for export).
 
+use crate::import::ChapterId;
+use crate::model::NodeId;
+
+/// Uniquely identifies a node across the entire book.
+///
+/// Combines a chapter identifier with a node identifier to provide
+/// a globally unique reference to any node in any chapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlobalNodeId {
+    pub chapter: ChapterId,
+    pub node: NodeId,
+}
+
+impl GlobalNodeId {
+    /// Create a new global node identifier.
+    pub fn new(chapter: ChapterId, node: NodeId) -> Self {
+        Self { chapter, node }
+    }
+}
+
+/// The resolved target of a link.
+///
+/// After resolving hrefs against the book structure, each link points to
+/// one of these target types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnchorTarget {
+    /// Link to a specific node in a specific chapter.
+    /// Example: href="chapter2.xhtml#note-1" → Internal(GlobalNodeId { chapter: 1, node: 23 })
+    Internal(GlobalNodeId),
+
+    /// Link to the start of a chapter (no fragment).
+    /// Example: href="chapter2.xhtml" → Chapter(ChapterId(1))
+    Chapter(ChapterId),
+
+    /// External URL.
+    /// Example: href="https://example.com" → External(String)
+    External(String),
+}
+
 /// Location within a chapter/spine item.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InternalLocation {

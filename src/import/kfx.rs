@@ -21,7 +21,7 @@ use crate::kfx::schema::schema;
 use crate::kfx::storyline::parse_storyline_to_ir;
 use crate::kfx::symbols::KfxSymbol;
 use crate::model::Chapter;
-use crate::model::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
+use crate::model::{AnchorTarget, CollectionInfo, Contributor, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
 macro_rules! sym {
@@ -82,6 +82,13 @@ pub struct KfxImporter {
     styles: HashMap<String, Vec<(u64, IonValue)>>,
     /// Whether styles have been indexed
     styles_indexed: bool,
+
+    // --- Link resolution ---
+    /// Internal anchors: anchor_name -> (position_id, offset)
+    internal_anchors: HashMap<String, (i64, i64)>,
+
+    /// Maps element string ID -> GlobalNodeId (built during index_anchors)
+    element_id_map: HashMap<String, GlobalNodeId>,
 }
 
 impl From<ContainerError> for io::Error {
@@ -119,7 +126,7 @@ impl Importer for KfxImporter {
 
     fn load_chapter(&mut self, id: ChapterId) -> io::Result<Chapter> {
         // Ensure anchors and styles are indexed
-        self.index_anchors()?;
+        self.index_anchor_entities()?;
         self.index_styles()?;
 
         let section_name = self
@@ -206,6 +213,73 @@ impl Importer for KfxImporter {
         // KFX load_raw returns binary Ion data, not HTML
         true
     }
+
+    fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+        self.element_id_map.clear();
+
+        // Build element_id → GlobalNodeId map from chapters
+        for (chapter_id, chapter) in chapters {
+            for node_id in chapter.iter_dfs() {
+                if let Some(id) = chapter.semantics.id(node_id) {
+                    self.element_id_map
+                        .insert(id.to_string(), GlobalNodeId::new(*chapter_id, node_id));
+                }
+            }
+        }
+    }
+
+    fn resolve_href(&self, _from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        let href = href.trim();
+
+        // External URLs
+        if href.starts_with("http://")
+            || href.starts_with("https://")
+            || href.starts_with("mailto:")
+            || href.starts_with("tel:")
+        {
+            return Some(AnchorTarget::External(href.to_string()));
+        }
+
+        // Strip leading # if present for anchor/element lookups
+        let anchor_name = href.strip_prefix('#').unwrap_or(href);
+
+        // Handle #id:offset format (KFX TOC/nav format)
+        let anchor_name = if let Some(colon_pos) = anchor_name.find(':') {
+            &anchor_name[..colon_pos]
+        } else {
+            anchor_name
+        };
+
+        // Check external anchors map (anchor_name → uri)
+        if let Some(uri) = self.anchors.get(anchor_name) {
+            return Some(AnchorTarget::External(uri.clone()));
+        }
+
+        // Check internal anchors (anchor_name → position.id → element_id)
+        // The position.id in anchor entities references element IDs in storylines
+        if let Some(&(pos_id, _offset)) = self.internal_anchors.get(anchor_name) {
+            let id_str = pos_id.to_string();
+            if let Some(target) = self.element_id_map.get(&id_str) {
+                return Some(AnchorTarget::Internal(*target));
+            }
+        }
+
+        // Try direct element ID lookup (anchor_name might be the numeric ID directly)
+        if let Some(target) = self.element_id_map.get(anchor_name) {
+            return Some(AnchorTarget::Internal(*target));
+        }
+
+        // Try parsing as numeric ID
+        if let Ok(numeric_id) = anchor_name.parse::<i64>() {
+            let id_str = numeric_id.to_string();
+            if let Some(target) = self.element_id_map.get(&id_str) {
+                return Some(AnchorTarget::Internal(*target));
+            }
+        }
+
+        // Not found
+        None
+    }
 }
 
 impl KfxImporter {
@@ -265,6 +339,8 @@ impl KfxImporter {
             anchors_indexed: false,
             styles: HashMap::new(),
             styles_indexed: false,
+            internal_anchors: HashMap::new(),
+            element_id_map: HashMap::new(),
         };
 
         // Parse metadata (only reads needed entities)
@@ -836,11 +912,11 @@ impl KfxImporter {
         Ok(())
     }
 
-    /// Index anchor entities to build anchor_name → uri map.
+    /// Index anchor entities to build anchor_name → uri/position maps.
     ///
-    /// This enables resolution of external links where `link_to` contains
-    /// an anchor name that maps to an external URI.
-    fn index_anchors(&mut self) -> io::Result<()> {
+    /// This enables resolution of both external and internal links where
+    /// `link_to` contains an anchor name.
+    fn index_anchor_entities(&mut self) -> io::Result<()> {
         if self.anchors_indexed {
             return Ok(());
         }
@@ -862,14 +938,30 @@ impl KfxImporter {
                     .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
                     .map(|s| s.to_string());
 
-                // Get uri (only present for external links)
+                let Some(name) = anchor_name else {
+                    continue;
+                };
+
+                // Get uri (present for external links)
                 let uri = get_field(fields, sym!(Uri))
                     .and_then(|v| v.as_string())
                     .map(|s| s.to_string());
 
-                // If we have both anchor_name and uri, add to map
-                if let (Some(name), Some(uri)) = (anchor_name, uri) {
+                if let Some(uri) = uri {
+                    // External anchor
                     self.anchors.insert(name, uri);
+                } else if let Some(position) =
+                    get_field(fields, sym!(Position)).and_then(|v| v.as_struct())
+                {
+                    // Internal anchor with position
+                    let id = get_field(position, sym!(Id)).and_then(|v| v.as_int());
+                    let offset = get_field(position, sym!(Offset))
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(0);
+
+                    if let Some(pos_id) = id {
+                        self.internal_anchors.insert(name, (pos_id, offset));
+                    }
                 }
             }
         }

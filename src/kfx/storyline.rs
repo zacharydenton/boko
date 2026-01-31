@@ -394,6 +394,11 @@ where
                 // Apply ALL semantic attributes from the generic map
                 apply_semantics_to_node(&mut chapter, node_id, &elem.semantics);
 
+                // Apply element ID if present (KFX stores as integer, we store as string)
+                if let Some(id) = elem.id {
+                    chapter.semantics.set_id(node_id, &id.to_string());
+                }
+
                 // Handle text content with style events
                 if let Some(ref content_ref) = elem.content_ref
                     && let Some(text) = content_lookup(&content_ref.name, content_ref.index)

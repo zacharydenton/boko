@@ -4,7 +4,7 @@ use std::io::Cursor;
 
 use boko::Book;
 use boko::export::{EpubConfig, EpubExporter, Exporter, GlobalStylePool, normalize_book};
-use boko::model::Chapter;
+use boko::model::{AnchorTarget, Chapter};
 use boko::style::{ComputedStyle, FontStyle, FontWeight, StyleId};
 
 // ============================================================================
@@ -283,4 +283,81 @@ fn test_book_cache_works() {
 
     // Clear cache should work
     book.clear_cache();
+}
+
+// ============================================================================
+// Link Resolution Tests
+// ============================================================================
+
+fn test_resolve_links_on_book(path: &str) {
+    let mut book = Book::open(path).expect("Failed to open test book");
+
+    let resolved = book.resolve_links().expect("resolve_links failed");
+
+    // The book should have some links (footnotes, TOC references, etc.)
+    // We don't require specific counts, just verify the API works
+    let total_links = resolved.len();
+    let broken_count = resolved.broken_links().len();
+
+    // Verify we can iterate links
+    let mut internal_count = 0;
+    let mut chapter_count = 0;
+    let mut external_count = 0;
+
+    for (_source, target) in resolved.iter() {
+        match target {
+            AnchorTarget::Internal(_) => internal_count += 1,
+            AnchorTarget::Chapter(_) => chapter_count += 1,
+            AnchorTarget::External(_) => external_count += 1,
+        }
+    }
+
+    assert_eq!(
+        total_links,
+        internal_count + chapter_count + external_count,
+        "Link counts should match"
+    );
+
+    // Print stats for debugging (visible with cargo test -- --nocapture)
+    eprintln!(
+        "[{}] links: {} total, {} internal, {} chapter, {} external, {} broken",
+        path, total_links, internal_count, chapter_count, external_count, broken_count
+    );
+}
+
+#[test]
+fn test_resolve_links_on_epub() {
+    test_resolve_links_on_book("tests/fixtures/epictetus.epub");
+}
+
+#[test]
+fn test_resolve_links_on_azw3() {
+    test_resolve_links_on_book("tests/fixtures/epictetus.azw3");
+}
+
+#[test]
+fn test_resolve_links_on_kfx() {
+    test_resolve_links_on_book("tests/fixtures/epictetus.kfx");
+}
+
+#[test]
+fn test_resolve_links_on_mobi() {
+    test_resolve_links_on_book("tests/fixtures/epictetus.mobi");
+}
+
+#[test]
+fn test_resolve_links_caches_chapters() {
+    let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
+
+    // Resolve links (this loads all chapters into cache)
+    let _resolved = book.resolve_links().expect("resolve_links failed");
+
+    // Now loading chapters should be fast (cached)
+    let spine: Vec<_> = book.spine().to_vec();
+    for entry in &spine {
+        // This should return cached Arc<Chapter>
+        let _chapter = book
+            .load_chapter_cached(entry.id)
+            .expect("Cached load failed");
+    }
 }

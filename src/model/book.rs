@@ -14,7 +14,8 @@ use crate::import::{
     Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry,
 };
 use crate::io::MemorySource;
-use crate::model::Chapter;
+use crate::model::resolved::resolve_book_links;
+use crate::model::{AnchorTarget, Chapter, ResolvedLinks};
 
 // ============================================================================
 // Data Types
@@ -392,6 +393,49 @@ impl Book {
         if let Ok(mut cache) = self.ir_cache.write() {
             cache.clear();
         }
+    }
+
+    /// Resolve all internal links in the book.
+    ///
+    /// Uses `load_chapter_cached()` internally, so chapters are parsed once
+    /// and reused for subsequent export operations. Call this before export
+    /// to benefit from caching.
+    ///
+    /// Returns both forward mappings (source -> target) and reverse mappings
+    /// (target -> sources) for efficient lookup during traversal.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use boko::Book;
+    ///
+    /// let mut book = Book::open("input.epub")?;
+    /// let resolved = book.resolve_links()?;
+    ///
+    /// // Check for broken links
+    /// for (source, href) in resolved.broken_links() {
+    ///     eprintln!("Broken link at {:?}: {}", source, href);
+    /// }
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn resolve_links(&mut self) -> io::Result<ResolvedLinks> {
+        resolve_book_links(self)
+    }
+
+    /// Index anchors for link resolution.
+    ///
+    /// Called internally by `resolve_links()`. Delegates to the format-specific
+    /// importer to build anchor maps.
+    pub(crate) fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+        self.backend.index_anchors(chapters);
+    }
+
+    /// Resolve a single href using format-specific logic.
+    ///
+    /// Called internally by `resolve_links()`. Delegates to the format-specific
+    /// importer.
+    pub(crate) fn resolve_href(&self, from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        self.backend.resolve_href(from_chapter, href)
     }
 
     /// Load an asset by path.

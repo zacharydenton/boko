@@ -8,9 +8,9 @@ use std::sync::Arc;
 use zip::ZipArchive;
 
 use crate::epub::{parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf};
-use crate::import::{ChapterId, Importer, SpineEntry};
+use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, ByteSourceCursor, FileSource};
-use crate::model::{Landmark, Metadata, TocEntry};
+use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// EPUB format importer with random-access ZIP reading.
 pub struct EpubImporter {
@@ -37,6 +37,13 @@ pub struct EpubImporter {
 
     /// All asset paths in the ZIP.
     assets: Vec<PathBuf>,
+
+    // --- Link resolution ---
+    /// Maps path (without fragment) -> ChapterId
+    path_to_chapter: HashMap<String, ChapterId>,
+
+    /// Maps "path#id" -> GlobalNodeId for fragment resolution
+    anchor_map: HashMap<String, GlobalNodeId>,
 }
 
 #[derive(Clone, Copy)]
@@ -90,6 +97,37 @@ impl Importer for EpubImporter {
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
         let key = path.to_string_lossy().replace('\\', "/");
         self.read_entry(&key)
+    }
+
+    fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+        self.anchor_map.clear();
+
+        for (chapter_id, chapter) in chapters {
+            // Get the chapter's source path
+            let chapter_path = match self.spine_paths.get(chapter_id.0 as usize) {
+                Some(p) => p.split('#').next().unwrap_or(p),
+                None => continue,
+            };
+
+            // Walk the chapter and record all nodes with IDs
+            for node_id in chapter.iter_dfs() {
+                if let Some(id) = chapter.semantics.id(node_id) {
+                    let key = format!("{}#{}", chapter_path, id);
+                    self.anchor_map
+                        .insert(key, GlobalNodeId::new(*chapter_id, node_id));
+                }
+            }
+        }
+    }
+
+    fn resolve_href(&self, from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        let from_path = self.source_id(from_chapter)?;
+        resolve_path_based_href(
+            from_path,
+            href,
+            |p| self.path_to_chapter.get(p).copied(),
+            |k| self.anchor_map.get(k).copied(),
+        )
     }
 }
 
@@ -196,6 +234,14 @@ impl EpubImporter {
             Vec::new()
         };
 
+        // Build path -> ChapterId map
+        let mut path_to_chapter = HashMap::new();
+        for (i, path) in spine_paths.iter().enumerate() {
+            // Store path without fragment
+            let base_path = path.split('#').next().unwrap_or(path);
+            path_to_chapter.insert(base_path.to_string(), ChapterId(i as u32));
+        }
+
         Ok(Self {
             source,
             zip_index,
@@ -205,6 +251,8 @@ impl EpubImporter {
             spine,
             spine_paths,
             assets,
+            path_to_chapter,
+            anchor_map: HashMap::new(),
         })
     }
 

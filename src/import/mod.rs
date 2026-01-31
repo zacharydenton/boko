@@ -15,9 +15,10 @@ pub use kfx::KfxImporter;
 pub use mobi::MobiImporter;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::dom::{Origin, Stylesheet, compile_html_bytes, extract_stylesheets};
-use crate::model::{Chapter, FontFace, Landmark, Metadata, TocEntry};
+use crate::model::{AnchorTarget, Chapter, FontFace, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// Unique identifier for a chapter/spine item within a book.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -175,6 +176,97 @@ pub trait Importer: Send + Sync {
     fn requires_normalized_export(&self) -> bool {
         false
     }
+
+    // --- Link Resolution ---
+
+    /// Index all anchor targets after chapters are loaded.
+    ///
+    /// This method is called once with all loaded chapters, allowing the importer
+    /// to build format-specific anchor maps. The default implementation builds
+    /// a path#id → GlobalNodeId map suitable for EPUB-style linking.
+    ///
+    /// Importers should override this to handle format-specific anchor systems
+    /// (e.g., KFX anchor entities, AZW3 fragment IDs).
+    fn index_anchors(&mut self, _chapters: &[(ChapterId, Arc<Chapter>)]) {
+        // Default: no-op. Path-based resolution in resolve_href() handles EPUB.
+        // Format-specific importers override to build their anchor maps.
+    }
+
+    // --- Link Resolution ---
+
+    /// Resolve an href to its target.
+    ///
+    /// Handles format-specific href parsing and resolution.
+    /// Returns `None` if the href cannot be resolved (broken link).
+    ///
+    /// The default implementation only handles external URLs.
+    /// Importers should override to handle internal links.
+    fn resolve_href(&self, _from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        let href = href.trim();
+
+        // External URLs
+        if href.starts_with("http://")
+            || href.starts_with("https://")
+            || href.starts_with("mailto:")
+            || href.starts_with("tel:")
+        {
+            return Some(AnchorTarget::External(href.to_string()));
+        }
+
+        None
+    }
+}
+
+/// Helper for path-based href resolution (used by EPUB, AZW3, MOBI).
+///
+/// Handles EPUB-style paths: `path#fragment`, `#fragment`, `path`
+pub fn resolve_path_based_href(
+    from_path: &str,
+    href: &str,
+    chapter_for_path: impl Fn(&str) -> Option<ChapterId>,
+    anchor: impl Fn(&str) -> Option<GlobalNodeId>,
+) -> Option<AnchorTarget> {
+    let href = href.trim();
+
+    // External URLs
+    if href.starts_with("http://")
+        || href.starts_with("https://")
+        || href.starts_with("mailto:")
+        || href.starts_with("tel:")
+    {
+        return Some(AnchorTarget::External(href.to_string()));
+    }
+
+    // Fragment-only link (#id) - same chapter
+    if let Some(fragment) = href.strip_prefix('#') {
+        let key = format!("{}#{}", from_path, fragment);
+        if let Some(target) = anchor(&key) {
+            return Some(AnchorTarget::Internal(target));
+        }
+        return None;
+    }
+
+    // Split path and fragment
+    let (path, fragment) = if let Some(hash_pos) = href.find('#') {
+        (&href[..hash_pos], Some(&href[hash_pos + 1..]))
+    } else {
+        (href, None)
+    };
+
+    // Look up target chapter
+    let target_chapter = chapter_for_path(path)?;
+
+    // If there's a fragment, resolve to specific node
+    if let Some(frag) = fragment {
+        let key = format!("{}#{}", path, frag);
+        if let Some(target) = anchor(&key) {
+            return Some(AnchorTarget::Internal(target));
+        }
+        return None;
+    }
+
+    // No fragment - link to chapter start
+    Some(AnchorTarget::Chapter(target_chapter))
 }
 
 /// Resolve a relative path against a base path.

@@ -10,6 +10,12 @@ pub mod parser;
 pub(crate) mod skeleton;
 pub(crate) mod writer_transform;
 
+// Transform for reading MOBI/KF8 files
+pub mod transform;
+
+// Filepos handling for link resolution
+pub mod filepos;
+
 pub use parser::{
     Compression, Encoding, ExthHeader, HuffCdicReader, MobiFormat, MobiHeader, NULL_INDEX,
     NcxEntry, PdbInfo, TocNode, build_toc_from_ncx, detect_font_type, detect_format,

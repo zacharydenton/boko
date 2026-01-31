@@ -10,7 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::import::{ChapterId, Importer, SpineEntry};
+use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::parser::{
     DivElement, SkeletonFile, parse_div_index, parse_ncx_index, parse_skel_index, read_index,
@@ -18,9 +18,9 @@ use crate::mobi::parser::{
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiFormat, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
     build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
-    strip_trailing_data,
+    strip_trailing_data, transform,
 };
-use crate::model::{Landmark, Metadata, TocEntry};
+use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// AZW3/KF8 format importer with lazy loading.
 pub struct Azw3Importer {
@@ -62,6 +62,10 @@ pub struct Azw3Importer {
 
     /// Cached chapter content.
     chapter_cache: HashMap<u32, Vec<u8>>,
+
+    // --- Link resolution ---
+    /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
+    element_id_map: HashMap<String, GlobalNodeId>,
 }
 
 /// KF8 structure info parsed from indices.
@@ -141,6 +145,42 @@ impl Importer for Azw3Importer {
             })?;
 
         self.load_image_record(idx)
+    }
+
+    fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+        self.element_id_map.clear();
+
+        // Build path#id → GlobalNodeId map from chapters (same format as EPUB)
+        for (chapter_id, chapter) in chapters {
+            // Get the chapter's source path
+            let chapter_path = match self.chapter_paths.get(chapter_id.0 as usize) {
+                Some(p) => p.as_str(),
+                None => continue,
+            };
+
+            for node_id in chapter.iter_dfs() {
+                if let Some(id) = chapter.semantics.id(node_id) {
+                    let key = format!("{}#{}", chapter_path, id);
+                    self.element_id_map
+                        .insert(key, GlobalNodeId::new(*chapter_id, node_id));
+                }
+            }
+        }
+    }
+
+    fn resolve_href(&self, from_chapter: ChapterId, href: &str) -> Option<AnchorTarget> {
+        let from_path = self.source_id(from_chapter)?;
+        resolve_path_based_href(
+            from_path,
+            href,
+            |p| {
+                self.chapter_paths
+                    .iter()
+                    .position(|cp| cp == p)
+                    .map(|i| ChapterId(i as u32))
+            },
+            |k| self.element_id_map.get(k).copied(),
+        )
     }
 }
 
@@ -313,6 +353,7 @@ impl Azw3Importer {
             },
             text_cache: None,
             chapter_cache: HashMap::new(),
+            element_id_map: HashMap::new(),
         })
     }
 
@@ -382,7 +423,7 @@ impl Azw3Importer {
         // Build all parts and return the requested one
         let parts = build_parts(html_text, &self.kf8.files, &self.kf8.elems);
 
-        parts
+        let content = parts
             .get(chapter_id as usize)
             .map(|(_, content)| content.clone())
             .ok_or_else(|| {
@@ -390,7 +431,28 @@ impl Azw3Importer {
                     io::ErrorKind::NotFound,
                     format!("Chapter {} not found", chapter_id),
                 )
-            })
+            })?;
+
+        // Transform kindle: references to standard EPUB-style paths
+        // This converts kindle:pos:fid:XXXX:off:YYYY to partNNNN.html#id
+        let file_starts: Vec<(u32, u32)> = self
+            .kf8
+            .files
+            .iter()
+            .map(|f| (f.start_pos, f.file_number as u32))
+            .collect();
+
+        let transformed = transform::transform_kindle_refs(
+            &content,
+            &self.kf8.elems,
+            html_text,
+            &file_starts,
+        );
+
+        // Strip Amazon-specific attributes (aid, data-Amzn*)
+        let cleaned = transform::strip_kindle_attributes_fast(&transformed);
+
+        Ok(cleaned)
     }
 
     /// Discover asset paths by scanning image records.
