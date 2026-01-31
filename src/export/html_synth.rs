@@ -383,9 +383,7 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        chapter
-            .semantics
-            .set_href(link, "https://example.com".to_string());
+        chapter.semantics.set_href(link, "https://example.com");
 
         let text_range = chapter.append_text("Click me");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -404,10 +402,8 @@ mod tests {
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter
-            .semantics
-            .set_src(img, "images/photo.jpg".to_string());
-        chapter.semantics.set_alt(img, "A photo".to_string());
+        chapter.semantics.set_src(img, "images/photo.jpg");
+        chapter.semantics.set_alt(img, "A photo");
 
         let result = synthesize_html(&chapter, &HashMap::new());
 
@@ -482,7 +478,7 @@ mod tests {
         // Image (void element)
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter.semantics.set_src(img, "test.png".to_string());
+        chapter.semantics.set_src(img, "test.png");
 
         let result = synthesize_html(&chapter, &HashMap::new());
 

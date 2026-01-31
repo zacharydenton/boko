@@ -2,35 +2,43 @@
 //!
 //! Most nodes don't have href, src, or alt attributes.
 //! Using HashMaps is more memory-efficient than `Option<String>` on every Node.
+//!
+//! String values are stored in a single contiguous buffer, with TextRange
+//! references into that buffer. This avoids per-attribute String allocations.
 
 use std::collections::HashMap;
 
-use super::node::NodeId;
+use super::node::{NodeId, TextRange};
 
 /// Sparse map for semantic attributes.
 ///
 /// Stores attributes only for nodes that have them, saving memory
 /// compared to storing `Option<String>` on every node.
+///
+/// All string values are stored in a single buffer, with TextRange
+/// references. This eliminates per-attribute heap allocations.
 #[derive(Debug, Default, Clone)]
 pub struct SemanticMap {
+    /// Contiguous buffer for all string attribute values.
+    buffer: String,
     /// href attribute (for links).
-    href: HashMap<NodeId, String>,
+    href: HashMap<NodeId, TextRange>,
     /// src attribute (for images).
-    src: HashMap<NodeId, String>,
+    src: HashMap<NodeId, TextRange>,
     /// alt attribute (for images).
-    alt: HashMap<NodeId, String>,
+    alt: HashMap<NodeId, TextRange>,
     /// id attribute (for anchors).
-    id: HashMap<NodeId, String>,
+    id: HashMap<NodeId, TextRange>,
     /// title attribute (for tooltips).
-    title: HashMap<NodeId, String>,
+    title: HashMap<NodeId, TextRange>,
     /// lang attribute (for language).
-    lang: HashMap<NodeId, String>,
+    lang: HashMap<NodeId, TextRange>,
     /// epub:type attribute (for EPUB semantics).
-    epub_type: HashMap<NodeId, String>,
+    epub_type: HashMap<NodeId, TextRange>,
     /// WAI-ARIA role attribute.
-    aria_role: HashMap<NodeId, String>,
+    aria_role: HashMap<NodeId, TextRange>,
     /// datetime attribute (for `<time>` elements).
-    datetime: HashMap<NodeId, String>,
+    datetime: HashMap<NodeId, TextRange>,
     /// start attribute (for ordered lists, ol@start).
     list_start: HashMap<NodeId, u32>,
     /// rowspan attribute (for table cells).
@@ -40,7 +48,7 @@ pub struct SemanticMap {
     /// Whether a table cell is a header cell (th vs td).
     is_header_cell: HashMap<NodeId, bool>,
     /// Programming language for code blocks.
-    language: HashMap<NodeId, String>,
+    language: HashMap<NodeId, TextRange>,
 }
 
 impl SemanticMap {
@@ -49,130 +57,153 @@ impl SemanticMap {
         Self::default()
     }
 
+    /// Append a string to the buffer and return its TextRange.
+    fn append(&mut self, s: &str) -> TextRange {
+        let start = self.buffer.len() as u32;
+        self.buffer.push_str(s);
+        TextRange::new(start, s.len() as u32)
+    }
+
+    /// Get a string slice from a TextRange.
+    fn get_str(&self, range: TextRange) -> &str {
+        let start = range.start as usize;
+        let end = (range.start + range.len) as usize;
+        &self.buffer[start..end]
+    }
+
     // --- href ---
 
     /// Set the href for a node.
-    pub fn set_href(&mut self, node: NodeId, href: String) {
+    pub fn set_href(&mut self, node: NodeId, href: &str) {
         if !href.is_empty() {
-            self.href.insert(node, href);
+            let range = self.append(href);
+            self.href.insert(node, range);
         }
     }
 
     /// Get the href for a node.
     pub fn href(&self, node: NodeId) -> Option<&str> {
-        self.href.get(&node).map(|s| s.as_str())
+        self.href.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- src ---
 
     /// Set the src for a node.
-    pub fn set_src(&mut self, node: NodeId, src: String) {
+    pub fn set_src(&mut self, node: NodeId, src: &str) {
         if !src.is_empty() {
-            self.src.insert(node, src);
+            let range = self.append(src);
+            self.src.insert(node, range);
         }
     }
 
     /// Get the src for a node.
     pub fn src(&self, node: NodeId) -> Option<&str> {
-        self.src.get(&node).map(|s| s.as_str())
+        self.src.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- alt ---
 
     /// Set the alt text for a node.
-    pub fn set_alt(&mut self, node: NodeId, alt: String) {
+    pub fn set_alt(&mut self, node: NodeId, alt: &str) {
         if !alt.is_empty() {
-            self.alt.insert(node, alt);
+            let range = self.append(alt);
+            self.alt.insert(node, range);
         }
     }
 
     /// Get the alt text for a node.
     pub fn alt(&self, node: NodeId) -> Option<&str> {
-        self.alt.get(&node).map(|s| s.as_str())
+        self.alt.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- id ---
 
     /// Set the id for a node.
-    pub fn set_id(&mut self, node: NodeId, id: String) {
+    pub fn set_id(&mut self, node: NodeId, id: &str) {
         if !id.is_empty() {
-            self.id.insert(node, id);
+            let range = self.append(id);
+            self.id.insert(node, range);
         }
     }
 
     /// Get the id for a node.
     pub fn id(&self, node: NodeId) -> Option<&str> {
-        self.id.get(&node).map(|s| s.as_str())
+        self.id.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- title ---
 
     /// Set the title for a node.
-    pub fn set_title(&mut self, node: NodeId, title: String) {
+    pub fn set_title(&mut self, node: NodeId, title: &str) {
         if !title.is_empty() {
-            self.title.insert(node, title);
+            let range = self.append(title);
+            self.title.insert(node, range);
         }
     }
 
     /// Get the title for a node.
     pub fn title(&self, node: NodeId) -> Option<&str> {
-        self.title.get(&node).map(|s| s.as_str())
+        self.title.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- lang ---
 
     /// Set the language for a node.
-    pub fn set_lang(&mut self, node: NodeId, lang: String) {
+    pub fn set_lang(&mut self, node: NodeId, lang: &str) {
         if !lang.is_empty() {
-            self.lang.insert(node, lang);
+            let range = self.append(lang);
+            self.lang.insert(node, range);
         }
     }
 
     /// Get the language for a node.
     pub fn lang(&self, node: NodeId) -> Option<&str> {
-        self.lang.get(&node).map(|s| s.as_str())
+        self.lang.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- epub:type ---
 
     /// Set the epub:type for a node.
-    pub fn set_epub_type(&mut self, node: NodeId, epub_type: String) {
+    pub fn set_epub_type(&mut self, node: NodeId, epub_type: &str) {
         if !epub_type.is_empty() {
-            self.epub_type.insert(node, epub_type);
+            let range = self.append(epub_type);
+            self.epub_type.insert(node, range);
         }
     }
 
     /// Get the epub:type for a node.
     pub fn epub_type(&self, node: NodeId) -> Option<&str> {
-        self.epub_type.get(&node).map(|s| s.as_str())
+        self.epub_type.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- aria role ---
 
     /// Set the WAI-ARIA role for a node.
-    pub fn set_aria_role(&mut self, node: NodeId, role: String) {
+    pub fn set_aria_role(&mut self, node: NodeId, role: &str) {
         if !role.is_empty() {
-            self.aria_role.insert(node, role);
+            let range = self.append(role);
+            self.aria_role.insert(node, range);
         }
     }
 
     /// Get the WAI-ARIA role for a node.
     pub fn aria_role(&self, node: NodeId) -> Option<&str> {
-        self.aria_role.get(&node).map(|s| s.as_str())
+        self.aria_role.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- datetime ---
 
     /// Set the datetime for a node (from `<time>` elements).
-    pub fn set_datetime(&mut self, node: NodeId, datetime: String) {
+    pub fn set_datetime(&mut self, node: NodeId, datetime: &str) {
         if !datetime.is_empty() {
-            self.datetime.insert(node, datetime);
+            let range = self.append(datetime);
+            self.datetime.insert(node, range);
         }
     }
 
     /// Get the datetime for a node.
     pub fn datetime(&self, node: NodeId) -> Option<&str> {
-        self.datetime.get(&node).map(|s| s.as_str())
+        self.datetime.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- list_start ---
@@ -237,15 +268,16 @@ impl SemanticMap {
     // --- language ---
 
     /// Set the programming language for a code block.
-    pub fn set_language(&mut self, node: NodeId, language: String) {
+    pub fn set_language(&mut self, node: NodeId, language: &str) {
         if !language.is_empty() {
-            self.language.insert(node, language);
+            let range = self.append(language);
+            self.language.insert(node, range);
         }
     }
 
     /// Get the programming language for a code block.
     pub fn language(&self, node: NodeId) -> Option<&str> {
-        self.language.get(&node).map(|s| s.as_str())
+        self.language.get(&node).map(|r| self.get_str(*r))
     }
 
     // --- Generic access ---
@@ -308,8 +340,7 @@ impl SemanticMap {
     /// assert!(semantics.set_attr(node, "alt", "A photo"));
     /// assert!(!semantics.set_attr(node, "unknown", "value")); // Unrecognized
     /// ```
-    pub fn set_attr(&mut self, node: NodeId, name: &str, value: impl Into<String>) -> bool {
-        let value = value.into();
+    pub fn set_attr(&mut self, node: NodeId, name: &str, value: &str) -> bool {
         match name {
             "href" => {
                 self.set_href(node, value);
@@ -379,6 +410,9 @@ impl SemanticMap {
     /// This is used to canonicalize relative paths (e.g., `../images/photo.jpg`)
     /// to absolute archive paths (e.g., `OEBPS/images/photo.jpg`).
     ///
+    /// Note: This appends resolved values to the buffer (old values become
+    /// unreachable but buffer space is not reclaimed).
+    ///
     /// # Arguments
     ///
     /// * `resolver` - A function that takes a path and returns the resolved path
@@ -387,16 +421,39 @@ impl SemanticMap {
         F: Fn(&str) -> String,
     {
         // Resolve src attributes (images)
-        for value in self.src.values_mut() {
-            *value = resolver(value);
+        // Collect updates first to avoid borrow conflicts
+        let src_updates: Vec<_> = self
+            .src
+            .iter()
+            .map(|(&node, &range)| {
+                let old_value = self.get_str(range);
+                (node, resolver(old_value))
+            })
+            .collect();
+
+        for (node, new_value) in src_updates {
+            let range = self.append(&new_value);
+            self.src.insert(node, range);
         }
 
         // Resolve href attributes (links)
         // Note: Only resolve internal links, not external URLs
-        for value in self.href.values_mut() {
-            if !value.contains("://") && !value.starts_with("mailto:") {
-                *value = resolver(value);
-            }
+        let href_updates: Vec<_> = self
+            .href
+            .iter()
+            .filter_map(|(&node, &range)| {
+                let old_value = self.get_str(range);
+                if !old_value.contains("://") && !old_value.starts_with("mailto:") {
+                    Some((node, resolver(old_value)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (node, new_value) in href_updates {
+            let range = self.append(&new_value);
+            self.href.insert(node, range);
         }
     }
 }

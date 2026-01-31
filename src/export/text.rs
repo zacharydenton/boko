@@ -1145,9 +1145,7 @@ mod tests {
 
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
-        chapter
-            .semantics
-            .set_href(link, "https://example.com".to_string());
+        chapter.semantics.set_href(link, "https://example.com");
 
         let text_range = chapter.append_text("Click here");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1163,8 +1161,8 @@ mod tests {
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter.semantics.set_src(img, "photo.jpg".to_string());
-        chapter.semantics.set_alt(img, "A photo".to_string());
+        chapter.semantics.set_src(img, "photo.jpg");
+        chapter.semantics.set_alt(img, "A photo");
 
         let result = export_to_string(&chapter, TextFormat::Markdown);
         assert!(result.contains("![A photo](photo.jpg)"));
@@ -1176,7 +1174,7 @@ mod tests {
 
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter.semantics.set_alt(img, "A sunset".to_string());
+        chapter.semantics.set_alt(img, "A sunset");
 
         let result = export_to_string(&chapter, TextFormat::Plain);
         assert!(result.contains("[Image: A sunset]"));
@@ -1196,8 +1194,8 @@ mod tests {
         // Image
         let img = chapter.alloc_node(Node::new(Role::Image));
         chapter.append_child(NodeId::ROOT, img);
-        chapter.semantics.set_src(img, "photo.jpg".to_string());
-        chapter.semantics.set_alt(img, "A photo".to_string());
+        chapter.semantics.set_src(img, "photo.jpg");
+        chapter.semantics.set_alt(img, "A photo");
 
         // Paragraph after image
         let p = chapter.alloc_node(Node::new(Role::Paragraph));
@@ -1620,7 +1618,7 @@ mod tests {
         // Heading with ID
         let h1 = chapter.alloc_node(Node::new(Role::Heading(1)));
         chapter.append_child(NodeId::ROOT, h1);
-        chapter.semantics.set_id(h1, "chapter-one".to_string());
+        chapter.semantics.set_id(h1, "chapter-one");
 
         let text_range = chapter.append_text("Chapter One");
         let text_node = chapter.alloc_node(Node::text(text_range));
@@ -1644,9 +1642,7 @@ mod tests {
         let link = chapter.alloc_node(Node::new(Role::Link));
         chapter.append_child(NodeId::ROOT, link);
         // Set an internal link to another file
-        chapter
-            .semantics
-            .set_href(link, "chapter2.xhtml#section-3".to_string());
+        chapter.semantics.set_href(link, "chapter2.xhtml#section-3");
 
         let text_range = chapter.append_text("See section 3");
         let text_node = chapter.alloc_node(Node::text(text_range));

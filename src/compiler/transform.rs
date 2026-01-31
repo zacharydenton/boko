@@ -274,14 +274,14 @@ impl<'a> TransformContext<'a> {
                     match attr_name {
                         // Core layout attributes
                         "href" => {
-                            self.chapter.semantics.set_href(ir_id, attr.value.clone());
+                            self.chapter.semantics.set_href(ir_id, &attr.value);
                         }
-                        "src" => self.chapter.semantics.set_src(ir_id, attr.value.clone()),
-                        "alt" => self.chapter.semantics.set_alt(ir_id, attr.value.clone()),
-                        "id" => self.chapter.semantics.set_id(ir_id, attr.value.clone()),
-                        "title" => self.chapter.semantics.set_title(ir_id, attr.value.clone()),
+                        "src" => self.chapter.semantics.set_src(ir_id, &attr.value),
+                        "alt" => self.chapter.semantics.set_alt(ir_id, &attr.value),
+                        "id" => self.chapter.semantics.set_id(ir_id, &attr.value),
+                        "title" => self.chapter.semantics.set_title(ir_id, &attr.value),
                         // Language (both lang and xml:lang)
-                        "lang" => self.chapter.semantics.set_lang(ir_id, attr.value.clone()),
+                        "lang" => self.chapter.semantics.set_lang(ir_id, &attr.value),
                         // List start attribute (ol@start)
                         "start" if name.local.as_ref() == "ol" => {
                             if let Ok(start) = attr.value.parse::<u32>() {
@@ -292,24 +292,16 @@ impl<'a> TransformContext<'a> {
                         // epub:type attribute - handle both namespaced and prefixed forms
                         // html5ever parses "epub:type" as literal name with empty namespace
                         "type" if attr_ns == "http://www.idpf.org/2007/ops" => {
-                            self.chapter
-                                .semantics
-                                .set_epub_type(ir_id, attr.value.clone());
+                            self.chapter.semantics.set_epub_type(ir_id, &attr.value);
                         }
                         "epub:type" => {
-                            self.chapter
-                                .semantics
-                                .set_epub_type(ir_id, attr.value.clone());
+                            self.chapter.semantics.set_epub_type(ir_id, &attr.value);
                         }
                         "role" => {
-                            self.chapter
-                                .semantics
-                                .set_aria_role(ir_id, attr.value.clone());
+                            self.chapter.semantics.set_aria_role(ir_id, &attr.value);
                         }
                         "datetime" => {
-                            self.chapter
-                                .semantics
-                                .set_datetime(ir_id, attr.value.clone());
+                            self.chapter.semantics.set_datetime(ir_id, &attr.value);
                         }
                         // Table cell attributes
                         "rowspan" if matches!(name.local.as_ref(), "td" | "th") => {
@@ -326,11 +318,11 @@ impl<'a> TransformContext<'a> {
                         "class" if matches!(name.local.as_ref(), "code" | "pre") => {
                             for class in attr.value.split_whitespace() {
                                 if let Some(lang) = class.strip_prefix("language-") {
-                                    self.chapter.semantics.set_language(ir_id, lang.to_string());
+                                    self.chapter.semantics.set_language(ir_id, lang);
                                     break;
                                 }
                                 if let Some(lang) = class.strip_prefix("lang-") {
-                                    self.chapter.semantics.set_language(ir_id, lang.to_string());
+                                    self.chapter.semantics.set_language(ir_id, lang);
                                     break;
                                 }
                             }

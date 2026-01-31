@@ -450,13 +450,13 @@ fn apply_semantics_to_node(
 ) {
     for (target, value) in semantics {
         match target {
-            SemanticTarget::Src => chapter.semantics.set_src(node_id, value.clone()),
+            SemanticTarget::Src => chapter.semantics.set_src(node_id, value),
             SemanticTarget::Href => {
-                chapter.semantics.set_href(node_id, value.clone());
+                chapter.semantics.set_href(node_id, value);
             }
-            SemanticTarget::Alt => chapter.semantics.set_alt(node_id, value.clone()),
-            SemanticTarget::Id => chapter.semantics.set_id(node_id, value.clone()),
-            SemanticTarget::EpubType => chapter.semantics.set_epub_type(node_id, value.clone()),
+            SemanticTarget::Alt => chapter.semantics.set_alt(node_id, value),
+            SemanticTarget::Id => chapter.semantics.set_id(node_id, value),
+            SemanticTarget::EpubType => chapter.semantics.set_epub_type(node_id, value),
         }
     }
 }
@@ -2207,10 +2207,8 @@ mod tests {
         chapter.append_child(chapter.root(), endnote_id);
 
         // Set epub:type to indicate this is an endnote
-        chapter
-            .semantics
-            .set_epub_type(endnote_id, "endnote footnote".to_string());
-        chapter.semantics.set_id(endnote_id, "note-1".to_string());
+        chapter.semantics.set_epub_type(endnote_id, "endnote footnote");
+        chapter.semantics.set_id(endnote_id, "note-1");
 
         let mut ctx = crate::kfx::context::ExportContext::new();
         ctx.register_section("test_section");
@@ -2592,7 +2590,7 @@ mod tests {
         let link_id = chapter.alloc_node(link_node);
         chapter.append_child(link_id, inline_id);
         chapter.append_child(link_id, text2_id);
-        chapter.semantics.set_href(link_id, "#chapter1".to_string());
+        chapter.semantics.set_href(link_id, "#chapter1");
 
         // Flatten the Link subtree
         let mut segments = Vec::new();
@@ -2661,7 +2659,7 @@ mod tests {
         let span_node = Node::new(Role::Inline);
         let span_id = chapter.alloc_node(span_node);
         chapter.append_child(h2_id, span_id);
-        chapter.semantics.set_id(span_id, "p6".to_string());
+        chapter.semantics.set_id(span_id, "p6");
 
         let mut ctx = crate::kfx::context::ExportContext::new();
 

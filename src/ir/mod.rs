@@ -312,8 +312,8 @@ mod tests {
         let mut semantics = SemanticMap::new();
         let node = NodeId(1);
 
-        semantics.set_href(node, "https://example.com".to_string());
-        semantics.set_alt(node, "An image".to_string());
+        semantics.set_href(node, "https://example.com");
+        semantics.set_alt(node, "An image");
 
         assert_eq!(semantics.href(node), Some("https://example.com"));
         assert_eq!(semantics.alt(node), Some("An image"));

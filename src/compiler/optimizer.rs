@@ -1003,7 +1003,7 @@ mod tests {
         let ws = chapter.append_text(" ");
         let ws_node = chapter.alloc_node(Node::text(ws));
         chapter.append_child(list, ws_node);
-        chapter.semantics.set_id(ws_node, "anchor".to_string());
+        chapter.semantics.set_id(ws_node, "anchor");
 
         let item = chapter.alloc_node(Node::new(Role::ListItem));
         chapter.append_child(list, item);
@@ -1172,7 +1172,7 @@ mod tests {
 
         let container = chapter.alloc_node(Node::new(Role::Container));
         chapter.append_child(NodeId::ROOT, container);
-        chapter.semantics.set_id(container, "anchor".to_string());
+        chapter.semantics.set_id(container, "anchor");
 
         prune_empty(&mut chapter);
 
