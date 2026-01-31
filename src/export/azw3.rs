@@ -9,7 +9,6 @@ use std::path::Path;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
-use crate::model::{Book, Resource, TocEntry};
 use crate::mobi::index::{
     NcxBuildEntry, build_chunk_indx, build_cncx, build_ncx_indx, build_skel_indx,
     calculate_cncx_offsets,
@@ -18,6 +17,7 @@ use crate::mobi::skeleton::{Chunker, ChunkerResult};
 use crate::mobi::writer_transform::{
     rewrite_css_references_fast, rewrite_html_references_fast, write_base32_4, write_base32_10,
 };
+use crate::model::{Book, Resource, TocEntry};
 
 use super::Exporter;
 

@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use zip::ZipArchive;
 
-use crate::model::{Landmark, Metadata, TocEntry};
 use crate::epub::{parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, ByteSourceCursor, FileSource};
+use crate::model::{Landmark, Metadata, TocEntry};
 
 /// EPUB format importer with random-access ZIP reading.
 pub struct EpubImporter {

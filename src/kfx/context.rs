@@ -933,7 +933,8 @@ impl ExportContext {
 
             // Also record as anchor position so TOC entries pointing to the chapter
             // (without #fragment) can be resolved
-            self.anchor_registry.record_position(path, first_content_id, 0);
+            self.anchor_registry
+                .record_position(path, first_content_id, 0);
         }
 
         // Get section ID for position_map grouping

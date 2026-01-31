@@ -8,7 +8,6 @@ use std::io::{self, Seek, Write};
 
 use crate::export::Exporter;
 use crate::import::ChapterId;
-use crate::model::{Book, Chapter, LandmarkType, NodeId, Role};
 use crate::kfx::auxiliary::build_auxiliary_data_fragment;
 use crate::kfx::context::{ExportContext, LandmarkTarget};
 use crate::kfx::cover::{
@@ -26,6 +25,7 @@ use crate::kfx::serialization::{
 };
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::format_to_kfx_symbol;
+use crate::model::{Book, Chapter, LandmarkType, NodeId, Role};
 use crate::util::detect_media_format;
 
 /// KFX export configuration.
@@ -1096,7 +1096,10 @@ fn build_toc_entries_with_positions(
 
             let nav_unit = IonValue::Struct(fields);
             // Annotate with nav_unit::
-            Some(IonValue::Annotated(vec![KfxSymbol::NavUnit as u64], Box::new(nav_unit)))
+            Some(IonValue::Annotated(
+                vec![KfxSymbol::NavUnit as u64],
+                Box::new(nav_unit),
+            ))
         })
         .collect()
 }
@@ -2689,8 +2692,8 @@ mod tests {
 #[allow(clippy::vec_init_then_push, clippy::needless_range_loop)]
 mod entity_structure_tests {
     use super::*;
-    use crate::model::Book;
     use crate::kfx::fragment::FragmentData;
+    use crate::model::Book;
 
     #[test]
     fn test_entity_order_matches_reference() {
@@ -2876,9 +2879,9 @@ mod entity_structure_tests {
 #[cfg(test)]
 mod section_type_tests {
     use super::*;
-    use crate::model::Book;
     use crate::kfx::cover::{needs_standalone_cover, normalize_cover_path};
     use crate::kfx::fragment::FragmentData;
+    use crate::model::Book;
 
     /// When a standalone cover (c0) exists, the titlepage chapter (c1) should have
     /// type: text, NOT type: container. The container type is reserved for c0.

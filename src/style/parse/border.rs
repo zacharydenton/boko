@@ -5,8 +5,8 @@
 
 use cssparser::Parser;
 
-use crate::style::properties::{BorderStyle, Color, Length};
 use crate::style::Declaration;
+use crate::style::properties::{BorderStyle, Color, Length};
 
 use super::box_model::expand_shorthand_4;
 use super::keywords::parse_border_style_value;

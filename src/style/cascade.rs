@@ -10,7 +10,8 @@ use selectors::context::{MatchingContext, SelectorCaches};
 
 use super::declaration::Declaration;
 use super::parse::{CssRule, Origin, Specificity, Stylesheet};
-use super::types::{ComputedStyle, StylePool};
+use super::style_pool::StylePool;
+use super::types::ComputedStyle;
 use crate::dom::element_ref::ElementRef;
 
 /// A matched rule with ordering information for the cascade.

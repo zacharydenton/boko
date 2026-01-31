@@ -13,6 +13,10 @@ use selectors::{OpaqueElement, SelectorImpl};
 
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 
+// ============================================================================
+// Selector crate type definitions
+// ============================================================================
+
 /// Our selector implementation for the selectors crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BokoSelectors;
@@ -29,6 +33,30 @@ impl precomputed_hash::PrecomputedHash for IdentStr {
             h = h.wrapping_mul(31).wrapping_add(byte as u32);
         }
         h
+    }
+}
+
+impl AsRef<str> for IdentStr {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for IdentStr {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl<'a> From<&'a str> for IdentStr {
+    fn from(s: &'a str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl cssparser::ToCss for IdentStr {
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        dest.write_str(&self.0)
     }
 }
 
@@ -94,35 +122,6 @@ impl<'a> From<&'a str> for CssNamespace {
     }
 }
 
-impl<'i> selectors::parser::Parser<'i> for BokoSelectors {
-    type Impl = BokoSelectors;
-    type Error = SelectorParseErrorKind<'i>;
-}
-
-impl AsRef<str> for IdentStr {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for IdentStr {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl<'a> From<&'a str> for IdentStr {
-    fn from(s: &'a str) -> Self {
-        Self(s.to_string())
-    }
-}
-
-impl cssparser::ToCss for IdentStr {
-    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
-        dest.write_str(&self.0)
-    }
-}
-
 /// Pseudo-element type (not used but required by trait).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PseudoElement {}
@@ -179,6 +178,11 @@ impl cssparser::ToCss for NonTSPseudoClass {
     }
 }
 
+impl<'i> selectors::parser::Parser<'i> for BokoSelectors {
+    type Impl = BokoSelectors;
+    type Error = SelectorParseErrorKind<'i>;
+}
+
 impl SelectorImpl for BokoSelectors {
     type ExtraMatchingData<'a> = ();
     type AttrValue = IdentStr;
@@ -191,6 +195,10 @@ impl SelectorImpl for BokoSelectors {
     type NonTSPseudoClass = NonTSPseudoClass;
     type PseudoElement = PseudoElement;
 }
+
+// ============================================================================
+// ElementRef implementation
+// ============================================================================
 
 /// Reference to an element in the ArenaDom for selector matching.
 #[derive(Clone, Copy)]

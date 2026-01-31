@@ -245,4 +245,3 @@ pub(crate) fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDe
     }
     if found { Some(result) } else { None }
 }
-

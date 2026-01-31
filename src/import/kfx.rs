@@ -10,10 +10,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::model::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
-use crate::model::Chapter;
 use crate::kfx::container::{
     self, ContainerError, EntityLoc, extract_doc_symbols, get_field, get_symbol_text,
     parse_container_header, parse_container_info, parse_index_table, skip_enty_header,
@@ -22,6 +20,8 @@ use crate::kfx::ion::{IonParser, IonValue};
 use crate::kfx::schema::schema;
 use crate::kfx::storyline::parse_storyline_to_ir;
 use crate::kfx::symbols::KfxSymbol;
+use crate::model::Chapter;
+use crate::model::{CollectionInfo, Contributor, Landmark, Metadata, TocEntry};
 
 /// Shorthand for getting a KfxSymbol as u32 for field lookups.
 macro_rules! sym {

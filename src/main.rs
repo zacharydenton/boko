@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use boko::{Book, ChapterId, Chapter, Format, NodeId, Role, ToCss, TocEntry};
+use boko::{Book, Chapter, ChapterId, Format, NodeId, Role, ToCss, TocEntry};
 
 #[derive(Parser)]
 #[command(name = "boko")]

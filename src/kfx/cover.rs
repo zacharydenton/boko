@@ -6,11 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::model::{Chapter, Role};
 use crate::kfx::context::ExportContext;
 use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
+use crate::model::{Chapter, Role};
 
 /// Section name for the standalone cover (always index 0).
 pub const COVER_SECTION_NAME: &str = "c0";

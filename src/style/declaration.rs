@@ -6,8 +6,8 @@
 use cssparser::Parser;
 
 use super::parse::border::{
-    parse_border_shorthand, parse_border_side_shorthand, parse_border_style_shorthand_values,
-    parse_color_shorthand_values, BorderSide,
+    BorderSide, parse_border_shorthand, parse_border_side_shorthand,
+    parse_border_style_shorthand_values, parse_color_shorthand_values,
 };
 use super::parse::box_model::parse_box_shorthand_values;
 use super::parse::font::{
@@ -21,7 +21,9 @@ use super::parse::keywords::{
     parse_text_transform, parse_vertical_align, parse_visibility, parse_white_space,
     parse_word_break,
 };
-use super::parse::values::{parse_background_shorthand, parse_color, parse_integer, parse_length, parse_text_decoration};
+use super::parse::values::{
+    parse_background_shorthand, parse_color, parse_integer, parse_length, parse_text_decoration,
+};
 use super::properties::*;
 
 /// A parsed CSS declaration (property: value).

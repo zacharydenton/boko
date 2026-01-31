@@ -7,7 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::model::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
@@ -15,6 +14,7 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth,
     parse_ncx_index, read_index, strip_trailing_data,
 };
+use crate::model::{Landmark, Metadata, TocEntry};
 
 /// MOBI6 format importer with lazy loading.
 ///

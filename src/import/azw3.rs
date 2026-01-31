@@ -10,7 +10,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::model::{Landmark, Metadata, TocEntry};
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::parser::{
@@ -21,6 +20,7 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
     strip_trailing_data,
 };
+use crate::model::{Landmark, Metadata, TocEntry};
 
 /// AZW3/KF8 format importer with lazy loading.
 pub struct Azw3Importer {

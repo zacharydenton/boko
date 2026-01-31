@@ -28,12 +28,12 @@
 //! 3. **Bidirectional**: Every import rule has export metadata
 //! 4. **Transformers**: Complex value conversions are encapsulated in traits
 
-use crate::model::{LandmarkType, Role};
-use crate::style::{ComputedStyle, FontStyle, FontWeight};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::transforms::{
     AttributeTransform, IdentityTransform, KfxLinkTransform, ResourceTransform,
 };
+use crate::model::{LandmarkType, Role};
+use crate::style::{ComputedStyle, FontStyle, FontWeight};
 use std::collections::HashMap;
 
 // ============================================================================

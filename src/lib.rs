@@ -51,7 +51,9 @@ pub(crate) mod util;
 pub mod wasm;
 
 // Primary exports from model
-pub use model::{Book, Chapter, Format, Metadata, Node, NodeId, Resource, Role, SemanticMap, TextRange, TocEntry};
+pub use model::{
+    Book, Chapter, Format, Metadata, Node, NodeId, Resource, Role, SemanticMap, TextRange, TocEntry,
+};
 
 // Primary exports from style
 pub use style::{ComputedStyle, ListStyleType, Origin, StyleId, StylePool, Stylesheet, ToCss};

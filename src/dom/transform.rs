@@ -1,92 +1,16 @@
 //! Transform ArenaDom to Chapter.
 
-use html5ever::LocalName;
-
 use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::element_ref::ElementRef;
+use super::role_map::element_to_role;
 use crate::model::{Chapter, Node, NodeId, Role};
-use crate::style::{compute_styles, ComputedStyle, Display, Origin, Stylesheet, WhiteSpace};
+use crate::style::{ComputedStyle, Display, Origin, Stylesheet, WhiteSpace, compute_styles};
 
 /// User agent stylesheet (browser defaults).
 const UA_CSS: &str = include_str!("data/styles.css");
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     Stylesheet::parse(UA_CSS)
-}
-
-/// Map an HTML element to its semantic role.
-fn map_element_to_role(local_name: &LocalName) -> Role {
-    match local_name.as_ref() {
-        // Block containers
-        "div" | "section" | "article" | "nav" | "header" | "footer" | "main" | "address"
-        | "details" | "summary" | "hgroup" => Role::Container,
-
-        // Line break (leaf node, not a container)
-        "br" => Role::Break,
-
-        // Horizontal rule (thematic break)
-        "hr" => Role::Rule,
-
-        // Aside/sidebar
-        "aside" => Role::Sidebar,
-
-        // Figure and caption
-        "figure" => Role::Figure,
-        "figcaption" | "caption" => Role::Caption,
-
-        // Paragraphs - block-level text containers
-        "p" => Role::Paragraph,
-
-        // Preformatted code blocks
-        "pre" => Role::CodeBlock,
-
-        // Inline elements with styling (rendered via ComputedStyle)
-        "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd" | "samp"
-        | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small" | "mark"
-        | "abbr" | "time" | "q" => Role::Inline,
-
-        // Headings with level
-        "h1" => Role::Heading(1),
-        "h2" => Role::Heading(2),
-        "h3" => Role::Heading(3),
-        "h4" => Role::Heading(4),
-        "h5" => Role::Heading(5),
-        "h6" => Role::Heading(6),
-
-        // Links
-        "a" => Role::Link,
-
-        // Images
-        "img" => Role::Image,
-
-        // Lists
-        "ul" => Role::UnorderedList,
-        "ol" => Role::OrderedList,
-        "li" => Role::ListItem,
-
-        // Block quote
-        "blockquote" => Role::BlockQuote,
-
-        // Definition lists
-        "dl" => Role::DefinitionList,
-        "dt" => Role::DefinitionTerm,
-        "dd" => Role::DefinitionDescription,
-
-        // Tables
-        "table" => Role::Table,
-        "thead" => Role::TableHead,
-        "tbody" => Role::TableBody,
-        "tr" => Role::TableRow,
-        "td" | "th" => Role::TableCell,
-
-        // Other inline containers
-        "label" | "legend" | "output" | "data" | "ruby" | "rt" | "rp" | "bdi" | "bdo" | "wbr" => {
-            Role::Inline
-        }
-
-        // Default to container for unknown block elements
-        _ => Role::Container,
-    }
 }
 
 /// Context for the transform operation.
@@ -250,7 +174,7 @@ impl<'a> TransformContext<'a> {
                 }
 
                 // Map to role first (needed for Break check)
-                let role = map_element_to_role(&name.local);
+                let role = element_to_role(&name.local);
 
                 // Skip hidden elements, but preserve Break nodes
                 // CSS may hide <br> (e.g., in verse: "span + br { display: none }") but
@@ -310,7 +234,8 @@ impl<'a> TransformContext<'a> {
                             }
                         }
                         "colspan" if matches!(name.local.as_ref(), "td" | "th") => {
-                            if let Ok(span) = attr.value.parse::<u32>() {                                self.chapter.semantics.set_col_span(ir_id, span);
+                            if let Ok(span) = attr.value.parse::<u32>() {
+                                self.chapter.semantics.set_col_span(ir_id, span);
                             }
                         }
                         // Extract language from class for code elements

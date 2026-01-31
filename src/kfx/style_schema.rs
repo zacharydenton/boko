@@ -13,9 +13,9 @@
 
 use std::collections::HashMap;
 
-use crate::style::{self as ir_style, ToCss};
 use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
+use crate::style::{self as ir_style, ToCss};
 
 // ============================================================================
 // Constants
@@ -3938,8 +3938,8 @@ mod tests {
 
     #[test]
     fn test_import_border_width_from_kfx() {
-        use crate::style::Length;
         use crate::kfx::ion::IonValue;
+        use crate::style::Length;
 
         let schema = StyleSchema::standard();
 

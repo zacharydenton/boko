@@ -17,13 +17,13 @@
 //! 4. Extract ALL attributes using schema's AttrRules
 //! 5. Apply transformers to convert values
 
-use crate::model::{Chapter, Node, NodeId};
 use crate::kfx::container::get_field;
 use crate::kfx::ion::IonValue;
 use crate::kfx::schema::{SemanticTarget, schema};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, SpanStart, TokenStream};
 use crate::kfx::transforms::ImportContext;
+use crate::model::{Chapter, Node, NodeId};
 use std::collections::HashMap;
 
 /// Context for tokenization including anchor resolution.
@@ -2208,7 +2208,9 @@ mod tests {
         chapter.append_child(chapter.root(), endnote_id);
 
         // Set epub:type to indicate this is an endnote
-        chapter.semantics.set_epub_type(endnote_id, "endnote footnote");
+        chapter
+            .semantics
+            .set_epub_type(endnote_id, "endnote footnote");
         chapter.semantics.set_id(endnote_id, "note-1");
 
         let mut ctx = crate::kfx::context::ExportContext::new();
@@ -2672,15 +2674,10 @@ mod tests {
         let _ion = build_storyline_ion(&chapter, &mut ctx);
 
         // Get the anchor position for p6
-        let anchor_pos = ctx
-            .anchor_registry
-            .get_anchor_position("chapter1.xhtml#p6");
+        let anchor_pos = ctx.anchor_registry.get_anchor_position("chapter1.xhtml#p6");
 
         // The anchor position should exist and point to the outer container ID
-        assert!(
-            anchor_pos.is_some(),
-            "Anchor for p6 should be created"
-        );
+        assert!(anchor_pos.is_some(), "Anchor for p6 should be created");
 
         let (fragment_id, _offset) = anchor_pos.unwrap();
 

@@ -12,8 +12,8 @@
 //! not typed fields like `link_target` or `resource`. This keeps the token
 //! layer format-agnostic - all format-specific logic lives in the schema.
 
-use crate::model::Role;
 use crate::kfx::schema::SemanticTarget;
+use crate::model::Role;
 use std::collections::HashMap;
 
 /// A token in the KFX content stream.

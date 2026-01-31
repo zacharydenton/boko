@@ -10,6 +10,8 @@ mod cascade;
 mod declaration;
 pub(crate) mod parse;
 mod properties;
+mod style_pool;
+mod to_css;
 mod types;
 
 // Re-export the ToCss trait
@@ -33,7 +35,8 @@ pub use properties::{
 };
 
 // Re-export core style types
-pub use types::{ComputedStyle, StyleId, StylePool};
+pub use style_pool::StylePool;
+pub use types::{ComputedStyle, StyleId};
 
 // Re-export declaration type (kept minimal)
 pub use declaration::Declaration;
