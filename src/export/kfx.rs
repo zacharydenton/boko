@@ -1818,10 +1818,11 @@ fn build_position_map_fragment(
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
     for (idx, &section_sym) in ctx.section_ids.iter().skip(section_offset).enumerate() {
-        if let Some(&(chapter_id, _fragment_id)) = chapter_entries.get(idx) {
-            // Only include content fragment IDs - these match location_map and position_id_map
-            // Do NOT include section fragment IDs or anchor IDs - they cause location count mismatches
+        if let Some(&(chapter_id, fragment_id)) = chapter_entries.get(idx) {
             let mut eid_list = Vec::new();
+
+            // Include page_template ID first (required for section start images)
+            eid_list.push(IonValue::Int(*fragment_id as i64));
 
             // Add all content fragment IDs for this chapter
             if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
