@@ -1030,6 +1030,15 @@ impl ExportContext {
     pub fn current_chapter(&self) -> Option<ChapterId> {
         self.current_chapter
     }
+
+    /// Check if a node is a registered link/TOC target.
+    pub fn is_registered_target(&self, node_id: NodeId) -> bool {
+        let Some(chapter_id) = self.current_chapter else {
+            return false;
+        };
+        let gid = GlobalNodeId::new(chapter_id, node_id);
+        self.anchor_registry.is_internal_target(gid)
+    }
 }
 
 impl Default for ExportContext {

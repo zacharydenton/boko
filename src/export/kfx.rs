@@ -1135,9 +1135,9 @@ fn resolve_toc_target(
 ) -> Option<(u64, usize)> {
     match target {
         Some(AnchorTarget::Internal(gid)) => {
-            // Look up node position
-            if let Some((fragment_id, offset)) = ctx.anchor_registry.get_node_position(*gid) {
-                return Some((fragment_id, offset));
+            // Look up node position - TOC always uses offset 0 (Kindle requirement)
+            if let Some((fragment_id, _offset)) = ctx.anchor_registry.get_node_position(*gid) {
+                return Some((fragment_id, 0));
             }
         }
         Some(AnchorTarget::Chapter(chapter_id)) => {
@@ -1787,7 +1787,7 @@ fn generate_resource_name(href: &str, ctx: &mut ExportContext) -> String {
 /// the Kindle reader to track which section contains a given position.
 fn build_position_map_fragment(
     ctx: &ExportContext,
-    anchor_ids_by_fragment: &HashMap<u64, Vec<u64>>,
+    _anchor_ids_by_fragment: &HashMap<u64, Vec<u64>>,
 ) -> KfxFragment {
     let mut entries = Vec::new();
 
@@ -1818,21 +1818,15 @@ fn build_position_map_fragment(
     chapter_entries.sort_by_key(|(_, fid)| **fid);
 
     for (idx, &section_sym) in ctx.section_ids.iter().skip(section_offset).enumerate() {
-        if let Some(&(chapter_id, &fragment_id)) = chapter_entries.get(idx) {
-            // Start with the page_template fragment ID
-            let mut eid_list = vec![IonValue::Int(fragment_id as i64)];
+        if let Some(&(chapter_id, _fragment_id)) = chapter_entries.get(idx) {
+            // Only include content fragment IDs - these match location_map and position_id_map
+            // Do NOT include section fragment IDs or anchor IDs - they cause location count mismatches
+            let mut eid_list = Vec::new();
 
-            // Add all content fragment IDs for this chapter (for navigation target resolution)
+            // Add all content fragment IDs for this chapter
             if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
                 for &content_id in content_ids {
                     eid_list.push(IonValue::Int(content_id as i64));
-                }
-            }
-
-            // Add all anchor IDs that belong to this section
-            if let Some(anchor_ids) = anchor_ids_by_fragment.get(&fragment_id) {
-                for &anchor_id in anchor_ids {
-                    eid_list.push(IonValue::Int(anchor_id as i64));
                 }
             }
 
@@ -1908,39 +1902,18 @@ fn build_position_id_map_fragment(ctx: &ExportContext) -> KfxFragment {
 
 /// Build location_map fragment ($550).
 ///
-/// Maps location numbers to positions. Every content item gets at least one
-/// location entry at offset 0 (required for TOC navigation), plus additional
-/// entries every ~110 characters for longer content.
+/// Maps location numbers to positions. Each content block gets one entry
+/// at offset 0 (matching Amazon's format for this entity).
 fn build_location_map_fragment(ctx: &ExportContext) -> KfxFragment {
-    const CHARS_PER_LOCATION: usize = 110;
-
     let mut location_entries = Vec::new();
 
-    // Helper closure to process a single content ID
-    // Every content item gets at least one location at offset 0,
-    // plus additional locations every CHARS_PER_LOCATION for long content.
+    // Helper closure to process a single content ID - always offset 0
     let mut process_content_id = |content_id: u64| {
-        let content_len = ctx
-            .content_id_lengths
-            .get(&content_id)
-            .copied()
-            .unwrap_or(1)
-            .max(1);
-
-        // Always emit at least one location at offset 0
-        let mut offset: usize = 0;
-        loop {
-            let entry = IonValue::Struct(vec![
-                (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
-                (KfxSymbol::Offset as u64, IonValue::Int(offset as i64)),
-            ]);
-            location_entries.push(entry);
-
-            offset += CHARS_PER_LOCATION;
-            if offset >= content_len {
-                break;
-            }
-        }
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Int(content_id as i64)),
+            (KfxSymbol::Offset as u64, IonValue::Int(0)),
+        ]);
+        location_entries.push(entry);
     };
 
     // Process cover content ID first if present

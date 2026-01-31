@@ -1199,11 +1199,13 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     // Create chapter-start anchor with first content fragment ID (if pending)
                     ctx.resolve_pending_chapter_anchor(outer_id);
 
-                    // Create fragment-based anchor if this element has an ID and a node_id
-                    if elem.get_semantic(SemanticTarget::Id).is_some()
-                        && let Some(node_id) = elem.node_id
-                    {
-                        ctx.create_anchor_if_needed(node_id, outer_id, 0);
+                    // Create fragment-based anchor if this element is a link/TOC target
+                    if let Some(node_id) = elem.node_id {
+                        let has_id = elem.get_semantic(SemanticTarget::Id).is_some();
+                        let is_target = ctx.is_registered_target(node_id);
+                        if has_id || is_target {
+                            ctx.create_anchor_if_needed(node_id, outer_id, 0);
+                        }
                     }
 
                     // Style reference - outer container gets full style with borders
@@ -1359,12 +1361,15 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                     // Create chapter-start anchor with first content fragment ID (if pending)
                     ctx.resolve_pending_chapter_anchor(container_id);
 
-                    // Create fragment-based anchor if this element has an ID that's a TOC/link target
+                    // Create fragment-based anchor if this element is a link/TOC target
                     // Note: Kindle expects offset: 0 for all navigation entries (per reference KFX)
-                    if elem.get_semantic(SemanticTarget::Id).is_some()
-                        && let Some(node_id) = elem.node_id
-                    {
-                        ctx.create_anchor_if_needed(node_id, container_id, 0);
+                    // Check both: elements with IDs AND elements that are registered targets (for TOC)
+                    if let Some(node_id) = elem.node_id {
+                        let has_id = elem.get_semantic(SemanticTarget::Id).is_some();
+                        let is_target = ctx.is_registered_target(node_id);
+                        if has_id || is_target {
+                            ctx.create_anchor_if_needed(node_id, container_id, 0);
+                        }
                     }
 
                     // Style reference - use per-element style if available, else default
@@ -1535,17 +1540,19 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
                 // The offset is relative to the current element's accumulated text
                 let current_offset = stack.last().map(|b| b.text_len()).unwrap_or(0);
 
-                // Create anchor for inline elements with IDs (e.g., noteref backlinks)
+                // Create anchor for inline elements with IDs or that are link/TOC targets
                 // For elements inside container wrappers, use the outer container's ID
-                // so TOC navigation targets the top-level element, not the nested text
-                if span.get_semantic(SemanticTarget::Id).is_some()
-                    && let Some(node_id) = span.node_id
+                if let Some(node_id) = span.node_id
                     && let Some(parent) = stack.last()
                 {
-                    // Prefer outer_container_id (for wrapped elements) over container_id
-                    let target_id = parent.outer_container_id.or(parent.container_id);
-                    if let Some(container_id) = target_id {
-                        ctx.create_anchor_if_needed(node_id, container_id, current_offset);
+                    let has_id = span.get_semantic(SemanticTarget::Id).is_some();
+                    let is_target = ctx.is_registered_target(node_id);
+                    if has_id || is_target {
+                        // Prefer outer_container_id (for wrapped elements) over container_id
+                        let target_id = parent.outer_container_id.or(parent.container_id);
+                        if let Some(container_id) = target_id {
+                            ctx.create_anchor_if_needed(node_id, container_id, current_offset);
+                        }
                     }
                 }
 
