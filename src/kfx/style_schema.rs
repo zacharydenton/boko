@@ -3957,7 +3957,7 @@ mod tests {
             ]),
         )];
 
-        let style = import_kfx_style(&schema, &props);
+        let style = import_kfx_style(schema, &props);
 
         // Should import as a non-default length (0.45pt ≈ 0.6px)
         assert!(

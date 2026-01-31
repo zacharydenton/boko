@@ -1724,6 +1724,7 @@ pub fn build_storyline_ion(chapter: &Chapter, ctx: &mut ExportContext) -> IonVal
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use crate::model::Role;
@@ -2294,27 +2295,25 @@ mod tests {
                     let mut inner_type = None;
 
                     for (key, value) in fields {
-                        if *key == KfxSymbol::Type as u64 {
-                            if let IonValue::Symbol(sym) = value {
-                                elem_type = Some(*sym);
-                            }
+                        if *key == KfxSymbol::Type as u64
+                            && let IonValue::Symbol(sym) = value
+                        {
+                            elem_type = Some(*sym);
                         }
-                        if *key == KfxSymbol::ContentList as u64 {
-                            if let IonValue::List(items) = value {
-                                for item in items {
-                                    if let Some((inner_elem_type, _)) =
-                                        find_container_structure(item)
-                                    {
-                                        inner_type = Some(inner_elem_type);
-                                        break;
-                                    }
+                        if *key == KfxSymbol::ContentList as u64
+                            && let IonValue::List(items) = value
+                        {
+                            for item in items {
+                                if let Some((inner_elem_type, _)) = find_container_structure(item) {
+                                    inner_type = Some(inner_elem_type);
+                                    break;
                                 }
                             }
                         }
                     }
 
-                    if elem_type.is_some() {
-                        return Some((elem_type.unwrap(), inner_type));
+                    if let Some(t) = elem_type {
+                        return Some((t, inner_type));
                     }
                     None
                 }
@@ -2378,10 +2377,10 @@ mod tests {
             match ion {
                 IonValue::Struct(fields) => {
                     for (key, value) in fields {
-                        if *key == KfxSymbol::Type as u64 {
-                            if let IonValue::Symbol(sym) = value {
-                                return Some(*sym);
-                            }
+                        if *key == KfxSymbol::Type as u64
+                            && let IonValue::Symbol(sym) = value
+                        {
+                            return Some(*sym);
                         }
                     }
                     None

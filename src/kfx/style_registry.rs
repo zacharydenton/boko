@@ -447,7 +447,6 @@ fn expand_font_shorthand(value: &str) -> Option<Vec<(String, String)>> {
     }
 }
 
-/// Convert an IR Length to a KFX Dimensioned value, preserving the original unit.
 // ============================================================================
 // Tests
 // ============================================================================
