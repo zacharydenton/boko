@@ -363,13 +363,17 @@ mod tests {
     fn test_resolve_relative_path_with_fragment() {
         // Relative paths with fragments should resolve normally
         let result = resolve_relative_path("text/ch1.xhtml", "ch2.xhtml#section");
-        assert_eq!(result.to_string_lossy(), "text/ch2.xhtml#section");
+        // Normalize path separators for cross-platform comparison
+        let normalized: String = result.to_string_lossy().replace('\\', "/");
+        assert_eq!(normalized, "text/ch2.xhtml#section");
     }
 
     #[test]
     fn test_resolve_parent_directory() {
         let result = resolve_relative_path("OEBPS/text/ch01.xhtml", "../styles/main.css");
-        assert_eq!(result.to_string_lossy(), "OEBPS/styles/main.css");
+        // Normalize path separators for cross-platform comparison
+        let normalized: String = result.to_string_lossy().replace('\\', "/");
+        assert_eq!(normalized, "OEBPS/styles/main.css");
     }
 
     #[test]
