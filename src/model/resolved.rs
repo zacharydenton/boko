@@ -192,7 +192,13 @@ pub(crate) fn resolve_book_links(
     // Step 2: Let the importer build format-specific anchor maps
     book.index_anchors(&chapters);
 
-    // Step 3: Walk all chapters, find Link nodes, resolve via importer
+    // Step 3: Resolve TOC hrefs (fills in fragments for AZW3/MOBI)
+    book.resolve_toc();
+
+    // Step 4: Resolve TOC entry targets
+    book.resolve_toc_targets();
+
+    // Step 5: Walk all chapters, find Link nodes, resolve via importer
     for (chapter_id, chapter) in &chapters {
         for node_id in chapter.iter_dfs() {
             let node = match chapter.node(node_id) {

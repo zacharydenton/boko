@@ -192,7 +192,17 @@ pub trait Importer: Send + Sync {
         // Format-specific importers override to build their anchor maps.
     }
 
-    // --- Link Resolution ---
+    /// Resolve TOC href fragments after chapters are loaded.
+    ///
+    /// This method is called after `index_anchors()` to fix up TOC entries
+    /// that were built without fragment identifiers (e.g., AZW3/MOBI).
+    /// The default implementation does nothing (EPUB/KFX have correct hrefs).
+    fn resolve_toc(&mut self) {
+        // Default: no-op. EPUB and KFX have correct TOC hrefs from source.
+    }
+
+    /// Get mutable access to TOC entries for resolution.
+    fn toc_mut(&mut self) -> &mut [TocEntry];
 
     /// Resolve an href to its target.
     ///

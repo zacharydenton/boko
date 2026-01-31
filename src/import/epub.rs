@@ -68,6 +68,10 @@ impl Importer for EpubImporter {
         &self.toc
     }
 
+    fn toc_mut(&mut self) -> &mut [TocEntry] {
+        &mut self.toc
+    }
+
     fn landmarks(&self) -> &[Landmark] {
         &self.landmarks
     }
@@ -321,6 +325,7 @@ fn prepend_base_to_toc(entries: &[TocEntry], base: &str) -> Vec<TocEntry> {
                 href,
                 children: prepend_base_to_toc(&entry.children, base),
                 play_order: entry.play_order,
+                target: None,
             }
         })
         .collect()

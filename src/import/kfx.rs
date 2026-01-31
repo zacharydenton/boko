@@ -112,6 +112,10 @@ impl Importer for KfxImporter {
         &self.toc
     }
 
+    fn toc_mut(&mut self) -> &mut [TocEntry] {
+        &mut self.toc
+    }
+
     fn landmarks(&self) -> &[Landmark] {
         &self.landmarks
     }
@@ -640,6 +644,7 @@ impl KfxImporter {
                         href,
                         children,
                         play_order: None,
+                        target: None,
                     });
                 }
             }

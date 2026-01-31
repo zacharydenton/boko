@@ -90,13 +90,15 @@ pub struct Metadata {
 }
 
 /// A table of contents entry (hierarchical)
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TocEntry {
     pub title: String,
     pub href: String,
     pub children: Vec<TocEntry>,
     /// Play order for sorting (from NCX playOrder attribute)
     pub play_order: Option<usize>,
+    /// Resolved target (set by `resolve_links()`)
+    pub target: Option<AnchorTarget>,
 }
 
 impl Ord for TocEntry {
@@ -430,6 +432,47 @@ impl Book {
         self.backend.index_anchors(chapters);
     }
 
+    /// Resolve TOC hrefs (fills in fragments for AZW3/MOBI).
+    ///
+    /// Called internally by `resolve_links()`. Delegates to the format-specific
+    /// importer.
+    pub(crate) fn resolve_toc(&mut self) {
+        self.backend.resolve_toc();
+    }
+
+    /// Resolve TOC entry targets using `resolve_href()`.
+    ///
+    /// Called internally by `resolve_links()`. Walks TOC entries and sets their
+    /// `target` field.
+    pub(crate) fn resolve_toc_targets(&mut self) {
+        // First, collect all hrefs with their targets
+        fn collect_targets(
+            entries: &[TocEntry],
+            backend: &dyn Importer,
+            default_chapter: ChapterId,
+            results: &mut Vec<Option<AnchorTarget>>,
+        ) {
+            for entry in entries {
+                results.push(backend.resolve_href(default_chapter, &entry.href));
+                collect_targets(&entry.children, backend, default_chapter, results);
+            }
+        }
+
+        let mut targets = Vec::new();
+        collect_targets(self.backend.toc(), &*self.backend, ChapterId(0), &mut targets);
+
+        // Then apply the targets to the TOC entries
+        fn apply_targets(entries: &mut [TocEntry], targets: &mut impl Iterator<Item = Option<AnchorTarget>>) {
+            for entry in entries {
+                entry.target = targets.next().flatten();
+                apply_targets(&mut entry.children, targets);
+            }
+        }
+
+        let toc = self.backend.toc_mut();
+        apply_targets(toc, &mut targets.into_iter());
+    }
+
     /// Resolve a single href using format-specific logic.
     ///
     /// Called internally by `resolve_links()`. Delegates to the format-specific
@@ -518,6 +561,7 @@ impl TocEntry {
             href: href.into(),
             children: Vec::new(),
             play_order: None,
+            target: None,
         }
     }
 }

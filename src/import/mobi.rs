@@ -69,6 +69,10 @@ impl Importer for MobiImporter {
         &self.toc
     }
 
+    fn toc_mut(&mut self) -> &mut [TocEntry] {
+        &mut self.toc
+    }
+
     fn landmarks(&self) -> &[Landmark] {
         &self.landmarks
     }

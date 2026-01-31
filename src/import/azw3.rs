@@ -66,6 +66,19 @@ pub struct Azw3Importer {
     // --- Link resolution ---
     /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
     element_id_map: HashMap<String, GlobalNodeId>,
+
+    // --- TOC resolution ---
+    /// NCX positions for TOC entries, keyed by (title, chapter_path).
+    toc_positions: HashMap<(String, String), TocPosition>,
+}
+
+/// Position metadata for a TOC entry (from NCX).
+#[derive(Debug, Clone, Copy)]
+struct TocPosition {
+    /// Byte position in the text stream.
+    byte_pos: u32,
+    /// File number (skeleton file).
+    file_num: u32,
 }
 
 /// KF8 structure info parsed from indices.
@@ -91,6 +104,10 @@ impl Importer for Azw3Importer {
 
     fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    fn toc_mut(&mut self) -> &mut [TocEntry] {
+        &mut self.toc
     }
 
     fn landmarks(&self) -> &[Landmark] {
@@ -181,6 +198,71 @@ impl Importer for Azw3Importer {
             },
             |k| self.element_id_map.get(k).copied(),
         )
+    }
+
+    fn resolve_toc(&mut self) {
+        // Load text if not cached
+        if self.text_cache.is_none() {
+            if let Ok(text) = self.extract_text() {
+                self.text_cache = Some(text);
+            } else {
+                return;
+            }
+        }
+
+        let text = self.text_cache.as_ref().unwrap();
+
+        // Get HTML flow (flow 0)
+        let (html_start, html_end) = self
+            .kf8
+            .flow_table
+            .first()
+            .copied()
+            .unwrap_or((0, text.len()));
+        let html_text = &text[html_start..html_end.min(text.len())];
+
+        // Build file_starts for find_nearest_id_fast
+        let file_starts: Vec<(u32, u32)> = self
+            .kf8
+            .files
+            .iter()
+            .map(|f| (f.start_pos, f.file_number as u32))
+            .collect();
+
+        // Resolve TOC entries using stored positions
+        resolve_toc_with_positions(&mut self.toc, &self.toc_positions, html_text, &file_starts);
+    }
+}
+
+/// Recursively resolve TOC entry hrefs with fragment IDs using position map.
+fn resolve_toc_with_positions(
+    entries: &mut [TocEntry],
+    positions: &HashMap<(String, String), TocPosition>,
+    html_text: &[u8],
+    file_starts: &[(u32, u32)],
+) {
+    for entry in entries {
+        // Look up position by (title, chapter_path)
+        let chapter_path = entry.href.split('#').next().unwrap_or(&entry.href);
+        let key = (entry.title.clone(), chapter_path.to_string());
+
+        if let Some(pos) = positions.get(&key) {
+            // Find nearest ID at this position
+            if let Some(id) = transform::find_nearest_id_fast(
+                html_text,
+                pos.byte_pos as usize,
+                pos.file_num as usize,
+                file_starts,
+            ) {
+                // Update href with fragment
+                if !entry.href.contains('#') {
+                    entry.href = format!("{}#{}", entry.href, id);
+                }
+            }
+        }
+
+        // Recurse into children
+        resolve_toc_with_positions(&mut entry.children, positions, html_text, file_starts);
     }
 }
 
@@ -312,18 +394,41 @@ impl Azw3Importer {
             });
         }
 
-        // Build hierarchical TOC
+        // Build hierarchical TOC and collect positions for later resolution
+        let mut toc_positions = HashMap::new();
         let toc = {
             let nodes = build_toc_from_ncx(&ncx, |entry| {
-                // KF8 uses pos_fid (file ID + offset) or falls back to byte position
-                if let Some((elem_idx, _offset)) = entry.pos_fid
+                // KF8 uses pos_fid (elem_idx, offset) - calculate actual byte position
+                let (file_num, byte_pos) = if let Some((elem_idx, offset)) = entry.pos_fid
                     && let Some(elem) = elems.get(elem_idx as usize)
                 {
-                    return format!("part{:04}.html", elem.file_number);
-                }
-                find_file_for_position(&files, entry.pos)
-                    .map(|f| format!("part{:04}.html", f.file_number))
-                    .unwrap_or_else(|| "part0000.html".to_string())
+                    // Position is elem's start_pos + offset within that element
+                    (elem.file_number as usize, elem.start_pos + offset)
+                } else {
+                    // Fall back to absolute position
+                    let file_num = find_file_for_position(&files, entry.pos)
+                        .map(|f| f.file_number)
+                        .unwrap_or(0);
+                    (file_num, entry.pos)
+                };
+
+                let chapter_path = format!("part{:04}.html", file_num);
+
+                // Store position keyed by (title, chapter_path)
+                // Use unescaped title to match TocEntry.title
+                let title = quick_xml::escape::unescape(&entry.text)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| entry.text.clone());
+                let key = (title, chapter_path.clone());
+                toc_positions.insert(
+                    key,
+                    TocPosition {
+                        byte_pos,
+                        file_num: file_num as u32,
+                    },
+                );
+
+                chapter_path
             });
             nodes.into_iter().map(toc_node_to_entry).collect()
         };
@@ -354,6 +459,7 @@ impl Azw3Importer {
             text_cache: None,
             chapter_cache: HashMap::new(),
             element_id_map: HashMap::new(),
+            toc_positions,
         })
     }
 
