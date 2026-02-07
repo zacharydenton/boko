@@ -57,10 +57,7 @@ pub fn synthesize_html_with_class_list(
     synthesize_html_with_resolver(ir, &resolver)
 }
 
-fn synthesize_html_with_resolver<R: StyleResolver>(
-    ir: &Chapter,
-    resolver: &R,
-) -> SynthesisResult {
+fn synthesize_html_with_resolver<R: StyleResolver>(ir: &Chapter, resolver: &R) -> SynthesisResult {
     let mut ctx = SynthesisContext {
         out: String::new(),
         assets: HashSet::new(),
@@ -117,7 +114,6 @@ fn synthesize_xhtml_from_body(
     title: &str,
     stylesheet_href: Option<&str>,
 ) -> SynthesisResult {
-
     let mut doc = String::new();
 
     // XHTML 1.1 DOCTYPE (compatible with EPUB)

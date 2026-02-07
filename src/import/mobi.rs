@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::dom::Stylesheet;
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
@@ -15,7 +16,6 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, filepos, is_metadata_record, palmdoc, parse_exth,
     parse_ncx_index, read_index, strip_trailing_data,
 };
-use crate::dom::Stylesheet;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// MOBI6 format importer with lazy loading.
@@ -428,10 +428,7 @@ fn discover_assets_from_source(
         if let Ok((start, end)) = pdb.record_range(i, file_len) {
             let read_len = 16.min((end - start) as usize);
             let mut header = [0u8; 16];
-            if source
-                .read_at_into(start, &mut header[..read_len])
-                .is_ok()
-            {
+            if source.read_at_into(start, &mut header[..read_len]).is_ok() {
                 let header = &header[..read_len];
                 if is_metadata_record(header) {
                     continue;

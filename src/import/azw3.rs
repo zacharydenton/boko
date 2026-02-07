@@ -10,6 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::dom::Stylesheet;
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::parser::{
@@ -20,7 +21,6 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
     strip_trailing_data, transform,
 };
-use crate::dom::Stylesheet;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// AZW3/KF8 format importer with lazy loading.

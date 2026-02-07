@@ -457,9 +457,10 @@ mod tests {
 
             fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
                 let key = path.to_string_lossy().replace('\\', "/");
-                self.assets.get(&key).cloned().ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "asset not found")
-                })
+                self.assets
+                    .get(&key)
+                    .cloned()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "asset not found"))
             }
 
             fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {

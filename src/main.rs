@@ -233,7 +233,7 @@ fn show_info(path: &str, json: bool) -> Result<(), String> {
 
 fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
     let meta = book.metadata().clone();
-    let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
+    let asset_paths: Vec<_> = book.list_assets().to_vec();
 
     let assets: Vec<AssetInfo> = asset_paths
         .iter()
@@ -408,7 +408,7 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     }
 
     // Assets
-    let assets: Vec<_> = book.list_assets().iter().cloned().collect();
+    let assets: Vec<_> = book.list_assets().to_vec();
     println!("\nAssets ({}):", assets.len());
     for asset in &assets {
         let size = book

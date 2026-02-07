@@ -121,7 +121,7 @@ impl EpubExporter {
         }
 
         // Add assets to manifest
-        let assets: Vec<_> = book.list_assets().iter().cloned().collect();
+        let assets: Vec<_> = book.list_assets().to_vec();
         let mut asset_map: HashMap<String, String> = HashMap::new();
 
         for (i, asset_path) in assets.iter().enumerate() {

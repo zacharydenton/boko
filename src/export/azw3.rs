@@ -116,7 +116,7 @@ impl BookContext {
         }
 
         // Collect assets
-        let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
+        let asset_paths: Vec<_> = book.list_assets().to_vec();
         let mut resources = HashMap::new();
 
         for path in asset_paths {
