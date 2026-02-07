@@ -359,6 +359,7 @@ fn resolve_semantic_paths(chapter: &mut Chapter, base_path: &str) {
 mod tests {
     use super::*;
     use crate::model::{Landmark, Metadata, TocEntry};
+    use proptest::prelude::*;
     use std::collections::HashMap;
     use std::io;
 
@@ -592,5 +593,37 @@ mod tests {
         assert_eq!(fonts.len(), 1);
         assert_eq!(fonts[0].font_family, "Test");
         assert_eq!(fonts[0].src, "fonts/test.woff");
+    }
+
+    proptest! {
+        #[test]
+        fn prop_resolve_relative_path_preserves_fragment_and_no_backslashes(
+            base_parts in prop::collection::vec("[a-z]{1,8}", 1..5),
+            target_parts in prop::collection::vec("[a-z]{1,8}", 1..5),
+            fragment in "[A-Za-z0-9_-]{1,12}",
+            up_levels in 0usize..3
+        ) {
+            // Build a base like "dir/sub/chapter.xhtml"
+            let mut base = base_parts.join("/");
+            base.push_str("/chapter.xhtml");
+
+            // Build a relative target like "../a/b.xhtml#frag"
+            let mut target = String::new();
+            for _ in 0..up_levels {
+                target.push_str("../");
+            }
+            target.push_str(&target_parts.join("/"));
+            target.push_str(".xhtml#");
+            target.push_str(&fragment);
+
+            let resolved = resolve_relative_path(&base, &target);
+            let normalized = resolved.to_string_lossy().replace('\\', "/");
+
+            // Fragment preserved.
+            let expected_fragment = format!("#{}", fragment);
+            prop_assert!(normalized.ends_with(&expected_fragment));
+            // Archive paths should be normalized to forward slashes.
+            prop_assert!(!normalized.contains('\\'));
+        }
     }
 }

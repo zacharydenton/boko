@@ -325,5 +325,34 @@ mod tests {
             s.extend(suffix);
             prop_assert!(kindle_base32_decode(&s).is_none());
         }
+
+        #[test]
+        fn prop_parse_external_http_https_is_external(path in "[A-Za-z0-9/_\\-]{0,24}") {
+            let http = format!("http://example.com/{}", path);
+            let https = format!("https://example.com/{}", path);
+            prop_assert!(matches!(Link::parse(&http), Link::External(_)));
+            prop_assert!(matches!(Link::parse(&https), Link::External(_)));
+        }
+
+        #[test]
+        fn prop_parse_fragment_only_is_internal(fragment in "[A-Za-z0-9_-]{1,32}") {
+            let href = format!("#{}", fragment);
+            match Link::parse(&href) {
+                Link::Internal(target) => {
+                    prop_assert_eq!(target.spine_index, None);
+                    prop_assert_eq!(target.location, InternalLocation::ElementId(fragment));
+                }
+                other => prop_assert!(false, "expected internal link, got {:?}", other),
+            }
+        }
+
+        #[test]
+        fn prop_parse_unknown_file_with_fragment_is_unknown(
+            file in "[A-Za-z0-9_-]{1,12}",
+            fragment in "[A-Za-z0-9_-]{1,12}"
+        ) {
+            let href = format!("{}.xhtml#{}", file, fragment);
+            prop_assert!(matches!(Link::parse(&href), Link::Unknown(_)));
+        }
     }
 }
