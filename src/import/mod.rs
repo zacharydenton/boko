@@ -644,5 +644,27 @@ mod tests {
             let resolved_url = resolve_relative_path(&base, &url);
             prop_assert_eq!(resolved_url.to_string_lossy(), url);
         }
+
+        #[test]
+        fn prop_resolve_relative_path_eliminates_dotdot(
+            base_parts in prop::collection::vec("[a-z]{1,8}", 2..5),
+            target_parts in prop::collection::vec("[a-z]{1,8}", 1..4),
+            up_levels in 0usize..2
+        ) {
+            let mut base = base_parts.join("/");
+            base.push_str("/chapter.xhtml");
+
+            let mut target = String::new();
+            for _ in 0..up_levels {
+                target.push_str("../");
+            }
+            target.push_str(&target_parts.join("/"));
+            target.push_str(".xhtml");
+
+            let resolved = resolve_relative_path(&base, &target);
+            let normalized = resolved.to_string_lossy().replace('\\', "/");
+
+            prop_assert!(!normalized.contains("/../"));
+        }
     }
 }
