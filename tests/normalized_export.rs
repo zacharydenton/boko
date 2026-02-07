@@ -124,9 +124,7 @@ fn extract_style_classes(document: &str) -> Vec<String> {
         };
         let class_attr = &rest[..end];
         for token in class_attr.split_whitespace() {
-            if token.starts_with('c')
-                && token[1..].chars().all(|c| c.is_ascii_digit())
-            {
+            if token.starts_with('c') && token[1..].chars().all(|c| c.is_ascii_digit()) {
                 classes.push(token.to_string());
             }
         }
