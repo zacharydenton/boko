@@ -32,7 +32,7 @@ use crate::import::ChapterId;
 use crate::model::{Book, Chapter, NodeId, Role};
 use crate::style::{StyleId, StylePool};
 
-use super::{generate_css, synthesize_xhtml_document};
+use super::{generate_css, synthesize_xhtml_document_with_class_list};
 
 /// Collects styles from all chapters into a unified pool.
 ///
@@ -204,11 +204,14 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
 
     for (idx, (chapter_id, source_path, ir)) in ir_chapters.iter().enumerate() {
         // Build remapped style map for this chapter
-        let mut remapped_class_map: HashMap<StyleId, String> = HashMap::new();
+        let mut remapped_class_list: Vec<Option<&str>> = vec![None; ir.styles.len()];
         for (local_id, _) in ir.styles.iter() {
             let global_id = global_styles.remap(idx, local_id);
-            if let Some(class_name) = css_artifact.class_map.get(&global_id) {
-                remapped_class_map.insert(local_id, class_name.clone());
+            if let Some(class_name) = css_artifact.class_name_fast(global_id) {
+                let slot = remapped_class_list
+                    .get_mut(local_id.0 as usize)
+                    .expect("style id out of bounds");
+                *slot = Some(class_name);
             }
         }
 
@@ -216,7 +219,12 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
         let title = extract_chapter_title(ir).unwrap_or_else(|| source_path.clone());
 
         // Synthesize XHTML document
-        let result = synthesize_xhtml_document(ir, &remapped_class_map, &title, Some("style.css"));
+        let result = synthesize_xhtml_document_with_class_list(
+            ir,
+            &remapped_class_list,
+            &title,
+            Some("style.css"),
+        );
 
         // Collect assets
         all_assets.extend(result.assets);

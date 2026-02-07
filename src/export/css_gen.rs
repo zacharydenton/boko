@@ -31,12 +31,21 @@ pub struct CssArtifact {
     pub stylesheet: String,
     /// Map from StyleId to CSS class name (e.g., StyleId(5) -> "c5").
     pub class_map: HashMap<StyleId, String>,
+    /// Dense lookup table by StyleId index.
+    class_list: Vec<Option<String>>,
 }
 
 impl CssArtifact {
     /// Get the CSS class name for a style ID, if one exists.
     pub fn class_name(&self, id: StyleId) -> Option<&str> {
         self.class_map.get(&id).map(|s| s.as_str())
+    }
+
+    /// Fast class name lookup by StyleId index.
+    pub fn class_name_fast(&self, id: StyleId) -> Option<&str> {
+        self.class_list
+            .get(id.0 as usize)
+            .and_then(|v| v.as_deref())
     }
 
     /// Check if the stylesheet is empty (no non-default styles).
@@ -63,6 +72,7 @@ impl CssArtifact {
 pub fn generate_css(pool: &StylePool, used_styles: &[StyleId]) -> CssArtifact {
     let mut stylesheet = String::new();
     let mut class_map = HashMap::new();
+    let mut class_list = vec![None; pool.len()];
 
     // Deduplicate and sort for deterministic output
     let unique_styles: HashSet<StyleId> = used_styles.iter().copied().collect();
@@ -86,12 +96,14 @@ pub fn generate_css(pool: &StylePool, used_styles: &[StyleId]) -> CssArtifact {
         style.to_css(&mut stylesheet);
         stylesheet.push_str("}\n");
 
+        class_list[id.0 as usize] = Some(class_name.clone());
         class_map.insert(id, class_name);
     }
 
     CssArtifact {
         stylesheet,
         class_map,
+        class_list,
     }
 }
 
