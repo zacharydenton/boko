@@ -43,7 +43,7 @@ pub use azw3::{Azw3Config, Azw3Exporter};
 pub use css_gen::{CssArtifact, generate_css, generate_css_all};
 pub use epub::{EpubConfig, EpubExporter};
 pub use html_synth::{
-    SynthesisResult, escape_xml, synthesize_html, synthesize_html_with_class_list,
+    SynthesisResult, escape_xml, escape_xml_into, synthesize_html, synthesize_html_with_class_list,
     synthesize_xhtml_document, synthesize_xhtml_document_with_class_list,
 };
 pub use kfx::{KfxConfig, KfxExporter};

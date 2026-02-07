@@ -129,16 +129,13 @@ fn synthesize_xhtml_from_body(
   <meta http-equiv="Content-Type" content="application/xhtml+xml; charset=utf-8"/>
   <title>"#,
     );
-    doc.push_str(&escape_xml(title));
+    escape_xml_into(&mut doc, title);
     doc.push_str("</title>\n");
 
     if let Some(href) = stylesheet_href {
-        writeln!(
-            doc,
-            "  <link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>",
-            escape_xml(href)
-        )
-        .unwrap();
+        doc.push_str("  <link rel=\"stylesheet\" type=\"text/css\" href=\"");
+        escape_xml_into(&mut doc, href);
+        doc.push_str("\"/>\n");
     }
 
     doc.push_str("</head>\n<body>\n");
@@ -202,24 +199,36 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>) {
 
     // Semantic attributes
     if let Some(elem_id) = ctx.ir.semantics.id(id) {
-        write!(attrs, " id=\"{}\"", escape_xml(elem_id)).unwrap();
+        attrs.push_str(" id=\"");
+        escape_xml_into(&mut attrs, elem_id);
+        attrs.push('"');
     }
     if let Some(href) = ctx.ir.semantics.href(id) {
-        write!(attrs, " href=\"{}\"", escape_xml(href)).unwrap();
+        attrs.push_str(" href=\"");
+        escape_xml_into(&mut attrs, href);
+        attrs.push('"');
     }
     if let Some(src) = ctx.ir.semantics.src(id) {
-        write!(attrs, " src=\"{}\"", escape_xml(src)).unwrap();
+        attrs.push_str(" src=\"");
+        escape_xml_into(&mut attrs, src);
+        attrs.push('"');
         // Track as asset
         ctx.assets.insert(src.to_string());
     }
     if let Some(alt) = ctx.ir.semantics.alt(id) {
-        write!(attrs, " alt=\"{}\"", escape_xml(alt)).unwrap();
+        attrs.push_str(" alt=\"");
+        escape_xml_into(&mut attrs, alt);
+        attrs.push('"');
     }
     if let Some(title) = ctx.ir.semantics.title(id) {
-        write!(attrs, " title=\"{}\"", escape_xml(title)).unwrap();
+        attrs.push_str(" title=\"");
+        escape_xml_into(&mut attrs, title);
+        attrs.push('"');
     }
     if let Some(lang) = ctx.ir.semantics.lang(id) {
-        write!(attrs, " xml:lang=\"{}\"", escape_xml(lang)).unwrap();
+        attrs.push_str(" xml:lang=\"");
+        escape_xml_into(&mut attrs, lang);
+        attrs.push('"');
     }
     // Emit start attribute for ordered lists
     if role == Role::OrderedList
@@ -361,17 +370,22 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
 /// Escape special XML/HTML characters.
 pub fn escape_xml(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
+    escape_xml_into(&mut result, s);
+    result
+}
+
+/// Escape special XML/HTML characters into an existing buffer.
+pub fn escape_xml_into(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
-            '&' => result.push_str("&amp;"),
-            '<' => result.push_str("&lt;"),
-            '>' => result.push_str("&gt;"),
-            '"' => result.push_str("&quot;"),
-            '\'' => result.push_str("&#39;"),
-            _ => result.push(c),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
         }
     }
-    result
 }
 
 #[cfg(test)]
