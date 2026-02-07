@@ -367,5 +367,18 @@ mod tests {
             prop_assert!(matches!(Link::parse(&mailto), Link::External(_)));
             prop_assert!(matches!(Link::parse(&tel), Link::External(_)));
         }
+
+        #[test]
+        fn prop_parse_invalid_kindle_is_unknown(
+            bad_fid in prop::collection::vec(
+                prop::char::range('G','Z'),
+                1..5
+            ),
+            off in "[A-V0-9]{1,8}"
+        ) {
+            let fid: String = bad_fid.into_iter().collect();
+            let href = format!("kindle:pos:fid:{}:off:{}", fid, off);
+            prop_assert!(matches!(Link::parse(&href), Link::Unknown(_)));
+        }
     }
 }
