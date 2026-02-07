@@ -595,11 +595,17 @@ impl Azw3Importer {
             // Only read first 16 bytes to detect type (magic bytes)
             if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
                 let read_len = 16.min((end - start) as usize);
-                if let Ok(header) = self.source.read_at(start, read_len) {
-                    if is_metadata_record(&header) {
+                let mut header = [0u8; 16];
+                if self
+                    .source
+                    .read_at_into(start, &mut header[..read_len])
+                    .is_ok()
+                {
+                    let header = &header[..read_len];
+                    if is_metadata_record(header) {
                         continue;
                     }
-                    if let Some(media_type) = detect_image_type(&header) {
+                    if let Some(media_type) = detect_image_type(header) {
                         let ext = match media_type {
                             "image/jpeg" => "jpg",
                             "image/png" => "png",

@@ -163,10 +163,7 @@ pub trait Importer: Send + Sync {
             .collect();
 
         for css_path in css_paths {
-            if let Ok(css_bytes) = self.load_asset(&css_path) {
-                let css_str = String::from_utf8_lossy(&css_bytes);
-                let stylesheet = Stylesheet::parse(&css_str);
-
+            if let Some(stylesheet) = self.load_stylesheet(&css_path) {
                 // Resolve relative font paths to canonical paths
                 for mut font_face in stylesheet.font_faces {
                     // Resolve the src path relative to the CSS file location
@@ -519,5 +516,79 @@ mod tests {
         let _ = importer.load_chapter(ChapterId(1)).unwrap();
 
         assert_eq!(importer.css_loads, 1);
+    }
+
+    #[test]
+    fn test_font_faces_uses_load_stylesheet() {
+        struct TestImporter {
+            asset_list: Vec<PathBuf>,
+            metadata: Metadata,
+            toc: Vec<TocEntry>,
+            landmarks: Vec<Landmark>,
+            spine: Vec<SpineEntry>,
+        }
+
+        impl Importer for TestImporter {
+            fn open(_path: &Path) -> io::Result<Self> {
+                unreachable!()
+            }
+
+            fn metadata(&self) -> &Metadata {
+                &self.metadata
+            }
+
+            fn toc(&self) -> &[TocEntry] {
+                &self.toc
+            }
+
+            fn toc_mut(&mut self) -> &mut [TocEntry] {
+                &mut self.toc
+            }
+
+            fn landmarks(&self) -> &[Landmark] {
+                &self.landmarks
+            }
+
+            fn spine(&self) -> &[SpineEntry] {
+                &self.spine
+            }
+
+            fn source_id(&self, _id: ChapterId) -> Option<&str> {
+                None
+            }
+
+            fn load_raw(&mut self, _id: ChapterId) -> io::Result<Vec<u8>> {
+                Err(io::Error::new(io::ErrorKind::Other, "unused"))
+            }
+
+            fn list_assets(&self) -> &[PathBuf] {
+                &self.asset_list
+            }
+
+            fn load_asset(&mut self, _path: &Path) -> io::Result<Vec<u8>> {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "load_asset should not be called",
+                ))
+            }
+
+            fn load_stylesheet(&mut self, _path: &Path) -> Option<Stylesheet> {
+                let css = "@font-face { font-family: Test; src: url(../fonts/test.woff); }";
+                Some(Stylesheet::parse(css))
+            }
+        }
+
+        let mut importer = TestImporter {
+            asset_list: vec![PathBuf::from("styles/main.css")],
+            metadata: Metadata::default(),
+            toc: Vec::new(),
+            landmarks: Vec::new(),
+            spine: Vec::new(),
+        };
+
+        let fonts = importer.font_faces();
+        assert_eq!(fonts.len(), 1);
+        assert_eq!(fonts[0].font_family, "Test");
+        assert_eq!(fonts[0].src, "fonts/test.woff");
     }
 }
