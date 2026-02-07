@@ -217,6 +217,7 @@ fn kindle_base32_decode(s: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_parse_external_links() {
@@ -278,5 +279,51 @@ mod tests {
         // Multi-digit
         assert_eq!(kindle_base32_decode("10"), Some(32)); // 1*32 + 0
         assert_eq!(kindle_base32_decode("11"), Some(33)); // 1*32 + 1
+    }
+
+    proptest! {
+        #[test]
+        fn prop_kindle_base32_decode_is_case_insensitive(
+            s in prop::collection::vec(
+                prop_oneof![
+                    prop::char::range('0','9'),
+                    prop::char::range('A','V'),
+                    prop::char::range('a','v'),
+                ],
+                1..7
+            )
+        ) {
+            let s: String = s.into_iter().collect();
+            let upper = s.to_ascii_uppercase();
+            prop_assert_eq!(kindle_base32_decode(&s), kindle_base32_decode(&upper));
+            prop_assert!(kindle_base32_decode(&s).is_some());
+        }
+
+        #[test]
+        fn prop_kindle_base32_decode_rejects_invalid_chars(
+            prefix in prop::collection::vec(
+                prop_oneof![
+                    prop::char::range('0','9'),
+                    prop::char::range('A','V'),
+                    prop::char::range('a','v'),
+                ],
+                0..5
+            ),
+            bad in prop::char::range('!','~')
+                .prop_filter("invalid base32 char", |c| !matches!(c, '0'..='9' | 'A'..='V' | 'a'..='v')),
+            suffix in prop::collection::vec(
+                prop_oneof![
+                    prop::char::range('0','9'),
+                    prop::char::range('A','V'),
+                    prop::char::range('a','v'),
+                ],
+                0..5
+            )
+        ) {
+            let mut s: String = prefix.into_iter().collect();
+            s.push(bad);
+            s.extend(suffix);
+            prop_assert!(kindle_base32_decode(&s).is_none());
+        }
     }
 }
