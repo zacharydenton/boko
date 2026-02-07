@@ -48,7 +48,7 @@ pub struct KfxImporter {
     asset_paths: Vec<PathBuf>,
 
     /// Document-specific symbols (extended symbol table).
-    doc_symbols: Vec<String>,
+    doc_symbols: Arc<Vec<String>>,
 
     /// Book metadata.
     metadata: Metadata,
@@ -79,18 +79,18 @@ pub struct KfxImporter {
     content_cache: HashMap<String, Vec<String>>,
 
     /// Anchor map: anchor_name -> uri (for external link resolution)
-    anchors: HashMap<String, String>,
+    anchors: Arc<HashMap<String, String>>,
     /// Whether anchors have been indexed
     anchors_indexed: bool,
 
     /// Style map: style_name -> KFX style properties (for style resolution)
-    styles: HashMap<String, Vec<(u64, IonValue)>>,
+    styles: Arc<HashMap<String, Vec<(u64, IonValue)>>>,
     /// Whether styles have been indexed
     styles_indexed: bool,
 
     // --- Link resolution ---
     /// Internal anchors: anchor_name -> (position_id, offset)
-    internal_anchors: HashMap<String, (i64, i64)>,
+    internal_anchors: Arc<HashMap<String, (i64, i64)>>,
 
     /// Maps element string ID -> GlobalNodeId (built during index_anchors)
     element_id_map: HashMap<String, GlobalNodeId>,
@@ -150,17 +150,17 @@ impl Importer for KfxImporter {
         // Parse storyline entity
         let storyline_ion = self.parse_entity_ion(storyline_loc)?;
 
-        // Clone doc_symbols, anchors, and styles to avoid borrow conflict with content lookup closure
-        let doc_symbols = self.doc_symbols.clone();
-        let anchors = self.anchors.clone();
-        let styles = self.styles.clone();
+        // Clone Arc handles to avoid borrow conflict with content lookup closure
+        let doc_symbols = Arc::clone(&self.doc_symbols);
+        let anchors = Arc::clone(&self.anchors);
+        let styles = Arc::clone(&self.styles);
 
         // Parse storyline and build IR using schema-driven tokenization
         let mut chapter = parse_storyline_to_ir(
             &storyline_ion,
-            &doc_symbols,
-            Some(&anchors),
-            Some(&styles),
+            doc_symbols.as_ref(),
+            Some(anchors.as_ref()),
+            Some(styles.as_ref()),
             |name, index| self.lookup_content_text(name, index),
         );
 
@@ -255,13 +255,13 @@ impl Importer for KfxImporter {
         };
 
         // Check external anchors map (anchor_name → uri)
-        if let Some(uri) = self.anchors.get(anchor_name) {
+        if let Some(uri) = self.anchors.as_ref().get(anchor_name) {
             return Some(AnchorTarget::External(uri.clone()));
         }
 
         // Check internal anchors (anchor_name → position.id → element_id)
         // The position.id in anchor entities references element IDs in storylines
-        if let Some(&(pos_id, _offset)) = self.internal_anchors.get(anchor_name) {
+        if let Some(&(pos_id, _offset)) = self.internal_anchors.as_ref().get(anchor_name) {
             let id_str = pos_id.to_string();
             if let Some(target) = self.element_id_map.get(&id_str) {
                 return Some(AnchorTarget::Internal(*target));
@@ -335,7 +335,7 @@ impl KfxImporter {
             header_len: header.header_len,
             entities,
             asset_paths,
-            doc_symbols,
+            doc_symbols: Arc::new(doc_symbols),
             metadata: Metadata::default(),
             toc: Vec::new(),
             landmarks: Vec::new(), // TODO: Parse from KFX landmarks nav_container
@@ -346,11 +346,11 @@ impl KfxImporter {
             resources: HashMap::new(),
             resources_indexed: false,
             content_cache: HashMap::new(),
-            anchors: HashMap::new(),
+            anchors: Arc::new(HashMap::new()),
             anchors_indexed: false,
-            styles: HashMap::new(),
+            styles: Arc::new(HashMap::new()),
             styles_indexed: false,
-            internal_anchors: HashMap::new(),
+            internal_anchors: Arc::new(HashMap::new()),
             element_id_map: HashMap::new(),
         };
 
@@ -391,7 +391,7 @@ impl KfxImporter {
 
     /// Get a symbol's text from an IonValue (handles both Symbol and String).
     fn get_symbol_text<'a>(&'a self, value: &'a IonValue) -> Option<&'a str> {
-        get_symbol_text(value, &self.doc_symbols)
+        get_symbol_text(value, self.doc_symbols.as_ref())
     }
 
     /// Parse book metadata.
@@ -903,7 +903,7 @@ impl KfxImporter {
 
                 // Also index by resource_name (e.g., "eF") for cover lookup
                 let name = get_field(fields, sym!(ResourceName))
-                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .and_then(|v| container::get_symbol_text(v, self.doc_symbols.as_ref()))
                     .map(|s| s.to_string());
 
                 if let Some(loc_str) = &location
@@ -941,13 +941,16 @@ impl KfxImporter {
             .copied()
             .collect();
 
+        let mut new_external = Vec::new();
+        let mut new_internal = Vec::new();
+
         for loc in locs {
             if let Ok(elem) = self.parse_entity_ion(loc)
                 && let Some(fields) = elem.as_struct()
             {
                 // Get anchor_name
                 let anchor_name = get_field(fields, sym!(AnchorName))
-                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .and_then(|v| container::get_symbol_text(v, self.doc_symbols.as_ref()))
                     .map(|s| s.to_string());
 
                 let Some(name) = anchor_name else {
@@ -961,7 +964,7 @@ impl KfxImporter {
 
                 if let Some(uri) = uri {
                     // External anchor
-                    self.anchors.insert(name, uri);
+                    new_external.push((name, uri));
                 } else if let Some(position) =
                     get_field(fields, sym!(Position)).and_then(|v| v.as_struct())
                 {
@@ -972,9 +975,22 @@ impl KfxImporter {
                         .unwrap_or(0);
 
                     if let Some(pos_id) = id {
-                        self.internal_anchors.insert(name, (pos_id, offset));
+                        new_internal.push((name, (pos_id, offset)));
                     }
                 }
+            }
+        }
+
+        if !new_external.is_empty() {
+            let anchors = Arc::make_mut(&mut self.anchors);
+            for (name, uri) in new_external {
+                anchors.insert(name, uri);
+            }
+        }
+        if !new_internal.is_empty() {
+            let internal_anchors = Arc::make_mut(&mut self.internal_anchors);
+            for (name, pos) in new_internal {
+                internal_anchors.insert(name, pos);
             }
         }
 
@@ -999,13 +1015,15 @@ impl KfxImporter {
             .copied()
             .collect();
 
+        let mut new_styles = Vec::new();
+
         for loc in locs {
             if let Ok(elem) = self.parse_entity_ion(loc)
                 && let Some(fields) = elem.as_struct()
             {
                 // Get style_name
                 let style_name = get_field(fields, sym!(StyleName))
-                    .and_then(|v| container::get_symbol_text(v, &self.doc_symbols))
+                    .and_then(|v| container::get_symbol_text(v, self.doc_symbols.as_ref()))
                     .map(|s| s.to_string());
 
                 if let Some(name) = style_name {
@@ -1016,8 +1034,15 @@ impl KfxImporter {
                         .map(|(k, v)| (*k, v.clone()))
                         .collect();
 
-                    self.styles.insert(name, props);
+                    new_styles.push((name, props));
                 }
+            }
+        }
+
+        if !new_styles.is_empty() {
+            let styles = Arc::make_mut(&mut self.styles);
+            for (name, props) in new_styles {
+                styles.insert(name, props);
             }
         }
 
