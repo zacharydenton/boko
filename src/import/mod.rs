@@ -625,5 +625,24 @@ mod tests {
             // Archive paths should be normalized to forward slashes.
             prop_assert!(!normalized.contains('\\'));
         }
+
+        #[test]
+        fn prop_resolve_relative_path_preserves_absolute_and_urls(
+            base_parts in prop::collection::vec("[a-z]{1,8}", 1..5),
+            absolute in "[A-Za-z0-9/_\\-]{1,24}",
+            path in "[A-Za-z0-9/_\\-]{1,24}",
+        ) {
+            let mut base = base_parts.join("/");
+            base.push_str("/chapter.xhtml");
+
+            let absolute_path = format!("/{}", absolute);
+            let url = format!("https://example.com/{}", path);
+
+            let resolved_abs = resolve_relative_path(&base, &absolute_path);
+            prop_assert_eq!(resolved_abs.to_string_lossy(), absolute_path);
+
+            let resolved_url = resolve_relative_path(&base, &url);
+            prop_assert_eq!(resolved_url.to_string_lossy(), url);
+        }
     }
 }
