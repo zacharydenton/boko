@@ -72,7 +72,8 @@ pub trait Importer: Send + Sync {
     fn load_chapter(&mut self, id: ChapterId) -> std::io::Result<Chapter> {
         // Load raw HTML
         let html_bytes = self.load_raw(id)?;
-        let html_str = String::from_utf8_lossy(&html_bytes);
+        let hint_encoding = crate::util::extract_xml_encoding(&html_bytes);
+        let html_str = crate::util::decode_text(&html_bytes, hint_encoding);
 
         // Extract stylesheet references
         let (linked, inline) = extract_stylesheets(&html_str);
@@ -89,9 +90,8 @@ pub trait Importer: Send + Sync {
                 PathBuf::from(&href)
             };
 
-            if let Ok(css_bytes) = self.load_asset(&css_path) {
-                let css_str = String::from_utf8_lossy(&css_bytes);
-                stylesheets.push((Stylesheet::parse(&css_str), Origin::Author));
+            if let Some(sheet) = self.load_stylesheet(&css_path) {
+                stylesheets.push((sheet, Origin::Author));
             }
         }
 
@@ -123,10 +123,21 @@ pub trait Importer: Send + Sync {
     // --- Assets ---
 
     /// List all assets (images, fonts, CSS, etc.).
-    fn list_assets(&self) -> Vec<PathBuf>;
+    fn list_assets(&self) -> &[PathBuf];
 
     /// Load an asset by path.
     fn load_asset(&mut self, path: &Path) -> std::io::Result<Vec<u8>>;
+
+    /// Load and parse a stylesheet, optionally using a cache.
+    ///
+    /// The default implementation loads the asset bytes and parses CSS.
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+        if let Ok(css_bytes) = self.load_asset(path) {
+            let css_str = String::from_utf8_lossy(&css_bytes);
+            return Some(Stylesheet::parse(&css_str));
+        }
+        None
+    }
 
     /// Collect all @font-face definitions from CSS files.
     ///
@@ -142,12 +153,13 @@ pub trait Importer: Send + Sync {
         // Find all CSS files
         let css_paths: Vec<_> = self
             .list_assets()
-            .into_iter()
+            .iter()
             .filter(|p| {
                 p.extension()
                     .map(|e| e.eq_ignore_ascii_case("css"))
                     .unwrap_or(false)
             })
+            .cloned()
             .collect();
 
         for css_path in css_paths {
@@ -348,6 +360,9 @@ fn resolve_semantic_paths(chapter: &mut Chapter, base_path: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Landmark, Metadata, TocEntry};
+    use std::collections::HashMap;
+    use std::io;
 
     #[test]
     fn test_resolve_fragment_only_path() {
@@ -386,5 +401,123 @@ mod tests {
     fn test_resolve_url_unchanged() {
         let result = resolve_relative_path("text/chapter.xhtml", "https://example.com/");
         assert_eq!(result.to_string_lossy(), "https://example.com/");
+    }
+
+    #[test]
+    fn test_load_chapter_stylesheet_cache() {
+        struct TestImporter {
+            chapters: HashMap<u32, String>,
+            assets: HashMap<String, Vec<u8>>,
+            asset_list: Vec<PathBuf>,
+            css_cache: HashMap<String, Stylesheet>,
+            css_loads: usize,
+            metadata: Metadata,
+            toc: Vec<TocEntry>,
+            landmarks: Vec<Landmark>,
+            spine: Vec<SpineEntry>,
+            source_ids: Vec<String>,
+        }
+
+        impl Importer for TestImporter {
+            fn open(_path: &Path) -> io::Result<Self> {
+                unreachable!()
+            }
+
+            fn metadata(&self) -> &Metadata {
+                &self.metadata
+            }
+
+            fn toc(&self) -> &[TocEntry] {
+                &self.toc
+            }
+
+            fn toc_mut(&mut self) -> &mut [TocEntry] {
+                &mut self.toc
+            }
+
+            fn landmarks(&self) -> &[Landmark] {
+                &self.landmarks
+            }
+
+            fn spine(&self) -> &[SpineEntry] {
+                &self.spine
+            }
+
+            fn source_id(&self, id: ChapterId) -> Option<&str> {
+                self.source_ids.get(id.0 as usize).map(|s| s.as_str())
+            }
+
+            fn load_raw(&mut self, id: ChapterId) -> io::Result<Vec<u8>> {
+                self.chapters
+                    .get(&id.0)
+                    .map(|s| s.as_bytes().to_vec())
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "chapter not found"))
+            }
+
+            fn list_assets(&self) -> &[PathBuf] {
+                &self.asset_list
+            }
+
+            fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
+                let key = path.to_string_lossy().replace('\\', "/");
+                self.assets.get(&key).cloned().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "asset not found")
+                })
+            }
+
+            fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+                let key = path.to_string_lossy().replace('\\', "/");
+                if let Some(sheet) = self.css_cache.get(&key) {
+                    return Some(sheet.clone());
+                }
+                let css_bytes = self.load_asset(path).ok()?;
+                let css_str = String::from_utf8_lossy(&css_bytes);
+                let sheet = Stylesheet::parse(&css_str);
+                self.css_cache.insert(key, sheet.clone());
+                self.css_loads += 1;
+                Some(sheet)
+            }
+        }
+
+        let mut importer = TestImporter {
+            chapters: HashMap::from([
+                (
+                    0,
+                    r#"<html><head><link rel="stylesheet" href="style.css"></head><body>One</body></html>"#
+                        .to_string(),
+                ),
+                (
+                    1,
+                    r#"<html><head><link rel="stylesheet" href="style.css"></head><body>Two</body></html>"#
+                        .to_string(),
+                ),
+            ]),
+            assets: HashMap::from([(
+                "text/style.css".to_string(),
+                b"p { color: red; }".to_vec(),
+            )]),
+            asset_list: vec![PathBuf::from("text/style.css")],
+            css_cache: HashMap::new(),
+            css_loads: 0,
+            metadata: Metadata::default(),
+            toc: Vec::new(),
+            landmarks: Vec::new(),
+            spine: vec![
+                SpineEntry {
+                    id: ChapterId(0),
+                    size_estimate: 0,
+                },
+                SpineEntry {
+                    id: ChapterId(1),
+                    size_estimate: 0,
+                },
+            ],
+            source_ids: vec!["text/ch1.xhtml".to_string(), "text/ch2.xhtml".to_string()],
+        };
+
+        let _ = importer.load_chapter(ChapterId(0)).unwrap();
+        let _ = importer.load_chapter(ChapterId(1)).unwrap();
+
+        assert_eq!(importer.css_loads, 1);
     }
 }

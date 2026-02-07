@@ -26,13 +26,14 @@ impl Read for ByteSourceCursor {
         let max_read = (total_len - self.position).min(buf.len() as u64) as usize;
 
         // 2. Fetch data (stateless)
-        let data = self.inner.read_at(self.position, max_read)?;
+        let read = self
+            .inner
+            .read_at_into(self.position, &mut buf[..max_read])?;
 
-        // 3. Copy to buffer and advance cursor
-        buf[..data.len()].copy_from_slice(&data);
-        self.position += data.len() as u64;
+        // 3. Advance cursor
+        self.position += read as u64;
 
-        Ok(data.len())
+        Ok(read)
     }
 }
 

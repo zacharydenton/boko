@@ -11,6 +11,7 @@ use crate::epub::{parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, ByteSourceCursor, FileSource};
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
+use crate::dom::Stylesheet;
 
 /// EPUB format importer with random-access ZIP reading.
 pub struct EpubImporter {
@@ -38,6 +39,9 @@ pub struct EpubImporter {
     /// All asset paths in the ZIP.
     assets: Vec<PathBuf>,
 
+    /// Cached parsed stylesheets.
+    css_cache: HashMap<String, Stylesheet>,
+
     // --- Link resolution ---
     /// Maps path (without fragment) -> ChapterId
     path_to_chapter: HashMap<String, ChapterId>,
@@ -50,6 +54,7 @@ pub struct EpubImporter {
 struct ZipEntryLoc {
     data_offset: u64,
     compressed_size: u64,
+    uncompressed_size: u64,
     compression: u16, // 0 = Store, 8 = Deflate
 }
 
@@ -94,13 +99,25 @@ impl Importer for EpubImporter {
         self.read_entry(path)
     }
 
-    fn list_assets(&self) -> Vec<PathBuf> {
-        self.assets.clone()
+    fn list_assets(&self) -> &[PathBuf] {
+        &self.assets
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
         let key = path.to_string_lossy().replace('\\', "/");
         self.read_entry(&key)
+    }
+
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+        let key = path.to_string_lossy().replace('\\', "/");
+        if let Some(sheet) = self.css_cache.get(&key) {
+            return Some(sheet.clone());
+        }
+        let css_bytes = self.load_asset(path).ok()?;
+        let css_str = String::from_utf8_lossy(&css_bytes);
+        let sheet = Stylesheet::parse(&css_str);
+        self.css_cache.insert(key, sheet.clone());
+        Some(sheet)
     }
 
     fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
@@ -154,6 +171,7 @@ impl EpubImporter {
                 ZipEntryLoc {
                     data_offset: file.data_start(),
                     compressed_size: file.compressed_size(),
+                    uncompressed_size: file.size(),
                     compression: compression_to_u16(file.compression()),
                 },
             );
@@ -257,6 +275,7 @@ impl EpubImporter {
             assets,
             path_to_chapter,
             anchor_map: HashMap::new(),
+            css_cache: HashMap::new(),
         })
     }
 
@@ -291,7 +310,8 @@ fn read_entry(
         8 => {
             // Deflate
             let mut decoder = flate2::read::DeflateDecoder::new(&compressed[..]);
-            let mut out = Vec::new();
+            let cap = usize::try_from(loc.uncompressed_size).unwrap_or(0);
+            let mut out = Vec::with_capacity(cap);
             decoder.read_to_end(&mut out)?;
             Ok(out)
         }

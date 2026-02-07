@@ -6,15 +6,31 @@ use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
 use html5ever::{Attribute as Html5Attribute, QualName};
 
-use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId, Attribute};
+use std::rc::Rc;
+
+use super::arena::{ArenaDom, ArenaNodeId, Attribute};
 
 /// Handle used by TreeSink to reference nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NodeHandle(pub ArenaNodeId);
+#[derive(Debug, Clone)]
+pub struct NodeHandle {
+    pub id: ArenaNodeId,
+    name: Option<Rc<QualName>>,
+}
+
+impl PartialEq for NodeHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for NodeHandle {}
 
 impl Default for NodeHandle {
     fn default() -> Self {
-        NodeHandle(ArenaNodeId::NONE)
+        NodeHandle {
+            id: ArenaNodeId::NONE,
+            name: None,
+        }
     }
 }
 
@@ -64,36 +80,20 @@ impl TreeSink for ArenaSink {
     }
 
     fn get_document(&self) -> Self::Handle {
-        NodeHandle(self.dom.borrow().document())
+        NodeHandle {
+            id: self.dom.borrow().document(),
+            name: None,
+        }
     }
 
     fn elem_name<'a>(&'a self, target: &'a Self::Handle) -> Self::ElemName<'a> {
-        // Safety: We're returning a reference to data that lives as long as self.
-        // This is a workaround for the trait's API requirements.
-        // In practice, the returned reference is used immediately and not stored.
         static EMPTY: QualName = QualName {
             prefix: None,
             ns: html5ever::ns!(),
             local: html5ever::local_name!(""),
         };
 
-        let dom = self.dom.borrow();
-        let node = dom.get(target.0);
-        match node {
-            Some(n) => match &n.data {
-                ArenaNodeData::Element { name, .. } => {
-                    // SAFETY: This is a workaround. The QualName is stored in the arena
-                    // which lives as long as self. The borrow checker can't verify this
-                    // through the RefCell, so we extend the lifetime manually.
-                    // This is safe because:
-                    // 1. The arena (and its QualNames) live as long as self
-                    // 2. The returned reference is typically used immediately
-                    unsafe { std::mem::transmute::<&QualName, &'a QualName>(name) }
-                }
-                _ => &EMPTY,
-            },
-            None => &EMPTY,
-        }
+        target.name.as_deref().unwrap_or(&EMPTY)
     }
 
     fn create_element(
@@ -110,28 +110,33 @@ impl TreeSink for ArenaSink {
             })
             .collect();
 
+        let name_rc = Rc::new(name.clone());
         let id = self.dom.borrow_mut().create_element(name, converted_attrs);
-        NodeHandle(id)
+        NodeHandle {
+            id,
+            name: Some(name_rc),
+        }
     }
 
     fn create_comment(&self, text: StrTendril) -> Self::Handle {
         let id = self.dom.borrow_mut().create_comment(text.to_string());
-        NodeHandle(id)
+        NodeHandle { id, name: None }
     }
 
     fn create_pi(&self, _target: StrTendril, _data: StrTendril) -> Self::Handle {
         // Processing instructions - create as comment
-        NodeHandle(self.dom.borrow_mut().create_comment(String::new()))
+        let id = self.dom.borrow_mut().create_comment(String::new());
+        NodeHandle { id, name: None }
     }
 
     fn append(&self, parent: &Self::Handle, child: NodeOrText<Self::Handle>) {
         let mut dom = self.dom.borrow_mut();
         match child {
             NodeOrText::AppendNode(node) => {
-                dom.append(parent.0, node.0);
+                dom.append(parent.id, node.id);
             }
             NodeOrText::AppendText(text) => {
-                dom.append_text(parent.0, &text);
+                dom.append_text(parent.id, &text);
             }
         }
     }
@@ -143,14 +148,14 @@ impl TreeSink for ArenaSink {
         child: NodeOrText<Self::Handle>,
     ) {
         // If element has parent, append there; otherwise use prev_element
-        let parent = self.dom.borrow().get(element.0).map(|n| n.parent);
+        let parent = self.dom.borrow().get(element.id).map(|n| n.parent);
         if let Some(parent) = parent
             && parent.is_some()
         {
             let mut dom = self.dom.borrow_mut();
             match child {
                 NodeOrText::AppendNode(node) => {
-                    dom.append(parent, node.0);
+                    dom.append(parent, node.id);
                 }
                 NodeOrText::AppendText(text) => {
                     dom.append_text(parent, &text);
@@ -180,11 +185,11 @@ impl TreeSink for ArenaSink {
     fn get_template_contents(&self, target: &Self::Handle) -> Self::Handle {
         // For templates, just return the target itself
         // A full implementation would track template contents separately
-        *target
+        target.clone()
     }
 
     fn same_node(&self, x: &Self::Handle, y: &Self::Handle) -> bool {
-        x.0 == y.0
+        x.id == y.id
     }
 
     fn set_quirks_mode(&self, mode: QuirksMode) {
@@ -195,38 +200,33 @@ impl TreeSink for ArenaSink {
         let mut dom = self.dom.borrow_mut();
         match new_node {
             NodeOrText::AppendNode(node) => {
-                dom.insert_before(sibling.0, node.0);
+                dom.insert_before(sibling.id, node.id);
             }
             NodeOrText::AppendText(text) => {
                 let text_node = dom.create_text(text.to_string());
-                dom.insert_before(sibling.0, text_node);
+                dom.insert_before(sibling.id, text_node);
             }
         }
     }
 
     fn add_attrs_if_missing(&self, target: &Self::Handle, attrs: Vec<Html5Attribute>) {
-        let mut dom = self.dom.borrow_mut();
-        if let Some(node) = dom.get_mut(target.0)
-            && let ArenaNodeData::Element {
-                attrs: existing, ..
-            } = &mut node.data
-        {
-            for attr in attrs {
-                if !existing.iter().any(|a| a.name == attr.name) {
-                    existing.push(Attribute {
-                        name: attr.name,
-                        value: attr.value.to_string(),
-                    });
-                }
-            }
-        }
+        let converted: Vec<Attribute> = attrs
+            .into_iter()
+            .map(|a| Attribute {
+                name: a.name,
+                value: a.value.to_string(),
+            })
+            .collect();
+        self.dom
+            .borrow_mut()
+            .add_attrs_if_missing(target.id, converted);
     }
 
     fn remove_from_parent(&self, target: &Self::Handle) {
         let mut dom = self.dom.borrow_mut();
 
         let (parent, prev, next) = {
-            let node = match dom.get(target.0) {
+            let node = match dom.get(target.id) {
                 Some(n) => n,
                 None => return,
             };
@@ -258,7 +258,7 @@ impl TreeSink for ArenaSink {
         }
 
         // Clear the removed node's links
-        if let Some(target_node) = dom.get_mut(target.0) {
+        if let Some(target_node) = dom.get_mut(target.id) {
             target_node.parent = ArenaNodeId::NONE;
             target_node.prev_sibling = ArenaNodeId::NONE;
             target_node.next_sibling = ArenaNodeId::NONE;
@@ -267,7 +267,7 @@ impl TreeSink for ArenaSink {
 
     fn reparent_children(&self, node: &Self::Handle, new_parent: &Self::Handle) {
         // Collect children first to avoid borrow issues
-        let children: Vec<_> = self.dom.borrow().children(node.0).collect();
+        let children: Vec<_> = self.dom.borrow().children(node.id).collect();
 
         {
             let mut dom = self.dom.borrow_mut();
@@ -281,7 +281,7 @@ impl TreeSink for ArenaSink {
             }
 
             // Clear old parent's children
-            if let Some(n) = dom.get_mut(node.0) {
+            if let Some(n) = dom.get_mut(node.id) {
                 n.first_child = ArenaNodeId::NONE;
                 n.last_child = ArenaNodeId::NONE;
             }
@@ -290,7 +290,7 @@ impl TreeSink for ArenaSink {
         // Append to new parent
         let mut dom = self.dom.borrow_mut();
         for child in children {
-            dom.append(new_parent.0, child);
+            dom.append(new_parent.id, child);
         }
     }
 }

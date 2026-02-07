@@ -15,6 +15,7 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, filepos, is_metadata_record, palmdoc, parse_exth,
     parse_ncx_index, read_index, strip_trailing_data,
 };
+use crate::dom::Stylesheet;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// MOBI6 format importer with lazy loading.
@@ -48,6 +49,12 @@ pub struct MobiImporter {
 
     /// Cached decompressed content (loaded on first request).
     content_cache: Option<Vec<u8>>,
+
+    /// Discovered asset paths.
+    assets: Vec<PathBuf>,
+
+    /// Cached parsed stylesheets.
+    css_cache: HashMap<String, Stylesheet>,
 
     // --- Link resolution ---
     /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
@@ -115,8 +122,8 @@ impl Importer for MobiImporter {
         Ok(content)
     }
 
-    fn list_assets(&self) -> Vec<PathBuf> {
-        self.discover_assets()
+    fn list_assets(&self) -> &[PathBuf] {
+        &self.assets
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
@@ -135,6 +142,18 @@ impl Importer for MobiImporter {
             })?;
 
         self.load_image_record(idx)
+    }
+
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+        let key = path.to_string_lossy().replace('\\', "/");
+        if let Some(sheet) = self.css_cache.get(&key) {
+            return Some(sheet.clone());
+        }
+        let css_bytes = self.load_asset(path).ok()?;
+        let css_str = String::from_utf8_lossy(&css_bytes);
+        let sheet = Stylesheet::parse(&css_str);
+        self.css_cache.insert(key, sheet.clone());
+        Some(sheet)
     }
 
     fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
@@ -261,7 +280,7 @@ impl MobiImporter {
             size_estimate,
         }];
 
-        Ok(Self {
+        let mut importer = Self {
             source,
             pdb,
             mobi,
@@ -271,8 +290,14 @@ impl MobiImporter {
             landmarks: Vec::new(), // MOBI6 format doesn't have landmarks
             spine,
             content_cache: None,
+            assets: Vec::new(),
+            css_cache: HashMap::new(),
             element_id_map: HashMap::new(),
-        })
+        };
+
+        importer.assets = importer.discover_assets();
+
+        Ok(importer)
     }
 
     /// Extract and decompress text content.

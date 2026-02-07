@@ -90,7 +90,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
 
     // Check if we need a standalone cover section
     // This happens when the EPUB cover image differs from the first spine chapter's image
-    let asset_paths: Vec<_> = book.list_assets();
+    let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
     let cover_image = book.metadata().cover_image.clone();
     let first_chapter_id = book.spine().first().map(|e| e.id);
 
@@ -240,7 +240,7 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
     // 1e. Register resource paths and create short names
     // IMPORTANT: Short names must be interned during Pass 1 to ensure
     // consistent symbol IDs when they're referenced later in storylines
-    let asset_paths: Vec<_> = book.list_assets();
+    let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
             let href = asset_path.to_string_lossy().to_string();
@@ -2924,7 +2924,7 @@ mod section_type_tests {
         let mut ctx = ExportContext::new();
 
         // Verify this book needs a standalone cover (cover.jpg != titlepage.png)
-        let asset_paths: Vec<_> = book.list_assets();
+        let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
         let cover_image = book
             .metadata()
             .cover_image
@@ -3017,7 +3017,7 @@ mod resource_export_tests {
         std::fs::write(&temp_path, &kfx_data).unwrap();
 
         let mut reimported = Book::open(&temp_path).unwrap();
-        let assets = reimported.list_assets();
+        let assets: Vec<_> = reimported.list_assets().iter().cloned().collect();
 
         // Load all assets and verify total size
         let total_size: usize = assets

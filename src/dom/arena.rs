@@ -170,6 +170,43 @@ impl ArenaDom {
         node_id
     }
 
+    /// Add attributes to an element if missing, updating cached id/classes.
+    pub fn add_attrs_if_missing(&mut self, id: ArenaNodeId, attrs: Vec<Attribute>) {
+        let mut new_id: Option<String> = None;
+        if let Some(node) = self.get_mut(id)
+            && let ArenaNodeData::Element {
+                attrs: existing,
+                id: existing_id,
+                classes,
+                ..
+            } = &mut node.data
+        {
+            for attr in attrs {
+                if existing.iter().any(|a| a.name == attr.name) {
+                    continue;
+                }
+
+                let local = attr.name.local.as_ref();
+                if local == "id" && existing_id.is_none() {
+                    *existing_id = Some(attr.value.clone());
+                    new_id = Some(attr.value.clone());
+                } else if local == "class" && classes.is_empty() {
+                    *classes = attr
+                        .value
+                        .split_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
+                }
+
+                existing.push(attr);
+            }
+        }
+
+        if let Some(id_str) = new_id {
+            self.id_map.insert(id_str, id);
+        }
+    }
+
     /// Create a new text node.
     pub fn create_text(&mut self, text: String) -> ArenaNodeId {
         self.alloc(ArenaNode::new(ArenaNodeData::Text(text)))
@@ -494,5 +531,33 @@ mod tests {
         let children: Vec<_> = dom.children(p).collect();
         assert_eq!(children.len(), 1);
         assert_eq!(dom.text_content(children[0]), Some("Hello, World!"));
+    }
+
+    #[test]
+    fn test_add_attrs_if_missing_updates_cache() {
+        let mut dom = ArenaDom::new();
+
+        let div = dom.create_element(make_qname("div"), vec![]);
+        dom.append(dom.document(), div);
+
+        dom.add_attrs_if_missing(
+            div,
+            vec![
+                Attribute {
+                    name: make_qname("id"),
+                    value: "main".to_string(),
+                },
+                Attribute {
+                    name: make_qname("class"),
+                    value: "container header".to_string(),
+                },
+            ],
+        );
+
+        assert_eq!(dom.element_id(div), Some("main"));
+        let classes = dom.element_classes(div);
+        assert!(classes.contains(&"container".to_string()));
+        assert!(classes.contains(&"header".to_string()));
+        assert_eq!(dom.get_by_id("main"), Some(div));
     }
 }

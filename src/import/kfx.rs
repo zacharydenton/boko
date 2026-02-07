@@ -44,6 +44,9 @@ pub struct KfxImporter {
     /// Entity index: maps (type_id, entity_idx) -> EntityLoc
     entities: Vec<EntityLoc>,
 
+    /// Precomputed asset paths (bcRawMedia entity IDs).
+    asset_paths: Vec<PathBuf>,
+
     /// Document-specific symbols (extended symbol table).
     doc_symbols: Vec<String>,
 
@@ -179,13 +182,8 @@ impl Importer for KfxImporter {
         self.read_entity(storyline_loc)
     }
 
-    fn list_assets(&self) -> Vec<PathBuf> {
-        // Return entity IDs for bcRawMedia (actual asset data)
-        self.entities
-            .iter()
-            .filter(|e| e.type_id == KfxSymbol::Bcrawmedia as u32)
-            .map(|e| PathBuf::from(format!("#{}", e.id)))
-            .collect()
+    fn list_assets(&self) -> &[PathBuf] {
+        &self.asset_paths
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
@@ -326,10 +324,17 @@ impl KfxImporter {
         let index_data = source.read_at(index_offset as u64, index_length)?;
         let entities = parse_index_table(&index_data, header.header_len);
 
+        let asset_paths: Vec<PathBuf> = entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::Bcrawmedia as u32)
+            .map(|e| PathBuf::from(format!("#{}", e.id)))
+            .collect();
+
         let mut importer = Self {
             source,
             header_len: header.header_len,
             entities,
+            asset_paths,
             doc_symbols,
             metadata: Metadata::default(),
             toc: Vec::new(),

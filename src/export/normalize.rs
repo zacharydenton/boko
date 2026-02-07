@@ -113,11 +113,13 @@ impl GlobalStylePool {
 
     /// Get all used style IDs across all chapters.
     pub fn used_styles(&self) -> Vec<StyleId> {
-        self.remaps
-            .iter()
-            .flat_map(|m| m.values())
-            .copied()
-            .collect()
+        let mut set = HashSet::new();
+        for map in &self.remaps {
+            set.extend(map.values().copied());
+        }
+        let mut styles: Vec<StyleId> = set.into_iter().collect();
+        styles.sort_by_key(|s| s.0);
+        styles
     }
 }
 

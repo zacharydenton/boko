@@ -20,6 +20,7 @@ use crate::mobi::{
     build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
     strip_trailing_data, transform,
 };
+use crate::dom::Stylesheet;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// AZW3/KF8 format importer with lazy loading.
@@ -62,6 +63,12 @@ pub struct Azw3Importer {
 
     /// Cached chapter content.
     chapter_cache: HashMap<u32, Vec<u8>>,
+
+    /// Discovered asset paths.
+    assets: Vec<PathBuf>,
+
+    /// Cached parsed stylesheets.
+    css_cache: HashMap<String, Stylesheet>,
 
     // --- Link resolution ---
     /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
@@ -141,9 +148,8 @@ impl Importer for Azw3Importer {
         Ok(content)
     }
 
-    fn list_assets(&self) -> Vec<PathBuf> {
-        // Asset discovery is done lazily - scan image records
-        self.discover_assets()
+    fn list_assets(&self) -> &[PathBuf] {
+        &self.assets
     }
 
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
@@ -162,6 +168,18 @@ impl Importer for Azw3Importer {
             })?;
 
         self.load_image_record(idx)
+    }
+
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+        let key = path.to_string_lossy().replace('\\', "/");
+        if let Some(sheet) = self.css_cache.get(&key) {
+            return Some(sheet.clone());
+        }
+        let css_bytes = self.load_asset(path).ok()?;
+        let css_str = String::from_utf8_lossy(&css_bytes);
+        let sheet = Stylesheet::parse(&css_str);
+        self.css_cache.insert(key, sheet.clone());
+        Some(sheet)
     }
 
     fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
@@ -441,7 +459,7 @@ impl Azw3Importer {
             metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
         }
 
-        Ok(Self {
+        let mut importer = Self {
             source,
             pdb,
             mobi,
@@ -459,9 +477,15 @@ impl Azw3Importer {
             },
             text_cache: None,
             chapter_cache: HashMap::new(),
+            assets: Vec::new(),
+            css_cache: HashMap::new(),
             element_id_map: HashMap::new(),
             toc_positions,
-        })
+        };
+
+        importer.assets = importer.discover_assets();
+
+        Ok(importer)
     }
 
     /// Extract and decompress text content (called on first chapter request).

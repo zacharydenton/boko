@@ -4,7 +4,7 @@
 //! - Format-agnostic types (`Metadata`, `TocEntry`, `Resource`, `SpineItem`)
 //! - The `Book` runtime handle for reading ebooks via importers
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::{self, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -189,7 +189,7 @@ pub struct Book {
     backend: Box<dyn Importer>,
     /// Cache of parsed IR chapters to avoid re-parsing during normalized export.
     /// Uses RwLock for thread-safe access and Arc for cheap cloning.
-    ir_cache: Arc<RwLock<BTreeMap<ChapterId, Arc<Chapter>>>>,
+    ir_cache: Arc<RwLock<HashMap<ChapterId, Arc<Chapter>>>>,
 }
 
 impl Format {
@@ -251,7 +251,7 @@ impl Book {
         };
         Ok(Self {
             backend,
-            ir_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            ir_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -274,7 +274,7 @@ impl Book {
         };
         Ok(Self {
             backend,
-            ir_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            ir_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -492,7 +492,7 @@ impl Book {
     }
 
     /// List all assets.
-    pub fn list_assets(&self) -> Vec<std::path::PathBuf> {
+    pub fn list_assets(&self) -> &[std::path::PathBuf] {
         self.backend.list_assets()
     }
 
