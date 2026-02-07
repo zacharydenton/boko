@@ -169,7 +169,8 @@ pub trait Importer: Send + Sync {
                     // Resolve the src path relative to the CSS file location
                     let resolved =
                         resolve_relative_path(css_path.to_string_lossy().as_ref(), &font_face.src);
-                    font_face.src = resolved.to_string_lossy().to_string();
+                    // Normalize to forward slashes for archive paths.
+                    font_face.src = resolved.to_string_lossy().replace('\\', "/");
                     font_faces.push(font_face);
                 }
             }
