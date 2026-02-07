@@ -354,5 +354,18 @@ mod tests {
             let href = format!("{}.xhtml#{}", file, fragment);
             prop_assert!(matches!(Link::parse(&href), Link::Unknown(_)));
         }
+
+        #[test]
+        fn prop_parse_mailto_tel_are_external(
+            local in "[A-Za-z0-9._%+-]{1,12}",
+            domain in "[A-Za-z0-9.-]{1,12}",
+            tld in "[A-Za-z]{2,6}",
+            phone in "[0-9+]{3,12}"
+        ) {
+            let mailto = format!("mailto:{}@{}.{}", local, domain, tld);
+            let tel = format!("tel:{}", phone);
+            prop_assert!(matches!(Link::parse(&mailto), Link::External(_)));
+            prop_assert!(matches!(Link::parse(&tel), Link::External(_)));
+        }
     }
 }
