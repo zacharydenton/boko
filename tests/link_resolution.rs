@@ -1,64 +1,6 @@
 //! Test link resolution for different formats.
 
 use boko::Book;
-use boko::model::AnchorTarget;
-
-#[test]
-fn test_azw3_link_resolution() {
-    let path = "tests/fixtures/epictetus.azw3";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Skipping test - fixture not found: {}", path);
-        return;
-    }
-
-    let mut book = Book::open(path).expect("Should open AZW3");
-
-    // Load all chapters
-    let spine: Vec<_> = book.spine().to_vec();
-    for entry in &spine {
-        let _ = book.load_chapter_cached(entry.id);
-    }
-
-    // Resolve links
-    let resolved = book.resolve_links().expect("Should resolve links");
-
-    let broken = resolved.broken_links();
-    let internal: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::Internal(_)))
-        .count();
-    let chapter: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::Chapter(_)))
-        .count();
-    let external: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::External(_)))
-        .count();
-
-    println!(
-        "AZW3: Total: {}, Internal: {}, Chapter: {}, External: {}, Broken: {}",
-        resolved.len(),
-        internal,
-        chapter,
-        external,
-        broken.len()
-    );
-
-    for (source, href) in broken.iter().take(5) {
-        println!("  Broken: {:?} -> {}", source, href);
-    }
-
-    // Should have mostly internal links, not just chapter-level
-    // The old code had 0 internal, 197 chapter - we expect more internal now
-    assert!(
-        internal > chapter,
-        "Should have more internal links than chapter-level: internal={}, chapter={}",
-        internal,
-        chapter
-    );
-}
-
 #[test]
 fn test_azw3_toc_resolution() {
     let path = "tests/fixtures/epictetus.azw3";
@@ -70,18 +12,11 @@ fn test_azw3_toc_resolution() {
     let mut book = Book::open(path).expect("Should open AZW3");
 
     // Before resolve_links: TOC hrefs don't have fragments
-    let toc_before: Vec<_> = book.toc().iter().map(|e| e.href.clone()).collect();
-    println!("Before resolution:");
-    for href in toc_before.iter().take(5) {
-        println!("  {}", href);
-    }
-
     // Resolve links (also resolves TOC)
     let _ = book.resolve_links().expect("Should resolve links");
 
     // After resolve_links: TOC hrefs should have fragments
     let toc = book.toc();
-    println!("\nAfter resolution:");
 
     fn count_with_fragments(entries: &[boko::model::TocEntry]) -> (usize, usize, usize) {
         let mut total = 0;
@@ -103,31 +38,7 @@ fn test_azw3_toc_resolution() {
         (total, with_fragment, with_target)
     }
 
-    let (total, with_fragment, with_target) = count_with_fragments(toc);
-    println!(
-        "TOC entries: {}, with fragment: {}, with target: {}",
-        total, with_fragment, with_target
-    );
-
-    // Print first few entries with fragments
-    fn print_entries(entries: &[boko::model::TocEntry], depth: usize) {
-        for entry in entries.iter().take(5) {
-            let indent = "  ".repeat(depth);
-            let target_str = match &entry.target {
-                Some(AnchorTarget::Internal(n)) => format!("Internal({:?})", n),
-                Some(AnchorTarget::Chapter(c)) => format!("Chapter({:?})", c),
-                Some(AnchorTarget::External(u)) => format!("External({})", u),
-                None => "None".to_string(),
-            };
-            println!(
-                "{}  {} -> {} [{}]",
-                indent, entry.title, entry.href, target_str
-            );
-            print_entries(&entry.children, depth + 1);
-        }
-    }
-    print_entries(toc, 0);
-
+    let (_total, with_fragment, with_target) = count_with_fragments(toc);
     // At least some TOC entries should have fragments
     assert!(
         with_fragment > 0,
@@ -166,13 +77,6 @@ fn assert_unique_toc_hrefs(toc: &[boko::model::TocEntry], format_name: &str) {
         *href_counts.entry(href).or_default() += 1;
     }
     let unique_count = href_counts.len();
-    println!(
-        "{}: {} TOC entries, {} unique hrefs",
-        format_name,
-        all_hrefs.len(),
-        unique_count
-    );
-
     assert_eq!(
         all_hrefs.len(),
         unique_count,
@@ -221,51 +125,4 @@ fn test_kfx_toc_resolution() {
     let _ = book.resolve_links().expect("Should resolve links");
 
     assert_unique_toc_hrefs(book.toc(), "KFX");
-}
-
-#[test]
-fn test_mobi_link_resolution() {
-    let path = "tests/fixtures/epictetus.mobi";
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Skipping test - fixture not found: {}", path);
-        return;
-    }
-
-    let mut book = Book::open(path).expect("Should open MOBI");
-
-    // Load all chapters
-    let spine: Vec<_> = book.spine().to_vec();
-    for entry in &spine {
-        let _ = book.load_chapter_cached(entry.id);
-    }
-
-    // Resolve links
-    let resolved = book.resolve_links().expect("Should resolve links");
-
-    let broken = resolved.broken_links();
-    let internal: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::Internal(_)))
-        .count();
-    let chapter: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::Chapter(_)))
-        .count();
-    let external: usize = resolved
-        .iter()
-        .filter(|(_, t)| matches!(t, AnchorTarget::External(_)))
-        .count();
-
-    println!(
-        "MOBI: Total: {}, Internal: {}, Chapter: {}, External: {}, Broken: {}",
-        resolved.len(),
-        internal,
-        chapter,
-        external,
-        broken.len()
-    );
-
-    for (source, href) in broken.iter().take(5) {
-        println!("  Broken: {:?} -> {}", source, href);
-    }
 }

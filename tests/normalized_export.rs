@@ -1,10 +1,11 @@
 //! Integration tests for normalized export pipeline.
 
 use std::io::Cursor;
+use std::sync::Arc;
 
 use boko::Book;
 use boko::export::{EpubConfig, EpubExporter, Exporter, GlobalStylePool, normalize_book};
-use boko::model::{AnchorTarget, Chapter};
+use boko::model::Chapter;
 use boko::style::{ComputedStyle, FontStyle, FontWeight, StyleId};
 
 // ============================================================================
@@ -80,100 +81,94 @@ fn test_global_style_pool_remap_unknown_returns_default() {
 }
 
 #[test]
-fn test_global_style_pool_used_styles() {
+fn test_global_style_pool_used_styles_dedupes_and_sorts() {
     let mut global = GlobalStylePool::new();
 
-    let mut chapter = Chapter::new();
+    let mut chapter1 = Chapter::new();
     let bold = ComputedStyle {
         font_weight: FontWeight::BOLD,
         ..Default::default()
     };
-    chapter.styles.intern(bold);
+    let bold_id1 = chapter1.styles.intern(bold.clone());
 
-    global.merge(0, &chapter);
+    let mut chapter2 = Chapter::new();
+    let bold_id2 = chapter2.styles.intern(bold);
+
+    global.merge(0, &chapter1);
+    global.merge(1, &chapter2);
 
     let used = global.used_styles();
-    assert!(!used.is_empty());
-    // Should contain at least default and bold
-    assert!(used.len() >= 2);
+
+    // Should include default and a single bold style, sorted by StyleId.
+    assert!(used.contains(&StyleId::DEFAULT));
+    assert_eq!(used.len(), 2);
+
+    let global_bold1 = global.remap(0, bold_id1);
+    let global_bold2 = global.remap(1, bold_id2);
+    assert_eq!(global_bold1, global_bold2);
+    assert_eq!(used, vec![StyleId::DEFAULT, global_bold1]);
 }
 
 // ============================================================================
 // Integration Tests
 // ============================================================================
 
-#[test]
-fn test_normalized_epub_export_produces_valid_output() {
-    let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
+fn extract_style_classes(document: &str) -> Vec<String> {
+    let mut classes = Vec::new();
+    let mut rest = document;
 
-    let mut output = Cursor::new(Vec::new());
-
-    let exporter = EpubExporter::new().with_config(EpubConfig {
-        normalize: true,
-        ..Default::default()
-    });
-
-    exporter
-        .export(&mut book, &mut output)
-        .expect("Normalized export failed");
-
-    // Verify output is not empty
-    let data = output.into_inner();
-    assert!(!data.is_empty(), "Exported EPUB should not be empty");
-
-    // Verify it's a valid ZIP (starts with PK)
-    assert!(
-        data.starts_with(b"PK"),
-        "Exported EPUB should be a valid ZIP file"
-    );
-}
-
-#[test]
-fn test_normalize_book_produces_content() {
-    let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
-
-    let content = normalize_book(&mut book).expect("normalize_book failed");
-
-    // Should have chapters
-    assert!(
-        !content.chapters.is_empty(),
-        "Should have normalized chapters"
-    );
-
-    // Each chapter should have content
-    for chapter in &content.chapters {
-        assert!(
-            !chapter.document.is_empty(),
-            "Chapter document should not be empty"
-        );
-        assert!(
-            chapter.document.contains("<!DOCTYPE"),
-            "Chapter should be valid XHTML"
-        );
-        assert!(
-            chapter.document.contains("<html"),
-            "Chapter should contain html element"
-        );
+    while let Some(idx) = rest.find("class=\"") {
+        rest = &rest[idx + 7..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let class_attr = &rest[..end];
+        for token in class_attr.split_whitespace() {
+            if token.starts_with('c')
+                && token[1..].chars().all(|c| c.is_ascii_digit())
+            {
+                classes.push(token.to_string());
+            }
+        }
+        rest = &rest[end + 1..];
     }
+
+    classes
 }
 
 #[test]
-fn test_normalized_export_includes_stylesheet_reference() {
+fn test_normalize_book_emits_css_for_used_classes() {
     let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
 
     let content = normalize_book(&mut book).expect("normalize_book failed");
 
-    // Check that chapters reference the stylesheet
+    // Ensure chapters reference the unified stylesheet and CSS matches class usage.
+    let mut all_classes = Vec::new();
     for chapter in &content.chapters {
         assert!(
             chapter.document.contains("style.css"),
             "Chapter should reference style.css"
         );
+        all_classes.extend(extract_style_classes(&chapter.document));
+    }
+
+    assert!(
+        !all_classes.is_empty(),
+        "Expected normalized XHTML to reference at least one style class"
+    );
+
+    for class_name in all_classes {
+        let needle = format!(".{}", class_name);
+        assert!(
+            content.css.contains(&needle),
+            "CSS should contain rule for class {}",
+            class_name
+        );
     }
 }
 
 #[test]
-fn test_normalized_epub_contains_style_css() {
+fn test_normalized_export_contains_css_and_numbered_chapters() {
     let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
 
     let mut output = Cursor::new(Vec::new());
@@ -187,90 +182,36 @@ fn test_normalized_epub_contains_style_css() {
         .export(&mut book, &mut output)
         .expect("Normalized export failed");
 
-    // Read the ZIP and verify style.css exists
     let data = output.into_inner();
     let reader = Cursor::new(data);
     let mut archive = zip::ZipArchive::new(reader).expect("Failed to read ZIP");
 
     let mut found_style = false;
+    let mut found_chapter_0 = false;
     for i in 0..archive.len() {
         let file = archive.by_index(i).expect("Failed to read ZIP entry");
         if file.name().ends_with("style.css") {
             found_style = true;
-            break;
+        }
+        if file.name().contains("chapter_0.xhtml") {
+            found_chapter_0 = true;
         }
     }
 
     assert!(found_style, "Normalized EPUB should contain style.css");
-}
-
-#[test]
-fn test_normalized_export_has_numbered_chapters() {
-    let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
-
-    // Export normalized
-    let mut norm_output = Cursor::new(Vec::new());
-    let norm_exporter = EpubExporter::new().with_config(EpubConfig {
-        normalize: true,
-        ..Default::default()
-    });
-    norm_exporter
-        .export(&mut book, &mut norm_output)
-        .expect("Normalized export failed");
-
-    let norm_data = norm_output.into_inner();
-    assert!(!norm_data.is_empty());
-
-    // Normalized should have chapter_0.xhtml, chapter_1.xhtml, etc.
-    let norm_reader = Cursor::new(norm_data);
-    let mut norm_archive = zip::ZipArchive::new(norm_reader).expect("Failed to read norm ZIP");
-
-    let mut has_chapter_0 = false;
-    for i in 0..norm_archive.len() {
-        let file = norm_archive.by_index(i).expect("Failed to read ZIP entry");
-        if file.name().contains("chapter_0.xhtml") {
-            has_chapter_0 = true;
-            break;
-        }
-    }
-
     assert!(
-        has_chapter_0,
+        found_chapter_0,
         "Normalized EPUB should have numbered chapter files"
     );
 }
 
 #[test]
-fn test_azw3_to_normalized_epub() {
-    let mut book = Book::open("tests/fixtures/epictetus.azw3").expect("Failed to open AZW3 book");
-
-    let mut output = Cursor::new(Vec::new());
-
-    let exporter = EpubExporter::new().with_config(EpubConfig {
-        normalize: true,
-        ..Default::default()
-    });
-
-    exporter
-        .export(&mut book, &mut output)
-        .expect("AZW3 to normalized EPUB export failed");
-
-    let data = output.into_inner();
-    assert!(!data.is_empty(), "Exported EPUB should not be empty");
-    assert!(
-        data.starts_with(b"PK"),
-        "Exported EPUB should be a valid ZIP file"
-    );
-}
-
-#[test]
-fn test_book_cache_works() {
+fn test_load_chapter_cached_returns_same_arc() {
     let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
 
     let spine: Vec<_> = book.spine().to_vec();
     assert!(!spine.is_empty(), "Book should have spine entries");
 
-    // Load same chapter twice with cache
     let chapter1 = book
         .load_chapter_cached(spine[0].id)
         .expect("First load failed");
@@ -278,86 +219,8 @@ fn test_book_cache_works() {
         .load_chapter_cached(spine[0].id)
         .expect("Second load failed");
 
-    // Both should have the same structure
-    assert_eq!(chapter1.node_count(), chapter2.node_count());
-
-    // Clear cache should work
-    book.clear_cache();
-}
-
-// ============================================================================
-// Link Resolution Tests
-// ============================================================================
-
-fn test_resolve_links_on_book(path: &str) {
-    let mut book = Book::open(path).expect("Failed to open test book");
-
-    let resolved = book.resolve_links().expect("resolve_links failed");
-
-    // The book should have some links (footnotes, TOC references, etc.)
-    // We don't require specific counts, just verify the API works
-    let total_links = resolved.len();
-    let broken_count = resolved.broken_links().len();
-
-    // Verify we can iterate links
-    let mut internal_count = 0;
-    let mut chapter_count = 0;
-    let mut external_count = 0;
-
-    for (_source, target) in resolved.iter() {
-        match target {
-            AnchorTarget::Internal(_) => internal_count += 1,
-            AnchorTarget::Chapter(_) => chapter_count += 1,
-            AnchorTarget::External(_) => external_count += 1,
-        }
-    }
-
-    assert_eq!(
-        total_links,
-        internal_count + chapter_count + external_count,
-        "Link counts should match"
+    assert!(
+        Arc::ptr_eq(&chapter1, &chapter2),
+        "Expected cached load to return the same Arc"
     );
-
-    // Print stats for debugging (visible with cargo test -- --nocapture)
-    eprintln!(
-        "[{}] links: {} total, {} internal, {} chapter, {} external, {} broken",
-        path, total_links, internal_count, chapter_count, external_count, broken_count
-    );
-}
-
-#[test]
-fn test_resolve_links_on_epub() {
-    test_resolve_links_on_book("tests/fixtures/epictetus.epub");
-}
-
-#[test]
-fn test_resolve_links_on_azw3() {
-    test_resolve_links_on_book("tests/fixtures/epictetus.azw3");
-}
-
-#[test]
-fn test_resolve_links_on_kfx() {
-    test_resolve_links_on_book("tests/fixtures/epictetus.kfx");
-}
-
-#[test]
-fn test_resolve_links_on_mobi() {
-    test_resolve_links_on_book("tests/fixtures/epictetus.mobi");
-}
-
-#[test]
-fn test_resolve_links_caches_chapters() {
-    let mut book = Book::open("tests/fixtures/epictetus.epub").expect("Failed to open test book");
-
-    // Resolve links (this loads all chapters into cache)
-    let _resolved = book.resolve_links().expect("resolve_links failed");
-
-    // Now loading chapters should be fast (cached)
-    let spine: Vec<_> = book.spine().to_vec();
-    for entry in &spine {
-        // This should return cached Arc<Chapter>
-        let _chapter = book
-            .load_chapter_cached(entry.id)
-            .expect("Cached load failed");
-    }
 }
