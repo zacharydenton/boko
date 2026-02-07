@@ -380,5 +380,14 @@ mod tests {
             let href = format!("kindle:pos:fid:{}:off:{}", fid, off);
             prop_assert!(matches!(Link::parse(&href), Link::Unknown(_)));
         }
+
+        #[test]
+        fn prop_parse_unknown_scheme_is_unknown(
+            scheme in prop_oneof![Just("ftp"), Just("data"), Just("file"), Just("ws")],
+            path in "[A-Za-z0-9/_\\-]{1,24}"
+        ) {
+            let href = format!("{}:{}", scheme, path);
+            prop_assert!(matches!(Link::parse(&href), Link::Unknown(_)));
+        }
     }
 }
