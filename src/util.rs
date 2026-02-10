@@ -309,6 +309,21 @@ pub fn detect_media_format(path: &str, data: &[u8]) -> MediaFormat {
     MediaFormat::Binary
 }
 
+/// Strip invisible formatting characters used in ebooks.
+///
+/// Removes:
+/// - U+00AD SOFT HYPHEN (hyphenation hints)
+/// - U+200B ZERO WIDTH SPACE (word-break hints)
+pub fn strip_ebook_chars(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c != '\u{00AD}' && c != '\u{200B}' {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Detect MIME type from file extension or magic bytes.
 ///
 /// Returns a static string like "image/jpeg", "image/png", etc.

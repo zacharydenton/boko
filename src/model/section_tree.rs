@@ -8,6 +8,7 @@ use std::io;
 use super::chapter::Chapter;
 use super::node::{NodeId, Role};
 use super::Book;
+use crate::util::strip_ebook_chars;
 
 // ============================================================================
 // Public Types
@@ -276,7 +277,7 @@ fn parse_siblings(events: &[Event], mut i: usize, min_level: u8) -> (Vec<Section
 fn collect_text(chapter: &Chapter, node_id: NodeId) -> String {
     let mut result = String::new();
     collect_text_recursive(chapter, node_id, &mut result);
-    result.replace('\u{00AD}', "")
+    strip_ebook_chars(&result)
 }
 
 fn collect_text_recursive(chapter: &Chapter, node_id: NodeId, result: &mut String) {
@@ -322,7 +323,7 @@ fn collect_text_recursive(chapter: &Chapter, node_id: NodeId, result: &mut Strin
 fn collect_text_verbatim(chapter: &Chapter, node_id: NodeId) -> String {
     let mut result = String::new();
     collect_text_verbatim_recursive(chapter, node_id, &mut result);
-    result
+    strip_ebook_chars(&result)
 }
 
 fn collect_text_verbatim_recursive(chapter: &Chapter, node_id: NodeId, result: &mut String) {

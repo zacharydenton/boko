@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::import::ChapterId;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, NodeId, ResolvedLinks, Role};
 use crate::style::Display;
+use crate::util::strip_ebook_chars;
 
 use super::escape::escape_markdown;
 use super::escape::{calculate_fence_length, calculate_inline_code_ticks};
@@ -578,8 +579,7 @@ impl<'a> RenderContext<'a> {
     fn write_text(&mut self, text: &str) {
         self.ensure_line_started();
 
-        // Strip soft hyphens (U+00AD) used for hyphenation hints in ebooks
-        let text = text.replace('\u{00AD}', "");
+        let text = strip_ebook_chars(text);
 
         // Normalize internal whitespace while preserving leading/trailing
         let has_leading = text.starts_with(char::is_whitespace);
@@ -620,7 +620,7 @@ impl<'a> RenderContext<'a> {
     fn collect_text_inner(&self, id: NodeId, verbatim: bool) -> String {
         let mut result = String::new();
         self.collect_text_recursive(id, &mut result, verbatim);
-        result.replace('\u{00AD}', "")
+        strip_ebook_chars(&result)
     }
 
     fn collect_text_recursive(&self, id: NodeId, result: &mut String, verbatim: bool) {
