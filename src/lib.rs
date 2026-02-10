@@ -53,7 +53,8 @@ pub mod wasm;
 
 // Primary exports from model
 pub use model::{
-    Book, Chapter, Format, Metadata, Node, NodeId, Resource, Role, SemanticMap, TextRange, TocEntry,
+    Book, Chapter, ContentBlock, Format, Metadata, Node, NodeId, Resource, Role, SectionNode,
+    SectionTree, SemanticMap, TextRange, TocEntry, extract_section_tree,
 };
 
 // Primary exports from style

@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use boko::{Book, Chapter, ChapterId, Format, NodeId, Role, ToCss, TocEntry};
+use boko::{Book, Chapter, ChapterId, Format, NodeId, Role, ToCss, TocEntry, extract_section_tree};
 
 #[derive(Parser)]
 #[command(name = "boko")]
@@ -48,6 +48,12 @@ enum Command {
         quiet: bool,
     },
 
+    /// Extract hierarchical section tree (JSON)
+    Sections {
+        /// Input file (EPUB, AZW3, or MOBI)
+        file: String,
+    },
+
     /// Dump the IR (Intermediate Representation) for a book
     Dump {
         /// Input file (EPUB, AZW3, or MOBI)
@@ -88,6 +94,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Info { file, json } => show_info(&file, json),
+        Command::Sections { file } => show_sections(&file),
         Command::Convert {
             input,
             output,
@@ -229,6 +236,14 @@ fn show_info(path: &str, json: bool) -> Result<(), String> {
     } else {
         print_human(&mut book, path)
     }
+}
+
+fn show_sections(path: &str) -> Result<(), String> {
+    let mut book = Book::open(path).map_err(|e| e.to_string())?;
+    let tree = extract_section_tree(&mut book).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&tree).map_err(|e| e.to_string())?;
+    println!("{json}");
+    Ok(())
 }
 
 fn print_json(book: &mut Book, path: &str) -> Result<(), String> {

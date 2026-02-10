@@ -14,6 +14,7 @@ mod font;
 mod links;
 mod node;
 mod resolved;
+pub mod section_tree;
 mod semantic;
 
 // Re-export book types
@@ -38,3 +39,6 @@ pub use resolved::ResolvedLinks;
 
 // Re-export font types
 pub use font::FontFace;
+
+// Re-export section tree
+pub use section_tree::{ContentBlock, SectionNode, SectionTree, extract_section_tree};
