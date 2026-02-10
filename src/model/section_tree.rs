@@ -5,9 +5,9 @@
 
 use std::io;
 
+use super::Book;
 use super::chapter::Chapter;
 use super::node::{NodeId, Role};
-use super::Book;
 use crate::util::strip_ebook_chars;
 
 // ============================================================================

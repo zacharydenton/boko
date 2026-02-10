@@ -169,7 +169,7 @@ impl EpubImporter {
             zip_index.insert(
                 name.clone(),
                 ZipEntryLoc {
-                    data_offset: file.data_start(),
+                    data_offset: file.data_start().unwrap(),
                     compressed_size: file.compressed_size(),
                     uncompressed_size: file.size(),
                     compression: compression_to_u16(file.compression()),

@@ -233,7 +233,7 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
 
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"name" if attr.value.as_ref() == b"cover" => is_cover = true,
+                                b"name" if &*attr.value == b"cover" => is_cover = true,
                                 b"content" => {
                                     let val = String::from_utf8(attr.value.to_vec())
                                         .map_err(io::Error::other)?;

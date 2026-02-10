@@ -207,7 +207,7 @@ impl Importer for KfxImporter {
 
         let loc = self
             .resources
-            .get(name.as_ref())
+            .get(&*name)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Asset not found"))?;
 
         self.read_entity(*loc)
