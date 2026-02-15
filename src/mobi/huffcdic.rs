@@ -278,4 +278,149 @@ mod tests {
         let data2 = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         assert_eq!(read_u64_be(&data2, 0), 0x0100000000000000);
     }
+
+    /// Build a minimal valid HUFF record with uniform 8-bit codes.
+    /// All 256 byte values map through 8-bit Huffman codes to identity.
+    fn make_huff() -> Vec<u8> {
+        let off1: u32 = 24;
+        let off2: u32 = 24 + 256 * 4; // 1048
+
+        let mut huff = vec![0u8; 24];
+        huff[0..8].copy_from_slice(b"HUFF\x00\x00\x00\x18");
+        huff[8..12].copy_from_slice(&off1.to_be_bytes());
+        huff[12..16].copy_from_slice(&off2.to_be_bytes());
+
+        // Table 1: 256 entries. All uniform 8-bit, term=true.
+        // Entry = (maxcode_raw << 8) | 0x80 | codelen
+        //       = (255 << 8) | 0x80 | 8 = 0x0000FF88
+        let entry = 0x0000FF88u32;
+        for _ in 0..256 {
+            huff.extend_from_slice(&entry.to_be_bytes());
+        }
+
+        // Table 2: 32 pairs of (mincode_raw, maxcode_raw)
+        for i in 0..32u32 {
+            if i + 1 == 8 {
+                huff.extend_from_slice(&0u32.to_be_bytes()); // min=0
+                huff.extend_from_slice(&255u32.to_be_bytes()); // max=255
+            } else {
+                huff.extend_from_slice(&[0u8; 8]); // unused
+            }
+        }
+
+        huff
+    }
+
+    /// Build a minimal valid CDIC record with 4 single-byte leaf entries.
+    fn make_cdic() -> Vec<u8> {
+        let num_phrases: u32 = 4;
+        let bits: u32 = 2; // 1 << 2 = 4 entries max per CDIC
+
+        let mut cdic = vec![0u8; 16];
+        cdic[0..8].copy_from_slice(b"CDIC\x00\x00\x00\x10");
+        cdic[8..12].copy_from_slice(&num_phrases.to_be_bytes());
+        cdic[12..16].copy_from_slice(&bits.to_be_bytes());
+
+        // Offset table: 4 entries x 2 bytes = 8 bytes
+        // Entry data starts at offset 8 (relative to byte 16)
+        // Each entry is 3 bytes: u16 length_flags + 1 byte data
+        let offset_table_size = 4 * 2; // 8
+        for i in 0..4u16 {
+            let offset = offset_table_size as u16 + i * 3;
+            cdic.extend_from_slice(&offset.to_be_bytes());
+        }
+
+        // Entries: each is leaf (0x8001) + one byte
+        for i in 0..4u8 {
+            cdic.extend_from_slice(&0x8001u16.to_be_bytes()); // leaf, len=1
+            cdic.push(i);
+        }
+
+        cdic
+    }
+
+    #[test]
+    fn test_load_huff_valid() {
+        let huff = make_huff();
+        let mut reader = HuffCdicReader {
+            dict1: Vec::new(),
+            mincode: Vec::new(),
+            maxcode: Vec::new(),
+            dictionary: Vec::new(),
+        };
+        assert!(reader.load_huff(&huff).is_ok());
+        assert_eq!(reader.dict1.len(), 256);
+    }
+
+    #[test]
+    fn test_load_huff_rejects_bad_magic() {
+        let mut reader = HuffCdicReader {
+            dict1: Vec::new(),
+            mincode: Vec::new(),
+            maxcode: Vec::new(),
+            dictionary: Vec::new(),
+        };
+        // JPEG SOI marker — not HUFF
+        assert!(reader.load_huff(b"\xFF\xD8\xFF\xE0JFIF").is_err());
+    }
+
+    #[test]
+    fn test_load_cdic_valid() {
+        let cdic = make_cdic();
+        let mut reader = HuffCdicReader {
+            dict1: Vec::new(),
+            mincode: Vec::new(),
+            maxcode: Vec::new(),
+            dictionary: Vec::new(),
+        };
+        assert!(reader.load_cdic(&cdic).is_ok());
+        assert_eq!(reader.dictionary.len(), 4);
+    }
+
+    #[test]
+    fn test_load_cdic_rejects_jpeg_bytes() {
+        // This is exactly what happens with the off-by-one bug:
+        // the loop reads one record past the CDICs, hits a JPEG image,
+        // and load_cdic() fails because 0xFF 0xD8 != "CDIC".
+        let jpeg = b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00";
+        let mut reader = HuffCdicReader {
+            dict1: Vec::new(),
+            mincode: Vec::new(),
+            maxcode: Vec::new(),
+            dictionary: Vec::new(),
+        };
+        let err = reader.load_cdic(jpeg).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("Invalid CDIC header"),
+            "Expected 'Invalid CDIC header', got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reader_new_with_valid_cdics() {
+        let huff = make_huff();
+        let cdic = make_cdic();
+        // Correct usage: only CDIC records passed
+        let result = HuffCdicReader::new(&huff, &[cdic.as_slice()]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_reader_new_with_poison_record_fails() {
+        // Simulates the off-by-one bug: the caller passes an extra
+        // non-CDIC record (JPEG image bytes) after the real CDICs.
+        let huff = make_huff();
+        let cdic = make_cdic();
+        let jpeg = b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00";
+
+        match HuffCdicReader::new(&huff, &[cdic.as_slice(), jpeg.as_slice()]) {
+            Err(e) => assert!(
+                e.to_string().contains("Invalid CDIC header"),
+                "Expected 'Invalid CDIC header', got: {e}"
+            ),
+            Ok(_) => panic!("Should fail when JPEG bytes are passed as CDIC"),
+        }
+    }
 }
