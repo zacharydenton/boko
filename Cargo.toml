@@ -23,7 +23,7 @@ wasm = ["wasm-bindgen", "console_error_panic_hook"]
 wasm-bindgen = { version = "0.2", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 quick-xml = "0.39"
-zip = { version = "7.1", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "8.1", default-features = false, features = ["deflate-flate2"] }
 percent-encoding = "2.3"
 
 # High-performance byte operations (SIMD-accelerated)
