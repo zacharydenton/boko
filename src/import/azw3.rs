@@ -504,7 +504,7 @@ impl Azw3Importer {
         {
             let huff_data = read_record(self.mobi.huff_record_index as usize)?;
             let mut cdics = Vec::new();
-            for i in 0..self.mobi.huff_record_count {
+            for i in 0..self.mobi.huff_record_count.saturating_sub(1) {
                 let cdic_idx = self.mobi.huff_record_index as usize + 1 + i as usize;
                 if let Ok(cdic) = read_record(cdic_idx) {
                     cdics.push(cdic);
