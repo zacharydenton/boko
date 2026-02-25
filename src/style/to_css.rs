@@ -73,7 +73,9 @@ impl ToCss for ComputedStyle {
 
         // Font properties
         if let Some(ref family) = self.font_family {
-            write!(buf, "font-family: {}; ", family).unwrap();
+            buf.push_str("font-family: ");
+            quote_font_family(buf, family);
+            buf.push_str("; ");
         }
         emit_if_changed!(self, default, buf, font_size, "font-size");
         emit_if_changed!(self, default, buf, font_weight, "font-weight");
@@ -237,5 +239,122 @@ impl ToCss for ComputedStyle {
         emit_if_changed!(self, default, buf, visibility, "visibility");
 
         // Note: language is stored but typically output via HTML lang attribute
+    }
+}
+
+/// CSS generic font families that must NOT be quoted.
+const GENERIC_FAMILIES: &[&str] = &[
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "ui-serif",
+    "ui-sans-serif",
+    "ui-monospace",
+    "ui-rounded",
+    "math",
+    "emoji",
+    "fangsong",
+];
+
+/// Quote font-family names that need quoting in CSS.
+///
+/// A comma-separated font stack like `din next lt pro,sans-serif` becomes
+/// `"din next lt pro",sans-serif` — generic families are left unquoted,
+/// custom names with spaces or leading digits are quoted.
+fn quote_font_family(buf: &mut String, family: &str) {
+    for (i, part) in family.split(',').enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        let trimmed = part.trim();
+        let is_generic = GENERIC_FAMILIES
+            .iter()
+            .any(|g| g.eq_ignore_ascii_case(trimmed));
+        let needs_quoting = !is_generic
+            && (trimmed.contains(' ')
+                || trimmed.starts_with(|c: char| c.is_ascii_digit())
+                || trimmed.contains('"')
+                || trimmed.is_empty());
+        if needs_quoting {
+            buf.push('"');
+            buf.push_str(trimmed);
+            buf.push('"');
+        } else {
+            buf.push_str(trimmed);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn quoted(input: &str) -> String {
+        let mut buf = String::new();
+        quote_font_family(&mut buf, input);
+        buf
+    }
+
+    #[test]
+    fn test_font_family_quoting_spaces_and_digit_prefix() {
+        // Real-world case from B003ZK58TA: unquoted name with spaces + leading digit
+        assert_eq!(
+            quoted("001_cvi_cover-din next lt pro,sans-serif"),
+            r#""001_cvi_cover-din next lt pro",sans-serif"#
+        );
+    }
+
+    #[test]
+    fn test_font_family_quoting_spaces() {
+        assert_eq!(
+            quoted("DIN Next LT Pro,sans-serif"),
+            r#""DIN Next LT Pro",sans-serif"#
+        );
+    }
+
+    #[test]
+    fn test_font_family_no_quoting_single_word() {
+        assert_eq!(quoted("Helvetica"), "Helvetica");
+    }
+
+    #[test]
+    fn test_font_family_generic_not_quoted() {
+        assert_eq!(quoted("serif"), "serif");
+        assert_eq!(quoted("sans-serif"), "sans-serif");
+        assert_eq!(quoted("monospace"), "monospace");
+    }
+
+    #[test]
+    fn test_font_family_generic_case_insensitive() {
+        assert_eq!(quoted("Sans-Serif"), "Sans-Serif");
+    }
+
+    #[test]
+    fn test_font_family_full_stack() {
+        assert_eq!(
+            quoted("031_next-reads-shift light,palatino,palatino linotype,georgia,serif"),
+            r#""031_next-reads-shift light",palatino,"palatino linotype",georgia,serif"#
+        );
+    }
+
+    #[test]
+    fn test_font_family_leading_digit() {
+        assert_eq!(quoted("123font"), r#""123font""#);
+    }
+
+    #[test]
+    fn test_computed_style_font_family_quoted() {
+        let mut style = ComputedStyle::default();
+        style.font_family = Some("001_cvi_cover-din next lt pro,sans-serif".to_string());
+        let mut css = String::new();
+        style.to_css(&mut css);
+        assert!(
+            css.contains(r#"font-family: "001_cvi_cover-din next lt pro",sans-serif;"#),
+            "Expected quoted font-family in CSS output, got: {}",
+            css
+        );
     }
 }
