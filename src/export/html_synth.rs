@@ -173,7 +173,17 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>) {
     // Handle leaf text nodes (Text role with text content, no children)
     if role == Role::Text && !node.text.is_empty() && node.first_child.is_none() {
         let text = ctx.ir.text(node.text);
-        ctx.out.push_str(&escape_xml(text));
+        // KFX uses \n in text content for forced line breaks — emit as <br/>
+        if text.contains('\n') {
+            for (i, segment) in text.split('\n').enumerate() {
+                if i > 0 {
+                    ctx.out.push_str("<br/>");
+                }
+                ctx.out.push_str(&escape_xml(segment));
+            }
+        } else {
+            ctx.out.push_str(&escape_xml(text));
+        }
         return;
     }
 
@@ -608,5 +618,50 @@ mod tests {
         assert!(result.body.contains("<h4>"));
         assert!(result.body.contains("<h5>"));
         assert!(result.body.contains("<h6>"));
+    }
+
+    #[test]
+    fn test_text_newlines_become_br() {
+        let mut chapter = Chapter::new();
+
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(NodeId::ROOT, para);
+
+        // Text with embedded newline (KFX forced line break)
+        let text_range = chapter.append_text("Interface Culture:\nHow New Technology");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(para, text_node);
+
+        let result = synthesize_html(&chapter, &HashMap::new());
+
+        assert!(
+            result
+                .body
+                .contains("Interface Culture:<br/>How New Technology"),
+            "Newlines in text content should become <br/> tags, got: {}",
+            result.body
+        );
+        // Should NOT contain a bare newline between the segments
+        assert!(
+            !result.body.contains("Culture:\nHow"),
+            "Raw newline should not appear in HTML output"
+        );
+    }
+
+    #[test]
+    fn test_text_without_newlines_unchanged() {
+        let mut chapter = Chapter::new();
+
+        let para = chapter.alloc_node(Node::new(Role::Paragraph));
+        chapter.append_child(NodeId::ROOT, para);
+
+        let text_range = chapter.append_text("Normal text without breaks");
+        let text_node = chapter.alloc_node(Node::text(text_range));
+        chapter.append_child(para, text_node);
+
+        let result = synthesize_html(&chapter, &HashMap::new());
+
+        assert!(result.body.contains("Normal text without breaks"));
+        assert!(!result.body.contains("<br/>"));
     }
 }
