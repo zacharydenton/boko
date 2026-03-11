@@ -44,8 +44,11 @@ pub struct KfxImporter {
     /// Entity index: maps (type_id, entity_idx) -> EntityLoc
     entities: Vec<EntityLoc>,
 
-    /// Precomputed asset paths (bcRawMedia entity IDs).
+    /// Precomputed asset paths (bcRawMedia entity IDs + font paths).
     asset_paths: Vec<PathBuf>,
+
+    /// Font entity map: font path (e.g., "fonts/font_0000.otf") -> EntityLoc.
+    font_entities: HashMap<String, EntityLoc>,
 
     /// Document-specific symbols (extended symbol table).
     doc_symbols: Arc<Vec<String>>,
@@ -189,6 +192,11 @@ impl Importer for KfxImporter {
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
         let name = path.to_string_lossy();
 
+        // Handle font path lookup (e.g., "fonts/font_0000.otf")
+        if let Some(loc) = self.font_entities.get(&*name) {
+            return self.read_entity(*loc);
+        }
+
         // Handle direct entity ID lookup (e.g., "#1102" from list_assets)
         if let Some(id_str) = name.strip_prefix('#') {
             if let Ok(id) = id_str.parse::<u32>() {
@@ -324,17 +332,30 @@ impl KfxImporter {
         let index_data = source.read_at(index_offset as u64, index_length)?;
         let entities = parse_index_table(&index_data, header.header_len);
 
-        let asset_paths: Vec<PathBuf> = entities
+        // Build asset paths: bcRawMedia as entity IDs, bcRawFont as fonts/ paths
+        let mut asset_paths: Vec<PathBuf> = entities
             .iter()
             .filter(|e| e.type_id == KfxSymbol::Bcrawmedia as u32)
             .map(|e| PathBuf::from(format!("#{}", e.id)))
             .collect();
+
+        let mut font_entities = HashMap::new();
+        for (idx, e) in entities
+            .iter()
+            .filter(|e| e.type_id == KfxSymbol::Bcrawfont as u32)
+            .enumerate()
+        {
+            let font_path = format!("fonts/font_{idx:04}.otf");
+            font_entities.insert(font_path.clone(), *e);
+            asset_paths.push(PathBuf::from(font_path));
+        }
 
         let mut importer = Self {
             source,
             header_len: header.header_len,
             entities,
             asset_paths,
+            font_entities,
             doc_symbols: Arc::new(doc_symbols),
             metadata: Metadata::default(),
             toc: Vec::new(),
