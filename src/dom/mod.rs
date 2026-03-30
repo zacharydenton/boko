@@ -64,10 +64,10 @@ fn parse_dom(html: &str) -> ArenaDom {
 
         // Verify xml5ever produced a usable tree (has a body with children).
         // Fall through to html5ever if not.
-        if let Some(body) = dom.find_by_tag("body") {
-            if dom.children(body).next().is_some() {
-                return dom;
-            }
+        if let Some(body) = dom.find_by_tag("body")
+            && dom.children(body).next().is_some()
+        {
+            return dom;
         }
     }
 
