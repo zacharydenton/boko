@@ -57,9 +57,10 @@ fn looks_like_xhtml(html: &str) -> bool {
 fn parse_dom(html: &str) -> ArenaDom {
     if looks_like_xhtml(html) {
         let sink = ArenaSink::new();
-        let result = xml5ever::driver::parse_document(sink, xml5ever::driver::XmlParseOpts::default())
-            .from_utf8()
-            .one(html.as_bytes());
+        let result =
+            xml5ever::driver::parse_document(sink, xml5ever::driver::XmlParseOpts::default())
+                .from_utf8()
+                .one(html.as_bytes());
         let dom = result.into_dom();
 
         // Verify xml5ever produced a usable tree (has a body with children).
@@ -528,14 +529,23 @@ mod tests {
                 }
             }
         }
-        assert!(found_text, "Self-closing <script/> in XHTML swallowed body content");
+        assert!(
+            found_text,
+            "Self-closing <script/> in XHTML swallowed body content"
+        );
     }
 
     #[test]
     fn test_looks_like_xhtml() {
-        assert!(looks_like_xhtml(r#"<?xml version="1.0"?><html><body>Hi</body></html>"#));
-        assert!(looks_like_xhtml(r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>Hi</body></html>"#));
-        assert!(!looks_like_xhtml("<html><body><p>Plain HTML</p></body></html>"));
+        assert!(looks_like_xhtml(
+            r#"<?xml version="1.0"?><html><body>Hi</body></html>"#
+        ));
+        assert!(looks_like_xhtml(
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>Hi</body></html>"#
+        ));
+        assert!(!looks_like_xhtml(
+            "<html><body><p>Plain HTML</p></body></html>"
+        ));
     }
 
     #[test]
