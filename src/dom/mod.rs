@@ -43,7 +43,8 @@ use tree_sink::ArenaSink;
 ///
 /// Checks for XML declaration (`<?xml`) or XHTML namespace (`xmlns=`).
 fn looks_like_xhtml(html: &str) -> bool {
-    let prefix = &html[..html.len().min(500)];
+    let end = html.floor_char_boundary(500);
+    let prefix = &html[..end];
     prefix.contains("<?xml") || prefix.contains("xmlns=")
 }
 
