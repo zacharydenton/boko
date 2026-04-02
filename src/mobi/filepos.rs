@@ -68,7 +68,15 @@ pub fn collect_filepos_targets(html: &[u8]) -> HashSet<usize> {
 /// 3. Convert `recindex=NNNNN` to proper image paths
 ///
 /// This matches KindleUnpack's findAnchors() + insertHREFS() methods.
-pub fn transform_mobi_html(html: &[u8], assets: &[std::path::PathBuf]) -> Vec<u8> {
+///
+/// `extra_anchor_positions` allows inserting additional anchors (e.g. from NCX
+/// index entries) at byte positions that may not have corresponding `filepos=N`
+/// attributes in the HTML.
+pub fn transform_mobi_html(
+    html: &[u8],
+    assets: &[std::path::PathBuf],
+    extra_anchor_positions: &[u32],
+) -> Vec<u8> {
     use std::collections::HashMap;
 
     // Step 1: Collect all filepos targets
@@ -84,6 +92,16 @@ pub fn transform_mobi_html(html: &[u8], assets: &[std::path::PathBuf]) -> Vec<u8
                 .entry(position)
                 .or_default()
                 .extend_from_slice(anchor.as_bytes());
+        }
+    }
+
+    // Also insert anchors at extra positions (NCX entries, etc.)
+    for &position in extra_anchor_positions {
+        let pos = position as usize;
+        if pos > 0 && pos <= html.len() {
+            position_map
+                .entry(pos)
+                .or_insert_with(|| format!("<a id=\"filepos{}\" />", pos).into_bytes());
         }
     }
 
@@ -244,7 +262,7 @@ mod tests {
         let link = b"<a filepos=50>Link</a>";
         html.extend_from_slice(link);
 
-        let result = transform_mobi_html(&html, &[]);
+        let result = transform_mobi_html(&html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         // Should have anchor at position 50
@@ -264,7 +282,7 @@ mod tests {
     #[test]
     fn test_transform_filepos_to_href() {
         let html = b"<a filepos=1234>Link</a>";
-        let result = transform_mobi_html(html, &[]);
+        let result = transform_mobi_html(html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         assert!(result_str.contains("href=\"#filepos1234\""));
@@ -275,7 +293,7 @@ mod tests {
     fn test_transform_recindex() {
         let assets = vec![PathBuf::from("images/image_0000.jpg")];
         let html = b"<img recindex=\"00001\">";
-        let result = transform_mobi_html(html, &assets);
+        let result = transform_mobi_html(html, &assets, &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         assert!(result_str.contains("src=\"images/image_0000.jpg\""));
@@ -285,7 +303,7 @@ mod tests {
     #[test]
     fn test_transform_with_leading_zeros() {
         let html = b"<a filepos=0000100>Link</a>";
-        let result = transform_mobi_html(html, &[]);
+        let result = transform_mobi_html(html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         // Should strip leading zeros in href
@@ -296,7 +314,7 @@ mod tests {
     fn test_transform_empty_filepos_quoted() {
         // Empty filepos with quotes should be removed, leaving plain anchor
         let html = b"<a filepos=\"\">Link text</a>";
-        let result = transform_mobi_html(html, &[]);
+        let result = transform_mobi_html(html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         // The empty filepos="" attribute should be stripped
@@ -317,7 +335,7 @@ mod tests {
     fn test_transform_empty_filepos_unquoted() {
         // Empty filepos without quotes (malformed) should be handled
         let html = b"<a filepos=>Link text</a>";
-        let result = transform_mobi_html(html, &[]);
+        let result = transform_mobi_html(html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         // The empty filepos= attribute should be stripped
@@ -338,7 +356,7 @@ mod tests {
     fn test_transform_whitespace_only_filepos() {
         // filepos with only whitespace should be handled
         let html = b"<a filepos=\"  \">Link text</a>";
-        let result = transform_mobi_html(html, &[]);
+        let result = transform_mobi_html(html, &[], &[]);
         let result_str = String::from_utf8_lossy(&result);
 
         // The whitespace-only filepos should be stripped
