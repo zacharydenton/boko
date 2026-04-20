@@ -349,7 +349,9 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                     let text = buf_text.clone();
                     match elem.as_str() {
                         "title" => {
-                            metadata.title = text;
+                            if metadata.title.is_empty() {
+                                metadata.title = text;
+                            }
                             if let Some(ref id) = current_element_id {
                                 element_ids.insert(id.clone(), MetaElement::Title);
                             }
@@ -1466,5 +1468,26 @@ mod tests {
             .find(|c| c.role == Some("edt".to_string()));
         assert!(editor.is_some());
         assert_eq!(editor.unwrap().name, "Editor Name");
+    }
+
+    #[test]
+    fn test_parse_opf_multiple_titles_uses_first() {
+        let opf = r##"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title id="title1">The First Title</dc:title>
+    <dc:title id="title2">The Second Title</dc:title>
+    <dc:title id="title3">The Third Title</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>"##;
+
+        let result = parse_opf(opf).unwrap();
+        // Should only use the first title
+        assert_eq!(result.metadata.title, "The First Title");
     }
 }
