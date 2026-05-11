@@ -480,6 +480,19 @@ impl KfxSchema {
             vec![],
         );
 
+        // Line break (<br/>)
+        // Note: KFX forced line breaks are primarily encoded as \n within text
+        // content (handled in html_synth.rs), but register the element type too
+        // in case some books use a discrete line_break element.
+        self.register_element(
+            KfxSymbol::LineBreak,
+            Strategy::Structure {
+                role: Role::Break,
+                kfx_type: KfxSymbol::LineBreak,
+            },
+            vec![],
+        );
+
         // BlockQuote - maps to type: text with yj.semantics.type: block_quote
         // KFX has no dedicated blockquote container. Instead it uses:
         // 1. type: text (standard text container)
