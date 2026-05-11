@@ -4,7 +4,7 @@
 //! All shared state flows through this context, avoiding the pitfalls of
 //! scattered symbol tables, ID collision, and orphaned references.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::import::ChapterId;
 use crate::model::{GlobalNodeId, LandmarkType, NodeId, TocEntry};
@@ -658,6 +658,11 @@ pub struct ExportContext {
 
     /// Text length for each content fragment ID.
     pub content_id_lengths: HashMap<u64, usize>,
+
+    /// Per-section image resource dependencies.
+    /// Maps section_name → set of resource short names (e.g., "e6") referenced by that section.
+    /// Used to build the container_entity_map dependency graph so Kindle can locate images.
+    pub section_resource_deps: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Position of a heading element for navigation.
@@ -722,7 +727,16 @@ impl ExportContext {
             first_content_ids: HashMap::new(),
             content_ids_by_chapter: HashMap::new(),
             content_id_lengths: HashMap::new(),
+            section_resource_deps: BTreeMap::new(),
         }
+    }
+
+    /// Record that a section references a given image resource (by short name).
+    pub fn record_section_image_ref(&mut self, section_name: &str, short_name: &str) {
+        self.section_resource_deps
+            .entry(section_name.to_string())
+            .or_default()
+            .insert(short_name.to_string());
     }
 
     /// Prepare context for processing a new chapter.

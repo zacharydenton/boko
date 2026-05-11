@@ -130,6 +130,7 @@ pub fn build_cover_section(
     // Get the resource name for the cover image
     let resource_name = ctx.resource_registry.get_or_create_name(cover_path);
     let resource_symbol = ctx.symbols.get_or_intern(&resource_name);
+    ctx.record_section_image_ref(section_name, &resource_name);
 
     // Use default style for the cover image
     let style_symbol = ctx.default_style_symbol;

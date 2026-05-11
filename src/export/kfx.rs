@@ -3,7 +3,7 @@
 //! This module provides the `KfxExporter` which implements the `Exporter` trait
 //! for writing books in Amazon's KFX format.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Seek, Write};
 
 use crate::export::Exporter;
@@ -322,6 +322,19 @@ fn build_kfx_container(book: &mut Book) -> io::Result<Vec<u8>> {
             storyline_fragments.push(storyline);
             if let Some(c) = content {
                 content_fragments.push(c);
+            }
+
+            // Record which image resources this section depends on, so the
+            // container_entity_map can declare the dependency graph that
+            // Kindle uses to locate images.
+            for node_id in chapter.iter_dfs() {
+                if let Some(node) = chapter.node(node_id)
+                    && node.role == crate::model::Role::Image
+                    && let Some(src) = chapter.semantics.src(node_id)
+                {
+                    let short_name = ctx.resource_registry.get_or_create_name(src);
+                    ctx.record_section_image_ref(section_name, &short_name);
+                }
             }
         }
     }
@@ -1965,32 +1978,28 @@ fn build_resource_path_fragment() -> KfxFragment {
 
 /// Build container_entity_map fragment ($419).
 ///
-/// Lists all entities in the container for the reader to enumerate.
-/// Each entry contains the container ID and a list of entity name symbols.
+/// Lists all entities in the container for the reader to enumerate, plus an
+/// `entity_dependencies` graph that tells Kindle how sections reach their
+/// image data: section → external_resource → bcRawMedia location.
 fn build_container_entity_map_fragment(
     container_id: &str,
     fragments: &[KfxFragment],
     ctx: &ExportContext,
 ) -> KfxFragment {
-    // Collect all non-singleton entity name symbols
+    // Collect all non-singleton entity name symbols (including bcRawMedia
+    // location strings — Kindle requires these so it can resolve resource
+    // dependencies).
     let mut entity_names: Vec<IonValue> = Vec::new();
 
     for frag in fragments {
-        // Skip singleton fragments (those with fid like "$258")
         if frag.fid.starts_with('$') {
             continue;
         }
-        // Skip raw media fragments (bcRawMedia)
-        if frag.is_raw() {
-            continue;
-        }
-        // Get the symbol ID for this entity name
         if let Some(symbol_id) = ctx.symbols.get(&frag.fid) {
             entity_names.push(IonValue::Symbol(symbol_id));
         }
     }
 
-    // Build the container_list entry
     let container_entry = IonValue::Struct(vec![
         (
             KfxSymbol::Id as u64,
@@ -1999,10 +2008,69 @@ fn build_container_entity_map_fragment(
         (KfxSymbol::Contains as u64, IonValue::List(entity_names)),
     ]);
 
-    let ion = IonValue::Struct(vec![(
+    // Build entity_dependencies: section → [resource short names], and
+    // external_resource → ['resource/<name>'] (the bcRawMedia symbol).
+    let mut dependencies: Vec<IonValue> = Vec::new();
+
+    for (section_name, short_names) in &ctx.section_resource_deps {
+        if short_names.is_empty() {
+            continue;
+        }
+        let Some(section_sym) = ctx.symbols.get(section_name) else {
+            continue;
+        };
+        let deps: Vec<IonValue> = short_names
+            .iter()
+            .filter_map(|n| ctx.symbols.get(n).map(IonValue::Symbol))
+            .collect();
+        if deps.is_empty() {
+            continue;
+        }
+        dependencies.push(IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Symbol(section_sym)),
+            (
+                KfxSymbol::MandatoryDependencies as u64,
+                IonValue::List(deps),
+            ),
+        ]));
+    }
+
+    // Collect every distinct resource short name actually used and emit its
+    // bcRawMedia location as a dependency.
+    let mut all_short_names: BTreeSet<&String> = BTreeSet::new();
+    for short_names in ctx.section_resource_deps.values() {
+        for n in short_names {
+            all_short_names.insert(n);
+        }
+    }
+    for short_name in all_short_names {
+        let Some(resource_sym) = ctx.symbols.get(short_name) else {
+            continue;
+        };
+        let raw_name = format!("resource/{short_name}");
+        let Some(raw_sym) = ctx.symbols.get(&raw_name) else {
+            continue;
+        };
+        dependencies.push(IonValue::Struct(vec![
+            (KfxSymbol::Id as u64, IonValue::Symbol(resource_sym)),
+            (
+                KfxSymbol::MandatoryDependencies as u64,
+                IonValue::List(vec![IonValue::Symbol(raw_sym)]),
+            ),
+        ]));
+    }
+
+    let mut ion_fields = vec![(
         KfxSymbol::ContainerList as u64,
         IonValue::List(vec![container_entry]),
-    )]);
+    )];
+    if !dependencies.is_empty() {
+        ion_fields.push((
+            KfxSymbol::EntityDependencies as u64,
+            IonValue::List(dependencies),
+        ));
+    }
+    let ion = IonValue::Struct(ion_fields);
 
     KfxFragment::singleton(KfxSymbol::ContainerEntityMap, ion)
 }
