@@ -179,8 +179,12 @@ fn process_link_tag(
         }
     }
 
-    // No rewrite needed, copy as-is
-    output.extend_from_slice(tag);
+    // No matching CSS flow. Don't pass the original `<link href="...css">`
+    // through — its href would be a relative path Kindle can't resolve,
+    // and stale stylesheet references can stall the layout engine waiting
+    // for the resource. Calibre's pipeline never emits unresolved `<link>`
+    // tags into the rawml. Drop it.
+    let _ = tag;
 }
 
 /// Process <img> tag, rewriting src to kindle:embed
@@ -417,6 +421,12 @@ fn resolve_href(base_dir: &str, href: &str) -> String {
 
 /// Single-pass CSS url() rewriting
 pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, usize>) -> Vec<u8> {
+    // Strip CSS at-rules that Kindle's parser doesn't support: `@charset`,
+    // `@namespace`. Calibre normalises these away in its OEB transform
+    // pipeline; leaving them in is correlated with the renderer freezing
+    // on otherwise-valid books.
+    let css = strip_unsupported_css_at_rules(css);
+
     let mut output = Vec::with_capacity(css.len());
     let mut pos = 0;
 
@@ -476,12 +486,250 @@ pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, us
     output
 }
 
+/// Strip `@charset "..."` and `@namespace ...` at-rules from CSS.
+///
+/// Kindle's CSS parser (KF8 rendering engine) doesn't implement CSS
+/// namespaces and gets unhappy with `@charset` directives; calibre's
+/// `mobiml.py` removes both as part of its normalisation pass before
+/// shipping CSS into the KF8 stream.
+fn strip_unsupported_css_at_rules(css: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(css.len());
+    let mut i = 0;
+    while i < css.len() {
+        if css[i] == b'@' {
+            let rest = &css[i..];
+            let matches_charset = rest.len() >= 8
+                && rest[..8].eq_ignore_ascii_case(b"@charset");
+            let matches_namespace = rest.len() >= 10
+                && rest[..10].eq_ignore_ascii_case(b"@namespace");
+
+            if matches_charset || matches_namespace {
+                // Drop the rule up to and including the next `;`. (Both
+                // `@charset` and `@namespace` are simple at-rules
+                // terminated by `;`.)
+                let mut j = i + if matches_charset { 8 } else { 10 };
+                while j < css.len() && css[j] != b';' {
+                    j += 1;
+                }
+                if j < css.len() {
+                    j += 1; // consume the `;`
+                }
+                // Also swallow any trailing whitespace so we don't leave
+                // a gap of blank lines where the rule was.
+                while j < css.len() && matches!(css[j], b' ' | b'\t' | b'\r' | b'\n') {
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+        }
+        output.push(css[i]);
+        i += 1;
+    }
+    output
+}
+
 /// Result of aid attribute insertion
 pub struct AidInsertResult {
     /// The HTML with aid attributes added
     pub html: Vec<u8>,
     /// Mapping of original byte position -> aid for filepos resolution
     pub position_map: Vec<(usize, String)>,
+}
+
+/// Strip XML namespace declarations and namespaced attributes that confuse
+/// the Kindle HTML5 parser.
+///
+/// Calibre's KF8 writer explicitly does this (see `writer8/skeleton.py:remove_namespaces`)
+/// because Kindle firmware refuses to render documents with EPUB3-style
+/// prefixed attributes such as `xmlns:epub`, `epub:prefix`, `epub:type`, or
+/// `xml:lang`. Leaving them in produces files that pass libmobi parsing but
+/// still get "Unable to Open Item" on the device.
+///
+/// We strip:
+///   - Any `xmlns:NAME="..."` namespace declaration except the default xhtml one.
+///   - Any attribute with a prefix in {`epub`, `xml`, `opf`, `dc`, `dcterms`,
+///     `xsi`}, e.g. `epub:type="..."`, `xml:lang="..."`.
+///
+/// The default xhtml `xmlns="..."` is preserved.
+pub fn strip_xml_namespaces(html: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(html.len());
+    let mut pos = 0;
+
+    while pos < html.len() {
+        let Some(rel) = memchr::memchr(b'<', &html[pos..]) else {
+            out.extend_from_slice(&html[pos..]);
+            break;
+        };
+        let tag_start = pos + rel;
+        out.extend_from_slice(&html[pos..tag_start]);
+
+        // Closing tags, comments, processing instructions: copy unchanged.
+        // DOCTYPE declarations: drop entirely — Kindle's HTML5 parser refuses
+        // to load external DTDs (e.g. XHTML 1.1's
+        // `http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd`) and calibre's KF8
+        // writer never emits a DOCTYPE for the same reason.
+        if matches!(html.get(tag_start + 1), Some(&b'/') | Some(&b'!') | Some(&b'?')) {
+            let Some(end_rel) = memchr::memchr(b'>', &html[tag_start..]) else {
+                out.extend_from_slice(&html[tag_start..]);
+                break;
+            };
+            let tag_end = tag_start + end_rel + 1;
+            let is_doctype = html
+                .get(tag_start + 2..tag_start + 9)
+                .is_some_and(|s| s.eq_ignore_ascii_case(b"DOCTYPE"));
+            if !is_doctype {
+                out.extend_from_slice(&html[tag_start..tag_end]);
+            }
+            pos = tag_end;
+            continue;
+        }
+
+        // Find tag end. Honor quoted attribute values so a `>` inside a value
+        // doesn't terminate early.
+        let mut i = tag_start + 1;
+        let mut in_quote: Option<u8> = None;
+        while i < html.len() {
+            let c = html[i];
+            match in_quote {
+                Some(q) if c == q => in_quote = None,
+                None => match c {
+                    b'"' | b'\'' => in_quote = Some(c),
+                    b'>' => break,
+                    _ => {}
+                },
+                _ => {}
+            }
+            i += 1;
+        }
+        if i >= html.len() {
+            out.extend_from_slice(&html[tag_start..]);
+            break;
+        }
+        let tag_end = i + 1;
+
+        out.push(b'<');
+        let mut p = tag_start + 1;
+
+        // Copy tag name (up to first whitespace, `/`, or `>`).
+        while p < tag_end - 1
+            && !matches!(
+                html[p],
+                b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'/' | b'>'
+            )
+        {
+            out.push(html[p]);
+            p += 1;
+        }
+
+        // Walk attributes. For each, decide keep vs drop based on its name.
+        while p < tag_end - 1 {
+            // Copy whitespace.
+            let ws_start = p;
+            while p < tag_end - 1
+                && matches!(html[p], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+            {
+                p += 1;
+            }
+            if p >= tag_end - 1 {
+                out.extend_from_slice(&html[ws_start..p]);
+                break;
+            }
+            // Self-close or end of tag.
+            if html[p] == b'/' || html[p] == b'>' {
+                out.extend_from_slice(&html[ws_start..p]);
+                break;
+            }
+
+            // Parse attribute name.
+            let name_start = p;
+            while p < tag_end - 1
+                && !matches!(
+                    html[p],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'=' | b'/' | b'>'
+                )
+            {
+                p += 1;
+            }
+            let name = &html[name_start..p];
+
+            // Parse optional value.
+            let value_end;
+            if p < tag_end - 1 && html[p] == b'=' {
+                p += 1;
+                // Skip whitespace before value.
+                while p < tag_end - 1
+                    && matches!(html[p], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
+                {
+                    p += 1;
+                }
+                if p < tag_end - 1 && (html[p] == b'"' || html[p] == b'\'') {
+                    let q = html[p];
+                    p += 1;
+                    while p < tag_end - 1 && html[p] != q {
+                        p += 1;
+                    }
+                    if p < tag_end - 1 {
+                        p += 1; // consume closing quote
+                    }
+                } else {
+                    // Unquoted value: read until whitespace, `/`, or `>`.
+                    while p < tag_end - 1
+                        && !matches!(
+                            html[p],
+                            b' ' | b'\t' | b'\n' | b'\r' | b'\x0c' | b'/' | b'>'
+                        )
+                    {
+                        p += 1;
+                    }
+                }
+                value_end = p;
+            } else {
+                value_end = p;
+            }
+
+            // Decide whether to drop this attribute.
+            let drop = should_drop_attr(name);
+
+            if !drop {
+                out.extend_from_slice(&html[ws_start..value_end]);
+            }
+        }
+
+        // Copy whatever's left of the tag (self-close marker, `>`).
+        out.extend_from_slice(&html[p..tag_end]);
+        pos = tag_end;
+    }
+
+    out
+}
+
+fn should_drop_attr(name: &[u8]) -> bool {
+    // Drop `xmlns:NAME` (but keep bare `xmlns`).
+    if name.len() > 6 && name[..6].eq_ignore_ascii_case(b"xmlns:") {
+        return true;
+    }
+    // Drop attributes with these prefixes.
+    const DROP_PREFIXES: &[&[u8]] = &[
+        b"epub:", b"opf:", b"dc:", b"dcterms:", b"xsi:", b"xml:",
+        // ARIA — Kindle's KF8 parser doesn't implement WAI-ARIA, and
+        // ARIA-DPUB role values (`doc-noteref`, `doc-chapter`, etc.) come
+        // from the same EPUB3 vocabulary family as `epub:type`. Standard
+        // Ebooks files emit them on every link/section. Stripping them
+        // here matches the same hypothesis that motivated stripping
+        // `epub:type`: same firmware sensitivity class.
+        b"aria-",
+    ];
+    for prefix in DROP_PREFIXES {
+        if name.len() > prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix) {
+            return true;
+        }
+    }
+    // Bare `role="..."` (no prefix). Drop too — same reasoning as above.
+    if name.eq_ignore_ascii_case(b"role") {
+        return true;
+    }
+    false
 }
 
 /// Optimized aid attribute insertion using byte operations
