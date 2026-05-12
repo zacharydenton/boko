@@ -3,174 +3,78 @@
 [![CI](https://github.com/zacharydenton/boko/actions/workflows/ci.yml/badge.svg)](https://github.com/zacharydenton/boko/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/boko.svg)](https://crates.io/crates/boko)
 [![docs.rs](https://docs.rs/boko/badge.svg)](https://docs.rs/boko)
+[![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-A fast Rust library and CLI for converting between ebook formats.
+Boko is a fast ebook converter for EPUB, KFX, AZW3, and MOBI, written in Rust.
 
-## Features
+KFX renders with hyphenation, kerning, and ligatures. AZW3 doesn't. MOBI (Calibre's default Kindle format) is 25 years old at this point. It's 2026, use boko to send .kfx files to your Kindle!
 
-- **Multi-format support**: Read and write EPUB, KFX (Kindle Format 10), and AZW3
-- **Intermediate representation**: Content is compiled to a semantic IR for accurate format conversion
-- **CSS preservation**: Full CSS parsing and transformation between formats
-- **Metadata fidelity**: Extended EPUB3 metadata (contributors, series, refinements) round-trips through KFX
-- **Lazy loading**: Efficient random access via `ByteSource` trait
-- **Cross-platform**: Native binaries for all platforms, plus WebAssembly for browsers
+Browser app: https://zacharydenton.github.io/boko Converts ebooks in your browser, fully client-side (even on your phone).
 
-## Supported Formats
+## Formats
 
-| Format | Read | Write | Notes |
-|--------|------|-------|-------|
-| EPUB 2/3 | ✓ | ✓ | Full EPUB3 metadata support |
-| KFX | ✓ | ✓ | Kindle Format 10 with enhanced typography |
-| AZW3 | ✓ | ✓ | Kindle Format 8 |
-| MOBI | ✓ | - | Legacy format, read-only |
-| Text | - | ✓ | Plain text export |
-| Markdown | - | ✓ | Markdown export |
+| Format | Read | Write |
+|--------|------|-------|
+| KFX | yes | yes |
+| AZW3 | yes | yes |
+| EPUB 2/3 | yes | yes |
+| MOBI | yes | no |
+| Markdown | no | yes |
+| Plain text | no | yes |
 
-## Installation
+## Install
 
-Requires Rust 1.85+ (for edition 2024).
+Requires Rust 1.85+.
 
-```bash
-cargo install boko
-```
+    cargo install boko        # CLI
+    cargo add boko            # library
 
-## CLI Usage
+## CLI
 
-### Show book info
+    boko convert in.epub out.kfx
+    boko convert in.epub out.azw3
+    boko convert in.kfx  out.epub
 
-```bash
-# Human-readable output
-boko info book.epub
+    boko info in.epub
+    boko info --json in.epub
 
-# JSON output
-boko info --json book.epub
-```
+    boko dump in.epub
+    boko dump -c 0 in.epub
 
-### Convert between formats
+`kfx-dump` is installed alongside `boko`.
 
-```bash
-# EPUB to KFX (latest Kindle format)
-boko convert book.epub book.kfx
-
-# EPUB to AZW3
-boko convert book.epub book.azw3
-
-# KFX/AZW3/MOBI to EPUB
-boko convert book.kfx book.epub
-
-# Export to text or markdown
-boko convert book.epub book.txt
-boko convert book.epub book.md
-```
-
-### Inspect the IR
-
-```bash
-# Dump chapter structure
-boko dump book.epub
-
-# Show structure without text content
-boko dump -s book.epub
-
-# Dump a specific chapter
-boko dump -c 0 book.epub
-
-# Show only the style pool
-boko dump --styles-only book.epub
-```
-
-## Library Usage
+## Library
 
 ```rust
 use boko::{Book, Format};
 use std::fs::File;
 
-// Open a book (format auto-detected from extension)
-let mut book = Book::open("input.epub")?;
-
-// Access metadata
-println!("Title: {}", book.metadata().title);
-println!("Authors: {:?}", book.metadata().authors);
-
-// Iterate chapters
-let spine: Vec<_> = book.spine().to_vec();
-for entry in spine {
-    let chapter = book.load_chapter(entry.id)?;
-    println!("Chapter has {} nodes", chapter.node_count());
-}
-
-// Export to another format
-let mut out = File::create("output.kfx")?;
+let mut book = Book::open("in.epub")?;
+let mut out = File::create("out.kfx")?;
 book.export(Format::Kfx, &mut out)?;
 ```
 
-### Working with the IR
-
-Boko compiles ebook content to an intermediate representation (IR) that captures semantic structure:
-
-```rust
-use boko::{compile_html, Origin, Stylesheet};
-
-// Compile HTML to IR
-let html = r#"<p class="intro">Hello <em>world</em></p>"#;
-let css = Stylesheet::parse("p.intro { font-size: 1.2em; }");
-let chapter = compile_html(html, &[(css, Origin::Author)]);
-
-// Walk the node tree
-for node_id in chapter.iter_dfs() {
-    if let Some(node) = chapter.node(node_id) {
-        let text = chapter.text(node.text);
-        println!("{:?}: {:?}", node.role, text);
-    }
-}
-```
+Full API: https://docs.rs/boko
 
 ## Architecture
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Import    │     │     IR      │     │   Export    │
-├─────────────┤     ├─────────────┤     ├─────────────┤
-│ EPUB        │────▶│ Nodes       │────▶│ EPUB        │
-│ KFX         │     │ Styles      │     │ KFX         │
-│ AZW3        │     │ Metadata    │     │ AZW3        │
-│ MOBI        │     │ TOC         │     │ Text/MD     │
-└─────────────┘     └─────────────┘     └─────────────┘
-```
-
-The IR captures:
-- **Nodes**: Semantic tree with elements, text, and structure
-- **Styles**: Computed CSS properties per node
-- **Roles**: Semantic annotations (heading, paragraph, list, etc.)
-- **Metadata**: Title, authors, contributors, series, etc.
-
-## Metadata Support
-
-Extended EPUB3 metadata is preserved during conversion:
-
-- `dcterms:modified` - Modification timestamp
-- `dc:contributor` with role refinements (translator, editor, illustrator)
-- `file-as` refinements for sort ordering
-- `belongs-to-collection` with series position
-
-Example output from `boko info`:
+Format → semantic IR → format. Imports compile to an intermediate representation: nodes, computed styles, semantic roles, metadata, TOC. Exporters render IR back out.
 
 ```
-Title: The Great Novel
-Authors: Jane Author
-Language: en
-Modified: 2024-01-15T12:00:00Z
-Title Sort: Great Novel, The
-Author Sort: Author, Jane
-Contributors:
-  John Translator (trl) [Translator, John]
-Collection: Epic Saga (series, #2)
+EPUB ─┐                    ┌─ EPUB
+KFX  ─┼─→  semantic IR  ─→─┼─ KFX
+AZW3 ─┤                    ├─ AZW3
+MOBI ─┘                    └─ Markdown / text
 ```
 
-## Web App
+## Contributing
 
-A browser-based converter is available at [zacharydenton.github.io/boko](https://zacharydenton.github.io/boko). All conversions happen locally in your browser using WebAssembly.
+Bug reports with sample files welcome, especially KFX and AZW3 edge cases.
+
+    cargo test
+    cargo clippy -- -D warnings
+    cargo fmt --check
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+[GPL-3.0-or-later](LICENSE).
