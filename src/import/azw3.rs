@@ -22,6 +22,7 @@ use crate::mobi::{
     is_metadata_record, palmdoc, parse_exth, parse_fdst, strip_trailing_data, transform,
 };
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
+use memchr::memmem;
 
 /// AZW3/KF8 format importer with lazy loading.
 pub struct Azw3Importer {
@@ -157,6 +158,16 @@ impl Importer for Azw3Importer {
     }
 
     fn load_asset(&self, path: &str) -> crate::Result<Vec<u8>> {
+        // CSS flow entries: styles/styleNNNN.css → flow_table[css_idx + 1]
+        if let Some(css_idx) = path
+            .strip_prefix("styles/style")
+            .and_then(|s| s.strip_suffix(".css"))
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            let flow_idx = css_idx + 1; // flow 0 = HTML, CSS flow N is at index N+1
+            return self.load_css_flow(flow_idx);
+        }
+
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
         // Images and fonts share the same record-index space, so the prefix
         // selects naming but the underlying lookup is the same.
@@ -652,7 +663,90 @@ impl Azw3Importer {
             }
         }
 
+        // Add CSS flow entries (flow 0 = HTML, flows 1+ = CSS)
+        for i in 1..self.kf8.flow_table.len() {
+            let css_idx = i - 1; // matches transform.rs kindle:flow mapping
+            assets.push(format!("styles/style{css_idx:04}.css"));
+        }
+
         assets
+    }
+
+    /// Load CSS data from a flow table entry, transforming kindle: references.
+    fn load_css_flow(&self, flow_idx: usize) -> crate::Result<Vec<u8>> {
+        let text = self.cached_text()?;
+
+        let (start, end) =
+            self.kf8
+                .flow_table
+                .get(flow_idx)
+                .copied()
+                .ok_or_else(|| crate::Error::NotFound {
+                    what: format!(
+                        "CSS flow {} (only {} flows)",
+                        flow_idx,
+                        self.kf8.flow_table.len()
+                    ),
+                })?;
+
+        let raw_css = flow_slice(text, start, end);
+        Ok(self.transform_css_kindle_refs(raw_css))
+    }
+
+    /// Transform `kindle:embed:XXXX` references in CSS to actual asset paths.
+    ///
+    /// Uses the discovered assets list to map embed indices to the correct
+    /// path (e.g. `fonts/font_0003.otf` instead of `images/image_0003.jpg`).
+    fn transform_css_kindle_refs(&self, css: &[u8]) -> Vec<u8> {
+        let needle = b"kindle:embed:";
+        let finder = memmem::Finder::new(needle);
+
+        let mut output = Vec::with_capacity(css.len());
+        let mut pos = 0;
+
+        while let Some(rel_start) = finder.find(&css[pos..]) {
+            let start = pos + rel_start;
+            output.extend_from_slice(&css[pos..start]);
+
+            let after = &css[start + needle.len()..];
+            // Find end of reference (terminated by ) " ' or ?)
+            let end_pos = after
+                .iter()
+                .position(|&b| b == b')' || b == b'"' || b == b'\'' || b == b'?')
+                .unwrap_or(after.len());
+            let id_bytes = &after[..end_pos];
+            let embed_num = transform::parse_base32(id_bytes);
+            let embed_idx = embed_num.saturating_sub(1);
+
+            // Skip ?mime=... suffix if present
+            let skip = if end_pos < after.len() && after[end_pos] == b'?' {
+                after[end_pos..]
+                    .iter()
+                    .position(|&b| b == b')' || b == b'"' || b == b'\'')
+                    .map(|p| end_pos + p)
+                    .unwrap_or(end_pos)
+            } else {
+                end_pos
+            };
+
+            // Look up the correct asset path by embed index
+            let idx_str = format!("{embed_idx:04}");
+            let asset_path = self
+                .assets
+                .iter()
+                .find(|s| {
+                    (s.starts_with("images/image_") || s.starts_with("fonts/font_"))
+                        && s.contains(&idx_str)
+                })
+                .cloned()
+                .unwrap_or_else(|| format!("images/image_{idx_str}.jpg"));
+
+            output.extend_from_slice(asset_path.as_bytes());
+            pos = start + needle.len() + skip;
+        }
+
+        output.extend_from_slice(&css[pos..]);
+        output
     }
 
     /// Load an image or font record by index.

@@ -179,3 +179,53 @@ fn azw3_roundtrip_resource_records_are_recognisable() {
         "expected at least one JPEG/PNG/GIF asset; got {assets:?}"
     );
 }
+
+/// CSS flows must resolve as assets. The writer stores stylesheets as FDST
+/// flows 1+ and rewrites `<link href>` to `kindle:flow:XXXX`; on import,
+/// `transform_kindle_refs` rewrites those references to
+/// `styles/styleNNNN.css`. Without the importer discovering and serving
+/// those paths, every stylesheet link in the imported book dangles — the
+/// HTML references CSS files that no asset provides.
+#[test]
+fn azw3_roundtrip_serves_css_flows_as_assets() {
+    let bytes = export_epub_to_azw3_bytes("tests/fixtures/epictetus.epub");
+    let book = Book::from_bytes(&bytes, Format::Azw3).expect("reopen azw3");
+
+    let css_assets: Vec<String> = book
+        .list_assets()
+        .iter()
+        .filter(|a| a.starts_with("styles/style") && a.ends_with(".css"))
+        .cloned()
+        .collect();
+    assert!(
+        !css_assets.is_empty(),
+        "AZW3 built from an EPUB with stylesheets must expose styles/styleNNNN.css assets"
+    );
+
+    // The imported chapter HTML links those exact paths...
+    let spine: Vec<_> = book.spine().to_vec();
+    let referenced = spine.iter().any(|entry| {
+        let html = book.load_raw(entry.id).expect("load chapter");
+        let html = String::from_utf8_lossy(&html);
+        css_assets.iter().any(|a| html.contains(a.as_str()))
+    });
+    assert!(
+        referenced,
+        "chapter HTML must reference the styles/styleNNNN.css paths"
+    );
+
+    // ...and each path must load as plausible CSS with kindle: refs resolved.
+    for asset in &css_assets {
+        let css = book.load_asset(asset).expect("CSS flow asset must load");
+        let css_str = String::from_utf8_lossy(&css);
+        assert!(
+            css_str.contains('{'),
+            "{asset} should contain CSS rules, got {} bytes",
+            css.len()
+        );
+        assert!(
+            !css_str.contains("kindle:embed:"),
+            "kindle:embed references must be rewritten to asset paths in {asset}"
+        );
+    }
+}
