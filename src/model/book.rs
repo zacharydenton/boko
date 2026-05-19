@@ -201,7 +201,7 @@ impl Format {
             .and_then(|ext| match ext.to_lowercase().as_str() {
                 "epub" => Some(Format::Epub),
                 "azw3" => Some(Format::Azw3),
-                "mobi" => Some(Format::Mobi),
+                "mobi" | "azw" => Some(Format::Mobi),
                 "kfx" => Some(Format::Kfx),
                 "md" | "txt" => Some(Format::Markdown),
                 _ => None,
@@ -563,5 +563,23 @@ impl TocEntry {
             play_order: None,
             target: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_path_recognises_known_extensions() {
+        assert_eq!(Format::from_path("book.epub"), Some(Format::Epub));
+        assert_eq!(Format::from_path("book.azw3"), Some(Format::Azw3));
+        assert_eq!(Format::from_path("book.mobi"), Some(Format::Mobi));
+        assert_eq!(Format::from_path("book.azw"), Some(Format::Mobi));
+        assert_eq!(Format::from_path("book.kfx"), Some(Format::Kfx));
+        assert_eq!(Format::from_path("notes.md"), Some(Format::Markdown));
+        assert_eq!(Format::from_path("book.AZW"), Some(Format::Mobi));
+        assert_eq!(Format::from_path("book.unknown"), None);
+        assert_eq!(Format::from_path("no_extension"), None);
     }
 }
