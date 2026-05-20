@@ -18,8 +18,8 @@ use crate::mobi::parser::{
 };
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiFormat, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
-    build_toc_from_ncx, detect_image_type, is_metadata_record, palmdoc, parse_exth, parse_fdst,
-    strip_trailing_data, transform,
+    build_toc_from_ncx, decode_font_record, detect_font_type, detect_image_type,
+    is_metadata_record, palmdoc, parse_exth, parse_fdst, strip_trailing_data, transform,
 };
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
@@ -155,9 +155,12 @@ impl Importer for Azw3Importer {
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
         let key = path.to_string_lossy();
 
-        // Parse index from path (images/image_XXXX.ext)
+        // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
+        // Images and fonts share the same record-index space, so the prefix
+        // selects naming but the underlying lookup is the same.
         let idx: usize = key
             .strip_prefix("images/image_")
+            .or_else(|| key.strip_prefix("fonts/font_"))
             .and_then(|s| s.split('.').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| {
@@ -582,7 +585,7 @@ impl Azw3Importer {
         Ok(cleaned)
     }
 
-    /// Discover asset paths by scanning image records.
+    /// Discover asset paths by scanning image and font records.
     fn discover_assets(&self) -> Vec<PathBuf> {
         let mut assets = Vec::new();
 
@@ -592,7 +595,6 @@ impl Azw3Importer {
 
         let first_img = self.mobi.first_image_index as usize + self.record_offset;
         for i in first_img..self.pdb.num_records as usize {
-            // Only read first 16 bytes to detect type (magic bytes)
             if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
                 let read_len = 16.min((end - start) as usize);
                 let mut header = [0u8; 16];
@@ -605,6 +607,7 @@ impl Azw3Importer {
                     if is_metadata_record(header) {
                         continue;
                     }
+                    let idx = i - first_img;
                     if let Some(media_type) = detect_image_type(header) {
                         let ext = match media_type {
                             "image/jpeg" => "jpg",
@@ -612,8 +615,9 @@ impl Azw3Importer {
                             "image/gif" => "gif",
                             _ => "bin",
                         };
-                        let idx = i - first_img;
                         assets.push(PathBuf::from(format!("images/image_{idx:04}.{ext}")));
+                    } else if let Some(font_ext) = detect_font_type(header) {
+                        assets.push(PathBuf::from(format!("fonts/font_{idx:04}.{font_ext}")));
                     }
                 }
             }
@@ -622,11 +626,20 @@ impl Azw3Importer {
         assets
     }
 
-    /// Load an image record by index.
+    /// Load an image or font record by index.
+    ///
+    /// If the record is a Kindle `FONT` container, it is decoded (XOR + zlib)
+    /// to extract the raw font bytes. Otherwise the record is returned as-is.
     fn load_image_record(&self, idx: usize) -> io::Result<Vec<u8>> {
         let first_img = self.mobi.first_image_index as usize + self.record_offset;
         let record_idx = first_img + idx;
-        self.read_record(record_idx)
+        let data = self.read_record(record_idx)?;
+
+        if data.starts_with(b"FONT") {
+            return decode_font_record(&data);
+        }
+
+        Ok(data)
     }
 
     /// Read a record by absolute index.

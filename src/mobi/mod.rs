@@ -19,9 +19,9 @@ pub mod filepos;
 
 pub use parser::{
     Compression, Encoding, ExthHeader, HuffCdicReader, MobiFormat, MobiHeader, NULL_INDEX,
-    NcxEntry, PdbInfo, TocNode, build_toc_from_ncx, detect_font_type, detect_format,
-    detect_image_type, is_metadata_record, parse_exth, parse_fdst, parse_ncx_index, read_index,
-    strip_trailing_data,
+    NcxEntry, PdbInfo, TocNode, build_toc_from_ncx, decode_font_record, detect_font_type,
+    detect_format, detect_image_type, is_metadata_record, parse_exth, parse_fdst, parse_ncx_index,
+    read_index, strip_trailing_data,
 };
 
 /// Parse Kindle base32 encoding (0-9A-V) to number.

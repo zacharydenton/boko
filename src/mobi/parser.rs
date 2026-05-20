@@ -259,11 +259,22 @@ pub fn detect_image_type(data: &[u8]) -> Option<&'static str> {
 }
 
 /// Detect font type from magic bytes / structure.
+///
+/// Recognises raw font signatures (TrueType / OpenType / WOFF) as well as the
+/// Kindle `FONT` FourCC container, which wraps a font with optional XOR
+/// obfuscation and zlib compression. For `FONT` containers, the actual font
+/// type is only known after `decode_font_record`; the returned `"otf"` is a
+/// safe default for the asset filename — readers identify fonts by their
+/// `@font-face` `src:` MIME, not by extension.
 pub fn detect_font_type(data: &[u8]) -> Option<&'static str> {
     if data.len() < 4 {
         return None;
     }
 
+    // Kindle FONT container (wraps actual font with optional XOR + zlib).
+    if data.starts_with(b"FONT") {
+        return Some("otf");
+    }
     // TrueType / OpenType
     if data.starts_with(&[0x00, 0x01, 0x00, 0x00]) || data.starts_with(b"OTTO") {
         return Some("ttf");
@@ -276,8 +287,84 @@ pub fn detect_font_type(data: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// Check if record is metadata/structure (not an image).
+/// Decode a Kindle `FONT` container record into raw font bytes.
+///
+/// AZW3 and MOBI ebooks may embed fonts wrapped in a `FONT` FourCC container
+/// with an optional XOR-obfuscated prefix (first 1040 bytes) and optional
+/// zlib compression. The container layout is:
+///
+/// | offset | size | field |
+/// |-------:|-----:|-------|
+/// | 0      | 4    | Magic `FONT` |
+/// | 4      | 4    | Uncompressed size (big-endian `u32`) |
+/// | 8      | 4    | Flags (`u32`): bit 0 = zlib-compressed, bit 1 = XOR-obfuscated |
+/// | 12     | 4    | Data offset (start of font payload, big-endian `u32`) |
+/// | 16     | 4    | XOR key length (big-endian `u32`) |
+/// | 20     | 4    | XOR key offset (big-endian `u32`) |
+/// | 24..   | …    | XOR key (when present) followed by font payload |
+///
+/// Returns the decoded raw font bytes (typically OTF/TTF/WOFF), suitable for
+/// writing directly into an EPUB `fonts/` asset entry.
+pub fn decode_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
+    if data.len() < 24 || !data.starts_with(b"FONT") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a FONT record",
+        ));
+    }
+
+    let flags = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+    let data_offset = u32::from_be_bytes([data[12], data[13], data[14], data[15]]) as usize;
+    let xor_key_len = u32::from_be_bytes([data[16], data[17], data[18], data[19]]) as usize;
+    let xor_key_offset = u32::from_be_bytes([data[20], data[21], data[22], data[23]]) as usize;
+
+    let is_compressed = flags & 0x0001 != 0;
+    let is_obfuscated = flags & 0x0002 != 0;
+
+    if data_offset > data.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "FONT data offset beyond record",
+        ));
+    }
+
+    let mut font_data = data[data_offset..].to_vec();
+
+    // Deobfuscate: XOR the first 1040 bytes with the key (Amazon's chosen window).
+    if is_obfuscated && xor_key_len > 0 {
+        let key_end = xor_key_offset + xor_key_len;
+        if key_end > data.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "FONT XOR key beyond record",
+            ));
+        }
+        let xor_key = &data[xor_key_offset..key_end];
+        let deobfuscate_len = 1040.min(font_data.len());
+        for (i, byte) in font_data.iter_mut().enumerate().take(deobfuscate_len) {
+            *byte ^= xor_key[i % xor_key_len];
+        }
+    }
+
+    // Decompress
+    if is_compressed {
+        use std::io::Read;
+        let mut decoder = flate2::read::ZlibDecoder::new(&font_data[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("FONT zlib error: {e}"))
+        })?;
+        Ok(decompressed)
+    } else {
+        Ok(font_data)
+    }
+}
+
+/// Check if record is metadata/structure (not an image or font).
 /// Based on 4-byte FourCC signatures used in MOBI/KF8 format.
+///
+/// Note: `FONT` is intentionally NOT classified as metadata — it is a
+/// container for extractable font data, decoded by `decode_font_record`.
 pub fn is_metadata_record(data: &[u8]) -> bool {
     if data.len() < 4 {
         return false;
@@ -297,7 +384,6 @@ pub fn is_metadata_record(data: &[u8]) -> bool {
             | b"PAGE"
             | b"CONT"
             | b"CRES"
-            | b"FONT"
             | b"INDX"
     ) || data.starts_with(b"BOUNDARY")
 }
@@ -590,6 +676,10 @@ mod tests {
         // WOFF
         assert_eq!(detect_font_type(b"wOFF"), Some("woff"));
 
+        // Kindle FONT container — default to "otf" extension; actual type is
+        // known only after decode_font_record.
+        assert_eq!(detect_font_type(b"FONT\x00\x00\x00\x00"), Some("otf"));
+
         // Unknown
         assert_eq!(detect_font_type(b"????"), None);
 
@@ -602,13 +692,127 @@ mod tests {
         assert!(is_metadata_record(b"FLIS...."));
         assert!(is_metadata_record(b"FCIS...."));
         assert!(is_metadata_record(b"FDST...."));
-        assert!(is_metadata_record(b"FONT...."));
         assert!(is_metadata_record(b"INDX...."));
         assert!(is_metadata_record(b"BOUNDARY"));
+
+        // FONT records are NOT metadata — they wrap extractable font data
+        // that `decode_font_record` unpacks.
+        assert!(!is_metadata_record(b"FONT...."));
 
         assert!(!is_metadata_record(b"\x89PNG"));
         assert!(!is_metadata_record(b"\xFF\xD8\xFF\xE0"));
         assert!(!is_metadata_record(b"abc")); // too short
+    }
+
+    /// Build a synthetic FONT container record from constituent parts.
+    fn build_font_record(flags: u32, xor_key: &[u8], payload: &[u8]) -> Vec<u8> {
+        // Header layout: 4 (magic) + 4 (uncomp_size) + 4 (flags)
+        //              + 4 (data_offset) + 4 (xor_key_len) + 4 (xor_key_offset) = 24
+        let xor_key_offset: u32 = 24;
+        let data_offset: u32 = 24 + xor_key.len() as u32;
+        let uncompressed_size: u32 = payload.len() as u32;
+
+        let mut record = Vec::new();
+        record.extend_from_slice(b"FONT");
+        record.extend_from_slice(&uncompressed_size.to_be_bytes());
+        record.extend_from_slice(&flags.to_be_bytes());
+        record.extend_from_slice(&data_offset.to_be_bytes());
+        record.extend_from_slice(&(xor_key.len() as u32).to_be_bytes());
+        record.extend_from_slice(&xor_key_offset.to_be_bytes());
+        record.extend_from_slice(xor_key);
+        record.extend_from_slice(payload);
+        record
+    }
+
+    #[test]
+    fn test_decode_font_record_uncompressed_plain() {
+        let font_bytes = b"OTTO\x00\x10\x00\x00testfontdata";
+        let record = build_font_record(0, &[], font_bytes);
+        assert_eq!(decode_font_record(&record).unwrap(), font_bytes);
+    }
+
+    #[test]
+    fn test_decode_font_record_zlib_compressed() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let font_bytes = b"OTTOreal-decompressed-font-payload-bytes";
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(font_bytes).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // flags bit 0 = compressed
+        let record = build_font_record(0x0001, &[], &compressed);
+        assert_eq!(decode_font_record(&record).unwrap(), font_bytes);
+    }
+
+    #[test]
+    fn test_decode_font_record_xor_obfuscated() {
+        let mut font_bytes = b"OTTOfont-data".to_vec();
+        let xor_key = [0xAA, 0xBB, 0xCC, 0xDD];
+
+        // Pre-apply XOR to the first min(1040, len) bytes — the on-disk form.
+        let n = font_bytes.len().min(1040);
+        for (i, byte) in font_bytes.iter_mut().enumerate().take(n) {
+            *byte ^= xor_key[i % xor_key.len()];
+        }
+
+        // flags bit 1 = obfuscated
+        let record = build_font_record(0x0002, &xor_key, &font_bytes);
+        let decoded = decode_font_record(&record).unwrap();
+        assert_eq!(&decoded[..4], b"OTTO");
+        assert_eq!(decoded, b"OTTOfont-data");
+    }
+
+    #[test]
+    fn test_decode_font_record_xor_and_zlib() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        // Real-world case: payload is first compressed, then the first 1040
+        // compressed bytes are XOR-masked. Decoder must reverse in the
+        // opposite order: XOR-unmask then decompress.
+        let font_bytes = b"OTTOreal-zlib-and-xor-payload-bytes-for-testing".to_vec();
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&font_bytes).unwrap();
+        let mut compressed = encoder.finish().unwrap();
+
+        let xor_key = [0x11, 0x22, 0x33, 0x44, 0x55];
+        let n = compressed.len().min(1040);
+        for (i, byte) in compressed.iter_mut().enumerate().take(n) {
+            *byte ^= xor_key[i % xor_key.len()];
+        }
+
+        // flags = compressed (0x0001) | obfuscated (0x0002) = 0x0003
+        let record = build_font_record(0x0003, &xor_key, &compressed);
+        assert_eq!(decode_font_record(&record).unwrap(), font_bytes);
+    }
+
+    #[test]
+    fn test_decode_font_record_rejects_wrong_magic() {
+        let mut record = b"NOPE".to_vec();
+        record.extend_from_slice(&[0u8; 20]);
+        assert!(decode_font_record(&record).is_err());
+    }
+
+    #[test]
+    fn test_decode_font_record_rejects_truncated() {
+        assert!(decode_font_record(b"FONT").is_err());
+        assert!(decode_font_record(b"FONT\x00\x00").is_err());
+    }
+
+    #[test]
+    fn test_decode_font_record_rejects_offset_beyond_record() {
+        let mut record = Vec::new();
+        record.extend_from_slice(b"FONT");
+        record.extend_from_slice(&100u32.to_be_bytes()); // uncomp size
+        record.extend_from_slice(&0u32.to_be_bytes()); // flags
+        record.extend_from_slice(&9999u32.to_be_bytes()); // data offset (beyond)
+        record.extend_from_slice(&0u32.to_be_bytes()); // xor key len
+        record.extend_from_slice(&0u32.to_be_bytes()); // xor key offset
+        assert!(decode_font_record(&record).is_err());
     }
 
     #[test]

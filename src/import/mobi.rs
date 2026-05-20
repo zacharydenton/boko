@@ -16,8 +16,8 @@ use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
-    build_toc_from_ncx, detect_image_type, filepos, is_metadata_record, palmdoc, parse_exth,
-    parse_ncx_index, read_index, strip_trailing_data,
+    build_toc_from_ncx, decode_font_record, detect_font_type, detect_image_type, filepos,
+    is_metadata_record, palmdoc, parse_exth, parse_ncx_index, read_index, strip_trailing_data,
 };
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
@@ -117,9 +117,12 @@ impl Importer for MobiImporter {
     fn load_asset(&mut self, path: &Path) -> io::Result<Vec<u8>> {
         let key = path.to_string_lossy();
 
-        // Parse index from path (images/image_XXXX.ext)
+        // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
+        // Images and fonts share the same record-index space, so the prefix
+        // selects naming but the underlying lookup is the same.
         let idx: usize = key
             .strip_prefix("images/image_")
+            .or_else(|| key.strip_prefix("fonts/font_"))
             .and_then(|s| s.split('.').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| {
@@ -339,7 +342,7 @@ impl MobiImporter {
         Ok(importer)
     }
 
-    /// Discover asset paths by scanning image records.
+    /// Discover asset paths by scanning image and font records.
     fn discover_assets(&self) -> Vec<PathBuf> {
         let mut assets = Vec::new();
 
@@ -361,6 +364,7 @@ impl MobiImporter {
                     if is_metadata_record(header) {
                         continue;
                     }
+                    let idx = i - first_img;
                     if let Some(media_type) = detect_image_type(header) {
                         let ext = match media_type {
                             "image/jpeg" => "jpg",
@@ -368,8 +372,9 @@ impl MobiImporter {
                             "image/gif" => "gif",
                             _ => "bin",
                         };
-                        let idx = i - first_img;
                         assets.push(PathBuf::from(format!("images/image_{idx:04}.{ext}")));
+                    } else if let Some(font_ext) = detect_font_type(header) {
+                        assets.push(PathBuf::from(format!("fonts/font_{idx:04}.{font_ext}")));
                     }
                 }
             }
@@ -378,11 +383,20 @@ impl MobiImporter {
         assets
     }
 
-    /// Load an image record by index.
+    /// Load an image or font record by index.
+    ///
+    /// If the record is a Kindle `FONT` container, it is decoded (XOR + zlib)
+    /// to extract the raw font bytes. Otherwise the record is returned as-is.
     fn load_image_record(&self, idx: usize) -> io::Result<Vec<u8>> {
         let first_img = self.mobi.first_image_index as usize;
         let record_idx = first_img + idx;
-        self.read_record(record_idx)
+        let data = self.read_record(record_idx)?;
+
+        if data.starts_with(b"FONT") {
+            return decode_font_record(&data);
+        }
+
+        Ok(data)
     }
 
     /// Read a record by index.
@@ -919,7 +933,7 @@ fn is_bare_filename_link(href: &[u8]) -> bool {
 // Helpers
 // ============================================================================
 
-/// Discover asset paths by scanning image records (standalone function for early use).
+/// Discover asset paths by scanning image and font records (standalone function for early use).
 fn discover_assets_from_source(
     source: &Arc<dyn ByteSource>,
     pdb: &PdbInfo,
@@ -942,6 +956,7 @@ fn discover_assets_from_source(
                 if is_metadata_record(header) {
                     continue;
                 }
+                let idx = i - first_img;
                 if let Some(media_type) = detect_image_type(header) {
                     let ext = match media_type {
                         "image/jpeg" => "jpg",
@@ -949,8 +964,9 @@ fn discover_assets_from_source(
                         "image/gif" => "gif",
                         _ => "bin",
                     };
-                    let idx = i - first_img;
                     assets.push(PathBuf::from(format!("images/image_{idx:04}.{ext}")));
+                } else if let Some(font_ext) = detect_font_type(header) {
+                    assets.push(PathBuf::from(format!("fonts/font_{idx:04}.{font_ext}")));
                 }
             }
         }
