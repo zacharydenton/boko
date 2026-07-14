@@ -11,11 +11,13 @@
 //!
 //! ## Supported Formats
 //!
-//! | Format | Read | Write |
-//! |--------|------|-------|
-//! | EPUB   | ✓    | ✓     |
-//! | AZW3   | ✓    | ✓     |
-//! | MOBI   | ✓    | -     |
+//! | Format   | Read | Write |
+//! |----------|------|-------|
+//! | KFX      | ✓    | ✓     |
+//! | AZW3     | ✓    | ✓     |
+//! | EPUB     | ✓    | ✓     |
+//! | MOBI     | ✓    | -     |
+//! | Markdown | -    | ✓     |
 //!
 //! ## Quick Start
 //!

@@ -452,14 +452,15 @@ impl<'a> IonParser<'a> {
     /// Read bytes from current position.
     #[inline]
     fn read_bytes(&mut self, len: usize) -> io::Result<&'a [u8]> {
-        if self.pos + len > self.data.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end of data",
-            ));
-        }
-        let bytes = &self.data[self.pos..self.pos + len];
-        self.pos += len;
+        let end = self
+            .pos
+            .checked_add(len)
+            .filter(|&end| end <= self.data.len())
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of data")
+            })?;
+        let bytes = &self.data[self.pos..end];
+        self.pos = end;
         Ok(bytes)
     }
 

@@ -4,7 +4,7 @@
 //! structures and boko's IR, using a schema-driven approach:
 //!
 //! Import: Ion → TokenStream → IR
-//! Export: IR → TokenStream → Ion (TODO)
+//! Export: IR → TokenStream → Ion
 //!
 //! ## Key Design: Generic Interpreter
 //!
@@ -1746,8 +1746,8 @@ impl IonBuilder {
 
 /// Build a storyline Ion structure from an IR chapter.
 ///
-/// **Note**: This is now internal - use `build_chapter_entities` for the full
-/// three-entity architecture (Content, Storyline, Section).
+/// **Note**: This is now internal - use `build_chapter_entities_grouped` for
+/// the full three-entity architecture (Content, Storyline, Section).
 pub fn build_storyline_ion(chapter: &Chapter, ctx: &mut ExportContext) -> IonValue {
     let tokens = ir_to_tokens(chapter, ctx);
     tokens_to_ion(&tokens, ctx)

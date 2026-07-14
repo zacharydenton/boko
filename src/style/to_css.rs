@@ -347,8 +347,10 @@ mod tests {
 
     #[test]
     fn test_computed_style_font_family_quoted() {
-        let mut style = ComputedStyle::default();
-        style.font_family = Some("001_cvi_cover-din next lt pro,sans-serif".to_string());
+        let style = ComputedStyle {
+            font_family: Some("001_cvi_cover-din next lt pro,sans-serif".to_string()),
+            ..Default::default()
+        };
         let mut css = String::new();
         style.to_css(&mut css);
         assert!(

@@ -561,7 +561,7 @@ mod tests {
             }
 
             fn load_raw(&mut self, _id: ChapterId) -> io::Result<Vec<u8>> {
-                Err(io::Error::new(io::ErrorKind::Other, "unused"))
+                Err(io::Error::other("unused"))
             }
 
             fn list_assets(&self) -> &[PathBuf] {
@@ -569,8 +569,7 @@ mod tests {
             }
 
             fn load_asset(&mut self, _path: &Path) -> io::Result<Vec<u8>> {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
+                Err(io::Error::other(
                     "load_asset should not be called",
                 ))
             }

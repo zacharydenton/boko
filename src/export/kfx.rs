@@ -2994,7 +2994,7 @@ mod section_type_tests {
         let mut ctx = ExportContext::new();
 
         // Verify this book needs a standalone cover (cover.jpg != titlepage.png)
-        let asset_paths: Vec<_> = book.list_assets().iter().cloned().collect();
+        let asset_paths: Vec<_> = book.list_assets().to_vec();
         let cover_image = book
             .metadata()
             .cover_image
@@ -3087,7 +3087,7 @@ mod resource_export_tests {
         std::fs::write(&temp_path, &kfx_data).unwrap();
 
         let mut reimported = Book::open(&temp_path).unwrap();
-        let assets: Vec<_> = reimported.list_assets().iter().cloned().collect();
+        let assets: Vec<_> = reimported.list_assets().to_vec();
 
         // Load all assets and verify total size
         let total_size: usize = assets
@@ -3122,7 +3122,7 @@ mod anchor_resolution_tests {
         let resolved = book.resolve_links().unwrap();
 
         // Should have resolved links (enchiridion has links to endnotes)
-        assert!(resolved.len() > 0, "Should have resolved some links");
+        assert!(!resolved.is_empty(), "Should have resolved some links");
 
         // Check for some broken links (external links won't resolve)
         // but internal endnote links should resolve
@@ -3160,8 +3160,8 @@ mod anchor_resolution_tests {
         for (source, target) in resolved.iter() {
             if let AnchorTarget::Internal(gid) = target {
                 // Get the href for this link
-                if let Ok(chapter) = book.load_chapter(source.chapter) {
-                    if let Some(href) = chapter.semantics.href(source.node) {
+                if let Ok(chapter) = book.load_chapter(source.chapter)
+                    && let Some(href) = chapter.semantics.href(source.node) {
                         // Both lookups should return the same symbol
                         let href_symbol = ctx.anchor_registry.get_href_symbol(href);
                         let node_symbol = ctx.anchor_registry.get_symbol(*gid);
@@ -3175,7 +3175,6 @@ mod anchor_resolution_tests {
                         // Only need to verify one link
                         return;
                     }
-                }
             }
         }
 
