@@ -50,6 +50,21 @@ impl StylePool {
         id
     }
 
+    /// Intern a style by reference, returning its StyleId.
+    ///
+    /// Like [`intern`](Self::intern) but only clones the style on a cache
+    /// miss — use this on hot paths where the caller keeps ownership.
+    pub fn intern_ref(&mut self, style: &ComputedStyle) -> StyleId {
+        if let Some(&id) = self.intern_map.get(style) {
+            return id;
+        }
+
+        let id = StyleId(self.styles.len() as u32);
+        self.intern_map.insert(style.clone(), id);
+        self.styles.push(style.clone());
+        id
+    }
+
     /// Get a style by ID.
     pub fn get(&self, id: StyleId) -> Option<&ComputedStyle> {
         self.styles.get(id.0 as usize)

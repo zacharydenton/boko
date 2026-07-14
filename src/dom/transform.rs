@@ -104,7 +104,11 @@ impl<'a> TransformContext<'a> {
         ir_parent: NodeId,
         parent_style: Option<&ComputedStyle>,
     ) {
-        for child_id in self.dom.children(dom_parent).collect::<Vec<_>>() {
+        // Copy the &'a ArenaDom out of self so the child iterator borrows the
+        // DOM (immutable for the whole transform), not `self` — avoids
+        // collecting children into a Vec for every element.
+        let dom = self.dom;
+        for child_id in dom.children(dom_parent) {
             self.process_node(child_id, ir_parent, parent_style);
         }
     }
@@ -213,7 +217,7 @@ impl<'a> TransformContext<'a> {
 
                 // Create IR node
                 let mut ir_node = Node::new(role);
-                ir_node.style = self.chapter.styles.intern(computed.clone());
+                ir_node.style = self.chapter.styles.intern_ref(&computed);
 
                 let ir_id = self.chapter.alloc_node(ir_node);
                 self.chapter.append_child(ir_parent, ir_id);
