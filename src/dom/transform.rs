@@ -4,7 +4,9 @@ use super::arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 use super::element_ref::ElementRef;
 use super::role_map::element_to_role;
 use crate::model::{Chapter, Node, NodeId, Role};
-use crate::style::{ComputedStyle, Display, Origin, Stylesheet, WhiteSpace, compute_styles};
+use crate::style::{
+    CascadeIndex, ComputedStyle, Display, Origin, Stylesheet, WhiteSpace, compute_styles_indexed,
+};
 
 /// User agent stylesheet (browser defaults).
 const UA_CSS: &str = include_str!("data/styles.css");
@@ -23,7 +25,8 @@ pub fn user_agent_stylesheet() -> Stylesheet {
 /// Context for the transform operation.
 struct TransformContext<'a> {
     dom: &'a ArenaDom,
-    stylesheets: &'a [(Stylesheet, Origin)],
+    /// Selector-bucketed view of `stylesheets`, built once for the whole chapter.
+    cascade_index: CascadeIndex<'a>,
     chapter: Chapter,
     /// Map from ArenaNodeId to Chapter NodeId
     node_map: std::collections::HashMap<ArenaNodeId, NodeId>,
@@ -33,7 +36,7 @@ impl<'a> TransformContext<'a> {
     fn new(dom: &'a ArenaDom, stylesheets: &'a [(Stylesheet, Origin)]) -> Self {
         Self {
             dom,
-            stylesheets,
+            cascade_index: CascadeIndex::build(stylesheets),
             chapter: Chapter::new(),
             node_map: std::collections::HashMap::new(),
         }
@@ -61,7 +64,12 @@ impl<'a> TransformContext<'a> {
         // Compute body's style so its properties (like hyphens: auto) are inherited
         let mut body_style = {
             let elem_ref = ElementRef::new(self.dom, body);
-            compute_styles(elem_ref, self.stylesheets, None, &mut self.chapter.styles)
+            compute_styles_indexed(
+                elem_ref,
+                &self.cascade_index,
+                None,
+                &mut self.chapter.styles,
+            )
         };
 
         // Add html lang to body style if present (so it's inherited by all content)
@@ -164,9 +172,9 @@ impl<'a> TransformContext<'a> {
             ArenaNodeData::Element { name, attrs, .. } => {
                 // Compute style for this element
                 let elem_ref = ElementRef::new(self.dom, dom_id);
-                let mut computed = compute_styles(
+                let mut computed = compute_styles_indexed(
                     elem_ref,
-                    self.stylesheets,
+                    &self.cascade_index,
                     parent_style,
                     &mut self.chapter.styles,
                 );

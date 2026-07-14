@@ -5,14 +5,16 @@
 //! importance, and source order.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use selectors::context::{MatchingContext, SelectorCaches};
+use selectors::parser::{Component, Selector};
 
 use super::declaration::Declaration;
 use super::parse::{CssRule, Origin, Specificity, Stylesheet};
 use super::style_pool::StylePool;
 use super::types::ComputedStyle;
-use crate::dom::element_ref::ElementRef;
+use crate::dom::element_ref::{BokoSelectors, ElementRef};
 
 /// A matched rule with ordering information for the cascade.
 #[derive(Debug)]
@@ -67,10 +69,143 @@ fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
     }
 }
 
+/// A reference to a rule as `(stylesheet index, rule index)`. Ordering by this
+/// tuple reproduces CSS source order, which the cascade uses as its final
+/// tiebreak — so candidate rules must be visited in this order.
+type RuleRef = (u32, u32);
+
+/// The bucket a selector is filed under: the single most-selective *positive*
+/// requirement (id > class > local name) in its rightmost compound selector.
+/// Selectors with no such requirement (`*`, attribute-only, `:is()`/`:not()`
+/// with no bare tag/class/id, ...) fall in the universal bucket and are always
+/// checked, so a rule that could match is never skipped.
+enum BucketKey {
+    Id(String),
+    Class(String),
+    Local(String),
+    Universal,
+}
+
+/// Determine the bucket key for one selector from its rightmost compound.
+///
+/// `Selector::iter()` yields exactly the rightmost compound's components (it
+/// stops at the first combinator). We only ever read a *positive* tag/class/id
+/// requirement; combinators, attribute selectors, negations and functional
+/// pseudo-classes are ignored, which keeps the key conservative — the full
+/// `matches_selector` still runs on every candidate.
+fn selector_bucket_key(selector: &Selector<BokoSelectors>) -> BucketKey {
+    let mut id: Option<String> = None;
+    let mut class: Option<String> = None;
+    let mut local: Option<String> = None;
+    for component in selector.iter() {
+        match component {
+            Component::ID(v) if id.is_none() => id = Some(v.0.clone()),
+            Component::Class(v) if class.is_none() => class = Some(v.0.clone()),
+            Component::LocalName(name) if local.is_none() => {
+                local = Some(name.lower_name.as_ref().to_ascii_lowercase());
+            }
+            _ => {}
+        }
+    }
+    if let Some(id) = id {
+        BucketKey::Id(id)
+    } else if let Some(class) = class {
+        BucketKey::Class(class)
+    } else if let Some(local) = local {
+        BucketKey::Local(local)
+    } else {
+        BucketKey::Universal
+    }
+}
+
+/// A selector-bucketed view of a set of stylesheets, so that computing styles
+/// for an element only tests rules whose rightmost compound could match it,
+/// instead of every rule of every stylesheet (O(elements × rules)).
+pub struct CascadeIndex<'a> {
+    stylesheets: &'a [(Stylesheet, Origin)],
+    by_id: HashMap<String, Vec<RuleRef>>,
+    by_class: HashMap<String, Vec<RuleRef>>,
+    by_local: HashMap<String, Vec<RuleRef>>,
+    universal: Vec<RuleRef>,
+}
+
+impl<'a> CascadeIndex<'a> {
+    /// Build the index by bucketing every selector of every rule.
+    pub fn build(stylesheets: &'a [(Stylesheet, Origin)]) -> Self {
+        let mut index = CascadeIndex {
+            stylesheets,
+            by_id: HashMap::new(),
+            by_class: HashMap::new(),
+            by_local: HashMap::new(),
+            universal: Vec::new(),
+        };
+        for (sheet_idx, (sheet, _origin)) in stylesheets.iter().enumerate() {
+            for (rule_idx, rule) in sheet.rules.iter().enumerate() {
+                let rref = (sheet_idx as u32, rule_idx as u32);
+                // A rule matches if any of its selectors match, so file it under
+                // each selector's bucket.
+                for selector in &rule.selectors {
+                    match selector_bucket_key(selector) {
+                        BucketKey::Id(k) => index.by_id.entry(k).or_default().push(rref),
+                        BucketKey::Class(k) => index.by_class.entry(k).or_default().push(rref),
+                        BucketKey::Local(k) => index.by_local.entry(k).or_default().push(rref),
+                        BucketKey::Universal => index.universal.push(rref),
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    /// Candidate rules for an element, in source order and de-duplicated. Any
+    /// rule not returned provably cannot match: matching a bucketed selector
+    /// requires the element to carry that id/class/tag.
+    fn candidate_rules(&self, elem: ElementRef<'_>) -> Vec<RuleRef> {
+        let mut out = self.universal.clone();
+        // Look up by lowercased tag; the full matcher decides case. Lowercasing
+        // only widens the candidate set, so it can never drop a real match.
+        if let Some(name) = elem.dom.element_name(elem.id)
+            && let Some(v) = self
+                .by_local
+                .get(name.as_ref().to_ascii_lowercase().as_str())
+        {
+            out.extend_from_slice(v);
+        }
+        if let Some(id) = elem.dom.element_id(elem.id)
+            && let Some(v) = self.by_id.get(id)
+        {
+            out.extend_from_slice(v);
+        }
+        for class in elem.dom.element_classes(elem.id) {
+            if let Some(v) = self.by_class.get(class.as_str()) {
+                out.extend_from_slice(v);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
 /// Compute styles for an element by applying the cascade.
+///
+/// Builds a one-shot [`CascadeIndex`]. Callers that compute styles for many
+/// elements against the same stylesheets should build the index once and call
+/// [`compute_styles_indexed`] instead.
 pub fn compute_styles(
     elem: ElementRef<'_>,
     stylesheets: &[(Stylesheet, Origin)],
+    parent_style: Option<&ComputedStyle>,
+    style_pool: &mut StylePool,
+) -> ComputedStyle {
+    let index = CascadeIndex::build(stylesheets);
+    compute_styles_indexed(elem, &index, parent_style, style_pool)
+}
+
+/// Compute styles for an element using a prebuilt [`CascadeIndex`].
+pub fn compute_styles_indexed(
+    elem: ElementRef<'_>,
+    index: &CascadeIndex<'_>,
     parent_style: Option<&ComputedStyle>,
     _style_pool: &mut StylePool,
 ) -> ComputedStyle {
@@ -81,31 +216,33 @@ pub fn compute_styles(
     // Reuse selector caches across all rule matching for this element
     let mut caches = SelectorCaches::default();
 
-    for (stylesheet, origin) in stylesheets {
-        for rule in &stylesheet.rules {
-            if rule_matches_with_caches(elem, rule, &mut caches) {
-                // Collect normal declarations
-                for decl in &rule.declarations {
-                    matched.push(MatchedRule {
-                        declaration: decl,
-                        origin: *origin,
-                        specificity: rule.specificity,
-                        order,
-                        important: false,
-                    });
-                    order += 1;
-                }
-                // Collect important declarations
-                for decl in &rule.important_declarations {
-                    matched.push(MatchedRule {
-                        declaration: decl,
-                        origin: *origin,
-                        specificity: rule.specificity,
-                        order,
-                        important: true,
-                    });
-                    order += 1;
-                }
+    // Candidate rules are already in source order, so `order` reproduces the
+    // exhaustive-scan cascade exactly.
+    for (sheet_idx, rule_idx) in index.candidate_rules(elem) {
+        let (stylesheet, origin) = &index.stylesheets[sheet_idx as usize];
+        let rule = &stylesheet.rules[rule_idx as usize];
+        if rule_matches_with_caches(elem, rule, &mut caches) {
+            // Collect normal declarations
+            for decl in &rule.declarations {
+                matched.push(MatchedRule {
+                    declaration: decl,
+                    origin: *origin,
+                    specificity: rule.specificity,
+                    order,
+                    important: false,
+                });
+                order += 1;
+            }
+            // Collect important declarations
+            for decl in &rule.important_declarations {
+                matched.push(MatchedRule {
+                    declaration: decl,
+                    origin: *origin,
+                    specificity: rule.specificity,
+                    order,
+                    important: true,
+                });
+                order += 1;
             }
         }
     }
