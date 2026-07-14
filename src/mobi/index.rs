@@ -265,9 +265,12 @@ impl Cncx {
                 if length > 0
                     && let Some(end) = start.checked_add(length)
                     && end <= raw.len()
+                    // `pos` is driven by untrusted varints; skip entries whose
+                    // offset would truncate rather than wrap the CNCX key.
+                    && let Ok(pos32) = u32::try_from(pos)
                 {
                     let s = crate::util::decode_text(&raw[start..end], Some(codec)).into_owned();
-                    strings.insert((pos as u32) + record_offset, s);
+                    strings.insert(pos32 + record_offset, s);
                 }
                 pos = start.saturating_add(length);
             }

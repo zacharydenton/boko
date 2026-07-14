@@ -207,7 +207,11 @@ impl MobiImporter {
 
         // Read record 0 (MOBI header)
         let (start, end) = pdb.record_range(0, file_len)?;
-        let record0 = source.read_at(start, (end - start) as usize)?;
+        let record0_len = usize::try_from(end - start).map_err(|_| crate::Error::Malformed {
+            format: crate::Format::Mobi,
+            context: "record 0 too large".into(),
+        })?;
+        let record0 = source.read_at(start, record0_len)?;
         let mobi = MobiHeader::parse(&record0)?;
 
         if mobi.encryption != 0 {
@@ -243,7 +247,9 @@ impl MobiImporter {
         let ncx_entries = if mobi.ncx_index != NULL_INDEX {
             let mut read_record = |idx: usize| -> io::Result<Vec<u8>> {
                 let (start, end) = pdb.record_range(idx, file_len)?;
-                source.read_at(start, (end - start) as usize)
+                let len = usize::try_from(end - start)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+                source.read_at(start, len)
             };
 
             match read_index(&mut read_record, mobi.ncx_index as usize, codec) {
@@ -345,7 +351,9 @@ impl MobiImporter {
         let first_img = self.mobi.first_image_index as usize;
         for i in first_img..self.pdb.num_records as usize {
             if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
-                let read_len = 16.min((end - start) as usize);
+                // min against a small constant before the cast so a >4 GiB
+                // record length can't truncate on 32-bit targets.
+                let read_len = (end - start).min(16) as usize;
                 let mut header = [0u8; 16];
                 if self
                     .source
@@ -394,7 +402,9 @@ impl MobiImporter {
     /// Read a record by index.
     fn read_record(&self, idx: usize) -> io::Result<Vec<u8>> {
         let (start, end) = self.pdb.record_range(idx, self.file_len)?;
-        self.source.read_at(start, (end - start) as usize)
+        let len = usize::try_from(end - start)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+        self.source.read_at(start, len)
     }
 }
 
@@ -413,7 +423,9 @@ fn extract_text_from_source(
 
     let read_record = |idx: usize| -> io::Result<Vec<u8>> {
         let (start, end) = pdb.record_range(idx, file_len)?;
-        source.read_at(start, (end - start) as usize)
+        let len = usize::try_from(end - start)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+        source.read_at(start, len)
     };
 
     // Build decompressor if needed
@@ -477,7 +489,9 @@ fn discover_assets_from_source(
     let first_img = mobi.first_image_index as usize;
     for i in first_img..pdb.num_records as usize {
         if let Ok((start, end)) = pdb.record_range(i, file_len) {
-            let read_len = 16.min((end - start) as usize);
+            // min against a small constant before the cast so a >4 GiB
+            // record length can't truncate on 32-bit targets.
+            let read_len = (end - start).min(16) as usize;
             let mut header = [0u8; 16];
             if source.read_at_into(start, &mut header[..read_len]).is_ok() {
                 let header = &header[..read_len];

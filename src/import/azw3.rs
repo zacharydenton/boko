@@ -313,7 +313,9 @@ impl Azw3Importer {
         // Helper to read a record
         let read_record = |idx: usize| -> io::Result<Vec<u8>> {
             let (start, end) = pdb.record_range(idx, file_len)?;
-            source.read_at(start, (end - start) as usize)
+            let len = usize::try_from(end - start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+            source.read_at(start, len)
         };
 
         // Parse record 0 (MOBI header)
@@ -358,7 +360,9 @@ impl Azw3Importer {
         let mut read_record_offset = |idx: usize| -> io::Result<Vec<u8>> {
             let actual_idx = idx + record_offset;
             let (start, end) = pdb.record_range(actual_idx, file_len)?;
-            source.read_at(start, (end - start) as usize)
+            let len = usize::try_from(end - start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+            source.read_at(start, len)
         };
 
         // Parse FDST
@@ -491,7 +495,9 @@ impl Azw3Importer {
         let read_record = |idx: usize| -> io::Result<Vec<u8>> {
             let actual_idx = idx + self.record_offset;
             let (start, end) = self.pdb.record_range(actual_idx, self.file_len)?;
-            self.source.read_at(start, (end - start) as usize)
+            let len = usize::try_from(end - start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+            self.source.read_at(start, len)
         };
 
         // Build decompressor if needed
@@ -589,7 +595,9 @@ impl Azw3Importer {
         let first_img = self.mobi.first_image_index as usize + self.record_offset;
         for i in first_img..self.pdb.num_records as usize {
             if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
-                let read_len = 16.min((end - start) as usize);
+                // min against a small constant before the cast so a >4 GiB
+                // record length can't truncate on 32-bit targets.
+                let read_len = (end - start).min(16) as usize;
                 let mut header = [0u8; 16];
                 if self
                     .source
@@ -638,7 +646,9 @@ impl Azw3Importer {
     /// Read a record by absolute index.
     fn read_record(&self, idx: usize) -> io::Result<Vec<u8>> {
         let (start, end) = self.pdb.record_range(idx, self.file_len)?;
-        self.source.read_at(start, (end - start) as usize)
+        let len = usize::try_from(end - start)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "record too large"))?;
+        self.source.read_at(start, len)
     }
 }
 
