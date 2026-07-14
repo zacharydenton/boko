@@ -723,9 +723,9 @@ mod tests {
     #[test]
     fn test_singleton_uses_null_symbol() {
         // Build a singleton fragment and serialize it
-        let frag = build_content_features_fragment();
+        let frags = [build_content_features_fragment()];
         let local_symbols: Vec<String> = vec![];
-        let entities = serialize_fragments(&[frag], &local_symbols);
+        let entities = serialize_fragments(&frags, &local_symbols);
 
         // Singleton should use $348 (null) as ID
         assert_eq!(entities[0].id, KfxSymbol::Null as u32);

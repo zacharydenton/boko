@@ -373,8 +373,8 @@ fn build_kfx_container(book: &mut Book) -> crate::Result<Vec<u8>> {
             let href = asset_path.to_string_lossy().to_string();
             // external_resource ($164) - metadata about the resource
             fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
-            // bcRawMedia ($417) - the actual bytes
-            fragments.push(build_resource_fragment(&href, &data, &mut ctx));
+            // bcRawMedia ($417) - the actual bytes (moved, not copied)
+            fragments.push(build_resource_fragment(&href, data, &mut ctx));
         }
     }
 
@@ -427,10 +427,10 @@ fn build_kfx_container(book: &mut Book) -> crate::Result<Vec<u8>> {
 // ============================================================================
 
 /// Serialize fragments to entities.
-fn serialize_fragments(
-    fragments: &[KfxFragment],
+fn serialize_fragments<'a>(
+    fragments: &'a [KfxFragment],
     local_symbols: &[String],
-) -> Vec<SerializedEntity> {
+) -> Vec<SerializedEntity<'a>> {
     // Index the local symbol table once; a per-fragment linear `position`
     // scan is O(fragments × symbols), which is quadratic in book size.
     let symbol_index: rustc_hash::FxHashMap<&str, usize> = local_symbols
@@ -451,17 +451,21 @@ fn serialize_fragments(
                     .unwrap_or(0)
             };
 
-            let data = match &frag.data {
-                crate::kfx::fragment::FragmentData::Ion(value) => create_entity_data(value),
-                crate::kfx::fragment::FragmentData::Raw(bytes) => {
-                    crate::kfx::serialization::create_raw_media_data(bytes)
-                }
+            let (data, raw) = match &frag.data {
+                crate::kfx::fragment::FragmentData::Ion(value) => (create_entity_data(value), None),
+                // Raw media bodies are borrowed, not copied: the container
+                // writer emits them straight from the fragment.
+                crate::kfx::fragment::FragmentData::Raw(bytes) => (
+                    crate::kfx::serialization::create_raw_media_header(),
+                    Some(bytes.as_slice()),
+                ),
             };
 
             SerializedEntity {
                 id,
                 entity_type: frag.ftype as u32,
                 data,
+                raw,
             }
         })
         .collect()

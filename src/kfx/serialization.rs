@@ -4,18 +4,32 @@
 //! This module provides functions to serialize KFX fragments into
 //! the container format that Kindle devices can read.
 
-use super::fragment::{FragmentData, KfxFragment};
 use super::ion::{IonValue, IonWriter};
 use super::symbols::KfxSymbol;
 
 /// Serialized entity ready for container output.
-pub struct SerializedEntity {
+pub struct SerializedEntity<'a> {
     /// Entity ID (fragment ID symbol)
     pub id: u32,
     /// Entity type (fragment type symbol)
     pub entity_type: u32,
-    /// Serialized data (ENTY-wrapped)
+    /// ENTY header (+ Ion content for structured entities).
     pub data: Vec<u8>,
+    /// Raw media body written after `data`, borrowed from the fragment so
+    /// multi-MB image/font payloads are never duplicated per entity.
+    pub raw: Option<&'a [u8]>,
+}
+
+impl SerializedEntity<'_> {
+    /// Total serialized length (header/content + raw body).
+    pub fn len(&self) -> usize {
+        self.data.len() + self.raw.map_or(0, <[u8]>::len)
+    }
+
+    /// Whether the entity serializes to zero bytes (never, in practice).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Container magic bytes.
@@ -49,16 +63,20 @@ pub fn serialize_container(
         entity_table.extend_from_slice(&entity.id.to_le_bytes());
         entity_table.extend_from_slice(&entity.entity_type.to_le_bytes());
         entity_table.extend_from_slice(&current_offset.to_le_bytes());
-        entity_table.extend_from_slice(&(entity.data.len() as u64).to_le_bytes());
-        current_offset += entity.data.len() as u64;
+        entity_table.extend_from_slice(&(entity.len() as u64).to_le_bytes());
+        current_offset += entity.len() as u64;
     }
 
-    // Calculate SHA1 of entity payloads for kfxgen_info
-    let mut entity_data = Vec::new();
+    // SHA1 of entity payloads for kfxgen_info, streamed so the payloads are
+    // never concatenated into a temporary whole-container buffer.
+    let mut sha = sha1_smol::Sha1::new();
     for entity in entities {
-        entity_data.extend_from_slice(&entity.data);
+        sha.update(&entity.data);
+        if let Some(raw) = entity.raw {
+            sha.update(raw);
+        }
     }
-    let payload_sha1 = payload_sha1(&entity_data);
+    let payload_sha1 = sha.digest().to_string();
 
     // Header is 18 bytes: magic(4) + version(2) + header_len(4) + ci_offset(4) + ci_len(4)
     const HEADER_SIZE: usize = 18;
@@ -124,7 +142,7 @@ pub fn serialize_container(
     let header_len = container_info_offset + container_info_data.len() + kfxgen_info.len();
 
     // Build output
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(header_len + current_offset as usize);
 
     // Fixed header (18 bytes)
     output.extend_from_slice(CONTAINER_MAGIC);
@@ -149,7 +167,12 @@ pub fn serialize_container(
     output.extend_from_slice(kfxgen_info.as_bytes());
 
     // Entity payloads (after header)
-    output.extend_from_slice(&entity_data);
+    for entity in entities {
+        output.extend_from_slice(&entity.data);
+        if let Some(raw) = entity.raw {
+            output.extend_from_slice(raw);
+        }
+    }
 
     output
 }
@@ -186,9 +209,12 @@ pub fn create_entity_data(value: &IonValue) -> Vec<u8> {
     data
 }
 
-/// Create raw media entity data (for images, fonts).
-/// Raw media stores bytes directly without Ion encoding.
-pub fn create_raw_media_data(raw_bytes: &[u8]) -> Vec<u8> {
+/// Create the ENTY header for a raw media entity (images, fonts).
+///
+/// Raw media stores bytes directly without Ion encoding; the body is not
+/// copied here — [`SerializedEntity::raw`] borrows it from the fragment and
+/// the container writer emits it after this header.
+pub fn create_raw_media_header() -> Vec<u8> {
     // Entity header ION: {$410:0, $411:0}
     let header_fields = vec![
         (KfxSymbol::Bccomprtype as u64, IonValue::Int(0)),
@@ -203,13 +229,11 @@ pub fn create_raw_media_data(raw_bytes: &[u8]) -> Vec<u8> {
     // ENTY header: magic(4) + version(2) + header_len(4) = 10
     let header_len = 10 + header_ion.len();
 
-    let mut data = Vec::with_capacity(header_len + raw_bytes.len());
+    let mut data = Vec::with_capacity(header_len);
     data.extend_from_slice(ENTITY_MAGIC);
     data.extend_from_slice(&1u16.to_le_bytes()); // version
     data.extend_from_slice(&(header_len as u32).to_le_bytes());
     data.extend_from_slice(&header_ion);
-    // Raw bytes directly, not Ion-encoded
-    data.extend_from_slice(raw_bytes);
 
     data
 }
@@ -222,14 +246,6 @@ pub fn serialize_annotated_ion(annotation_id: u64, value: &IonValue) -> Vec<u8> 
     writer.write_bvm();
     writer.write_value(&annotated);
     writer.into_bytes()
-}
-
-/// Serialize a fragment to entity data.
-pub fn serialize_fragment(fragment: &KfxFragment) -> Vec<u8> {
-    match &fragment.data {
-        FragmentData::Ion(value) => create_entity_data(value),
-        FragmentData::Raw(bytes) => create_raw_media_data(bytes),
-    }
 }
 
 /// Generate a unique container ID.
@@ -261,14 +277,6 @@ pub fn generate_container_id() -> String {
     }
 
     id
-}
-
-/// SHA-1 of the payload for kfxgen_info, matching what the field name
-/// (`kfxgen_payload_sha1`) promises. Previously a `DefaultHasher` value
-/// formatted to *look* like a SHA-1 — wrong if any KFX reader validates it,
-/// and unstable across Rust releases.
-fn payload_sha1(data: &[u8]) -> String {
-    sha1_smol::Sha1::from(data).digest().to_string()
 }
 
 #[cfg(test)]
@@ -307,14 +315,15 @@ mod tests {
     }
 
     #[test]
-    fn test_create_raw_media_data() {
-        let raw = vec![0xFF, 0xD8, 0xFF, 0xE0]; // JPEG header
-        let data = create_raw_media_data(&raw);
+    fn test_create_raw_media_header() {
+        let header = create_raw_media_header();
 
         // Should start with ENTY magic
-        assert_eq!(&data[..4], b"ENTY");
-        // Raw data should be at the end
-        assert!(data.ends_with(&raw));
+        assert_eq!(&header[..4], b"ENTY");
+        // Declared header length covers exactly the returned bytes; the raw
+        // body is appended separately by the container writer.
+        let header_len = u32::from_le_bytes([header[6], header[7], header[8], header[9]]);
+        assert_eq!(header_len as usize, header.len());
     }
 
     #[test]

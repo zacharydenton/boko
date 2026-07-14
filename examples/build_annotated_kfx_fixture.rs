@@ -63,6 +63,7 @@ fn main() -> std::io::Result<()> {
         id: 0,
         entity_type: KfxSymbol::BookMetadata as u32,
         data: entity_data,
+        raw: None,
     }];
 
     let container_id = "CR!BOKOTESTANNOTATEDMETADATAFIX";

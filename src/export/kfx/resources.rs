@@ -45,9 +45,12 @@ pub(super) fn build_external_resource_fragment(
 }
 
 /// Build a resource fragment (bcRawMedia $417) - the actual bytes.
+///
+/// Takes ownership of `data` so multi-MB image/font payloads move into the
+/// fragment instead of being copied.
 pub(super) fn build_resource_fragment(
     href: &str,
-    data: &[u8],
+    data: Vec<u8>,
     ctx: &mut ExportContext,
 ) -> KfxFragment {
     // Use resource/ prefix to distinguish from external_resource fragment
@@ -59,7 +62,7 @@ pub(super) fn build_resource_fragment(
     ctx.symbols.get_or_intern(&raw_name);
 
     // Create raw fragment for binary resources
-    KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &raw_name, data.to_vec())
+    KfxFragment::raw(KfxSymbol::Bcrawmedia as u64, &raw_name, data)
 }
 
 /// Build font entity fragments ($262) from @font-face rules.

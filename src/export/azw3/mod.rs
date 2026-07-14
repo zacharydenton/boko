@@ -98,9 +98,11 @@ impl BookContext {
     }
 }
 
+/// A reading-order entry. Chapter bytes live in `BookContext::resources`
+/// (keyed by href) — storing them here too doubled peak memory for the whole
+/// text payload and read every spine document from the archive twice.
 struct SpineItem {
     href: String,
-    data: Vec<u8>,
 }
 
 impl BookContext {
@@ -119,9 +121,10 @@ impl BookContext {
         let metadata = book.metadata().clone();
         let toc = book.toc().to_vec();
 
-        // Collect spine items
+        // Collect spine items; their bytes go straight into `resources`.
         let spine_entries: Vec<_> = book.spine().to_vec();
         let mut spine = Vec::with_capacity(spine_entries.len());
+        let mut resources = HashMap::new();
 
         for entry in &spine_entries {
             let href = book
@@ -129,32 +132,27 @@ impl BookContext {
                 .unwrap_or("unknown.xhtml")
                 .to_string();
             let data = book.load_raw(entry.id)?;
-            spine.push(SpineItem { href, data });
+            resources.insert(
+                href.clone(),
+                Resource {
+                    data,
+                    media_type: "application/xhtml+xml",
+                },
+            );
+            spine.push(SpineItem { href });
         }
 
-        // Collect assets
+        // Collect assets, skipping spine documents already loaded above.
         let asset_paths: Vec<_> = book.list_assets().to_vec();
-        let mut resources = HashMap::new();
-
         for path in asset_paths {
             let path_str = path.to_string_lossy().to_string();
+            if resources.contains_key(&path_str) {
+                continue;
+            }
             let data = book.load_asset(&path)?;
             let media_type = guess_media_type(&path_str);
 
             resources.insert(path_str, Resource { data, media_type });
-        }
-
-        // Also add spine items as resources (needed for internal lookups)
-        for item in &spine {
-            if !resources.contains_key(&item.href) {
-                resources.insert(
-                    item.href.clone(),
-                    Resource {
-                        data: item.data.clone(),
-                        media_type: "application/xhtml+xml",
-                    },
-                );
-            }
         }
 
         Ok(Self {
@@ -189,22 +187,18 @@ impl BookContext {
             );
         }
 
-        // Build spine from normalized chapters
+        // Build spine from normalized chapters; bytes stored once in `resources`.
         let mut spine = Vec::with_capacity(normalized.chapters.len());
         for (i, chapter) in normalized.chapters.iter().enumerate() {
             let href = format!("chapter_{}.xhtml", i);
-            let data = chapter.document.as_bytes().to_vec();
-
-            // Add as resource
             resources.insert(
                 href.clone(),
                 Resource {
-                    data: data.clone(),
+                    data: chapter.document.as_bytes().to_vec(),
                     media_type: "application/xhtml+xml",
                 },
             );
-
-            spine.push(SpineItem { href, data });
+            spine.push(SpineItem { href });
         }
 
         // Add referenced assets
