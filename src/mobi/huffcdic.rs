@@ -5,6 +5,10 @@
 
 use std::io;
 
+/// Maximum HUFF/CDIC dictionary-node recursion depth. Real dictionaries nest
+/// only a handful of levels; this guards against a crafted CDIC record.
+const MAX_HUFF_DEPTH: usize = 32;
+
 /// Dictionary entry: (slice data, is_leaf flag)
 #[derive(Clone)]
 enum DictEntry {
@@ -163,11 +167,20 @@ impl HuffCdicReader {
     /// Decompress a text record
     pub fn decompress(&mut self, data: &[u8]) -> io::Result<Vec<u8>> {
         let mut result = Vec::new();
-        self.unpack_into(data, &mut result)?;
+        self.unpack_into(data, &mut result, 0)?;
         Ok(result)
     }
 
-    fn unpack_into(&mut self, data: &[u8], output: &mut Vec<u8>) -> io::Result<()> {
+    fn unpack_into(&mut self, data: &[u8], output: &mut Vec<u8>, depth: usize) -> io::Result<()> {
+        // Node entries unpack recursively; cap the depth so a crafted CDIC
+        // dictionary can't drive unbounded recursion into a stack overflow.
+        if depth > MAX_HUFF_DEPTH {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HUFF/CDIC dictionary nested too deep",
+            ));
+        }
+
         let bitsleft = data.len() * 8;
         let mut bits_remaining = bitsleft as i64;
 
@@ -235,7 +248,7 @@ impl HuffCdicReader {
                     // Need to recursively unpack
                     let slice_copy = slice.clone();
                     let mut unpacked = Vec::new();
-                    self.unpack_into(&slice_copy, &mut unpacked)?;
+                    self.unpack_into(&slice_copy, &mut unpacked, depth + 1)?;
                     output.extend_from_slice(&unpacked);
                     self.dictionary[r] = DictEntry::Unpacked(unpacked);
                 }

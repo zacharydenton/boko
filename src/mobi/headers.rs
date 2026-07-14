@@ -94,9 +94,24 @@ impl MobiHeader {
             });
         }
 
-        let header_length = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-        let mobi_type = u32::from_be_bytes([data[24], data[25], data[26], data[27]]);
-        let codepage = u32::from_be_bytes([data[28], data[29], data[30], data[31]]);
+        // These fields live at offsets 20..32. A record0 between 17 and 31 bytes
+        // passes the `<= 16` minimal-header check above but is too short to read
+        // them, so guard each read and fall back to the minimal-header defaults.
+        let header_length = if data.len() >= 24 {
+            u32::from_be_bytes([data[20], data[21], data[22], data[23]])
+        } else {
+            0
+        };
+        let mobi_type = if data.len() >= 28 {
+            u32::from_be_bytes([data[24], data[25], data[26], data[27]])
+        } else {
+            0
+        };
+        let codepage = if data.len() >= 32 {
+            u32::from_be_bytes([data[28], data[29], data[30], data[31]])
+        } else {
+            1252
+        };
 
         let encoding = match codepage {
             1252 => Encoding::Cp1252,
@@ -278,7 +293,9 @@ impl ExthHeader {
                 u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
                     as usize;
 
-            if pos + record_len > data.len() {
+            // record_len covers the 8-byte record header plus its content, so a
+            // value below 8 would make the content slice start past its end.
+            if record_len < 8 || pos + record_len > data.len() {
                 break;
             }
 
@@ -400,6 +417,35 @@ mod tests {
     fn test_mobi_header_too_short() {
         let data = vec![0u8; 10];
         assert!(MobiHeader::parse(&data).is_err());
+    }
+
+    #[test]
+    fn test_mobi_header_truncated_between_17_and_31_bytes() {
+        // A record0 in the 17..=31 byte range passes the `<= 16` minimal-header
+        // check but is too short for the fields at offsets 20..32. Every length
+        // in that gap must parse without panicking (OOB indexing).
+        for len in 17..=31 {
+            let data = vec![0u8; len];
+            let header = MobiHeader::parse(&data).expect("short header should not panic");
+            // Falls back to minimal-header defaults.
+            assert_eq!(header.mobi_type, 0);
+        }
+    }
+
+    #[test]
+    fn test_exth_header_record_len_below_8() {
+        // record_len covers the 8-byte record header; a value < 8 would make the
+        // content slice start past its end. Parsing must stop, not panic.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"EXTH");
+        data.extend_from_slice(&12u32.to_be_bytes()); // header length
+        data.extend_from_slice(&1u32.to_be_bytes()); // 1 record
+        data.extend_from_slice(&100u32.to_be_bytes()); // type
+        data.extend_from_slice(&4u32.to_be_bytes()); // record_len = 4 (< 8!)
+        data.extend_from_slice(&[0u8; 8]); // trailing bytes
+
+        let exth = ExthHeader::parse(&data, Encoding::Utf8).expect("must not panic");
+        assert!(exth.authors.is_empty());
     }
 
     #[test]

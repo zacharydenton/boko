@@ -162,17 +162,40 @@ impl IonValue {
     }
 }
 
+/// Maximum container nesting depth. KFX Ion is shallow in practice; this only
+/// exists to stop a crafted deeply-nested value from overflowing the stack.
+const MAX_ION_DEPTH: usize = 256;
+
 /// Ion binary parser.
 pub struct IonParser<'a> {
     data: &'a [u8],
     pos: usize,
+    depth: usize,
 }
 
 impl<'a> IonParser<'a> {
     /// Create a new parser for the given data.
     #[inline]
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self {
+            data,
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    /// Compute `self.pos + length` for a value whose `length` is a byte span,
+    /// erroring if it overruns the buffer. Container and skip types use this so a
+    /// crafted oversized length can neither loop forever nor slice out of bounds.
+    #[inline]
+    fn span_end(&self, length: usize) -> io::Result<usize> {
+        match self.pos.checked_add(length) {
+            Some(end) if end <= self.data.len() => Ok(end),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Ion value length exceeds buffer",
+            )),
+        }
     }
 
     /// Parse Ion data starting with the BVM marker.
@@ -187,8 +210,24 @@ impl<'a> IonParser<'a> {
         self.parse_value()
     }
 
-    /// Parse a single Ion value at current position.
+    /// Parse a single Ion value at the current position, enforcing a recursion
+    /// depth limit so nested containers can't overflow the stack.
     fn parse_value(&mut self) -> io::Result<IonValue> {
+        self.depth += 1;
+        if self.depth > MAX_ION_DEPTH {
+            self.depth -= 1;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Ion nesting too deep",
+            ));
+        }
+        let result = self.parse_value_inner();
+        self.depth -= 1;
+        result
+    }
+
+    /// Parse a single Ion value at current position.
+    fn parse_value_inner(&mut self) -> io::Result<IonValue> {
         if self.pos >= self.data.len() {
             return Ok(IonValue::Null);
         }
@@ -219,7 +258,7 @@ impl<'a> IonParser<'a> {
         match ion_type {
             IonType::Null => {
                 // Type 0 with length > 0 is a NOP pad, skip the bytes
-                self.pos += length;
+                self.pos = self.span_end(length)?;
                 Ok(IonValue::Null)
             }
 
@@ -280,7 +319,7 @@ impl<'a> IonParser<'a> {
                     return Ok(IonValue::Decimal("0".to_string()));
                 }
 
-                let end = self.pos + length;
+                let end = self.span_end(length)?;
 
                 // Read exponent as VarInt (signed)
                 let (exponent, _) = self.read_varint()?;
@@ -297,9 +336,27 @@ impl<'a> IonParser<'a> {
                 let value = if exponent == 0 {
                     coefficient.to_string()
                 } else if exponent > 0 {
-                    // Positive exponent: shift left (multiply)
-                    let multiplier = 10i64.pow(exponent as u32);
-                    (coefficient * multiplier).to_string()
+                    // Positive exponent: shift left (multiply). The exponent is
+                    // attacker-controlled, so use checked arithmetic instead of
+                    // panicking on overflow.
+                    let multiplier = u32::try_from(exponent)
+                        .ok()
+                        .and_then(|e| 10i64.checked_pow(e))
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Ion decimal exponent out of range",
+                            )
+                        })?;
+                    coefficient
+                        .checked_mul(multiplier)
+                        .ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Ion decimal coefficient overflow",
+                            )
+                        })?
+                        .to_string()
                 } else {
                     // Negative exponent: we have decimal places
                     let abs_exp = (-exponent) as usize;
@@ -327,7 +384,7 @@ impl<'a> IonParser<'a> {
 
             IonType::Timestamp => {
                 // Skip - not used in KFX reading
-                self.pos += length;
+                self.pos = self.span_end(length)?;
                 Ok(IonValue::Null)
             }
 
@@ -348,7 +405,7 @@ impl<'a> IonParser<'a> {
             }
 
             IonType::List | IonType::Sexp => {
-                let end = self.pos + length;
+                let end = self.span_end(length)?;
                 let mut items = Vec::new();
                 while self.pos < end {
                     items.push(self.parse_value()?);
@@ -357,7 +414,7 @@ impl<'a> IonParser<'a> {
             }
 
             IonType::Struct => {
-                let end = self.pos + length;
+                let end = self.span_end(length)?;
                 let mut fields = Vec::new();
                 while self.pos < end {
                     let field_name = self.read_varuint()? as u64;
@@ -368,11 +425,11 @@ impl<'a> IonParser<'a> {
             }
 
             IonType::Annotation => {
-                let end = self.pos + length;
+                let end = self.span_end(length)?;
 
                 // Read annotation length (VarUInt)
                 let ann_len = self.read_varuint()? as usize;
-                let ann_end = self.pos + ann_len;
+                let ann_end = self.span_end(ann_len)?;
 
                 // Read annotation symbol IDs
                 let mut annotations = Vec::new();
@@ -922,6 +979,52 @@ mod tests {
     fn test_float_invalid_length() {
         // Float with invalid length (e.g., 3) should error
         let data = [0xe0, 0x01, 0x00, 0xea, 0x43, 0x00, 0x00, 0x00];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn test_list_length_overrunning_buffer_is_rejected() {
+        // List claiming length 11 with no content bytes. Previously the
+        // `while pos < end` loop spun forever pushing Null (OOM); now it errors.
+        let data = [0xe0, 0x01, 0x00, 0xea, 0xbb];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn test_deeply_nested_list_is_rejected_not_stack_overflow() {
+        // Ion VarUInt: 7 bits/byte, big-endian, stop bit (0x80) on the last byte.
+        fn encode_varuint(mut v: usize) -> Vec<u8> {
+            let mut bytes = vec![(v & 0x7f) as u8 | 0x80];
+            v >>= 7;
+            while v > 0 {
+                bytes.insert(0, (v & 0x7f) as u8);
+                v >>= 7;
+            }
+            bytes
+        }
+        // Nest lists deeper than MAX_ION_DEPTH; each 0xbe is a List with a
+        // VarUInt length. Must hit the depth guard, not overflow the stack.
+        let mut buf = vec![0x10u8]; // innermost: bool false
+        for _ in 0..(MAX_ION_DEPTH + 50) {
+            let len = buf.len();
+            let mut next = vec![0xbeu8];
+            next.extend_from_slice(&encode_varuint(len));
+            next.extend_from_slice(&buf);
+            buf = next;
+        }
+        let mut data = ION_MAGIC.to_vec();
+        data.extend_from_slice(&buf);
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn test_decimal_exponent_overflow_is_rejected() {
+        // Decimal (0x52) with exponent VarInt 0x94 (= +20) and coefficient 1.
+        // 10^20 overflows i64; must error instead of panicking on overflow.
+        let data = [0xe0, 0x01, 0x00, 0xea, 0x52, 0x94, 0x01];
         let mut parser = IonParser::new(&data);
         assert!(parser.parse().is_err());
     }

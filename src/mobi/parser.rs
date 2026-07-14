@@ -91,6 +91,16 @@ impl PdbInfo {
             file_len
         };
 
+        // Record offsets come straight from the (untrusted) PDB record table.
+        // A descending or out-of-file range would underflow `end - start` at the
+        // call sites, so reject it here rather than panicking downstream.
+        if start > end || end > file_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Record {index} has invalid range {start}..{end}"),
+            ));
+        }
+
         Ok((start, end))
     }
 }
@@ -527,6 +537,26 @@ mod tests {
 
         // Out of bounds
         assert!(pdb.record_range(5, 1000).is_err());
+    }
+
+    #[test]
+    fn test_pdb_info_record_range_rejects_descending_offsets() {
+        // A crafted PDB whose record offsets descend would underflow `end - start`
+        // at the call sites. record_range must reject it instead of panicking.
+        let data = make_pdb_header("Book", 3, &[500, 200, 100]);
+        let (pdb, _) = PdbInfo::parse(&data).unwrap();
+
+        assert!(pdb.record_range(0, 1000).is_err()); // 500 > 200
+        assert!(pdb.record_range(1, 1000).is_err()); // 200 > 100
+    }
+
+    #[test]
+    fn test_pdb_info_record_range_rejects_offset_past_file() {
+        // Last-record end is file_len; a start beyond the file is invalid.
+        let data = make_pdb_header("Book", 2, &[100, 5000]);
+        let (pdb, _) = PdbInfo::parse(&data).unwrap();
+
+        assert!(pdb.record_range(1, 1000).is_err()); // start 5000 > file_len 1000
     }
 
     #[test]

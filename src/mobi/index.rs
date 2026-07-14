@@ -347,7 +347,10 @@ pub fn read_index(
         for j in 0..positions.len().saturating_sub(1) {
             let start = positions[j];
             let end = positions[j + 1];
-            if start >= end || start >= rec_data.len() {
+            // `end` comes from the (untrusted) IDXT offset table and was never
+            // checked against the record length, so an out-of-range value would
+            // panic slicing `rec_data[start..end]`.
+            if start >= end || end > rec_data.len() {
                 continue;
             }
 

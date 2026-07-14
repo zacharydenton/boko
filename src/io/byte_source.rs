@@ -22,6 +22,16 @@ pub trait ByteSource: Send + Sync {
     /// Reads exactly `len` bytes starting at `offset`.
     /// This must NOT modify any internal cursor position.
     fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        // A read can never yield more bytes than the source holds, so reject an
+        // oversized request before allocating. Length fields in the input are
+        // untrusted; without this a crafted value triggers a huge allocation
+        // (out-of-memory abort) before the bounds check below ever runs.
+        if len as u64 > self.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read length exceeds source length",
+            ));
+        }
         let mut buf = vec![0u8; len];
         let read = self.read_at_into(offset, &mut buf)?;
         if read != len {
@@ -151,5 +161,15 @@ mod tests {
         let source = MemorySource::new(b"abcdef".to_vec());
         let data = source.read_at(1, 3).unwrap();
         assert_eq!(&data, b"bcd");
+    }
+
+    #[test]
+    fn test_read_at_rejects_oversized_len_without_allocating() {
+        // A length far larger than the source (e.g. from a crafted length field)
+        // must error immediately rather than attempting a huge allocation.
+        let source = MemorySource::new(b"abcdef".to_vec());
+        assert!(source.read_at(0, 71_776_119_061_217_892).is_err());
+        assert!(source.read_at(0, 7).is_err()); // one past the end
+        assert_eq!(source.read_at(0, 6).unwrap().len(), 6); // exact length still ok
     }
 }
