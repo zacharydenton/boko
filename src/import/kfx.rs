@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::import::{ChapterId, Importer, SpineEntry};
 use crate::io::{ByteSource, FileSource};
@@ -69,26 +69,18 @@ pub struct KfxImporter {
     section_storylines_indexed: bool,
 
     /// Resources: name -> EntityLoc (lazily populated)
-    resources: HashMap<String, EntityLoc>,
-    /// Whether resources have been indexed
-    resources_indexed: bool,
+    resource_index: OnceLock<HashMap<String, EntityLoc>>,
 
     /// Content cache: name -> list of strings (lazily populated)
     content_cache: RwLock<HashMap<String, Vec<String>>>,
 
     /// Anchor map: anchor_name -> uri (for external link resolution)
-    anchors: Arc<HashMap<String, String>>,
-    /// Whether anchors have been indexed
-    anchors_indexed: bool,
+    anchors: OnceLock<AnchorIndex>,
 
     /// Style map: style_name -> KFX style properties (for style resolution)
-    styles: Arc<HashMap<String, Vec<(u64, IonValue)>>>,
-    /// Whether styles have been indexed
-    styles_indexed: bool,
+    styles: OnceLock<Arc<StyleIndex>>,
 
     // --- Link resolution ---
-    /// Internal anchors: anchor_name -> (position_id, offset)
-    internal_anchors: Arc<HashMap<String, (i64, i64)>>,
 
     /// Maps element string ID -> GlobalNodeId (built during index_anchors)
     element_id_map: RwLock<HashMap<String, GlobalNodeId>>,
@@ -147,8 +139,8 @@ impl Importer for KfxImporter {
 
         // Clone Arc handles to avoid borrow conflict with content lookup closure
         let doc_symbols = Arc::clone(&self.doc_symbols);
-        let anchors = Arc::clone(&self.anchors);
-        let styles = Arc::clone(&self.styles);
+        let anchors = Arc::clone(&self.anchor_index().external);
+        let styles = Arc::clone(self.style_index());
 
         // Parse storyline and build IR using schema-driven tokenization
         let mut chapter = parse_storyline_to_ir(
@@ -203,7 +195,7 @@ impl Importer for KfxImporter {
         }
 
         let loc = self
-            .resources
+            .resource_index()
             .get(path)
             .ok_or_else(|| crate::Error::NotFound {
                 what: format!("asset {}", path),
@@ -257,13 +249,13 @@ impl Importer for KfxImporter {
         };
 
         // Check external anchors map (anchor_name → uri)
-        if let Some(uri) = self.anchors.as_ref().get(anchor_name) {
+        if let Some(uri) = self.anchor_index().external.get(anchor_name) {
             return Some(AnchorTarget::External(uri.clone()));
         }
 
         // Check internal anchors (anchor_name → position.id → element_id)
         // The position.id in anchor entities references element IDs in storylines
-        if let Some(&(pos_id, _offset)) = self.internal_anchors.as_ref().get(anchor_name) {
+        if let Some(&(pos_id, _offset)) = self.anchor_index().internal.get(anchor_name) {
             let id_str = pos_id.to_string();
             if let Some(target) = self.element_id(&id_str) {
                 return Some(AnchorTarget::Internal(target));
@@ -366,14 +358,10 @@ impl KfxImporter {
             section_names: Vec::new(),
             section_storylines: HashMap::new(),
             section_storylines_indexed: false,
-            resources: HashMap::new(),
-            resources_indexed: false,
+            resource_index: OnceLock::new(),
             content_cache: RwLock::new(HashMap::new()),
-            anchors: Arc::new(HashMap::new()),
-            anchors_indexed: false,
-            styles: Arc::new(HashMap::new()),
-            styles_indexed: false,
-            internal_anchors: Arc::new(HashMap::new()),
+            anchors: OnceLock::new(),
+            styles: OnceLock::new(),
             element_id_map: RwLock::new(HashMap::new()),
         };
 
@@ -388,12 +376,6 @@ impl KfxImporter {
 
         // Parse spine from reading order (uses section→storyline map for sizes)
         importer.parse_spine()?;
-
-        // Index anchors, styles, and resources eagerly so every runtime
-        // accessor is `&self` (chapter loads run in parallel).
-        importer.index_anchor_entities()?;
-        importer.index_styles()?;
-        importer.index_resources()?;
 
         Ok(importer)
     }
@@ -924,11 +906,13 @@ impl KfxImporter {
     }
 
     /// Index external resources.
-    fn index_resources(&mut self) -> crate::Result<()> {
-        if self.resources_indexed {
-            return Ok(());
-        }
+    /// The resource-name → entity-location index, built on first use.
+    fn resource_index(&self) -> &HashMap<String, EntityLoc> {
+        self.resource_index.get_or_init(|| self.build_resource_index())
+    }
 
+    fn build_resource_index(&self) -> HashMap<String, EntityLoc> {
+        let mut resources = HashMap::new();
         // Build a lookup from resolved bcRawMedia entity names to their binary payload locations.
         let mut raw_media_by_name: HashMap<String, EntityLoc> = HashMap::new();
         for raw_loc in self
@@ -983,30 +967,28 @@ impl KfxImporter {
                 if let Some(loc_str) = &location
                     && !loc_str.is_empty()
                 {
-                    self.resources.insert(loc_str.clone(), resolved_loc);
+                    resources.insert(loc_str.clone(), resolved_loc);
                 }
                 if let Some(name_str) = &name
                     && !name_str.is_empty()
                     && Some(name_str) != location.as_ref()
                 {
-                    self.resources.insert(name_str.clone(), resolved_loc);
+                    resources.insert(name_str.clone(), resolved_loc);
                 }
             }
         }
 
-        self.resources_indexed = true;
-        Ok(())
+        resources
     }
 
-    /// Index anchor entities to build anchor_name → uri/position maps.
-    ///
-    /// This enables resolution of both external and internal links where
-    /// `link_to` contains an anchor name.
-    fn index_anchor_entities(&mut self) -> crate::Result<()> {
-        if self.anchors_indexed {
-            return Ok(());
-        }
+    /// The anchor indexes (external uri map + internal position map), built
+    /// on first use. Enables resolution of both external and internal links
+    /// where `link_to` contains an anchor name.
+    fn anchor_index(&self) -> &AnchorIndex {
+        self.anchors.get_or_init(|| self.build_anchor_index())
+    }
 
+    fn build_anchor_index(&self) -> AnchorIndex {
         // Find all anchor entities (type $266)
         let locs: Vec<_> = self
             .entities
@@ -1055,32 +1037,19 @@ impl KfxImporter {
             }
         }
 
-        if !new_external.is_empty() {
-            let anchors = Arc::make_mut(&mut self.anchors);
-            for (name, uri) in new_external {
-                anchors.insert(name, uri);
-            }
+        AnchorIndex {
+            external: Arc::new(new_external.into_iter().collect()),
+            internal: Arc::new(new_internal.into_iter().collect()),
         }
-        if !new_internal.is_empty() {
-            let internal_anchors = Arc::make_mut(&mut self.internal_anchors);
-            for (name, pos) in new_internal {
-                internal_anchors.insert(name, pos);
-            }
-        }
-
-        self.anchors_indexed = true;
-        Ok(())
     }
 
-    /// Index style entities to build style_name → properties map.
-    ///
-    /// This enables resolution of style references in storyline elements.
-    /// Style entities ($157) contain properties like font_weight, text_alignment, margins, etc.
-    fn index_styles(&mut self) -> crate::Result<()> {
-        if self.styles_indexed {
-            return Ok(());
-        }
+    /// The style_name → properties index, built on first use. Style entities
+    /// ($157) contain properties like font_weight, text_alignment, margins.
+    fn style_index(&self) -> &Arc<StyleIndex> {
+        self.styles.get_or_init(|| Arc::new(self.build_style_index()))
+    }
 
+    fn build_style_index(&self) -> StyleIndex {
         // Find all style entities (type $157)
         let locs: Vec<_> = self
             .entities
@@ -1113,14 +1082,17 @@ impl KfxImporter {
             }
         }
 
-        if !new_styles.is_empty() {
-            let styles = Arc::make_mut(&mut self.styles);
-            for (name, props) in new_styles {
-                styles.insert(name, props);
-            }
-        }
-
-        self.styles_indexed = true;
-        Ok(())
+        new_styles.into_iter().collect()
     }
+}
+
+/// style_name → raw Ion property fields, from style entities ($157).
+type StyleIndex = HashMap<String, Vec<(u64, IonValue)>>;
+
+/// Anchor lookup tables built from anchor entities ($266).
+struct AnchorIndex {
+    /// anchor_name → external URI.
+    external: Arc<HashMap<String, String>>,
+    /// anchor_name → (position_id, offset) for internal links.
+    internal: Arc<HashMap<String, (i64, i64)>>,
 }

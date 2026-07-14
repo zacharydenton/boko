@@ -132,13 +132,16 @@ impl BookContext {
                 .unwrap_or("unknown.xhtml")
                 .to_string();
             let data = book.load_raw(entry.id)?;
-            resources.insert(
-                href.clone(),
-                Resource {
-                    data,
-                    media_type: "application/xhtml+xml",
-                },
-            );
+            // Guess from the extension so a non-XHTML spine item (SVG-in-spine
+            // is legal EPUB) keeps its real type and is routed to resource
+            // records, not the text/chunker pipeline; fall back to XHTML only
+            // for unknown/extensionless names (matching the pre-dedup
+            // behavior, where the asset pass's guess took precedence).
+            let media_type = match guess_media_type(&href) {
+                "application/octet-stream" => "application/xhtml+xml",
+                other => other,
+            };
+            resources.insert(href.clone(), Resource { data, media_type });
             spine.push(SpineItem { href });
         }
 

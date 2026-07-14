@@ -364,6 +364,12 @@ fn resolve_relative_path(base: &str, relative: &str) -> String {
         return normalize_separators(format!("{}{}", base, relative));
     }
 
+    // Normalize backslashes BEFORE splitting on '/': `..\styles\main.css`
+    // from Windows-authored content must split into components, or the `..`
+    // survives as a literal segment and the archive lookup silently misses.
+    let base = normalize_separators(base.to_string());
+    let relative = normalize_separators(relative.to_string());
+
     // Get the directory of the base path
     let base_dir = base.rsplit_once('/').map_or("", |(dir, _)| dir);
 

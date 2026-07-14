@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use crate::dom::Stylesheet;
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
@@ -60,6 +60,10 @@ pub struct Azw3Importer {
 
     /// Cached decompressed text (loaded on first chapter request).
     text_cache: OnceLock<Vec<u8>>,
+
+    /// Serializes the first text extraction: parallel chapter loads would
+    /// otherwise each decompress the whole book before the OnceLock settles.
+    text_init: Mutex<()>,
 
     /// Cached chapter content.
     chapter_cache: RwLock<HashMap<u32, Vec<u8>>>,
@@ -257,9 +261,14 @@ impl Azw3Importer {
         if let Some(text) = self.text_cache.get() {
             return Ok(text);
         }
+        // Hold the init lock across extraction so N parallel chapter loads
+        // don't each decompress the entire book; losers of the race re-check
+        // and find the cache populated.
+        let _guard = self.text_init.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(text) = self.text_cache.get() {
+            return Ok(text);
+        }
         let text = self.extract_text()?;
-        // A concurrent extraction may have won the race; either value is
-        // identical, so whichever landed first is used.
         Ok(self.text_cache.get_or_init(|| text))
     }
 }
@@ -488,6 +497,7 @@ impl Azw3Importer {
                 elems,
             },
             text_cache: OnceLock::new(),
+            text_init: Mutex::new(()),
             chapter_cache: RwLock::new(HashMap::new()),
             assets: Vec::new(),
             css_cache: RwLock::new(HashMap::new()),
