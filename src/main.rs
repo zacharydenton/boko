@@ -866,35 +866,9 @@ fn collect_styles(chapter: &Chapter) -> Vec<StyleInfo> {
 }
 
 fn role_to_string(role: Role) -> String {
-    match role {
-        Role::Text => "Text".to_string(),
-        Role::Paragraph => "Paragraph".to_string(),
-        Role::Heading(level) => format!("Heading({level})"),
-        Role::Container => "Container".to_string(),
-        Role::Image => "Image".to_string(),
-        Role::Link => "Link".to_string(),
-        Role::OrderedList => "OrderedList".to_string(),
-        Role::UnorderedList => "UnorderedList".to_string(),
-        Role::ListItem => "ListItem".to_string(),
-        Role::Table => "Table".to_string(),
-        Role::TableHead => "TableHead".to_string(),
-        Role::TableBody => "TableBody".to_string(),
-        Role::TableRow => "TableRow".to_string(),
-        Role::TableCell => "TableCell".to_string(),
-        Role::Sidebar => "Sidebar".to_string(),
-        Role::Footnote => "Footnote".to_string(),
-        Role::Figure => "Figure".to_string(),
-        Role::Inline => "Inline".to_string(),
-        Role::BlockQuote => "BlockQuote".to_string(),
-        Role::Root => "Root".to_string(),
-        Role::Break => "Break".to_string(),
-        Role::Rule => "Rule".to_string(),
-        Role::DefinitionList => "DefinitionList".to_string(),
-        Role::DefinitionTerm => "DefinitionTerm".to_string(),
-        Role::DefinitionDescription => "DefinitionDescription".to_string(),
-        Role::CodeBlock => "CodeBlock".to_string(),
-        Role::Caption => "Caption".to_string(),
-    }
+    // The derived Debug output matches the names this hand-written match
+    // produced, and stays exhaustive as `Role` (non_exhaustive) grows.
+    format!("{role:?}")
 }
 
 fn truncate_text(text: &str, max_chars: usize) -> String {

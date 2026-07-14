@@ -202,7 +202,7 @@ fn process_img_tag(
         if let Some(&res_idx) = resource_map.get(&resolved) {
             let mime = book_resources
                 .get(&resolved)
-                .map(|r| r.media_type.as_str())
+                .map(|r| r.media_type)
                 .unwrap_or("image/jpeg");
 
             let mut base32_buf = [0u8; 4];

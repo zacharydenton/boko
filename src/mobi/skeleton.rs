@@ -276,6 +276,10 @@ impl Chunker {
         let mut aid_offset_map = HashMap::new();
         let finder = memmem::Finder::new(b" aid=\"");
         let mut search_pos = 0;
+        // Aids are discovered in ascending offset order and chunks are sorted
+        // by insert_pos, so a persistent cursor resolves each aid without
+        // rescanning the chunk table (previously O(aids × chunks)).
+        let mut chunk_cursor = 0usize;
 
         while let Some(rel_pos) = finder.find(&text[search_pos..]) {
             let offset = search_pos + rel_pos;
@@ -298,27 +302,28 @@ impl Chunker {
                     let (seq_num, offset_in_chunk) = if chunk_table.is_empty() {
                         (0usize, offset)
                     } else {
-                        let mut resolved: Option<(usize, usize)> = None;
-                        for chunk in chunk_table {
-                            let chunk_start = chunk.insert_pos;
-                            let chunk_end = chunk_start + chunk.length;
-                            if offset >= chunk_start && offset < chunk_end {
-                                resolved = Some((chunk.sequence_number, offset - chunk_start));
+                        // Advance to the first chunk that ends after `offset`.
+                        while chunk_cursor < chunk_table.len() {
+                            let c = &chunk_table[chunk_cursor];
+                            if c.insert_pos + c.length > offset {
                                 break;
                             }
-                            if chunk_start > offset {
-                                // Aid is in a skeleton before this chunk —
-                                // use this chunk with in-chunk offset 0.
-                                resolved = Some((chunk.sequence_number, 0));
-                                break;
+                            chunk_cursor += 1;
+                        }
+                        match chunk_table.get(chunk_cursor) {
+                            // Chunk contains the aid.
+                            Some(chunk) if offset >= chunk.insert_pos => {
+                                (chunk.sequence_number, offset - chunk.insert_pos)
+                            }
+                            // Aid is in a skeleton before this chunk — use
+                            // this chunk with in-chunk offset 0.
+                            Some(chunk) => (chunk.sequence_number, 0),
+                            // Past every chunk: point to the last chunk's end.
+                            None => {
+                                let last = chunk_table.last().expect("chunk_table non-empty here");
+                                (last.sequence_number, last.length.saturating_sub(1))
                             }
                         }
-                        // If the aid is past every chunk, point to the last
-                        // chunk's end.
-                        resolved.unwrap_or_else(|| {
-                            let last = chunk_table.last().expect("chunk_table non-empty here");
-                            (last.sequence_number, last.length.saturating_sub(1))
-                        })
                     };
 
                     aid_offset_map.insert(aid, (seq_num, offset_in_chunk, offset));

@@ -16,18 +16,16 @@ pub fn user_agent_stylesheet() -> Stylesheet {
     (*user_agent_stylesheet_arc()).clone()
 }
 
-/// Shared handle to the per-thread UA stylesheet. Cloning the `Arc` is a
+/// Shared handle to the process-wide UA stylesheet. Cloning the `Arc` is a
 /// refcount bump; use this instead of [`user_agent_stylesheet`] anywhere the
 /// per-chapter hot path would otherwise deep-clone the parsed rules.
 pub(crate) fn user_agent_stylesheet_arc() -> std::sync::Arc<Stylesheet> {
     // The UA stylesheet is a constant, but `compile_html` is called once per
-    // chapter, so parsing UA_CSS every time is pure redundant work. Parse it
-    // once per thread and share it behind an Arc.
-    thread_local! {
-        static UA_STYLESHEET: std::sync::Arc<Stylesheet> =
-            std::sync::Arc::new(Stylesheet::parse(UA_CSS));
-    }
-    UA_STYLESHEET.with(|ua| ua.clone())
+    // chapter (now potentially from many rayon workers), so parse UA_CSS
+    // exactly once for the whole process.
+    static UA_STYLESHEET: std::sync::LazyLock<std::sync::Arc<Stylesheet>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(Stylesheet::parse(UA_CSS)));
+    UA_STYLESHEET.clone()
 }
 
 /// Context for the transform operation.
@@ -174,13 +172,14 @@ impl<'a> TransformContext<'a> {
                     })
                     .unwrap_or(false);
 
-                // Normalize whitespace unless we're in a pre-like context
-                let text_content = if preserve_whitespace {
-                    text.to_string()
+                // Normalize whitespace unless we're in a pre-like context.
+                // Both paths append straight into the chapter's text buffer,
+                // avoiding an intermediate per-text-node String.
+                let range = if preserve_whitespace {
+                    self.chapter.append_text(text)
                 } else {
-                    normalize_whitespace(text)
+                    self.chapter.append_text_normalized(text)
                 };
-                let range = self.chapter.append_text(&text_content);
                 // Text nodes don't have styles - they inherit from parent element
                 let text_node = Node::text(range);
                 let ir_id = self.chapter.alloc_node(text_node);
@@ -308,30 +307,6 @@ impl<'a> TransformContext<'a> {
 pub fn transform(dom: &ArenaDom, stylesheets: &[(&Stylesheet, Origin)]) -> Chapter {
     let ctx = TransformContext::new(dom, stylesheets);
     ctx.transform()
-}
-
-/// Normalize whitespace in text content according to HTML rules.
-///
-/// Collapses runs of whitespace (spaces, tabs, newlines) to single spaces.
-/// This matches standard HTML text content normalization.
-fn normalize_whitespace(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut prev_was_whitespace = false;
-
-    for c in text.chars() {
-        if c.is_whitespace() {
-            if !prev_was_whitespace {
-                result.push(' ');
-                prev_was_whitespace = true;
-            }
-            // Skip consecutive whitespace
-        } else {
-            result.push(c);
-            prev_was_whitespace = false;
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]

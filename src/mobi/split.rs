@@ -338,11 +338,32 @@ fn split_at_ncx_anchors(body: &str, positions: &[u32]) -> Vec<String> {
 
     let body_bytes = body.as_bytes();
 
-    // Find byte offsets of each NCX anchor in the body
+    // Find byte offsets of each NCX anchor in a single scan. Searching the
+    // whole body once per position (needle `id="fileposN"`) is
+    // O(positions × body); instead scan for `id="filepos` once, parse the
+    // number, and check membership. Each position matches only its first
+    // occurrence, like the per-needle `find` did.
+    let mut wanted: rustc_hash::FxHashSet<u32> = positions.iter().copied().collect();
     let mut split_offsets = Vec::new();
-    for &pos in positions {
-        let needle = format!("id=\"filepos{}\"", pos);
-        if let Some(id_offset) = body.find(&needle) {
+    const PREFIX: &[u8] = b"id=\"filepos";
+    let finder = memchr::memmem::Finder::new(PREFIX);
+    let mut at = 0;
+    while let Some(rel) = finder.find(&body_bytes[at..]) {
+        let id_offset = at + rel;
+        let digits_start = id_offset + PREFIX.len();
+        let mut end = digits_start;
+        while end < body_bytes.len() && body_bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        // Match the exact needle shape: canonical decimal (no leading zeros)
+        // followed by the closing quote.
+        let canonical = end > digits_start
+            && (body_bytes[digits_start] != b'0' || end == digits_start + 1);
+        if canonical
+            && body_bytes.get(end) == Some(&b'"')
+            && let Ok(pos) = body[digits_start..end].parse::<u32>()
+            && wanted.remove(&pos)
+        {
             // Scan backward to find the opening '<' of the enclosing tag
             let tag_start = body_bytes[..id_offset]
                 .iter()
@@ -352,6 +373,7 @@ fn split_at_ncx_anchors(body: &str, positions: &[u32]) -> Vec<String> {
                 split_offsets.push(tag_start);
             }
         }
+        at = digits_start;
     }
 
     split_offsets.sort_unstable();

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use zip::ZipArchive;
 
@@ -53,8 +53,9 @@ pub struct EpubImporter {
     /// All asset paths in the ZIP.
     assets: Vec<PathBuf>,
 
-    /// Cached parsed stylesheets.
-    css_cache: HashMap<String, Arc<Stylesheet>>,
+    /// Cached parsed stylesheets. Behind a lock so parallel chapter
+    /// compilation ([`Importer::load_chapters`]) can share it through `&self`.
+    css_cache: RwLock<HashMap<String, Arc<Stylesheet>>>,
 
     // --- Link resolution ---
     /// Maps path (without fragment) -> ChapterId
@@ -123,15 +124,37 @@ impl Importer for EpubImporter {
     }
 
     fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
-        let key = path.to_string_lossy().replace('\\', "/");
-        if let Some(sheet) = self.css_cache.get(&key) {
-            return Some(Arc::clone(sheet));
+        self.load_stylesheet_shared(path)
+    }
+
+    fn load_chapters(&mut self, ids: &[ChapterId]) -> Vec<crate::Result<Chapter>> {
+        // Everything a chapter load needs is `&self` here (random-access ZIP
+        // reads, the locked CSS cache), so chapters compile in parallel: the
+        // HTML parse + CSS cascade + IR transform dominate cold conversion.
+        let load_one = |id: &ChapterId| -> crate::Result<Chapter> {
+            let path =
+                self.spine_paths
+                    .get(id.0 as usize)
+                    .ok_or_else(|| crate::Error::NotFound {
+                        what: format!("chapter {}", id.0),
+                    })?;
+            let html_bytes = self.read_entry(path)?;
+            Ok(crate::import::compile_chapter_html(
+                &html_bytes,
+                Some(path),
+                &mut |css_path| self.load_stylesheet_shared(css_path),
+            ))
+        };
+
+        #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+        {
+            use rayon::prelude::*;
+            ids.par_iter().map(load_one).collect()
         }
-        let css_bytes = self.load_asset(path).ok()?;
-        let css_str = String::from_utf8_lossy(&css_bytes);
-        let sheet = Arc::new(Stylesheet::parse(&css_str));
-        self.css_cache.insert(key, Arc::clone(&sheet));
-        Some(sheet)
+        #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+        {
+            ids.iter().map(load_one).collect()
+        }
     }
 
     fn index_anchors(&mut self, chapters: &[(ChapterId, Arc<Chapter>)]) {
@@ -300,13 +323,34 @@ impl EpubImporter {
             assets,
             path_to_chapter,
             anchor_map: HashMap::new(),
-            css_cache: HashMap::new(),
+            css_cache: RwLock::new(HashMap::new()),
         })
     }
 
     /// Read and decompress a ZIP entry by path.
     fn read_entry(&self, path: &str) -> crate::Result<Vec<u8>> {
         read_entry(&self.source, &self.zip_index, path)
+    }
+
+    /// Load and cache a parsed stylesheet through `&self`, so both the
+    /// `&mut self` trait method and parallel chapter compilation share the
+    /// same cache.
+    fn load_stylesheet_shared(&self, path: &Path) -> Option<Arc<Stylesheet>> {
+        let key = path.to_string_lossy().replace('\\', "/");
+        if let Ok(cache) = self.css_cache.read()
+            && let Some(sheet) = cache.get(&key)
+        {
+            return Some(Arc::clone(sheet));
+        }
+        let css_bytes = self.read_entry(&key).ok()?;
+        let css_str = String::from_utf8_lossy(&css_bytes);
+        let sheet = Arc::new(Stylesheet::parse(&css_str));
+        // Two threads may race to parse the same sheet; the first insert wins
+        // so every chapter ends up sharing one Arc.
+        match self.css_cache.write() {
+            Ok(mut cache) => Some(Arc::clone(cache.entry(key).or_insert(sheet))),
+            Err(_) => Some(sheet),
+        }
     }
 }
 

@@ -7,23 +7,24 @@
 //!
 //! [`Book`]: crate::Book
 
-use std::fmt;
-
 use crate::model::Format;
 
 /// Errors produced by boko's importers, exporters, and `Book` API.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// Underlying I/O failure (file access, writer errors).
-    Io(std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     /// The input doesn't match any supported format, or the format doesn't
     /// support the requested direction (e.g. writing MOBI).
+    #[error("unsupported format: {detail}")]
     UnsupportedFormat {
         /// Human-readable explanation of what was unsupported.
         detail: String,
     },
     /// The input claims to be `format` but its structure is invalid.
+    #[error("malformed {format:?} input: {context}")]
     Malformed {
         /// The format the input claimed to be.
         format: Format,
@@ -31,8 +32,10 @@ pub enum Error {
         context: String,
     },
     /// The input is DRM-protected / encrypted; boko does not decrypt.
+    #[error("{0:?} file is DRM-protected; boko does not decrypt")]
     DrmProtected(Format),
     /// A referenced chapter, asset, or resource does not exist.
+    #[error("not found: {what}")]
     NotFound {
         /// The missing chapter, asset, or resource.
         what: String,
@@ -41,43 +44,6 @@ pub enum Error {
 
 /// Convenience alias used throughout boko's public API.
 pub type Result<T> = std::result::Result<T, Error>;
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Io(e) => write!(f, "I/O error: {}", e),
-            Error::UnsupportedFormat { detail } => {
-                write!(f, "unsupported format: {}", detail)
-            }
-            Error::Malformed { format, context } => {
-                write!(f, "malformed {:?} input: {}", format, context)
-            }
-            Error::DrmProtected(format) => {
-                write!(
-                    f,
-                    "{:?} file is DRM-protected; boko does not decrypt",
-                    format
-                )
-            }
-            Error::NotFound { what } => write!(f, "not found: {}", what),
-        }
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Error::Io(e)
-    }
-}
 
 /// Compat shim: lets callers that still want `io::Result` convert back.
 impl From<Error> for std::io::Error {

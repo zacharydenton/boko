@@ -48,7 +48,7 @@ pub fn export_to_bytes(book: &mut Book, format: Format) -> Vec<u8> {
         Format::Markdown => boko::export::MarkdownExporter::new()
             .export(book, &mut buf)
             .expect("markdown export"),
-        Format::Mobi => panic!("MOBI is export-only-unsupported"),
+        other => panic!("unsupported export format {other:?}"),
     }
     buf.into_inner()
 }

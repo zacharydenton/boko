@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use rustc_hash::FxHashMap;
+
 use crate::import::ChapterId;
 use crate::model::{GlobalNodeId, LandmarkType, NodeId, TocEntry};
 use crate::style::StyleId;
@@ -599,11 +601,11 @@ pub struct ExportContext {
 
     /// Position map: (ChapterId, NodeId) → Position.
     /// Populated during Pass 1 survey for landmark resolution.
-    pub position_map: HashMap<(ChapterId, NodeId), Position>,
+    pub position_map: FxHashMap<(ChapterId, NodeId), Position>,
 
     /// Chapter to fragment ID mapping.
     /// Populated during Pass 1 to resolve section references.
-    pub chapter_fragments: HashMap<ChapterId, u64>,
+    pub chapter_fragments: FxHashMap<ChapterId, u64>,
 
     /// Current chapter being processed.
     current_chapter: Option<ChapterId>,
@@ -616,7 +618,7 @@ pub struct ExportContext {
 
     /// Path to fragment ID mapping.
     /// Maps source file paths (e.g., "chapter1.xhtml") to fragment IDs.
-    pub path_to_fragment: HashMap<String, u64>,
+    pub path_to_fragment: FxHashMap<String, u64>,
 
     /// Default style symbol ID.
     /// All storyline elements reference this style for Kindle rendering.
@@ -628,7 +630,7 @@ pub struct ExportContext {
     /// Memo for `register_style_id`: chapter-local StyleId → KFX style symbol.
     /// StyleIds are only meaningful within one chapter's StylePool, so this
     /// is cleared by `begin_chapter`.
-    ir_style_memo: HashMap<StyleId, u64>,
+    ir_style_memo: FxHashMap<StyleId, u64>,
 
     /// Anchor registry for link target resolution.
     pub anchor_registry: AnchorRegistry,
@@ -713,15 +715,15 @@ impl ExportContext {
             section_ids: Vec::new(),
             text_accumulator: TextAccumulator::new(),
             current_content_name: 0,
-            position_map: HashMap::new(),
-            chapter_fragments: HashMap::new(),
+            position_map: FxHashMap::default(),
+            chapter_fragments: FxHashMap::default(),
             current_chapter: None,
             current_fragment_id: 0,
             current_text_offset: 0,
-            path_to_fragment: HashMap::new(),
+            path_to_fragment: FxHashMap::default(),
             default_style_symbol,
             style_registry: StyleRegistry::new(default_style_symbol),
-            ir_style_memo: HashMap::new(),
+            ir_style_memo: FxHashMap::default(),
             anchor_registry: AnchorRegistry::new(),
             landmark_fragments: HashMap::new(),
             nav_container_symbols: NavContainerSymbols::default(),

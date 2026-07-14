@@ -41,6 +41,9 @@ bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 # arena ids, symbol tables) whose keys are not attacker-chosen for collision.
 rustc-hash = "2.1"
 
+# Derive Display/Error/From for the typed error enum (compile-time only).
+thiserror = "2"
+
 html5ever = "0.39"
 cssparser = "0.36"
 selectors = "0.35"

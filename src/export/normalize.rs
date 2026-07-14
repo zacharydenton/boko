@@ -25,7 +25,6 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use std::io;
 use std::sync::Arc;
 
 use crate::import::ChapterId;
@@ -269,7 +268,7 @@ fn rewrite_document_hrefs(
 /// # Returns
 ///
 /// A `NormalizedContent` containing all normalized data ready for export.
-pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
+pub fn normalize_book(book: &mut Book) -> crate::Result<NormalizedContent> {
     let spine: Vec<_> = book.spine().to_vec();
 
     // =========================================================================
@@ -282,14 +281,17 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
     let mut source_to_output: HashMap<String, String> = HashMap::new();
     let mut anchor_to_output: HashMap<String, String> = HashMap::new();
 
-    for (idx, entry) in spine.iter().enumerate() {
+    // Compile every spine chapter up front as one batch — importers with
+    // thread-safe IO (EPUB) parallelize the HTML parse + cascade + IR
+    // transform across chapters, which dominates cold conversion.
+    let spine_ids: Vec<ChapterId> = spine.iter().map(|e| e.id).collect();
+    let loaded = book.load_chapters_cached(&spine_ids)?;
+
+    for ((idx, entry), chapter) in spine.iter().enumerate().zip(loaded) {
         let source_path = book
             .source_id(entry.id)
             .unwrap_or("unknown.xhtml")
             .to_string();
-
-        // Load chapter as IR (using cache for efficiency)
-        let chapter = book.load_chapter_cached(entry.id)?;
 
         // Merge styles into global pool
         global_styles.merge(idx, &chapter);
@@ -321,10 +323,13 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
     // Pass 2: Synthesize XHTML with remapped styles
     // =========================================================================
 
-    let mut chapters = Vec::with_capacity(ir_chapters.len());
-    let mut all_assets = HashSet::new();
-
-    for (idx, (chapter_id, source_path, ir)) in ir_chapters.iter().enumerate() {
+    // Each chapter's synthesis reads only shared immutable state, so this
+    // fans out across chapters when the `parallel` feature is on.
+    let synthesize_one = |(idx, (chapter_id, source_path, ir)): (
+        usize,
+        &(ChapterId, String, Arc<Chapter>),
+    )|
+     -> (ChapterContent, HashSet<String>) {
         // Build remapped style map for this chapter
         let mut remapped_class_list: Vec<Option<&str>> = vec![None; ir.styles.len()];
         for (local_id, _) in ir.styles.iter() {
@@ -348,18 +353,38 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
             Some("style.css"),
         );
 
-        // Collect assets
-        all_assets.extend(result.assets);
-
         // Rewrite internal links to target the emitted chapter files.
         let document =
             rewrite_document_hrefs(&result.body, source_path, &source_to_output, &anchor_to_output);
 
-        chapters.push(ChapterContent {
-            id: *chapter_id,
-            source_path: source_path.clone(),
-            document,
-        });
+        (
+            ChapterContent {
+                id: *chapter_id,
+                source_path: source_path.clone(),
+                document,
+            },
+            result.assets,
+        )
+    };
+
+    #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+    let synthesized: Vec<(ChapterContent, HashSet<String>)> = {
+        use rayon::prelude::*;
+        ir_chapters
+            .par_iter()
+            .enumerate()
+            .map(synthesize_one)
+            .collect()
+    };
+    #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
+    let synthesized: Vec<(ChapterContent, HashSet<String>)> =
+        ir_chapters.iter().enumerate().map(synthesize_one).collect();
+
+    let mut chapters = Vec::with_capacity(synthesized.len());
+    let mut all_assets = HashSet::new();
+    for (content, assets) in synthesized {
+        all_assets.extend(assets);
+        chapters.push(content);
     }
 
     Ok(NormalizedContent {

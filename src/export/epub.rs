@@ -4,13 +4,15 @@
 
 use std::collections::HashMap;
 use std::io::{self, Seek, Write};
-use std::path::Path;
 
 use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::model::{Book, TocEntry};
+use crate::util::guess_media_type;
+
+use super::html_synth::escape_xml;
 
 use super::Exporter;
 
@@ -79,7 +81,7 @@ impl Exporter for EpubExporter {
 
 impl EpubExporter {
     /// Export with passthrough mode (preserves original HTML/CSS).
-    fn export_raw<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
+    fn export_raw<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> crate::Result<()> {
         // Resolve TOC fragments before we generate the NCX. AZW3 and MOBI
         // importers leave TOC entries with bare chapter hrefs until
         // `resolve_toc()` populates the `#fileposN` / `#id` suffix from the
@@ -134,7 +136,7 @@ impl EpubExporter {
             manifest_items.push(ManifestItem {
                 id: id.clone(),
                 href: filename,
-                media_type: "application/xhtml+xml".to_string(),
+                media_type: "application/xhtml+xml",
                 properties: None,
             });
             spine_refs.push(id);
@@ -258,7 +260,7 @@ impl EpubExporter {
             manifest_items.push(ManifestItem {
                 id: "stylesheet".to_string(),
                 href: "OEBPS/style.css".to_string(),
-                media_type: "text/css".to_string(),
+                media_type: "text/css",
                 properties: None,
             });
         }
@@ -271,7 +273,7 @@ impl EpubExporter {
             manifest_items.push(ManifestItem {
                 id: id.clone(),
                 href,
-                media_type: "application/xhtml+xml".to_string(),
+                media_type: "application/xhtml+xml",
                 properties: None,
             });
             spine_refs.push(id);
@@ -281,7 +283,7 @@ impl EpubExporter {
         manifest_items.push(ManifestItem {
             id: "nav".to_string(),
             href: "OEBPS/nav.xhtml".to_string(),
-            media_type: "application/xhtml+xml".to_string(),
+            media_type: "application/xhtml+xml",
             properties: Some("nav"),
         });
 
@@ -408,7 +410,7 @@ const CONTAINER_XML: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 struct ManifestItem {
     id: String,
     href: String,
-    media_type: String,
+    media_type: &'static str,
     /// Optional OPF `properties` (e.g. `nav`, `cover-image`).
     properties: Option<&'static str>,
 }
@@ -622,7 +624,7 @@ fn generate_opf(
             "    <item id=\"{}\" href=\"{}\" media-type=\"{}\"{}/>\n",
             escape_xml(&item.id),
             escape_xml(href),
-            escape_xml(&item.media_type),
+            escape_xml(item.media_type),
             properties,
         ));
     }
@@ -764,46 +766,11 @@ fn write_nav_list(doc: &mut String, entries: &[TocEntry], indent: usize) {
     doc.push_str("</ol>\n");
 }
 
-/// Escape XML special characters.
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 /// Sanitize a path for use in ZIP (remove leading slashes, normalize).
 fn sanitize_path(path: &str) -> String {
     path.trim_start_matches('/')
         .replace('\\', "/")
         .replace("//", "/")
-}
-
-/// Guess media type from file extension.
-fn guess_media_type(path: &str) -> String {
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    match ext.as_str() {
-        "xhtml" | "html" | "htm" => "application/xhtml+xml".to_string(),
-        "css" => "text/css".to_string(),
-        "js" => "application/javascript".to_string(),
-        "jpg" | "jpeg" => "image/jpeg".to_string(),
-        "png" => "image/png".to_string(),
-        "gif" => "image/gif".to_string(),
-        "svg" => "image/svg+xml".to_string(),
-        "ttf" => "font/ttf".to_string(),
-        "otf" => "font/otf".to_string(),
-        "woff" => "font/woff".to_string(),
-        "woff2" => "font/woff2".to_string(),
-        "ncx" => "application/x-dtbncx+xml".to_string(),
-        "opf" => "application/oebps-package+xml".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
 }
 
 #[cfg(test)]

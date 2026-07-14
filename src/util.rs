@@ -354,6 +354,36 @@ pub fn detect_media_format(path: &str, data: &[u8]) -> MediaFormat {
     MediaFormat::Binary
 }
 
+/// Guess a media type (MIME) from a file extension.
+///
+/// The single source of truth for extension→MIME mapping used by the EPUB
+/// and AZW3 exporters (previously duplicated, and drifting, in both).
+pub(crate) fn guess_media_type(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match ext.as_str() {
+        "xhtml" | "html" | "htm" => "application/xhtml+xml",
+        "css" => "text/css",
+        "js" => "application/javascript",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ncx" => "application/x-dtbncx+xml",
+        "opf" => "application/oebps-package+xml",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Strip invisible formatting characters used in ebooks.
 ///
 /// Removes:

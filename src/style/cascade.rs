@@ -16,13 +16,20 @@ use super::style_pool::StylePool;
 use super::types::ComputedStyle;
 use crate::dom::element_ref::{BokoSelectors, ElementRef};
 
-/// A matched rule with ordering information for the cascade.
+/// A matched declaration with ordering information for the cascade.
+///
+/// Stores indices into the cascade index's stylesheets rather than borrowing
+/// the `Declaration` so the buffer can live in [`CascadeScratch`] and be
+/// reused across every element of a chapter instead of reallocating per
+/// element.
 #[derive(Debug)]
-struct MatchedRule<'a> {
-    declaration: &'a Declaration,
+struct MatchedDecl {
+    sheet: u32,
+    rule: u32,
+    decl: u32,
     origin: Origin,
     specificity: Specificity,
-    order: usize,
+    order: u32,
     important: bool,
 }
 
@@ -127,6 +134,7 @@ fn selector_bucket_key(selector: &Selector<BokoSelectors>) -> BucketKey {
 pub struct CascadeScratch {
     caches: SelectorCaches,
     candidates: Vec<RuleRef>,
+    matched: Vec<MatchedDecl>,
 }
 
 /// A selector-bucketed view of a set of stylesheets, so that computing styles
@@ -237,12 +245,14 @@ pub fn compute_styles_indexed(
     _style_pool: &mut StylePool,
     scratch: &mut CascadeScratch,
 ) -> ComputedStyle {
-    // Pre-allocate with typical capacity (most elements match 5-20 declarations)
-    let mut matched: Vec<MatchedRule> = Vec::with_capacity(16);
-    let mut order = 0;
-
-    let CascadeScratch { caches, candidates } = scratch;
+    let CascadeScratch {
+        caches,
+        candidates,
+        matched,
+    } = scratch;
     index.candidate_rules(elem, candidates);
+    matched.clear();
+    let mut order: u32 = 0;
 
     // Candidate rules are already in source order, so `order` reproduces the
     // exhaustive-scan cascade exactly.
@@ -251,9 +261,11 @@ pub fn compute_styles_indexed(
         let rule = &stylesheet.rules[rule_idx as usize];
         if let Some(specificity) = rule_match_specificity(elem, rule, caches) {
             // Collect normal declarations
-            for decl in &rule.declarations {
-                matched.push(MatchedRule {
-                    declaration: decl,
+            for decl_idx in 0..rule.declarations.len() {
+                matched.push(MatchedDecl {
+                    sheet: sheet_idx,
+                    rule: rule_idx,
+                    decl: decl_idx as u32,
                     origin,
                     specificity,
                     order,
@@ -262,9 +274,11 @@ pub fn compute_styles_indexed(
                 order += 1;
             }
             // Collect important declarations
-            for decl in &rule.important_declarations {
-                matched.push(MatchedRule {
-                    declaration: decl,
+            for decl_idx in 0..rule.important_declarations.len() {
+                matched.push(MatchedDecl {
+                    sheet: sheet_idx,
+                    rule: rule_idx,
+                    decl: decl_idx as u32,
                     origin,
                     specificity,
                     order,
@@ -316,8 +330,15 @@ pub fn compute_styles_indexed(
     };
 
     // Apply matched declarations in cascade order
-    for matched_rule in &matched {
-        apply_declaration(&mut style, matched_rule.declaration);
+    for m in matched.iter() {
+        let (stylesheet, _) = index.stylesheets[m.sheet as usize];
+        let rule = &stylesheet.rules[m.rule as usize];
+        let decl = if m.important {
+            &rule.important_declarations[m.decl as usize]
+        } else {
+            &rule.declarations[m.decl as usize]
+        };
+        apply_declaration(&mut style, decl);
     }
 
     style

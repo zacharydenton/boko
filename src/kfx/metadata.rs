@@ -261,53 +261,20 @@ pub struct MetadataContext<'a> {
 ///
 /// Format: 23-character URL-safe Base64 (version byte + 16 derived bytes)
 pub fn generate_book_id(identifier: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use base64::Engine;
 
     // Version prefix (0x05 based on reference KFX files)
     let mut bytes = vec![0x05u8];
 
-    // Hash the identifier to get deterministic bytes
-    let mut hasher = DefaultHasher::new();
-    identifier.hash(&mut hasher);
-    let hash1 = hasher.finish();
-    // Hash again with salt for more bytes
-    "boko-book-id".hash(&mut hasher);
-    let hash2 = hasher.finish();
-
-    bytes.extend_from_slice(&hash1.to_le_bytes());
-    bytes.extend_from_slice(&hash2.to_le_bytes());
+    // Derive deterministic bytes from the identifier with a fixed algorithm.
+    // (Previously `DefaultHasher`, whose output is explicitly not guaranteed
+    // stable across Rust releases — a toolchain bump would silently change
+    // every "stable" book ID.)
+    let digest = sha1_smol::Sha1::from(identifier.as_bytes()).digest().bytes();
+    bytes.extend_from_slice(&digest[..16]);
 
     // URL-safe Base64 encode (no padding), 17 bytes → 23 chars
-    base64_url_encode(&bytes[..17])
-}
-
-/// URL-safe Base64 encoding without padding.
-fn base64_url_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    let mut result = String::new();
-    let mut bits: u32 = 0;
-    let mut bit_count = 0;
-
-    for &byte in bytes {
-        bits = (bits << 8) | byte as u32;
-        bit_count += 8;
-
-        while bit_count >= 6 {
-            bit_count -= 6;
-            let idx = ((bits >> bit_count) & 0x3F) as usize;
-            result.push(ALPHABET[idx] as char);
-        }
-    }
-
-    // Handle remaining bits (no padding)
-    if bit_count > 0 {
-        let idx = ((bits << (6 - bit_count)) & 0x3F) as usize;
-        result.push(ALPHABET[idx] as char);
-    }
-
-    result
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 
 /// Build metadata entries for a category from the schema.

@@ -386,17 +386,23 @@ pub fn escape_xml(s: &str) -> String {
 }
 
 /// Escape special XML/HTML characters into an existing buffer.
+///
+/// Copies unescaped runs in bulk; text with nothing to escape (the common
+/// case) is a single `push_str`.
 pub fn escape_xml_into(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
+    let mut rest = s;
+    while let Some(i) = rest.find(['&', '<', '>', '"', '\'']) {
+        out.push_str(&rest[..i]);
+        out.push_str(match rest.as_bytes()[i] {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            _ => "&#39;",
+        });
+        rest = &rest[i + 1..];
     }
+    out.push_str(rest);
 }
 
 #[cfg(test)]

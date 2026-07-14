@@ -79,6 +79,34 @@ impl Chapter {
         TextRange::new(start, text.len() as u32)
     }
 
+    /// Append text with HTML whitespace normalization (runs of whitespace
+    /// collapse to a single space) and return the range.
+    ///
+    /// Normalizes directly into the global buffer, so already-normalized text
+    /// (the common case) is a single `memcpy` and never allocates an
+    /// intermediate `String`.
+    pub fn append_text_normalized(&mut self, text: &str) -> TextRange {
+        let start = self.text.len() as u32;
+        if is_normalized_whitespace(text) {
+            self.text.push_str(text);
+        } else {
+            self.text.reserve(text.len());
+            let mut prev_was_whitespace = false;
+            for c in text.chars() {
+                if c.is_whitespace() {
+                    if !prev_was_whitespace {
+                        self.text.push(' ');
+                        prev_was_whitespace = true;
+                    }
+                } else {
+                    self.text.push(c);
+                    prev_was_whitespace = false;
+                }
+            }
+        }
+        TextRange::new(start, self.text.len() as u32 - start)
+    }
+
     /// Get text from a range.
     pub fn text(&self, range: TextRange) -> &str {
         let start = range.start as usize;
@@ -142,6 +170,28 @@ impl Chapter {
             stack: vec![NodeId::ROOT],
         }
     }
+}
+
+/// Whether `text` is already whitespace-normalized: ASCII-only with no
+/// whitespace other than single interior spaces. The check is conservative —
+/// any non-ASCII byte falls back to the char-by-char normalization path,
+/// which handles Unicode whitespace exactly as before.
+fn is_normalized_whitespace(text: &str) -> bool {
+    let mut prev_space = false;
+    for &b in text.as_bytes() {
+        match b {
+            b' ' => {
+                if prev_space {
+                    return false;
+                }
+                prev_space = true;
+            }
+            b'\t' | b'\n' | b'\x0B' | b'\x0C' | b'\r' => return false,
+            _ if b >= 0x80 => return false,
+            _ => prev_space = false,
+        }
+    }
+    true
 }
 
 /// Iterator over children of a node.

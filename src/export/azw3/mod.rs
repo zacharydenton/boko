@@ -4,7 +4,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Seek, Write};
-use std::path::Path;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
@@ -18,6 +17,7 @@ use crate::mobi::writer_transform::{
     rewrite_css_references_fast, rewrite_html_references_fast, write_base32_4, write_base32_10,
 };
 use crate::model::{Book, Resource, TocEntry};
+use crate::util::guess_media_type;
 
 use super::Exporter;
 
@@ -105,7 +105,7 @@ struct SpineItem {
 
 impl BookContext {
     /// Collect all data from a Book into internal structures.
-    fn from_book(book: &mut Book, normalize: bool) -> io::Result<Self> {
+    fn from_book(book: &mut Book, normalize: bool) -> crate::Result<Self> {
         if normalize {
             Self::from_normalized(book)
         } else {
@@ -114,7 +114,7 @@ impl BookContext {
     }
 
     /// Collect raw (passthrough) content from the book.
-    fn from_raw(book: &mut Book) -> io::Result<Self> {
+    fn from_raw(book: &mut Book) -> crate::Result<Self> {
         // Collect metadata and TOC (these are borrowed, so clone)
         let metadata = book.metadata().clone();
         let toc = book.toc().to_vec();
@@ -151,7 +151,7 @@ impl BookContext {
                     item.href.clone(),
                     Resource {
                         data: item.data.clone(),
-                        media_type: "application/xhtml+xml".to_string(),
+                        media_type: "application/xhtml+xml",
                     },
                 );
             }
@@ -167,7 +167,7 @@ impl BookContext {
     }
 
     /// Collect normalized content from the book through IR pipeline.
-    fn from_normalized(book: &mut Book) -> io::Result<Self> {
+    fn from_normalized(book: &mut Book) -> crate::Result<Self> {
         use super::normalize::normalize_book;
 
         let normalized = normalize_book(book)?;
@@ -184,7 +184,7 @@ impl BookContext {
                 "style.css".to_string(),
                 Resource {
                     data: normalized.css.into_bytes(),
-                    media_type: "text/css".to_string(),
+                    media_type: "text/css",
                 },
             );
         }
@@ -200,7 +200,7 @@ impl BookContext {
                 href.clone(),
                 Resource {
                     data: data.clone(),
-                    media_type: "application/xhtml+xml".to_string(),
+                    media_type: "application/xhtml+xml",
                 },
             );
 
@@ -225,25 +225,3 @@ impl BookContext {
     }
 }
 
-/// Guess media type from file extension.
-fn guess_media_type(path: &str) -> String {
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    match ext.as_str() {
-        "xhtml" | "html" | "htm" => "application/xhtml+xml".to_string(),
-        "css" => "text/css".to_string(),
-        "jpg" | "jpeg" => "image/jpeg".to_string(),
-        "png" => "image/png".to_string(),
-        "gif" => "image/gif".to_string(),
-        "svg" => "image/svg+xml".to_string(),
-        "ttf" => "font/ttf".to_string(),
-        "otf" => "font/otf".to_string(),
-        "woff" => "font/woff".to_string(),
-        "woff2" => "font/woff2".to_string(),
-        _ => "application/octet-stream".to_string(),
-    }
-}

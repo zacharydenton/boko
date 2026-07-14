@@ -22,7 +22,10 @@ use crate::model::{AnchorTarget, Chapter, ResolvedLinks};
 // ============================================================================
 
 /// Ebook file format.
+///
+/// `#[non_exhaustive]`: new formats can be added without a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Format {
     /// EPUB format (EPUB 2 or 3)
     Epub,
@@ -40,7 +43,7 @@ pub enum Format {
 #[derive(Debug, Clone)]
 pub struct Resource {
     pub data: Vec<u8>,
-    pub media_type: String,
+    pub media_type: &'static str,
 }
 
 /// A contributor with optional role and sort name.
@@ -380,6 +383,54 @@ impl Book {
         Ok(chapter_arc)
     }
 
+    /// Load several chapters as IR with caching, in spine order.
+    ///
+    /// Like calling [`load_chapter_cached`](Self::load_chapter_cached) per
+    /// id, but uncached chapters are handed to the backend as one batch so
+    /// importers that support it (EPUB) compile them in parallel.
+    pub fn load_chapters_cached(
+        &mut self,
+        ids: &[ChapterId],
+    ) -> crate::Result<Vec<Arc<Chapter>>> {
+        // Collect the ids that still need compiling.
+        let missing: Vec<ChapterId> = {
+            let cache = self
+                .ir_cache
+                .read()
+                .map_err(|_| io::Error::other("IR cache lock poisoned"))?;
+            ids.iter()
+                .copied()
+                .filter(|id| !cache.contains_key(id))
+                .collect()
+        };
+
+        if !missing.is_empty() {
+            let loaded = self.backend.load_chapters(&missing);
+            let mut cache = self
+                .ir_cache
+                .write()
+                .map_err(|_| io::Error::other("IR cache lock poisoned"))?;
+            for (id, chapter) in missing.into_iter().zip(loaded) {
+                cache.insert(id, Arc::new(chapter?));
+            }
+        }
+
+        let cache = self
+            .ir_cache
+            .read()
+            .map_err(|_| io::Error::other("IR cache lock poisoned"))?;
+        ids.iter()
+            .map(|id| {
+                cache
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| crate::Error::NotFound {
+                        what: format!("chapter {}", id.0),
+                    })
+            })
+            .collect()
+    }
+
     /// Clear the IR cache.
     ///
     /// Call this to free memory after normalized export is complete.
@@ -413,7 +464,7 @@ impl Book {
     /// # Ok::<(), boko::Error>(())
     /// ```
     pub fn resolve_links(&mut self) -> crate::Result<ResolvedLinks> {
-        Ok(resolve_book_links(self)?)
+        resolve_book_links(self)
     }
 
     /// Index anchors for link resolution.

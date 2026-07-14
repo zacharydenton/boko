@@ -58,7 +58,7 @@ pub fn serialize_container(
     for entity in entities {
         entity_data.extend_from_slice(&entity.data);
     }
-    let payload_sha1 = simple_hash(&entity_data);
+    let payload_sha1 = payload_sha1(&entity_data);
 
     // Header is 18 bytes: magic(4) + version(2) + header_len(4) + ci_offset(4) + ci_len(4)
     const HEADER_SIZE: usize = 18;
@@ -176,7 +176,7 @@ pub fn create_entity_data(value: &IonValue) -> Vec<u8> {
     // ENTY header: magic(4) + version(2) + header_len(4) = 10
     let header_len = 10 + header_ion.len();
 
-    let mut data = Vec::new();
+    let mut data = Vec::with_capacity(header_len + content_ion.len());
     data.extend_from_slice(ENTITY_MAGIC);
     data.extend_from_slice(&1u16.to_le_bytes()); // version
     data.extend_from_slice(&(header_len as u32).to_le_bytes());
@@ -203,7 +203,7 @@ pub fn create_raw_media_data(raw_bytes: &[u8]) -> Vec<u8> {
     // ENTY header: magic(4) + version(2) + header_len(4) = 10
     let header_len = 10 + header_ion.len();
 
-    let mut data = Vec::new();
+    let mut data = Vec::with_capacity(header_len + raw_bytes.len());
     data.extend_from_slice(ENTITY_MAGIC);
     data.extend_from_slice(&1u16.to_le_bytes()); // version
     data.extend_from_slice(&(header_len as u32).to_le_bytes());
@@ -263,20 +263,12 @@ pub fn generate_container_id() -> String {
     id
 }
 
-/// Simple hash for kfxgen_info (not cryptographic, just informational).
-fn simple_hash(data: &[u8]) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    let hash = hasher.finish();
-    format!(
-        "{:016x}{:016x}{:08x}",
-        hash,
-        hash.rotate_left(32),
-        (hash >> 32) as u32
-    )
+/// SHA-1 of the payload for kfxgen_info, matching what the field name
+/// (`kfxgen_payload_sha1`) promises. Previously a `DefaultHasher` value
+/// formatted to *look* like a SHA-1 — wrong if any KFX reader validates it,
+/// and unstable across Rust releases.
+fn payload_sha1(data: &[u8]) -> String {
+    sha1_smol::Sha1::from(data).digest().to_string()
 }
 
 #[cfg(test)]

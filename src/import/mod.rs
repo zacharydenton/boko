@@ -70,50 +70,24 @@ pub trait Importer: Send + Sync {
     ///
     /// Implementations may override for format-specific optimizations.
     fn load_chapter(&mut self, id: ChapterId) -> crate::Result<Chapter> {
-        // Load raw HTML, decode, and parse the DOM exactly once: the same
-        // parse serves stylesheet discovery and IR compilation below.
         let html_bytes = self.load_raw(id)?;
-        let hint_encoding = crate::util::extract_xml_encoding(&html_bytes);
-        let html_str = crate::util::decode_text(&html_bytes, hint_encoding);
-        let dom = crate::dom::parse_dom(&html_str);
+        let base_path = self.source_id(id).map(str::to_string);
+        Ok(compile_chapter_html(
+            &html_bytes,
+            base_path.as_deref(),
+            &mut |path| self.load_stylesheet(path),
+        ))
+    }
 
-        // Extract stylesheet references
-        let (linked, inline) = crate::dom::extract_stylesheets_from_dom(&dom);
-
-        // Build stylesheets list (Arc-shared: cached sheets are not cloned)
-        let mut stylesheets: Vec<(Arc<Stylesheet>, Origin)> = Vec::new();
-
-        // Load linked stylesheets
-        for href in linked {
-            // Resolve relative path based on chapter's source path
-            let css_path = if let Some(chapter_path) = self.source_id(id) {
-                resolve_relative_path(chapter_path, &href)
-            } else {
-                PathBuf::from(&href)
-            };
-
-            if let Some(sheet) = self.load_stylesheet(&css_path) {
-                stylesheets.push((sheet, Origin::Author));
-            }
-        }
-
-        // Parse inline styles
-        for css in inline {
-            stylesheets.push((Arc::new(Stylesheet::parse(&css)), Origin::Author));
-        }
-
-        // Compile to IR from the DOM parsed above
-        let sheet_refs: Vec<(&Stylesheet, Origin)> =
-            stylesheets.iter().map(|(s, o)| (s.as_ref(), *o)).collect();
-        let mut chapter = crate::dom::compile_dom(&dom, &sheet_refs);
-
-        // Post-process: Resolve relative paths in semantic attributes (src, href)
-        // This canonicalizes paths like "../images/photo.jpg" to "OEBPS/images/photo.jpg"
-        if let Some(base_path) = self.source_id(id) {
-            resolve_semantic_paths(&mut chapter, base_path);
-        }
-
-        Ok(chapter)
+    /// Load several chapters as normalized IR.
+    ///
+    /// The default implementation loads serially via [`load_chapter`]
+    /// (Self::load_chapter). Importers whose IO is thread-safe (e.g. EPUB's
+    /// random-access ZIP source) override this to compile chapters in
+    /// parallel — HTML parsing, the CSS cascade, and IR transformation
+    /// dominate cold conversion and are independent per chapter.
+    fn load_chapters(&mut self, ids: &[ChapterId]) -> Vec<crate::Result<Chapter>> {
+        ids.iter().map(|&id| self.load_chapter(id)).collect()
     }
 
     // --- Track 2: Raw Access (The Converter) ---
@@ -294,6 +268,58 @@ pub fn resolve_path_based_href(
 
     // No fragment - link to chapter start
     Some(AnchorTarget::Chapter(target_chapter))
+}
+
+/// Compile a chapter's raw HTML bytes to normalized IR.
+///
+/// This is the body shared by [`Importer::load_chapter`]'s default
+/// implementation and parallel [`Importer::load_chapters`] overrides:
+/// decode, parse the DOM exactly once (the same parse serves stylesheet
+/// discovery and IR compilation), resolve linked CSS through `load_sheet`,
+/// and compile to IR.
+pub(crate) fn compile_chapter_html(
+    html_bytes: &[u8],
+    base_path: Option<&str>,
+    load_sheet: &mut dyn FnMut(&Path) -> Option<Arc<Stylesheet>>,
+) -> Chapter {
+    let hint_encoding = crate::util::extract_xml_encoding(html_bytes);
+    let html_str = crate::util::decode_text(html_bytes, hint_encoding);
+    let dom = crate::dom::parse_dom(&html_str);
+
+    // Extract stylesheet references
+    let (linked, inline) = crate::dom::extract_stylesheets_from_dom(&dom);
+
+    // Build stylesheets list (Arc-shared: cached sheets are not cloned)
+    let mut stylesheets: Vec<(Arc<Stylesheet>, Origin)> = Vec::new();
+
+    // Load linked stylesheets, resolving relative to the chapter's source path
+    for href in linked {
+        let css_path = match base_path {
+            Some(chapter_path) => resolve_relative_path(chapter_path, &href),
+            None => PathBuf::from(&href),
+        };
+        if let Some(sheet) = load_sheet(&css_path) {
+            stylesheets.push((sheet, Origin::Author));
+        }
+    }
+
+    // Parse inline styles
+    for css in inline {
+        stylesheets.push((Arc::new(Stylesheet::parse(&css)), Origin::Author));
+    }
+
+    // Compile to IR from the DOM parsed above
+    let sheet_refs: Vec<(&Stylesheet, Origin)> =
+        stylesheets.iter().map(|(s, o)| (s.as_ref(), *o)).collect();
+    let mut chapter = crate::dom::compile_dom(&dom, &sheet_refs);
+
+    // Post-process: Resolve relative paths in semantic attributes (src, href)
+    // This canonicalizes paths like "../images/photo.jpg" to "OEBPS/images/photo.jpg"
+    if let Some(base) = base_path {
+        resolve_semantic_paths(&mut chapter, base);
+    }
+
+    chapter
 }
 
 /// Resolve a relative path against a base path.

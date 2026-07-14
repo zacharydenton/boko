@@ -26,6 +26,7 @@ impl NodeId {
 /// - BlockQuote
 /// - Table, TableRow, TableCell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Role {
     /// Leaf text content node containing actual string data.
     /// References a range in the chapter's text buffer.

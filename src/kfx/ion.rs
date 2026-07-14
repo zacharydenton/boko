@@ -665,9 +665,9 @@ impl IonWriter {
             (3u8, (-value) as u64)
         };
 
-        let bytes = uint_bytes(magnitude);
-        self.write_type_descriptor(type_code, bytes.len());
-        self.buffer.extend_from_slice(&bytes);
+        let (bytes, skip) = uint_bytes(magnitude);
+        self.write_type_descriptor(type_code, 8 - skip);
+        self.buffer.extend_from_slice(&bytes[skip..]);
     }
 
     /// Write float value (always as 64-bit).
@@ -719,7 +719,8 @@ impl IonWriter {
             let is_neg = coef < 0;
 
             // Encode magnitude as big-endian bytes
-            let coef_bytes = uint_bytes(coef_mag);
+            let (coef_buf, coef_skip) = uint_bytes(coef_mag);
+            let coef_bytes = &coef_buf[coef_skip..];
 
             // Check if we need a sign byte
             let needs_sign_byte = (coef_bytes[0] & 0x80) != 0;
@@ -727,7 +728,7 @@ impl IonWriter {
             if is_neg {
                 if needs_sign_byte {
                     decimal_bytes.push(0x80); // negative sign byte
-                    decimal_bytes.extend_from_slice(&coef_bytes);
+                    decimal_bytes.extend_from_slice(coef_bytes);
                 } else {
                     // Set sign bit in first byte
                     decimal_bytes.push(coef_bytes[0] | 0x80);
@@ -737,7 +738,7 @@ impl IonWriter {
                 if needs_sign_byte {
                     decimal_bytes.push(0x00); // positive sign byte
                 }
-                decimal_bytes.extend_from_slice(&coef_bytes);
+                decimal_bytes.extend_from_slice(coef_bytes);
             }
         }
 
@@ -752,9 +753,9 @@ impl IonWriter {
             self.buffer.push(0x70); // type 7, length 0
             return;
         }
-        let bytes = uint_bytes(id);
-        self.write_type_descriptor(7, bytes.len());
-        self.buffer.extend_from_slice(&bytes);
+        let (bytes, skip) = uint_bytes(id);
+        self.write_type_descriptor(7, 8 - skip);
+        self.buffer.extend_from_slice(&bytes[skip..]);
     }
 
     /// Write string value.
@@ -772,51 +773,66 @@ impl IonWriter {
 
     /// Write list value.
     pub fn write_list(&mut self, items: &[IonValue]) {
-        let mut inner = IonWriter::new();
+        let start = self.buffer.len();
         for item in items {
-            inner.write_value(item);
+            self.write_value(item);
         }
-        let inner_bytes = inner.into_bytes();
-
-        self.write_type_descriptor(11, inner_bytes.len());
-        self.buffer.extend_from_slice(&inner_bytes);
+        self.finish_container(11, start);
     }
 
     /// Write struct value (preserves field order).
     pub fn write_struct(&mut self, fields: &[(u64, IonValue)]) {
-        let mut inner = IonWriter::new();
-
+        let start = self.buffer.len();
         for (key, value) in fields {
-            inner.write_varuint(*key);
-            inner.write_value(value);
+            self.write_varuint(*key);
+            self.write_value(value);
         }
-        let inner_bytes = inner.into_bytes();
-
-        self.write_type_descriptor(13, inner_bytes.len());
-        self.buffer.extend_from_slice(&inner_bytes);
+        self.finish_container(13, start);
     }
 
     /// Write annotated value.
     pub fn write_annotated(&mut self, annotations: &[u64], inner: &IonValue) {
-        // Serialize annotation IDs
-        let mut ann_buf = Vec::new();
+        let start = self.buffer.len();
+        // Annotation IDs, then their byte length prefixed in front of them.
         for &ann in annotations {
-            write_varuint_to(&mut ann_buf, ann);
+            self.write_varuint(ann);
         }
+        let (ann_len, n) = varuint_bytes((self.buffer.len() - start) as u64);
+        self.insert_at(start, &ann_len[..n]);
+        // Inner value, then the annotation wrapper's type descriptor.
+        self.write_value(inner);
+        self.finish_container(14, start);
+    }
 
-        // Serialize inner value
-        let mut inner_writer = IonWriter::new();
-        inner_writer.write_value(inner);
-        let inner_bytes = inner_writer.into_bytes();
+    /// Retroactively prefix everything written since `start` with a type
+    /// descriptor, shifting the bytes in place.
+    ///
+    /// Containers can't know their length until their contents are written;
+    /// serializing children into the parent's buffer and back-patching keeps
+    /// deeply nested KFX values in one allocation, instead of a temporary
+    /// `IonWriter` per container copied into its parent (an allocation per
+    /// container and a copy per nesting level).
+    fn finish_container(&mut self, type_code: u8, start: usize) {
+        let len = self.buffer.len() - start;
+        let mut desc = [0u8; 11];
+        let desc_len = if len < 14 {
+            desc[0] = (type_code << 4) | (len as u8);
+            1
+        } else {
+            desc[0] = (type_code << 4) | 14;
+            let (bytes, n) = varuint_bytes(len as u64);
+            desc[1..=n].copy_from_slice(&bytes[..n]);
+            1 + n
+        };
+        self.insert_at(start, &desc[..desc_len]);
+    }
 
-        // Total content = annot_length varuint + annotations + inner value
-        let mut content = Vec::new();
-        write_varuint_to(&mut content, ann_buf.len() as u64);
-        content.extend_from_slice(&ann_buf);
-        content.extend_from_slice(&inner_bytes);
-
-        self.write_type_descriptor(14, content.len());
-        self.buffer.extend_from_slice(&content);
+    /// Insert `bytes` at `pos`, shifting the tail right.
+    fn insert_at(&mut self, pos: usize, bytes: &[u8]) {
+        let old_len = self.buffer.len();
+        self.buffer.resize(old_len + bytes.len(), 0);
+        self.buffer.copy_within(pos..old_len, pos + bytes.len());
+        self.buffer[pos..pos + bytes.len()].copy_from_slice(bytes);
     }
 
     /// Write type descriptor byte(s).
@@ -841,39 +857,35 @@ impl Default for IonWriter {
     }
 }
 
-/// Encode unsigned int as big-endian bytes (minimal length).
-fn uint_bytes(value: u64) -> Vec<u8> {
+/// Encode unsigned int as big-endian bytes (minimal length), returned as a
+/// stack buffer and the number of leading bytes to skip (`value == 0` encodes
+/// as zero bytes).
+fn uint_bytes(value: u64) -> ([u8; 8], usize) {
+    ((value.to_be_bytes()), (value.leading_zeros() / 8) as usize)
+}
+
+/// Encode a VarUInt (7 bits per byte, MSB set on the last byte) into a stack
+/// buffer, returning the buffer and the number of bytes used.
+fn varuint_bytes(value: u64) -> ([u8; 10], usize) {
+    let mut out = [0u8; 10];
     if value == 0 {
-        return vec![];
+        out[0] = 0x80;
+        return (out, 1);
     }
-    let bytes = value.to_be_bytes();
-    let skip = bytes.iter().take_while(|&&b| b == 0).count();
-    bytes[skip..].to_vec()
+    let groups = (64 - value.leading_zeros() as usize).div_ceil(7);
+    let mut v = value;
+    for i in (0..groups).rev() {
+        out[i] = (v & 0x7f) as u8;
+        v >>= 7;
+    }
+    out[groups - 1] |= 0x80; // Last byte has MSB set
+    (out, groups)
 }
 
 /// Write VarUInt to a buffer (7 bits per byte, MSB set on last byte).
 fn write_varuint_to(buf: &mut Vec<u8>, value: u64) {
-    if value == 0 {
-        buf.push(0x80);
-        return;
-    }
-
-    // Count how many 7-bit groups we need
-    let mut temp = value;
-    let mut groups = Vec::new();
-    while temp > 0 {
-        groups.push((temp & 0x7f) as u8);
-        temp >>= 7;
-    }
-
-    // Write in reverse order, setting MSB on last byte
-    for (i, &group) in groups.iter().rev().enumerate() {
-        if i == groups.len() - 1 {
-            buf.push(group | 0x80); // Last byte has MSB set
-        } else {
-            buf.push(group);
-        }
-    }
+    let (bytes, len) = varuint_bytes(value);
+    buf.extend_from_slice(&bytes[..len]);
 }
 
 #[cfg(test)]

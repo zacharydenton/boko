@@ -32,7 +32,7 @@ pub(super) struct Kf8Builder {
 }
 
 impl Kf8Builder {
-    pub(super) fn new(book: &mut Book, normalize: bool) -> io::Result<Self> {
+    pub(super) fn new(book: &mut Book, normalize: bool) -> crate::Result<Self> {
         let ctx = BookContext::from_book(book, normalize)?;
 
         let mut builder = Self {
@@ -338,16 +338,19 @@ impl Kf8Builder {
             self.first_resource_record = self.records.len() as u32;
         }
 
-        // Write images
-        for href in &self.image_hrefs.clone() {
-            if let Some(resource) = self.ctx.resources.get(href) {
-                self.records.push(resource.data.clone());
+        // Write images. This is the last reader of `ctx.resources` (the
+        // build sequence ends with fdst/flis/record0, none of which touch
+        // it), so move each image's bytes out instead of cloning multi-MB
+        // payloads.
+        for i in 0..self.image_hrefs.len() {
+            if let Some(resource) = self.ctx.resources.get_mut(&self.image_hrefs[i]) {
+                self.records.push(std::mem::take(&mut resource.data));
             }
         }
 
         // Write fonts as FONT records
-        for href in &self.font_hrefs.clone() {
-            if let Some(resource) = self.ctx.resources.get(href) {
+        for i in 0..self.font_hrefs.len() {
+            if let Some(resource) = self.ctx.resources.get(&self.font_hrefs[i]) {
                 let font_record = write_font_record(&resource.data)?;
                 self.records.push(font_record);
             }
