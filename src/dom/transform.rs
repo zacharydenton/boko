@@ -12,12 +12,19 @@ use crate::style::{
 const UA_CSS: &str = include_str!("data/styles.css");
 
 pub fn user_agent_stylesheet() -> Stylesheet {
+    (*user_agent_stylesheet_arc()).clone()
+}
+
+/// Shared handle to the per-thread UA stylesheet. Cloning the `Arc` is a
+/// refcount bump; use this instead of [`user_agent_stylesheet`] anywhere the
+/// per-chapter hot path would otherwise deep-clone the parsed rules.
+pub(crate) fn user_agent_stylesheet_arc() -> std::sync::Arc<Stylesheet> {
     // The UA stylesheet is a constant, but `compile_html` is called once per
     // chapter, so parsing UA_CSS every time is pure redundant work. Parse it
-    // once per thread and hand back a clone (cloning parsed rules is much
-    // cheaper than re-tokenizing and re-parsing the CSS).
+    // once per thread and share it behind an Arc.
     thread_local! {
-        static UA_STYLESHEET: Stylesheet = Stylesheet::parse(UA_CSS);
+        static UA_STYLESHEET: std::sync::Arc<Stylesheet> =
+            std::sync::Arc::new(Stylesheet::parse(UA_CSS));
     }
     UA_STYLESHEET.with(|ua| ua.clone())
 }
@@ -33,7 +40,7 @@ struct TransformContext<'a> {
 }
 
 impl<'a> TransformContext<'a> {
-    fn new(dom: &'a ArenaDom, stylesheets: &'a [(Stylesheet, Origin)]) -> Self {
+    fn new(dom: &'a ArenaDom, stylesheets: &'a [(&'a Stylesheet, Origin)]) -> Self {
         Self {
             dom,
             cascade_index: CascadeIndex::build(stylesheets),
@@ -287,7 +294,7 @@ impl<'a> TransformContext<'a> {
 }
 
 /// Transform an ArenaDom to Chapter.
-pub fn transform(dom: &ArenaDom, stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
+pub fn transform(dom: &ArenaDom, stylesheets: &[(&Stylesheet, Origin)]) -> Chapter {
     let ctx = TransformContext::new(dom, stylesheets);
     ctx.transform()
 }
@@ -337,7 +344,7 @@ mod tests {
     fn test_basic_transform() {
         let dom = parse_html("<html><body><p>Hello, World!</p></body></html>");
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -361,7 +368,7 @@ mod tests {
     fn test_heading_levels() {
         let dom = parse_html("<html><body><h1>Title</h1><h2>Subtitle</h2></body></html>");
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -382,7 +389,7 @@ mod tests {
     fn test_link_semantics() {
         let dom = parse_html(r#"<a href="https://example.com">Link</a>"#);
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -405,7 +412,7 @@ mod tests {
         );
         let ua = user_agent_stylesheet();
         let author = Stylesheet::parse("div { color: red; }");
-        let stylesheets = vec![(ua, Origin::UserAgent), (author, Origin::Author)];
+        let stylesheets = vec![(&ua, Origin::UserAgent), (&author, Origin::Author)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -420,7 +427,7 @@ mod tests {
             r#"<html><head><title>Test</title></head><body><p>Visible</p></body></html>"#,
         );
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -438,7 +445,7 @@ mod tests {
     fn test_br_element() {
         let dom = parse_html(r#"<html><body><p>Line one<br/>Line two</p></body></html>"#);
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -462,7 +469,7 @@ mod tests {
             <body><p><span>Line one</span><br/><span>Line two</span></p></body></html>"#,
         );
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 
@@ -493,7 +500,7 @@ mod tests {
             </body></html>"#,
         );
         let ua = user_agent_stylesheet();
-        let stylesheets = vec![(ua, Origin::UserAgent)];
+        let stylesheets = vec![(&ua, Origin::UserAgent)];
 
         let chapter = transform(&dom, &stylesheets);
 

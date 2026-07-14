@@ -107,16 +107,26 @@ fn parse_dom(html: &str) -> ArenaDom {
 /// ```
 pub fn compile_html(html: &str, author_stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
     let dom = parse_dom(html);
+    let refs: Vec<(&Stylesheet, Origin)> =
+        author_stylesheets.iter().map(|(s, o)| (s, *o)).collect();
+    compile_dom(&dom, &refs)
+}
 
+/// Compile an already-parsed DOM to IR with borrowed stylesheets.
+///
+/// Internal hot path shared by [`compile_html`] and the importers: no
+/// stylesheet is cloned — the UA sheet is shared per thread and author
+/// sheets are borrowed (typically from `Arc<Stylesheet>` caches).
+pub(crate) fn compile_dom(dom: &ArenaDom, author_stylesheets: &[(&Stylesheet, Origin)]) -> Chapter {
     // Build complete stylesheet list with UA defaults
-    let ua = transform::user_agent_stylesheet();
-    let mut all_stylesheets: Vec<(Stylesheet, Origin)> = vec![(ua, Origin::UserAgent)];
-    for (sheet, origin) in author_stylesheets {
-        all_stylesheets.push((sheet.clone(), *origin));
-    }
+    let ua = transform::user_agent_stylesheet_arc();
+    let mut all_stylesheets: Vec<(&Stylesheet, Origin)> =
+        Vec::with_capacity(author_stylesheets.len() + 1);
+    all_stylesheets.push((ua.as_ref(), Origin::UserAgent));
+    all_stylesheets.extend_from_slice(author_stylesheets);
 
     // Transform to IR
-    let mut chapter = transform::transform(&dom, &all_stylesheets);
+    let mut chapter = transform::transform(dom, &all_stylesheets);
 
     // Optimize: merge adjacent text nodes with identical styles
     optimize::optimize(&mut chapter);
@@ -137,6 +147,18 @@ pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin
     let html_str = crate::util::decode_text(html, hint_encoding);
 
     compile_html(&html_str, author_stylesheets)
+}
+
+/// Byte-input variant of [`compile_dom`]'s calling convention: decode, parse,
+/// and compile with borrowed stylesheets. Internal importer hot path.
+pub(crate) fn compile_html_bytes_borrowed(
+    html: &[u8],
+    author_stylesheets: &[(&Stylesheet, Origin)],
+) -> Chapter {
+    let hint_encoding = crate::util::extract_xml_encoding(html);
+    let html_str = crate::util::decode_text(html, hint_encoding);
+    let dom = parse_dom(&html_str);
+    compile_dom(&dom, author_stylesheets)
 }
 
 /// Extract stylesheet links and inline styles from HTML.

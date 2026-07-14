@@ -60,7 +60,7 @@ pub struct MobiImporter {
     assets: Vec<PathBuf>,
 
     /// Cached parsed stylesheets.
-    css_cache: HashMap<String, Stylesheet>,
+    css_cache: HashMap<String, Arc<Stylesheet>>,
 
     // --- Link resolution ---
     /// Maps "path#id" -> GlobalNodeId (built during index_anchors)
@@ -129,15 +129,15 @@ impl Importer for MobiImporter {
         Ok(self.load_image_record(idx)?)
     }
 
-    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
         let key = path.to_string_lossy().replace('\\', "/");
         if let Some(sheet) = self.css_cache.get(&key) {
-            return Some(sheet.clone());
+            return Some(Arc::clone(sheet));
         }
         let css_bytes = self.load_asset(path).ok()?;
         let css_str = String::from_utf8_lossy(&css_bytes);
-        let sheet = Stylesheet::parse(&css_str);
-        self.css_cache.insert(key, sheet.clone());
+        let sheet = Arc::new(Stylesheet::parse(&css_str));
+        self.css_cache.insert(key, Arc::clone(&sheet));
         Some(sheet)
     }
 

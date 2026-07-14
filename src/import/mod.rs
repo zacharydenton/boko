@@ -17,7 +17,7 @@ pub use mobi::MobiImporter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::dom::{Origin, Stylesheet, compile_html_bytes, extract_stylesheets};
+use crate::dom::{Origin, Stylesheet, extract_stylesheets};
 use crate::model::{AnchorTarget, Chapter, FontFace, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// Unique identifier for a chapter/spine item within a book.
@@ -78,8 +78,8 @@ pub trait Importer: Send + Sync {
         // Extract stylesheet references
         let (linked, inline) = extract_stylesheets(&html_str);
 
-        // Build stylesheets list
-        let mut stylesheets = Vec::new();
+        // Build stylesheets list (Arc-shared: cached sheets are not cloned)
+        let mut stylesheets: Vec<(Arc<Stylesheet>, Origin)> = Vec::new();
 
         // Load linked stylesheets
         for href in linked {
@@ -97,11 +97,13 @@ pub trait Importer: Send + Sync {
 
         // Parse inline styles
         for css in inline {
-            stylesheets.push((Stylesheet::parse(&css), Origin::Author));
+            stylesheets.push((Arc::new(Stylesheet::parse(&css)), Origin::Author));
         }
 
         // Compile to IR
-        let mut chapter = compile_html_bytes(&html_bytes, &stylesheets);
+        let sheet_refs: Vec<(&Stylesheet, Origin)> =
+            stylesheets.iter().map(|(s, o)| (s.as_ref(), *o)).collect();
+        let mut chapter = crate::dom::compile_html_bytes_borrowed(&html_bytes, &sheet_refs);
 
         // Post-process: Resolve relative paths in semantic attributes (src, href)
         // This canonicalizes paths like "../images/photo.jpg" to "OEBPS/images/photo.jpg"
@@ -131,10 +133,12 @@ pub trait Importer: Send + Sync {
     /// Load and parse a stylesheet, optionally using a cache.
     ///
     /// The default implementation loads the asset bytes and parses CSS.
-    fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+    /// Returns an `Arc` so cached sheets are shared across chapters instead
+    /// of deep-cloning the parsed rules per chapter.
+    fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
         if let Ok(css_bytes) = self.load_asset(path) {
             let css_str = String::from_utf8_lossy(&css_bytes);
-            return Some(Stylesheet::parse(&css_str));
+            return Some(Arc::new(Stylesheet::parse(&css_str)));
         }
         None
     }
@@ -165,7 +169,8 @@ pub trait Importer: Send + Sync {
         for css_path in css_paths {
             if let Some(stylesheet) = self.load_stylesheet(&css_path) {
                 // Resolve relative font paths to canonical paths
-                for mut font_face in stylesheet.font_faces {
+                for font_face in &stylesheet.font_faces {
+                    let mut font_face = font_face.clone();
                     // Resolve the src path relative to the CSS file location
                     let resolved =
                         resolve_relative_path(css_path.to_string_lossy().as_ref(), &font_face.src);
@@ -408,7 +413,7 @@ mod tests {
             chapters: HashMap<u32, String>,
             assets: HashMap<String, Vec<u8>>,
             asset_list: Vec<PathBuf>,
-            css_cache: HashMap<String, Stylesheet>,
+            css_cache: HashMap<String, Arc<Stylesheet>>,
             css_loads: usize,
             metadata: Metadata,
             toc: Vec<TocEntry>,
@@ -465,14 +470,14 @@ mod tests {
                     .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "asset not found").into())
             }
 
-            fn load_stylesheet(&mut self, path: &Path) -> Option<Stylesheet> {
+            fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
                 let key = path.to_string_lossy().replace('\\', "/");
                 if let Some(sheet) = self.css_cache.get(&key) {
-                    return Some(sheet.clone());
+                    return Some(Arc::clone(sheet));
                 }
                 let css_bytes = self.load_asset(path).ok()?;
                 let css_str = String::from_utf8_lossy(&css_bytes);
-                let sheet = Stylesheet::parse(&css_str);
+                let sheet = Arc::new(Stylesheet::parse(&css_str));
                 self.css_cache.insert(key, sheet.clone());
                 self.css_loads += 1;
                 Some(sheet)
@@ -572,9 +577,9 @@ mod tests {
                 Err(io::Error::other("load_asset should not be called").into())
             }
 
-            fn load_stylesheet(&mut self, _path: &Path) -> Option<Stylesheet> {
+            fn load_stylesheet(&mut self, _path: &Path) -> Option<Arc<Stylesheet>> {
                 let css = "@font-face { font-family: Test; src: url(../fonts/test.woff); }";
-                Some(Stylesheet::parse(css))
+                Some(Arc::new(Stylesheet::parse(css)))
             }
         }
 

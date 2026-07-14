@@ -122,7 +122,7 @@ fn selector_bucket_key(selector: &Selector<BokoSelectors>) -> BucketKey {
 /// for an element only tests rules whose rightmost compound could match it,
 /// instead of every rule of every stylesheet (O(elements × rules)).
 pub struct CascadeIndex<'a> {
-    stylesheets: &'a [(Stylesheet, Origin)],
+    stylesheets: &'a [(&'a Stylesheet, Origin)],
     by_id: HashMap<String, Vec<RuleRef>>,
     by_class: HashMap<String, Vec<RuleRef>>,
     by_local: HashMap<String, Vec<RuleRef>>,
@@ -131,7 +131,10 @@ pub struct CascadeIndex<'a> {
 
 impl<'a> CascadeIndex<'a> {
     /// Build the index by bucketing every selector of every rule.
-    pub fn build(stylesheets: &'a [(Stylesheet, Origin)]) -> Self {
+    ///
+    /// Takes borrowed stylesheets so callers can share parsed sheets (e.g.
+    /// `Arc<Stylesheet>` caches) across chapters without deep-cloning rules.
+    pub fn build(stylesheets: &'a [(&'a Stylesheet, Origin)]) -> Self {
         let mut index = CascadeIndex {
             stylesheets,
             by_id: HashMap::new(),
@@ -198,7 +201,8 @@ pub fn compute_styles(
     parent_style: Option<&ComputedStyle>,
     style_pool: &mut StylePool,
 ) -> ComputedStyle {
-    let index = CascadeIndex::build(stylesheets);
+    let refs: Vec<(&Stylesheet, Origin)> = stylesheets.iter().map(|(s, o)| (s, *o)).collect();
+    let index = CascadeIndex::build(&refs);
     compute_styles_indexed(elem, &index, parent_style, style_pool)
 }
 
@@ -219,14 +223,14 @@ pub fn compute_styles_indexed(
     // Candidate rules are already in source order, so `order` reproduces the
     // exhaustive-scan cascade exactly.
     for (sheet_idx, rule_idx) in index.candidate_rules(elem) {
-        let (stylesheet, origin) = &index.stylesheets[sheet_idx as usize];
+        let (stylesheet, origin) = index.stylesheets[sheet_idx as usize];
         let rule = &stylesheet.rules[rule_idx as usize];
         if rule_matches_with_caches(elem, rule, &mut caches) {
             // Collect normal declarations
             for decl in &rule.declarations {
                 matched.push(MatchedRule {
                     declaration: decl,
-                    origin: *origin,
+                    origin,
                     specificity: rule.specificity,
                     order,
                     important: false,
@@ -237,7 +241,7 @@ pub fn compute_styles_indexed(
             for decl in &rule.important_declarations {
                 matched.push(MatchedRule {
                     declaration: decl,
-                    origin: *origin,
+                    origin,
                     specificity: rule.specificity,
                     order,
                     important: true,
