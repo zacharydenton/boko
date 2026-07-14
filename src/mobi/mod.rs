@@ -8,6 +8,7 @@ pub mod parser;
 
 // Internal modules for AZW3 export
 pub(crate) mod skeleton;
+pub(crate) mod split;
 pub(crate) mod tbs;
 pub(crate) mod writer_transform;
 
