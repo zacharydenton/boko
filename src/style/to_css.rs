@@ -1,244 +1,279 @@
 //! ToCss implementation for ComputedStyle.
 //!
-//! Uses macros to eliminate boilerplate in CSS property serialization.
+//! A single canonical table ([`PROPERTIES`]) is the source of truth for how
+//! each `ComputedStyle` property is compared against its default and
+//! serialized to CSS. Both `ComputedStyle::to_css` (the CSS declaration blob)
+//! and the KFX exporter's per-field extraction
+//! (`crate::kfx::style_schema::extract_ir_field`) are driven by this table,
+//! so a new `ComputedStyle` field normally needs exactly one entry here.
 
 use std::fmt::Write;
 
 use super::ToCss;
-use super::properties::FontVariant;
 use super::types::ComputedStyle;
 
-/// Emit property if different from default.
-macro_rules! emit_if_changed {
-    ($self:expr, $default:expr, $buf:expr, $field:ident, $css_name:expr) => {
-        if $self.$field != $default.$field {
-            $buf.push_str($css_name);
-            $buf.push_str(": ");
-            $self.$field.to_css($buf);
-            $buf.push_str("; ");
+/// Serializer for one property: writes the CSS value into `out` and returns
+/// `true` when the property differs from its default (`false` writes nothing).
+type EmitFn = fn(&ComputedStyle, &ComputedStyle, &mut String) -> bool;
+
+/// One CSS property of `ComputedStyle` in the canonical table.
+struct CssProperty {
+    /// Canonical CSS property name.
+    name: &'static str,
+    /// Whether `ComputedStyle::to_css` emits this property in the CSS blob.
+    ///
+    /// Historically `to_css` never emitted some properties that the KFX
+    /// exporter extracts (min-width, max-height, clear, orphans, widows,
+    /// word-break, border-collapse, border-spacing). That asymmetry is
+    /// preserved: those entries are lookup-only via
+    /// [`changed_property_value`].
+    in_blob: bool,
+    /// How to serialize the value when it differs from the default.
+    emit: EmitFn,
+}
+
+/// Table entry: emit the field's CSS value when it differs from the default.
+macro_rules! prop {
+    ($name:expr, $field:ident) => {
+        prop!($name, $field, in_blob: true)
+    };
+    ($name:expr, $field:ident, in_blob: $in_blob:expr) => {
+        CssProperty {
+            name: $name,
+            in_blob: $in_blob,
+            emit: |s, d, out| {
+                if s.$field == d.$field {
+                    false
+                } else {
+                    s.$field.to_css(out);
+                    true
+                }
+            },
         }
     };
 }
 
-/// Emit optional color if Some.
-macro_rules! emit_color_if_some {
-    ($self:expr, $buf:expr, $field:ident, $css_name:expr) => {
-        if let Some(color) = $self.$field {
-            $buf.push_str($css_name);
-            $buf.push_str(": ");
-            color.to_css($buf);
-            $buf.push_str("; ");
+/// Table entry: emit an optional color field when it is `Some`.
+macro_rules! color_prop {
+    ($name:expr, $field:ident) => {
+        CssProperty {
+            name: $name,
+            in_blob: true,
+            emit: |s, _d, out| match s.$field {
+                Some(color) => {
+                    color.to_css(out);
+                    true
+                }
+                None => false,
+            },
         }
     };
 }
 
-/// Emit 4-sided property (margin, padding, border-style, border-width).
-macro_rules! emit_4sided {
-    ($self:expr, $default:expr, $buf:expr,
-     $top:ident, $right:ident, $bottom:ident, $left:ident,
-     $prefix:expr) => {
-        emit_if_changed!($self, $default, $buf, $top, concat!($prefix, "-top"));
-        emit_if_changed!($self, $default, $buf, $right, concat!($prefix, "-right"));
-        emit_if_changed!($self, $default, $buf, $bottom, concat!($prefix, "-bottom"));
-        emit_if_changed!($self, $default, $buf, $left, concat!($prefix, "-left"));
+/// Table entry (lookup-only): emit an integer count field when it differs
+/// from the default.
+macro_rules! count_prop {
+    ($name:expr, $field:ident) => {
+        CssProperty {
+            name: $name,
+            in_blob: false,
+            emit: |s, d, out| {
+                if s.$field == d.$field {
+                    false
+                } else {
+                    write!(out, "{}", s.$field).unwrap();
+                    true
+                }
+            },
+        }
     };
 }
 
-/// Emit 4-sided optional color (border-color).
-macro_rules! emit_4sided_color {
-    ($self:expr, $buf:expr,
-     $top:ident, $right:ident, $bottom:ident, $left:ident,
-     $prefix:expr) => {
-        emit_color_if_some!($self, $buf, $top, concat!($prefix, "-top-color"));
-        emit_color_if_some!($self, $buf, $right, concat!($prefix, "-right-color"));
-        emit_color_if_some!($self, $buf, $bottom, concat!($prefix, "-bottom-color"));
-        emit_color_if_some!($self, $buf, $left, concat!($prefix, "-left-color"));
-    };
+/// Canonical property table, in `to_css` emission order.
+///
+/// Blob entries (`in_blob: true`) are emitted by `ComputedStyle::to_css` in
+/// this exact order; lookup-only entries at the end exist solely for
+/// [`changed_property_value`] (used by the KFX exporter).
+const PROPERTIES: &[CssProperty] = &[
+    // Font properties.
+    CssProperty {
+        name: "font-family",
+        in_blob: true,
+        // The blob quotes family names that need it; the KFX exporter
+        // intentionally uses the raw family string instead and does NOT
+        // consult this entry (see extract_ir_field).
+        emit: |s, _d, out| match &s.font_family {
+            Some(family) => {
+                quote_font_family(out, family);
+                true
+            }
+            None => false,
+        },
+    },
+    prop!("font-size", font_size),
+    prop!("font-weight", font_weight),
+    prop!("font-style", font_style),
+    // Colors.
+    color_prop!("color", color),
+    color_prop!("background-color", background_color),
+    // Text properties.
+    prop!("text-align", text_align),
+    prop!("text-indent", text_indent),
+    prop!("line-height", line_height),
+    // Combined underline/line-through value. The KFX exporter needs the two
+    // flags separately and handles them itself (see extract_ir_field).
+    CssProperty {
+        name: "text-decoration",
+        in_blob: true,
+        emit: |s, _d, out| {
+            match (s.text_decoration_underline, s.text_decoration_line_through) {
+                (true, true) => out.push_str("underline line-through"),
+                (true, false) => out.push_str("underline"),
+                (false, true) => out.push_str("line-through"),
+                (false, false) => return false,
+            }
+            true
+        },
+    },
+    // Display.
+    prop!("display", display),
+    // Margins (4-sided).
+    prop!("margin-top", margin_top),
+    prop!("margin-right", margin_right),
+    prop!("margin-bottom", margin_bottom),
+    prop!("margin-left", margin_left),
+    // Padding (4-sided).
+    prop!("padding-top", padding_top),
+    prop!("padding-right", padding_right),
+    prop!("padding-bottom", padding_bottom),
+    prop!("padding-left", padding_left),
+    // Vertical alignment.
+    prop!("vertical-align", vertical_align),
+    // List style. The blob emits it whenever non-default; the KFX exporter
+    // additionally gates it on display: list-item (see extract_ir_field).
+    prop!("list-style-type", list_style_type),
+    // Font variant.
+    prop!("font-variant", font_variant),
+    // Text spacing.
+    prop!("letter-spacing", letter_spacing),
+    prop!("word-spacing", word_spacing),
+    // Text transform.
+    prop!("text-transform", text_transform),
+    // Hyphenation.
+    prop!("hyphens", hyphens),
+    // White-space.
+    prop!("white-space", white_space),
+    // Underline style.
+    prop!("text-decoration-style", underline_style),
+    // Overline flag. The KFX exporter maps this flag to a decoration style
+    // ("solid") rather than a line value, so it does not consult this entry
+    // (see extract_ir_field).
+    CssProperty {
+        name: "text-decoration-line",
+        in_blob: true,
+        emit: |s, _d, out| {
+            if s.overline {
+                out.push_str("overline");
+                true
+            } else {
+                false
+            }
+        },
+    },
+    // Underline color.
+    color_prop!("text-decoration-color", underline_color),
+    // Layout dimensions.
+    prop!("width", width),
+    prop!("height", height),
+    prop!("max-width", max_width),
+    prop!("min-height", min_height),
+    // Float.
+    prop!("float", float),
+    // Page breaks.
+    prop!("break-before", break_before),
+    prop!("break-after", break_after),
+    prop!("break-inside", break_inside),
+    // Border styles (4-sided).
+    prop!("border-style-top", border_style_top),
+    prop!("border-style-right", border_style_right),
+    prop!("border-style-bottom", border_style_bottom),
+    prop!("border-style-left", border_style_left),
+    // Border widths (4-sided).
+    prop!("border-width-top", border_width_top),
+    prop!("border-width-right", border_width_right),
+    prop!("border-width-bottom", border_width_bottom),
+    prop!("border-width-left", border_width_left),
+    // Border colors (4-sided optional).
+    color_prop!("border-top-color", border_color_top),
+    color_prop!("border-right-color", border_color_right),
+    color_prop!("border-bottom-color", border_color_bottom),
+    color_prop!("border-left-color", border_color_left),
+    // Border radius (4-corner).
+    prop!("border-top-left-radius", border_radius_top_left),
+    prop!("border-top-right-radius", border_radius_top_right),
+    prop!("border-bottom-left-radius", border_radius_bottom_left),
+    prop!("border-bottom-right-radius", border_radius_bottom_right),
+    // List style position (same display gating note as list-style-type).
+    prop!("list-style-position", list_style_position),
+    // Visibility.
+    prop!("visibility", visibility),
+    // Note: language is stored but typically output via HTML lang attribute.
+    //
+    // Lookup-only entries below: never emitted in the CSS blob, used by the
+    // KFX exporter via changed_property_value.
+    prop!("min-width", min_width, in_blob: false),
+    prop!("max-height", max_height, in_blob: false),
+    prop!("clear", clear, in_blob: false),
+    count_prop!("orphans", orphans),
+    count_prop!("widows", widows),
+    prop!("word-break", word_break, in_blob: false),
+    prop!("border-collapse", border_collapse, in_blob: false),
+    prop!("border-spacing", border_spacing, in_blob: false),
+];
+
+/// Visit every property that `ComputedStyle::to_css` emits — i.e. every blob
+/// property differing from its default — in emission order, as
+/// (css-property-name, css-value) pairs.
+pub fn for_each_changed_property(style: &ComputedStyle, f: &mut dyn FnMut(&str, &str)) {
+    let default = ComputedStyle::default();
+    let mut value = String::new();
+    for prop in PROPERTIES {
+        if !prop.in_blob {
+            continue;
+        }
+        value.clear();
+        if (prop.emit)(style, &default, &mut value) {
+            f(prop.name, &value);
+        }
+    }
 }
 
-/// Emit 4-corner property (border-radius).
-macro_rules! emit_4corner {
-    ($self:expr, $default:expr, $buf:expr,
-     $tl:ident, $tr:ident, $bl:ident, $br:ident) => {
-        emit_if_changed!($self, $default, $buf, $tl, "border-top-left-radius");
-        emit_if_changed!($self, $default, $buf, $tr, "border-top-right-radius");
-        emit_if_changed!($self, $default, $buf, $bl, "border-bottom-left-radius");
-        emit_if_changed!($self, $default, $buf, $br, "border-bottom-right-radius");
-    };
+/// Look up one property in the canonical table: `Some(css_value)` when the
+/// property differs from its default, `None` otherwise.
+///
+/// # Panics
+///
+/// Panics if `name` is not in the canonical table. Callers pass compile-time
+/// constant names, so an unknown name is a bug (drift between the KFX schema
+/// and the table) that must not be silently ignored.
+pub fn changed_property_value(style: &ComputedStyle, name: &str) -> Option<String> {
+    let prop = PROPERTIES
+        .iter()
+        .find(|p| p.name == name)
+        .unwrap_or_else(|| panic!("unknown CSS property name: {name}"));
+    let default = ComputedStyle::default();
+    let mut value = String::new();
+    (prop.emit)(style, &default, &mut value).then_some(value)
 }
 
 impl ToCss for ComputedStyle {
     fn to_css(&self, buf: &mut String) {
-        let default = ComputedStyle::default();
-
-        // Font properties
-        if let Some(ref family) = self.font_family {
-            buf.push_str("font-family: ");
-            quote_font_family(buf, family);
+        for_each_changed_property(self, &mut |name, value| {
+            buf.push_str(name);
+            buf.push_str(": ");
+            buf.push_str(value);
             buf.push_str("; ");
-        }
-        emit_if_changed!(self, default, buf, font_size, "font-size");
-        emit_if_changed!(self, default, buf, font_weight, "font-weight");
-        emit_if_changed!(self, default, buf, font_style, "font-style");
-
-        // Colors
-        emit_color_if_some!(self, buf, color, "color");
-        emit_color_if_some!(self, buf, background_color, "background-color");
-
-        // Text properties
-        emit_if_changed!(self, default, buf, text_align, "text-align");
-        emit_if_changed!(self, default, buf, text_indent, "text-indent");
-        emit_if_changed!(self, default, buf, line_height, "line-height");
-
-        // Text decorations (special handling for combined value)
-        let mut decorations = Vec::new();
-        if self.text_decoration_underline {
-            decorations.push("underline");
-        }
-        if self.text_decoration_line_through {
-            decorations.push("line-through");
-        }
-        if !decorations.is_empty() {
-            write!(buf, "text-decoration: {}; ", decorations.join(" ")).unwrap();
-        }
-
-        // Display
-        emit_if_changed!(self, default, buf, display, "display");
-
-        // Margins (4-sided)
-        emit_4sided!(
-            self,
-            default,
-            buf,
-            margin_top,
-            margin_right,
-            margin_bottom,
-            margin_left,
-            "margin"
-        );
-
-        // Padding (4-sided)
-        emit_4sided!(
-            self,
-            default,
-            buf,
-            padding_top,
-            padding_right,
-            padding_bottom,
-            padding_left,
-            "padding"
-        );
-
-        // Vertical alignment
-        emit_if_changed!(self, default, buf, vertical_align, "vertical-align");
-
-        // List style
-        emit_if_changed!(self, default, buf, list_style_type, "list-style-type");
-
-        // Font variant (uses FontVariant::Normal directly for comparison)
-        if self.font_variant != FontVariant::Normal {
-            buf.push_str("font-variant: ");
-            self.font_variant.to_css(buf);
-            buf.push_str("; ");
-        }
-
-        // Text spacing
-        emit_if_changed!(self, default, buf, letter_spacing, "letter-spacing");
-        emit_if_changed!(self, default, buf, word_spacing, "word-spacing");
-
-        // Text transform
-        emit_if_changed!(self, default, buf, text_transform, "text-transform");
-
-        // Hyphenation
-        emit_if_changed!(self, default, buf, hyphens, "hyphens");
-
-        // White-space
-        emit_if_changed!(self, default, buf, white_space, "white-space");
-
-        // Underline style
-        emit_if_changed!(self, default, buf, underline_style, "text-decoration-style");
-
-        // Overline (special handling)
-        if self.overline {
-            buf.push_str("text-decoration-line: overline; ");
-        }
-
-        // Underline color
-        emit_color_if_some!(self, buf, underline_color, "text-decoration-color");
-
-        // Layout dimensions
-        emit_if_changed!(self, default, buf, width, "width");
-        emit_if_changed!(self, default, buf, height, "height");
-        emit_if_changed!(self, default, buf, max_width, "max-width");
-        emit_if_changed!(self, default, buf, min_height, "min-height");
-
-        // Float
-        emit_if_changed!(self, default, buf, float, "float");
-
-        // Page breaks
-        emit_if_changed!(self, default, buf, break_before, "break-before");
-        emit_if_changed!(self, default, buf, break_after, "break-after");
-        emit_if_changed!(self, default, buf, break_inside, "break-inside");
-
-        // Border styles (4-sided)
-        emit_4sided!(
-            self,
-            default,
-            buf,
-            border_style_top,
-            border_style_right,
-            border_style_bottom,
-            border_style_left,
-            "border-style"
-        );
-
-        // Border widths (4-sided)
-        emit_4sided!(
-            self,
-            default,
-            buf,
-            border_width_top,
-            border_width_right,
-            border_width_bottom,
-            border_width_left,
-            "border-width"
-        );
-
-        // Border colors (4-sided optional)
-        emit_4sided_color!(
-            self,
-            buf,
-            border_color_top,
-            border_color_right,
-            border_color_bottom,
-            border_color_left,
-            "border"
-        );
-
-        // Border radius (4-corner)
-        emit_4corner!(
-            self,
-            default,
-            buf,
-            border_radius_top_left,
-            border_radius_top_right,
-            border_radius_bottom_left,
-            border_radius_bottom_right
-        );
-
-        // List style position
-        emit_if_changed!(
-            self,
-            default,
-            buf,
-            list_style_position,
-            "list-style-position"
-        );
-
-        // Visibility
-        emit_if_changed!(self, default, buf, visibility, "visibility");
-
-        // Note: language is stored but typically output via HTML lang attribute
+        });
     }
 }
 
@@ -358,5 +393,33 @@ mod tests {
             "Expected quoted font-family in CSS output, got: {}",
             css
         );
+    }
+
+    #[test]
+    fn test_property_names_unique() {
+        for (i, a) in PROPERTIES.iter().enumerate() {
+            for b in &PROPERTIES[i + 1..] {
+                assert_ne!(a.name, b.name, "duplicate property name in table");
+            }
+        }
+    }
+
+    #[test]
+    fn test_changed_property_value_matches_blob() {
+        let style = ComputedStyle {
+            font_weight: crate::style::FontWeight::BOLD,
+            ..Default::default()
+        };
+        assert_eq!(
+            changed_property_value(&style, "font-weight"),
+            Some("bold".to_string())
+        );
+        assert_eq!(changed_property_value(&style, "font-style"), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown CSS property name")]
+    fn test_changed_property_value_unknown_name_panics() {
+        changed_property_value(&ComputedStyle::default(), "not-a-property");
     }
 }

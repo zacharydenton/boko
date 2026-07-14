@@ -36,6 +36,7 @@ pub use properties::{
 
 // Re-export core style types
 pub use style_pool::StylePool;
+pub use to_css::{changed_property_value, for_each_changed_property};
 pub use types::{ComputedStyle, StyleId};
 
 // Re-export declaration type (kept minimal)

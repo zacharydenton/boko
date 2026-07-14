@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::kfx::ion::IonValue;
 use crate::kfx::symbols::KfxSymbol;
-use crate::style::{self as ir_style, ToCss};
+use crate::style as ir_style;
 
 // ============================================================================
 // Constants
@@ -1672,127 +1672,25 @@ fn extract_shorthand_value(
 ///
 /// This is the centralized extraction logic for the bidirectional schema.
 /// The schema declares WHICH fields to extract (via `IrField` enum), and
-/// this function provides the HOW (accessing the struct field, checking defaults).
+/// this function provides the HOW.
+///
+/// Most fields delegate to the canonical property table in
+/// `crate::style::to_css` (via [`ir_style::changed_property_value`]), which
+/// is the single source of truth for default-comparison and CSS
+/// serialization — a new `ComputedStyle` field normally needs only one entry
+/// there. Fields with KFX-specific semantics that intentionally differ from
+/// `ComputedStyle::to_css` are handled explicitly at the top of the match.
 ///
 /// Returns `None` if the field has its default value (nothing to emit).
 pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> Option<String> {
-    let default = ir_style::ComputedStyle::default();
+    let shared = |name: &str| ir_style::changed_property_value(ir_style, name);
 
     match field {
-        IrField::FontWeight => {
-            if ir_style.font_weight != default.font_weight {
-                Some(ir_style.font_weight.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::FontStyle => {
-            if ir_style.font_style != default.font_style {
-                Some(ir_style.font_style.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::FontSize => {
-            if ir_style.font_size != default.font_size {
-                Some(ir_style.font_size.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::FontVariant => {
-            if ir_style.font_variant != default.font_variant {
-                Some(ir_style.font_variant.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::TextAlign => {
-            if ir_style.text_align != default.text_align {
-                Some(ir_style.text_align.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::TextIndent => {
-            if ir_style.text_indent != default.text_indent {
-                Some(ir_style.text_indent.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::LineHeight => {
-            if ir_style.line_height != default.line_height {
-                Some(ir_style.line_height.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MarginTop => {
-            if ir_style.margin_top != default.margin_top {
-                Some(ir_style.margin_top.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MarginBottom => {
-            if ir_style.margin_bottom != default.margin_bottom {
-                Some(ir_style.margin_bottom.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MarginLeft => {
-            if ir_style.margin_left != default.margin_left {
-                Some(ir_style.margin_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MarginRight => {
-            if ir_style.margin_right != default.margin_right {
-                Some(ir_style.margin_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::PaddingTop => {
-            if ir_style.padding_top != default.padding_top {
-                Some(ir_style.padding_top.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::PaddingBottom => {
-            if ir_style.padding_bottom != default.padding_bottom {
-                Some(ir_style.padding_bottom.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::PaddingLeft => {
-            if ir_style.padding_left != default.padding_left {
-                Some(ir_style.padding_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::PaddingRight => {
-            if ir_style.padding_right != default.padding_right {
-                Some(ir_style.padding_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::Color => ir_style.color.map(|c| c.to_css_string()),
-        IrField::BackgroundColor => ir_style.background_color.map(|c| c.to_css_string()),
-        IrField::VerticalAlign => {
-            if ir_style.vertical_align != ir_style::VerticalAlign::Baseline {
-                Some(ir_style.vertical_align.to_css_string())
-            } else {
-                None
-            }
-        }
+        // ------------------------------------------------------------------
+        // KFX-specific extractions (intentionally NOT shared with to_css).
+        // ------------------------------------------------------------------
+        // to_css combines both flags into one `text-decoration` value; KFX
+        // needs each flag as a separate property.
         IrField::TextDecorationUnderline => {
             if ir_style.text_decoration_underline {
                 Some("underline".to_string())
@@ -1807,50 +1705,9 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
-        // Phase 1: Text properties
-        IrField::LetterSpacing => {
-            if ir_style.letter_spacing != default.letter_spacing {
-                Some(ir_style.letter_spacing.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::WordSpacing => {
-            if ir_style.word_spacing != default.word_spacing {
-                Some(ir_style.word_spacing.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::TextTransform => {
-            if ir_style.text_transform != default.text_transform {
-                Some(ir_style.text_transform.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::Hyphens => {
-            if ir_style.hyphens != default.hyphens {
-                Some(ir_style.hyphens.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::WhiteSpace => {
-            if ir_style.white_space != default.white_space {
-                Some(ir_style.white_space.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 2: Text decoration extensions
-        IrField::UnderlineStyle => {
-            if ir_style.underline_style != default.underline_style {
-                Some(ir_style.underline_style.to_css_string())
-            } else {
-                None
-            }
-        }
+        // KNOWN DISCREPANCY: to_css emits `text-decoration-line: overline`,
+        // while KFX maps the overline flag to a decoration style ("solid").
+        // Kept as-is to preserve byte-identical output on both sides.
         IrField::Overline => {
             if ir_style.overline {
                 Some("solid".to_string())
@@ -1858,201 +1715,29 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
-        IrField::UnderlineColor => ir_style.underline_color.map(|c| c.to_css_string()),
-        // Phase 3: Layout properties
-        IrField::Width => {
-            if ir_style.width != default.width {
-                Some(ir_style.width.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::Height => {
-            if ir_style.height != default.height {
-                Some(ir_style.height.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MaxWidth => {
-            if ir_style.max_width != default.max_width {
-                Some(ir_style.max_width.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MinHeight => {
-            if ir_style.min_height != default.min_height {
-                Some(ir_style.min_height.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MinWidth => {
-            if ir_style.min_width != default.min_width {
-                Some(ir_style.min_width.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::MaxHeight => {
-            if ir_style.max_height != default.max_height {
-                Some(ir_style.max_height.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::Float => {
-            if ir_style.float != default.float {
-                Some(ir_style.float.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 4: Page break properties
-        IrField::BreakBefore => {
-            if ir_style.break_before != default.break_before {
-                Some(ir_style.break_before.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BreakAfter => {
-            if ir_style.break_after != default.break_after {
-                Some(ir_style.break_after.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BreakInside => {
-            if ir_style.break_inside != default.break_inside {
-                Some(ir_style.break_inside.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 5: Border properties
-        IrField::BorderStyleTop => {
-            if ir_style.border_style_top != default.border_style_top {
-                Some(ir_style.border_style_top.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderStyleRight => {
-            if ir_style.border_style_right != default.border_style_right {
-                Some(ir_style.border_style_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderStyleBottom => {
-            if ir_style.border_style_bottom != default.border_style_bottom {
-                Some(ir_style.border_style_bottom.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderStyleLeft => {
-            if ir_style.border_style_left != default.border_style_left {
-                Some(ir_style.border_style_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderWidthTop => {
-            if ir_style.border_width_top != default.border_width_top {
-                Some(ir_style.border_width_top.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderWidthRight => {
-            if ir_style.border_width_right != default.border_width_right {
-                Some(ir_style.border_width_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderWidthBottom => {
-            if ir_style.border_width_bottom != default.border_width_bottom {
-                Some(ir_style.border_width_bottom.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderWidthLeft => {
-            if ir_style.border_width_left != default.border_width_left {
-                Some(ir_style.border_width_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderColorTop => ir_style.border_color_top.map(|c| c.to_css_string()),
-        IrField::BorderColorRight => ir_style.border_color_right.map(|c| c.to_css_string()),
-        IrField::BorderColorBottom => ir_style.border_color_bottom.map(|c| c.to_css_string()),
-        IrField::BorderColorLeft => ir_style.border_color_left.map(|c| c.to_css_string()),
-        IrField::BorderRadiusTopLeft => {
-            if ir_style.border_radius_top_left != default.border_radius_top_left {
-                Some(ir_style.border_radius_top_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderRadiusTopRight => {
-            if ir_style.border_radius_top_right != default.border_radius_top_right {
-                Some(ir_style.border_radius_top_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderRadiusBottomLeft => {
-            if ir_style.border_radius_bottom_left != default.border_radius_bottom_left {
-                Some(ir_style.border_radius_bottom_left.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderRadiusBottomRight => {
-            if ir_style.border_radius_bottom_right != default.border_radius_bottom_right {
-                Some(ir_style.border_radius_bottom_right.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 6: List properties
+        // KNOWN DISCREPANCY: KFX gates list properties on display: list-item;
+        // to_css emits them whenever they differ from the default.
         IrField::ListStylePosition => {
-            // Only applies to display: list-item
-            if ir_style.display == ir_style::Display::ListItem
-                && ir_style.list_style_position != default.list_style_position
-            {
-                Some(ir_style.list_style_position.to_css_string())
+            if ir_style.display == ir_style::Display::ListItem {
+                shared("list-style-position")
             } else {
                 None
             }
         }
         IrField::ListStyleType => {
-            // Only applies to display: list-item
-            if ir_style.display == ir_style::Display::ListItem
-                && ir_style.list_style_type != default.list_style_type
-            {
-                Some(ir_style.list_style_type.to_css_string())
+            if ir_style.display == ir_style::Display::ListItem {
+                shared("list-style-type")
             } else {
                 None
             }
         }
-        // Phase 7: Font family
+        // KNOWN DISCREPANCY: KFX uses the raw family string; to_css quotes
+        // names that need quoting for CSS syntax.
         IrField::FontFamily => ir_style.font_family.clone(),
-        // Phase 8: Amazon properties
+        // Language is not a CSS property (to_css emits it via the HTML lang
+        // attribute instead).
         IrField::Language => ir_style.language.clone(),
-        IrField::Visibility => {
-            if ir_style.visibility != default.visibility {
-                Some(ir_style.visibility.to_css_string())
-            } else {
-                None
-            }
-        }
-        // BoxAlign: derived from margin-left: auto + margin-right: auto
+        // BoxAlign: derived from margin-left: auto + margin-right: auto.
         IrField::BoxAlign => {
             if ir_style.margin_left == ir_style::Length::Auto
                 && ir_style.margin_right == ir_style::Length::Auto
@@ -2062,8 +1747,9 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
-        // SizingBounds: Amazon auto-adds content-box when width/height is present
+        // SizingBounds: Amazon auto-adds content-box when width/height is present.
         IrField::SizingBounds => {
+            let default = ir_style::ComputedStyle::default();
             // If explicitly border-box, emit it
             if ir_style.box_sizing == ir_style::BoxSizing::BorderBox {
                 Some("border-box".to_string())
@@ -2074,52 +1760,67 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
-        // Phase 8: Additional layout properties
-        IrField::Clear => {
-            if ir_style.clear != default.clear {
-                Some(ir_style.clear.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 9: Pagination control
-        IrField::Orphans => {
-            if ir_style.orphans != default.orphans {
-                Some(ir_style.orphans.to_string())
-            } else {
-                None
-            }
-        }
-        IrField::Widows => {
-            if ir_style.widows != default.widows {
-                Some(ir_style.widows.to_string())
-            } else {
-                None
-            }
-        }
-        // Phase 10: Text wrapping
-        IrField::WordBreak => {
-            if ir_style.word_break != default.word_break {
-                Some(ir_style.word_break.to_css_string())
-            } else {
-                None
-            }
-        }
-        // Phase 12: Table properties
-        IrField::BorderCollapse => {
-            if ir_style.border_collapse != default.border_collapse {
-                Some(ir_style.border_collapse.to_css_string())
-            } else {
-                None
-            }
-        }
-        IrField::BorderSpacing => {
-            if ir_style.border_spacing != default.border_spacing {
-                Some(ir_style.border_spacing.to_css_string())
-            } else {
-                None
-            }
-        }
+        // ------------------------------------------------------------------
+        // Shared extractions: canonical table in style/to_css.rs.
+        // ------------------------------------------------------------------
+        IrField::FontWeight => shared("font-weight"),
+        IrField::FontStyle => shared("font-style"),
+        IrField::FontSize => shared("font-size"),
+        IrField::FontVariant => shared("font-variant"),
+        IrField::TextAlign => shared("text-align"),
+        IrField::TextIndent => shared("text-indent"),
+        IrField::LineHeight => shared("line-height"),
+        IrField::MarginTop => shared("margin-top"),
+        IrField::MarginBottom => shared("margin-bottom"),
+        IrField::MarginLeft => shared("margin-left"),
+        IrField::MarginRight => shared("margin-right"),
+        IrField::PaddingTop => shared("padding-top"),
+        IrField::PaddingBottom => shared("padding-bottom"),
+        IrField::PaddingLeft => shared("padding-left"),
+        IrField::PaddingRight => shared("padding-right"),
+        IrField::Color => shared("color"),
+        IrField::BackgroundColor => shared("background-color"),
+        IrField::VerticalAlign => shared("vertical-align"),
+        IrField::LetterSpacing => shared("letter-spacing"),
+        IrField::WordSpacing => shared("word-spacing"),
+        IrField::TextTransform => shared("text-transform"),
+        IrField::Hyphens => shared("hyphens"),
+        IrField::WhiteSpace => shared("white-space"),
+        IrField::UnderlineStyle => shared("text-decoration-style"),
+        IrField::UnderlineColor => shared("text-decoration-color"),
+        IrField::Width => shared("width"),
+        IrField::Height => shared("height"),
+        IrField::MaxWidth => shared("max-width"),
+        IrField::MinHeight => shared("min-height"),
+        IrField::MinWidth => shared("min-width"),
+        IrField::MaxHeight => shared("max-height"),
+        IrField::Float => shared("float"),
+        IrField::BreakBefore => shared("break-before"),
+        IrField::BreakAfter => shared("break-after"),
+        IrField::BreakInside => shared("break-inside"),
+        IrField::BorderStyleTop => shared("border-style-top"),
+        IrField::BorderStyleRight => shared("border-style-right"),
+        IrField::BorderStyleBottom => shared("border-style-bottom"),
+        IrField::BorderStyleLeft => shared("border-style-left"),
+        IrField::BorderWidthTop => shared("border-width-top"),
+        IrField::BorderWidthRight => shared("border-width-right"),
+        IrField::BorderWidthBottom => shared("border-width-bottom"),
+        IrField::BorderWidthLeft => shared("border-width-left"),
+        IrField::BorderColorTop => shared("border-top-color"),
+        IrField::BorderColorRight => shared("border-right-color"),
+        IrField::BorderColorBottom => shared("border-bottom-color"),
+        IrField::BorderColorLeft => shared("border-left-color"),
+        IrField::BorderRadiusTopLeft => shared("border-top-left-radius"),
+        IrField::BorderRadiusTopRight => shared("border-top-right-radius"),
+        IrField::BorderRadiusBottomLeft => shared("border-bottom-left-radius"),
+        IrField::BorderRadiusBottomRight => shared("border-bottom-right-radius"),
+        IrField::Visibility => shared("visibility"),
+        IrField::Clear => shared("clear"),
+        IrField::Orphans => shared("orphans"),
+        IrField::Widows => shared("widows"),
+        IrField::WordBreak => shared("word-break"),
+        IrField::BorderCollapse => shared("border-collapse"),
+        IrField::BorderSpacing => shared("border-spacing"),
     }
 }
 
@@ -2891,6 +2592,93 @@ mod tests {
             extract_ir_field(&styled, IrField::MarginTop),
             Some("1.5em".to_string())
         );
+    }
+
+    #[test]
+    fn test_extract_ir_field_all_variants_resolve() {
+        // Drift guard: `changed_property_value` panics on a property name
+        // missing from the canonical table in style/to_css.rs, so extracting
+        // every IrField variant verifies every shared lookup resolves.
+        const ALL_FIELDS: &[IrField] = &[
+            IrField::FontWeight,
+            IrField::FontStyle,
+            IrField::FontSize,
+            IrField::FontVariant,
+            IrField::TextAlign,
+            IrField::TextIndent,
+            IrField::LineHeight,
+            IrField::MarginTop,
+            IrField::MarginBottom,
+            IrField::MarginLeft,
+            IrField::MarginRight,
+            IrField::PaddingTop,
+            IrField::PaddingBottom,
+            IrField::PaddingLeft,
+            IrField::PaddingRight,
+            IrField::Color,
+            IrField::BackgroundColor,
+            IrField::VerticalAlign,
+            IrField::TextDecorationUnderline,
+            IrField::TextDecorationStrikethrough,
+            IrField::LetterSpacing,
+            IrField::WordSpacing,
+            IrField::TextTransform,
+            IrField::Hyphens,
+            IrField::WhiteSpace,
+            IrField::UnderlineStyle,
+            IrField::Overline,
+            IrField::UnderlineColor,
+            IrField::Width,
+            IrField::Height,
+            IrField::MaxWidth,
+            IrField::MinHeight,
+            IrField::Float,
+            IrField::BoxAlign,
+            IrField::BreakBefore,
+            IrField::BreakAfter,
+            IrField::BreakInside,
+            IrField::BorderStyleTop,
+            IrField::BorderStyleRight,
+            IrField::BorderStyleBottom,
+            IrField::BorderStyleLeft,
+            IrField::BorderWidthTop,
+            IrField::BorderWidthRight,
+            IrField::BorderWidthBottom,
+            IrField::BorderWidthLeft,
+            IrField::BorderColorTop,
+            IrField::BorderColorRight,
+            IrField::BorderColorBottom,
+            IrField::BorderColorLeft,
+            IrField::BorderRadiusTopLeft,
+            IrField::BorderRadiusTopRight,
+            IrField::BorderRadiusBottomLeft,
+            IrField::BorderRadiusBottomRight,
+            IrField::ListStylePosition,
+            IrField::ListStyleType,
+            IrField::FontFamily,
+            IrField::Language,
+            IrField::Visibility,
+            IrField::SizingBounds,
+            IrField::Clear,
+            IrField::MinWidth,
+            IrField::MaxHeight,
+            IrField::Orphans,
+            IrField::Widows,
+            IrField::WordBreak,
+            IrField::BorderCollapse,
+            IrField::BorderSpacing,
+        ];
+
+        let default = ir_style::ComputedStyle::default();
+        for &field in ALL_FIELDS {
+            let extracted = extract_ir_field(&default, field);
+            if field == IrField::BoxAlign {
+                // Default margins are `auto`, which BoxAlign maps to center.
+                assert_eq!(extracted, Some("center".to_string()));
+            } else {
+                assert_eq!(extracted, None, "{field:?} non-None on default style");
+            }
+        }
     }
 
     #[test]
