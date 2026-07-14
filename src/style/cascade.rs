@@ -118,6 +118,17 @@ fn selector_bucket_key(selector: &Selector<BokoSelectors>) -> BucketKey {
     }
 }
 
+/// Reusable per-element scratch state for [`compute_styles_indexed`].
+///
+/// Owning this across a whole chapter avoids re-allocating the candidate
+/// list and rebuilding the selectors crate's matching caches for every
+/// element (the caches are designed to be shared across a traversal).
+#[derive(Default)]
+pub struct CascadeScratch {
+    caches: SelectorCaches,
+    candidates: Vec<RuleRef>,
+}
+
 /// A selector-bucketed view of a set of stylesheets, so that computing styles
 /// for an element only tests rules whose rightmost compound could match it,
 /// instead of every rule of every stylesheet (O(elements × rules)).
@@ -160,19 +171,26 @@ impl<'a> CascadeIndex<'a> {
         index
     }
 
-    /// Candidate rules for an element, in source order and de-duplicated. Any
-    /// rule not returned provably cannot match: matching a bucketed selector
-    /// requires the element to carry that id/class/tag.
-    fn candidate_rules(&self, elem: ElementRef<'_>) -> Vec<RuleRef> {
-        let mut out = self.universal.clone();
+    /// Fill `out` with the candidate rules for an element, in source order and
+    /// de-duplicated. Any rule not returned provably cannot match: matching a
+    /// bucketed selector requires the element to carry that id/class/tag.
+    fn candidate_rules(&self, elem: ElementRef<'_>, out: &mut Vec<RuleRef>) {
+        out.clear();
+        out.extend_from_slice(&self.universal);
         // Look up by lowercased tag; the full matcher decides case. Lowercasing
         // only widens the candidate set, so it can never drop a real match.
-        if let Some(name) = elem.dom.element_name(elem.id)
-            && let Some(v) = self
-                .by_local
-                .get(name.as_ref().to_ascii_lowercase().as_str())
-        {
-            out.extend_from_slice(v);
+        // html5ever already lowercases HTML local names, so allocating a
+        // lowercase copy is only needed in the rare uppercase case.
+        if let Some(name) = elem.dom.element_name(elem.id) {
+            let name = name.as_ref();
+            let bucket = if name.bytes().any(|b| b.is_ascii_uppercase()) {
+                self.by_local.get(name.to_ascii_lowercase().as_str())
+            } else {
+                self.by_local.get(name)
+            };
+            if let Some(v) = bucket {
+                out.extend_from_slice(v);
+            }
         }
         if let Some(id) = elem.dom.element_id(elem.id)
             && let Some(v) = self.by_id.get(id)
@@ -186,7 +204,6 @@ impl<'a> CascadeIndex<'a> {
         }
         out.sort_unstable();
         out.dedup();
-        out
     }
 }
 
@@ -203,7 +220,7 @@ pub fn compute_styles(
 ) -> ComputedStyle {
     let refs: Vec<(&Stylesheet, Origin)> = stylesheets.iter().map(|(s, o)| (s, *o)).collect();
     let index = CascadeIndex::build(&refs);
-    compute_styles_indexed(elem, &index, parent_style, style_pool)
+    compute_styles_indexed(elem, &index, parent_style, style_pool, &mut CascadeScratch::default())
 }
 
 /// Compute styles for an element using a prebuilt [`CascadeIndex`].
@@ -212,20 +229,21 @@ pub fn compute_styles_indexed(
     index: &CascadeIndex<'_>,
     parent_style: Option<&ComputedStyle>,
     _style_pool: &mut StylePool,
+    scratch: &mut CascadeScratch,
 ) -> ComputedStyle {
     // Pre-allocate with typical capacity (most elements match 5-20 declarations)
     let mut matched: Vec<MatchedRule> = Vec::with_capacity(16);
     let mut order = 0;
 
-    // Reuse selector caches across all rule matching for this element
-    let mut caches = SelectorCaches::default();
+    let CascadeScratch { caches, candidates } = scratch;
+    index.candidate_rules(elem, candidates);
 
     // Candidate rules are already in source order, so `order` reproduces the
     // exhaustive-scan cascade exactly.
-    for (sheet_idx, rule_idx) in index.candidate_rules(elem) {
+    for &(sheet_idx, rule_idx) in candidates.iter() {
         let (stylesheet, origin) = index.stylesheets[sheet_idx as usize];
         let rule = &stylesheet.rules[rule_idx as usize];
-        if rule_matches_with_caches(elem, rule, &mut caches) {
+        if rule_matches_with_caches(elem, rule, caches) {
             // Collect normal declarations
             for decl in &rule.declarations {
                 matched.push(MatchedRule {

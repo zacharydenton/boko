@@ -45,7 +45,7 @@ pub use declaration::Declaration;
 pub use parse::{CssRule, Origin, Specificity, Stylesheet, TextDecorationValue};
 
 // Re-export cascade function
-pub use cascade::{CascadeIndex, compute_styles, compute_styles_indexed};
+pub use cascade::{CascadeIndex, CascadeScratch, compute_styles, compute_styles_indexed};
 
 // Re-export macro for internal use
 #[allow(unused_imports)]
