@@ -404,10 +404,21 @@ impl KfxImporter {
     }
 
     /// Parse an entity as Ion and return the parsed value.
+    ///
+    /// Strips any top-level Ion type annotation (e.g. `$490::{ ... }`) so
+    /// callers can rely on the returned value being the entity struct itself,
+    /// matching every other callsite in this importer that does
+    /// `value.as_struct()` directly. Some KFX containers tag entities with an
+    /// annotation indicating their schema type; without this strip, those
+    /// entities silently fall through `get_field()` lookups because the
+    /// outer value is an `Annotated`, not a `Struct`.
     fn parse_entity_ion(&self, loc: EntityLoc) -> io::Result<IonValue> {
         let ion_data = self.read_entity(loc)?;
         let mut parser = IonParser::new(&ion_data);
-        parser.parse()
+        Ok(match parser.parse()? {
+            IonValue::Annotated(_, inner) => *inner,
+            other => other,
+        })
     }
 
     /// Get a symbol's text from an IonValue (handles both Symbol and String).
