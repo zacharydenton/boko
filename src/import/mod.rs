@@ -17,7 +17,7 @@ pub use mobi::MobiImporter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::dom::{Origin, Stylesheet, extract_stylesheets};
+use crate::dom::{Origin, Stylesheet};
 use crate::model::{AnchorTarget, Chapter, FontFace, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// Unique identifier for a chapter/spine item within a book.
@@ -70,13 +70,15 @@ pub trait Importer: Send + Sync {
     ///
     /// Implementations may override for format-specific optimizations.
     fn load_chapter(&mut self, id: ChapterId) -> crate::Result<Chapter> {
-        // Load raw HTML
+        // Load raw HTML, decode, and parse the DOM exactly once: the same
+        // parse serves stylesheet discovery and IR compilation below.
         let html_bytes = self.load_raw(id)?;
         let hint_encoding = crate::util::extract_xml_encoding(&html_bytes);
         let html_str = crate::util::decode_text(&html_bytes, hint_encoding);
+        let dom = crate::dom::parse_dom(&html_str);
 
         // Extract stylesheet references
-        let (linked, inline) = extract_stylesheets(&html_str);
+        let (linked, inline) = crate::dom::extract_stylesheets_from_dom(&dom);
 
         // Build stylesheets list (Arc-shared: cached sheets are not cloned)
         let mut stylesheets: Vec<(Arc<Stylesheet>, Origin)> = Vec::new();
@@ -100,10 +102,10 @@ pub trait Importer: Send + Sync {
             stylesheets.push((Arc::new(Stylesheet::parse(&css)), Origin::Author));
         }
 
-        // Compile to IR
+        // Compile to IR from the DOM parsed above
         let sheet_refs: Vec<(&Stylesheet, Origin)> =
             stylesheets.iter().map(|(s, o)| (s.as_ref(), *o)).collect();
-        let mut chapter = crate::dom::compile_html_bytes_borrowed(&html_bytes, &sheet_refs);
+        let mut chapter = crate::dom::compile_dom(&dom, &sheet_refs);
 
         // Post-process: Resolve relative paths in semantic attributes (src, href)
         // This canonicalizes paths like "../images/photo.jpg" to "OEBPS/images/photo.jpg"

@@ -54,7 +54,7 @@ fn looks_like_xhtml(html: &str) -> bool {
 /// first 500 bytes), falling back to html5ever for plain HTML. This correctly
 /// handles self-closing tags like `<script/>` which are valid in XHTML but
 /// cause content loss with HTML5 parsing.
-fn parse_dom(html: &str) -> ArenaDom {
+pub(crate) fn parse_dom(html: &str) -> ArenaDom {
     if looks_like_xhtml(html) {
         let sink = ArenaSink::new();
         let result =
@@ -149,25 +149,19 @@ pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin
     compile_html(&html_str, author_stylesheets)
 }
 
-/// Byte-input variant of [`compile_dom`]'s calling convention: decode, parse,
-/// and compile with borrowed stylesheets. Internal importer hot path.
-pub(crate) fn compile_html_bytes_borrowed(
-    html: &[u8],
-    author_stylesheets: &[(&Stylesheet, Origin)],
-) -> Chapter {
-    let hint_encoding = crate::util::extract_xml_encoding(html);
-    let html_str = crate::util::decode_text(html, hint_encoding);
-    let dom = parse_dom(&html_str);
-    compile_dom(&dom, author_stylesheets)
-}
-
 /// Extract stylesheet links and inline styles from HTML.
 ///
 /// Returns a list of (href, media) tuples for linked stylesheets,
 /// and a list of inline CSS content.
 pub fn extract_stylesheets(html: &str) -> (Vec<String>, Vec<String>) {
-    let dom = parse_dom(html);
+    extract_stylesheets_from_dom(&parse_dom(html))
+}
 
+/// Extract stylesheet references from an already-parsed DOM.
+///
+/// Internal importer hot path: lets `load_chapter` parse each chapter's HTML
+/// once and reuse the DOM for both stylesheet discovery and IR compilation.
+pub(crate) fn extract_stylesheets_from_dom(dom: &ArenaDom) -> (Vec<String>, Vec<String>) {
     let mut linked = Vec::new();
     let mut inline = Vec::new();
 
