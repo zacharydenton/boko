@@ -69,7 +69,11 @@ impl Default for Azw3Exporter {
 
 impl Exporter for Azw3Exporter {
     fn export<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> crate::Result<()> {
-        let builder = Kf8Builder::new(book, self.config.normalize)?;
+        // Normalize when explicitly requested OR when the source format requires
+        // it (e.g. KFX raw content is binary Ion, not HTML) — otherwise the
+        // builder would chunk and compress that binary as if it were XHTML.
+        let normalize = self.config.normalize || book.requires_normalized_export();
+        let builder = Kf8Builder::new(book, normalize)?;
         Ok(builder.write(writer)?)
     }
 }

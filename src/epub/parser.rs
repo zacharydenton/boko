@@ -32,7 +32,7 @@ pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == b"full-path" {
-                        return String::from_utf8(attr.value.to_vec())
+                        return attr.unescape_value().map(|v| v.into_owned())
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
                     }
                 }
@@ -115,7 +115,7 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"id" {
                                 current_element_id = Some(
-                                    String::from_utf8(attr.value.to_vec())
+                                    attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?,
                                 );
                             }
@@ -133,19 +133,19 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                             match attr.key.as_ref() {
                                 b"property" => {
                                     meta_property = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"refines" => {
                                     meta_refines = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"id" => {
                                     meta_id = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
@@ -157,7 +157,7 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"toc" {
                                 toc_id = Some(
-                                    String::from_utf8(attr.value.to_vec())
+                                    attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?,
                                 );
                             }
@@ -180,20 +180,20 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"id" => {
-                                    id = String::from_utf8(attr.value.to_vec())
+                                    id = attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?
                                 }
                                 b"href" => {
-                                    href = String::from_utf8(attr.value.to_vec())
+                                    href = attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?
                                 }
                                 b"media-type" => {
-                                    media_type = String::from_utf8(attr.value.to_vec())
+                                    media_type = attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?
                                 }
                                 b"properties" => {
                                     properties = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     )
                                 }
@@ -216,7 +216,7 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"idref" {
                                 spine_ids.push(
-                                    String::from_utf8(attr.value.to_vec())
+                                    attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?,
                                 );
                             }
@@ -235,26 +235,26 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
                             match attr.key.as_ref() {
                                 b"name" if &*attr.value == b"cover" => is_cover = true,
                                 b"content" => {
-                                    let val = String::from_utf8(attr.value.to_vec())
+                                    let val = attr.unescape_value().map(|v| v.into_owned())
                                         .map_err(io::Error::other)?;
                                     cover_id = val.clone();
                                     content = Some(val);
                                 }
                                 b"property" => {
                                     property = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"refines" => {
                                     refines = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"id" => {
                                     elem_id = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
@@ -600,7 +600,7 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                         let mut play_order = None;
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"playOrder"
-                                && let Ok(order_str) = String::from_utf8(attr.value.to_vec())
+                                && let Ok(order_str) = attr.unescape_value().map(|v| v.into_owned())
                             {
                                 play_order = order_str.parse().ok();
                             }
@@ -625,7 +625,7 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                             && let Some(state) = stack.last_mut()
                         {
                             state.src = Some(
-                                String::from_utf8(attr.value.to_vec()).map_err(io::Error::other)?,
+                                attr.unescape_value().map(|v| v.into_owned()).map_err(io::Error::other)?,
                             );
                         }
                     }
@@ -727,13 +727,13 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                             match key_local {
                                 b"href" => {
                                     current_href = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"type" => {
                                     current_epub_type = Some(
-                                        String::from_utf8(attr.value.to_vec())
+                                        attr.unescape_value().map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }

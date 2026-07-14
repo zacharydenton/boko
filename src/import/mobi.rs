@@ -546,33 +546,36 @@ fn build_metadata(
 
 /// Wrap raw text as HTML.
 fn wrap_text_as_html(text: &[u8], title: &str, mobi: &MobiHeader) -> Vec<u8> {
-    let charset = match mobi.encoding {
+    // Decode using the header-declared encoding *before* wrapping. Previously
+    // the bytes were run through `from_utf8_lossy` — which replaces every
+    // cp1252 byte >= 0x80 (curly quotes, accents, …) with U+FFFD — while still
+    // declaring `windows-1252`, destroying all non-ASCII text.
+    let hint = match mobi.encoding {
         Encoding::Utf8 => "utf-8",
         _ => "windows-1252",
     };
-
-    let content = String::from_utf8_lossy(text);
+    let content = crate::util::decode_text(text, Some(hint));
     let content_str = content.trim();
 
-    // Check if content already has HTML structure
+    // Already a full HTML document: keep the original bytes (it carries its own
+    // charset declaration).
     if content_str.starts_with("<!DOCTYPE") || content_str.starts_with("<html") {
         return text.to_vec();
     }
 
-    // Wrap as HTML
+    // Wrap as HTML. The body is now decoded UTF-8, so declare utf-8.
     let html = format!(
-        r#"<?xml version="1.0" encoding="{charset}"?>
+        r#"<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <title>{title}</title>
-<meta charset="{charset}"/>
+<meta charset="utf-8"/>
 </head>
 <body>
 {content}
 </body>
 </html>"#,
-        charset = charset,
         title = html_escape(title),
         content = content,
     );
