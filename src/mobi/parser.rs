@@ -5,8 +5,8 @@ use std::io;
 pub use super::headers::{Compression, Encoding, ExthHeader, MobiHeader, NULL_INDEX};
 pub use super::huffcdic::HuffCdicReader;
 pub use super::index::{
-    Cncx, DivElement, IndexEntry, NcxEntry, SkeletonFile, parse_div_index, parse_ncx_index,
-    parse_skel_index, read_index,
+    DivElement, NcxEntry, SkeletonFile, parse_div_index, parse_ncx_index, parse_skel_index,
+    read_index,
 };
 
 /// PDB (Palm Database) header info extracted from bytes.
@@ -129,25 +129,6 @@ impl MobiFormat {
     pub fn is_kf8(&self) -> bool {
         matches!(self, MobiFormat::Kf8 | MobiFormat::Combo { .. })
     }
-}
-
-/// Detect format from headers.
-pub fn detect_format(mobi: &MobiHeader, exth: Option<&ExthHeader>) -> MobiFormat {
-    // Pure KF8: version 8
-    if mobi.mobi_version == 8 {
-        return MobiFormat::Kf8;
-    }
-
-    // Check for combo file: EXTH 121 points to KF8 boundary
-    if let Some(kf8_idx) = exth.and_then(|e| e.kf8_boundary)
-        && kf8_idx > 0
-    {
-        return MobiFormat::Combo {
-            kf8_record_offset: kf8_idx as usize,
-        };
-    }
-
-    MobiFormat::Mobi6
 }
 
 /// Parse EXTH header if present.
@@ -593,46 +574,6 @@ mod tests {
     fn test_pdb_info_too_short() {
         let data = vec![0u8; 50];
         assert!(PdbInfo::parse(&data).is_err());
-    }
-
-    #[test]
-    fn test_detect_format_kf8() {
-        let mut header = MobiHeader::parse(&[0u8; 0x6C]).unwrap();
-        header.mobi_version = 8;
-
-        let format = detect_format(&header, None);
-        assert!(matches!(format, MobiFormat::Kf8));
-        assert!(format.is_kf8());
-        assert_eq!(format.record_offset(), 0);
-    }
-
-    #[test]
-    fn test_detect_format_combo() {
-        let header = MobiHeader::parse(&[0u8; 32]).unwrap();
-        let exth = ExthHeader {
-            kf8_boundary: Some(100),
-            ..Default::default()
-        };
-
-        let format = detect_format(&header, Some(&exth));
-        assert!(matches!(
-            format,
-            MobiFormat::Combo {
-                kf8_record_offset: 100
-            }
-        ));
-        assert!(format.is_kf8());
-        assert_eq!(format.record_offset(), 100);
-    }
-
-    #[test]
-    fn test_detect_format_mobi6() {
-        let header = MobiHeader::parse(&[0u8; 32]).unwrap();
-
-        let format = detect_format(&header, None);
-        assert!(matches!(format, MobiFormat::Mobi6));
-        assert!(!format.is_kf8());
-        assert_eq!(format.record_offset(), 0);
     }
 
     #[test]

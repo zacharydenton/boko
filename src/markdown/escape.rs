@@ -17,8 +17,8 @@
 ///
 /// # Examples
 ///
-/// ```
-/// use boko::markdown::escape_markdown;
+/// ```ignore (crate-internal; exercised by unit tests)
+/// use crate::markdown::escape_markdown;
 ///
 /// assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
 /// assert_eq!(escape_markdown("[link]"), "\\[link\\]");
@@ -74,8 +74,8 @@ pub fn escape_markdown(text: &str) -> String {
 ///
 /// # Examples
 ///
-/// ```
-/// use boko::markdown::calculate_fence_length;
+/// ```ignore (crate-internal; exercised by unit tests)
+/// use crate::markdown::calculate_fence_length;
 ///
 /// // Normal content needs 3 backticks
 /// assert_eq!(calculate_fence_length("let x = 1;", '`'), 3);
@@ -106,8 +106,8 @@ pub fn calculate_fence_length(content: &str, fence_char: char) -> usize {
 ///
 /// # Examples
 ///
-/// ```
-/// use boko::markdown::calculate_inline_code_ticks;
+/// ```ignore (crate-internal; exercised by unit tests)
+/// use crate::markdown::calculate_inline_code_ticks;
 ///
 /// // Normal content needs 1 backtick
 /// assert_eq!(calculate_inline_code_ticks("code"), 1);

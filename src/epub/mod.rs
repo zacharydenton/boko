@@ -2,6 +2,4 @@
 
 mod parser;
 
-pub use parser::{
-    OpfData, parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf, strip_bom,
-};
+pub use parser::{parse_container_xml, parse_nav_landmarks, parse_ncx, parse_opf};

@@ -14,8 +14,8 @@ use crate::model::{AnchorTarget, Chapter, GlobalNodeId, NodeId, ResolvedLinks, R
 ///
 /// # Examples
 ///
-/// ```
-/// use boko::markdown::slugify;
+/// ```ignore (crate-internal; exercised by unit tests)
+/// use crate::markdown::slugify;
 ///
 /// assert_eq!(slugify("Chapter One"), "chapter-one");
 /// assert_eq!(slugify("Hello, World!"), "hello-world");

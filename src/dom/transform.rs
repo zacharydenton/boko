@@ -15,7 +15,8 @@ use crate::style::{
 /// User agent stylesheet (browser defaults).
 const UA_CSS: &str = include_str!("data/styles.css");
 
-pub fn user_agent_stylesheet() -> Stylesheet {
+#[cfg(test)]
+pub(crate) fn user_agent_stylesheet() -> Stylesheet {
     (*user_agent_stylesheet_arc()).clone()
 }
 

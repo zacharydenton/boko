@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use boko::dom::{compile_html, Stylesheet, Origin};
+//! use boko::{compile_html, Stylesheet, Origin};
 //!
 //! let html = "<html><body><p>Hello, World!</p></body></html>";
 //! let css = "p { color: blue; }";
@@ -25,13 +25,10 @@ mod role_map;
 mod transform;
 mod tree_sink;
 
-pub use arena::{ArenaDom, ArenaNode, ArenaNodeData, ArenaNodeId};
-pub use element_ref::{BokoSelectors, ElementRef};
-pub use optimize::optimize;
-pub use transform::user_agent_stylesheet;
+pub use arena::{ArenaDom, ArenaNodeData};
 
 // Re-export style types for convenience
-pub use crate::style::{Declaration, Origin, Specificity, Stylesheet};
+pub use crate::style::{Origin, Stylesheet};
 
 use html5ever::driver::ParseOpts;
 use html5ever::tendril::TendrilSink;
@@ -97,7 +94,7 @@ pub(crate) fn parse_dom(html: &str) -> ArenaDom {
 /// # Example
 ///
 /// ```
-/// use boko::dom::{compile_html, Stylesheet, Origin};
+/// use boko::{compile_html, Stylesheet, Origin};
 ///
 /// let html = "<p class='intro'>Welcome!</p>";
 /// let css = ".intro { font-weight: bold; }";
@@ -139,7 +136,11 @@ pub(crate) fn compile_dom(dom: &ArenaDom, author_stylesheets: &[(&Stylesheet, Or
 /// Convenience wrapper that handles byte-to-string conversion with proper
 /// encoding detection. Supports UTF-8, Windows-1252, and other encodings
 /// via the XML declaration.
-pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin)]) -> Chapter {
+#[cfg(test)]
+pub(crate) fn compile_html_bytes(
+    html: &[u8],
+    author_stylesheets: &[(Stylesheet, Origin)],
+) -> Chapter {
     // Extract encoding from XML declaration if present
     let hint_encoding = crate::util::extract_xml_encoding(html);
 
@@ -153,7 +154,8 @@ pub fn compile_html_bytes(html: &[u8], author_stylesheets: &[(Stylesheet, Origin
 ///
 /// Returns a list of (href, media) tuples for linked stylesheets,
 /// and a list of inline CSS content.
-pub fn extract_stylesheets(html: &str) -> (Vec<String>, Vec<String>) {
+#[cfg(test)]
+pub(crate) fn extract_stylesheets(html: &str) -> (Vec<String>, Vec<String>) {
     extract_stylesheets_from_dom(&parse_dom(html))
 }
 
@@ -228,8 +230,8 @@ pub(crate) fn extract_stylesheets_from_dom(dom: &ArenaDom) -> (Vec<String>, Vec<
 ///
 /// # Examples
 ///
-/// ```
-/// use boko::dom::resolve_path;
+/// ```ignore (crate-internal; exercised by unit tests below)
+/// use crate::dom::resolve_path;
 ///
 /// assert_eq!(
 ///     resolve_path("OEBPS/text/ch1.html", "../images/logo.png"),
