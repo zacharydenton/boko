@@ -80,6 +80,14 @@ impl Exporter for EpubExporter {
 impl EpubExporter {
     /// Export with passthrough mode (preserves original HTML/CSS).
     fn export_raw<W: Write + Seek>(&self, book: &mut Book, writer: &mut W) -> io::Result<()> {
+        // Resolve TOC fragments before we generate the NCX. AZW3 and MOBI
+        // importers leave TOC entries with bare chapter hrefs until
+        // `resolve_toc()` populates the `#fileposN` / `#id` suffix from the
+        // book's NCX / position map. Without this call the exported NCX has
+        // unresolvable anchors and readers land on chapter starts instead of
+        // the intended in-chapter targets.
+        book.resolve_toc();
+
         let mut zip = ZipWriter::new(writer);
 
         let compression_level = self.config.compression_level.unwrap_or(6);
@@ -184,6 +192,18 @@ impl EpubExporter {
     ) -> io::Result<()> {
         use super::normalize::normalize_book;
 
+        // Resolve TOC fragments before generating the NCX. Same rationale as
+        // `export_raw`: AZW3 / MOBI importers leave TOC entries with bare
+        // chapter hrefs until this is called.
+        book.resolve_toc();
+
+        // Snapshot every asset the importer surfaces. The normalized content
+        // pipeline only records assets it actively references, which misses
+        // resources like embedded fonts that are referenced from CSS rather
+        // than from the IR DOM. We add those back into the manifest and ZIP
+        // below.
+        let all_assets: Vec<_> = book.list_assets().to_vec();
+
         // Normalize the book content
         let content = normalize_book(book)?;
 
@@ -243,6 +263,28 @@ impl EpubExporter {
             });
         }
 
+        // Add font assets the importer surfaced that aren't already covered
+        // by normalized content. Fonts are typically referenced from CSS, not
+        // from DOM nodes, so `normalize_book` doesn't pull them into
+        // `content.assets`. Without this we'd emit `@font-face` rules whose
+        // `src:` URLs point at files we never wrote into the ZIP.
+        let mut extra_font_idx = 0;
+        for asset_path in &all_assets {
+            let path_str = asset_path.to_string_lossy();
+            if !path_str.starts_with("fonts/") {
+                continue;
+            }
+            if content.assets.iter().any(|a| a == &*path_str) {
+                continue;
+            }
+            manifest_items.push(ManifestItem {
+                id: format!("font_{}", extra_font_idx),
+                href: format!("OEBPS/{}", sanitize_path(&path_str)),
+                media_type: guess_media_type(&path_str),
+            });
+            extra_font_idx += 1;
+        }
+
         // 4. Write content.opf
         let opf = generate_opf(book.metadata(), &manifest_items, &spine_refs);
         zip.start_file("OEBPS/content.opf", deflated)
@@ -275,6 +317,23 @@ impl EpubExporter {
 
             // Try to load the asset from the book
             if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
+                zip.start_file(&zip_path, deflated).map_err(io_error)?;
+                zip.write_all(&data)?;
+            }
+        }
+
+        // 9. Write font assets not already covered by normalized content.
+        // Matches the manifest entries added above.
+        for asset_path in &all_assets {
+            let path_str = asset_path.to_string_lossy();
+            if !path_str.starts_with("fonts/") {
+                continue;
+            }
+            if content.assets.iter().any(|a| a == &*path_str) {
+                continue;
+            }
+            let zip_path = format!("OEBPS/{}", sanitize_path(&path_str));
+            if let Ok(data) = book.load_asset(asset_path) {
                 zip.start_file(&zip_path, deflated).map_err(io_error)?;
                 zip.write_all(&data)?;
             }
