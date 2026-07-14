@@ -1,0 +1,113 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3187981280
+INFO: Loaded 1 modules   (206468 inline 8-bit counters): 206468 [0x10105dc50, 0x1010902d4), 
+INFO: Loaded 1 PC tables (206468 PCs): 206468 [0x1010902d8,0x1013b6b18), 
+INFO:      176 files found in /Users/zach/code/boko/fuzz/corpus/from_bytes
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 605510 bytes
+INFO: seed corpus: files: 176 min: 5600b max: 605510b total: 83391902b rss: 44Mb
+#32	pulse  cov: 8368 ft: 12304 corp: 28/7589Kb exec/s: 16 rss: 615Mb
+#64	pulse  cov: 13918 ft: 22033 corp: 58/20Mb exec/s: 16 rss: 720Mb
+#128	pulse  cov: 13950 ft: 23146 corp: 115/46Mb exec/s: 12 rss: 772Mb
+#180	INITED cov: 15103 ft: 26609 corp: 163/73Mb exec/s: 12 rss: 842Mb
+#182	NEW    cov: 15103 ft: 26611 corp: 164/73Mb lim: 605510 exec/s: 13 rss: 842Mb L: 279148/605510 MS: 2 CopyPart-ShuffleBytes-
+#187	NEW    cov: 15105 ft: 26613 corp: 165/73Mb lim: 605510 exec/s: 12 rss: 842Mb L: 186175/605510 MS: 5 CrossOver-ChangeASCIIInt-ChangeBinInt-EraseBytes-EraseBytes-
+#188	NEW    cov: 15106 ft: 26620 corp: 166/74Mb lim: 605510 exec/s: 12 rss: 842Mb L: 605510/605510 MS: 1 ShuffleBytes-
+#190	NEW    cov: 15106 ft: 26622 corp: 167/74Mb lim: 605510 exec/s: 12 rss: 842Mb L: 478053/605510 MS: 2 ChangeASCIIInt-ChangeBit-
+	NEW_FUNC[1/2]: 0x000100783680 in _RNvXs0_NtNtCs1nZb6VDLA8y_4boko3kfx9containerNtB5_14ContainerErrorINtNtCs1eZMhyJvjos_4core7convert4FromNtNtNtB16_2io5error5ErrorE4from+0x0 (from_bytes:arm64+0x100607680)
+	NEW_FUNC[2/2]: 0x0001007e58e4 in _RNvXsC_NtCs15aG3uGCGCG_5alloc6stringNtNtNtCs1nZb6VDLA8y_4boko3kfx9container14ContainerErrorNtB5_12SpecToString14spec_to_stringBE_+0x0 (from_bytes:arm64+0x1006698e4)
+	NEW_FUNC[1/1]: 0x0001009db7bc in _RNvXs_NtNtCsiCBByfyW1Yo_3zip4read12magic_finderNtB4_9BackwardsINtB4_15FinderDirectionAhj4_E11move_cursor+0x0 (from_bytes:arm64+0x10085f7bc)
+#228	RELOAD cov: 15189 ft: 28280 corp: 196/84Mb lim: 605510 exec/s: 12 rss: 842Mb
+#229	NEW    cov: 15191 ft: 28446 corp: 197/85Mb lim: 605510 exec/s: 12 rss: 842Mb L: 368313/605510 MS: 1 CMP- DE: "\0023333333"-
+#230	NEW    cov: 15191 ft: 28448 corp: 198/85Mb lim: 605510 exec/s: 12 rss: 842Mb L: 538456/605510 MS: 1 ShuffleBytes-
+#231	NEW    cov: 15191 ft: 28450 corp: 199/86Mb lim: 605510 exec/s: 12 rss: 842Mb L: 605510/605510 MS: 1 ChangeByte-
+#232	NEW    cov: 15191 ft: 28461 corp: 200/86Mb lim: 605510 exec/s: 12 rss: 842Mb L: 538457/605510 MS: 1 ChangeBinInt-
+#233	NEW    cov: 15191 ft: 28462 corp: 201/87Mb lim: 605510 exec/s: 12 rss: 842Mb L: 547523/605510 MS: 1 EraseBytes-
+#234	NEW    cov: 15191 ft: 28463 corp: 202/87Mb lim: 605510 exec/s: 13 rss: 842Mb L: 605127/605510 MS: 1 CopyPart-
+#235	NEW    cov: 15191 ft: 28464 corp: 203/88Mb lim: 605510 exec/s: 13 rss: 842Mb L: 370359/605510 MS: 1 ChangeBinInt-
+#236	NEW    cov: 15192 ft: 28509 corp: 204/88Mb lim: 605510 exec/s: 13 rss: 842Mb L: 538457/605510 MS: 1 ShuffleBytes-
+#238	NEW    cov: 15192 ft: 28510 corp: 205/89Mb lim: 605510 exec/s: 12 rss: 842Mb L: 482409/605510 MS: 2 ShuffleBytes-CMP- DE: "\376\377\377\376"-
+#239	NEW    cov: 15192 ft: 28514 corp: 206/89Mb lim: 605510 exec/s: 12 rss: 842Mb L: 447179/605510 MS: 1 ChangeByte-
+#240	NEW    cov: 15194 ft: 28531 corp: 207/90Mb lim: 605510 exec/s: 12 rss: 842Mb L: 459175/605510 MS: 1 ChangeASCIIInt-
+	NEW_FUNC[1/1]: 0x000100803e2c in _RNvXsa_NtCs15aG3uGCGCG_5alloc6borrowINtB5_3CoweENtNtCs1eZMhyJvjos_4core3fmt5Debug3fmtCs1nZb6VDLA8y_4boko+0x0 (from_bytes:arm64+0x100687e2c)
+#256	pulse  cov: 15218 ft: 29622 corp: 220/95Mb lim: 605510 exec/s: 12 rss: 842Mb
+#270	RELOAD cov: 15230 ft: 29696 corp: 229/99Mb lim: 605510 exec/s: 12 rss: 842Mb
+#281	NEW    cov: 15235 ft: 29777 corp: 230/99Mb lim: 605510 exec/s: 13 rss: 842Mb L: 233714/605510 MS: 1 ChangeASCIIInt-
+#282	REDUCE cov: 15235 ft: 29777 corp: 230/99Mb lim: 605510 exec/s: 13 rss: 842Mb L: 363437/605510 MS: 1 EraseBytes-
+#285	REDUCE cov: 15235 ft: 29777 corp: 230/99Mb lim: 605510 exec/s: 13 rss: 842Mb L: 253417/605510 MS: 3 ChangeBinInt-ChangeBinInt-EraseBytes-
+#286	NEW    cov: 15236 ft: 29867 corp: 231/100Mb lim: 605510 exec/s: 13 rss: 842Mb L: 306907/605510 MS: 1 ChangeByte-
+#287	NEW    cov: 15240 ft: 29883 corp: 232/100Mb lim: 605510 exec/s: 13 rss: 842Mb L: 474212/605510 MS: 1 CopyPart-
+#289	NEW    cov: 15240 ft: 29884 corp: 233/101Mb lim: 605510 exec/s: 13 rss: 842Mb L: 547756/605510 MS: 2 CrossOver-PersAutoDict- DE: "\0023333333"-
+#290	NEW    cov: 15242 ft: 29890 corp: 234/101Mb lim: 605510 exec/s: 13 rss: 842Mb L: 605510/605510 MS: 1 CopyPart-
+#291	NEW    cov: 15242 ft: 29892 corp: 235/102Mb lim: 605510 exec/s: 13 rss: 842Mb L: 605510/605510 MS: 1 ChangeBinInt-
+#292	NEW    cov: 15242 ft: 29895 corp: 236/102Mb lim: 605510 exec/s: 13 rss: 842Mb L: 605510/605510 MS: 1 ChangeByte-
+	NEW_FUNC[1/1]: 0x0001009dbd78 in _RNvXs_NtNtCsiCBByfyW1Yo_3zip4read12magic_finderNtB4_9BackwardsINtB4_15FinderDirectionAhj4_E12scope_window+0x0 (from_bytes:arm64+0x10085fd78)
+#321	RELOAD cov: 15279 ft: 30010 corp: 254/109Mb lim: 605510 exec/s: 13 rss: 842Mb
+#322	NEW    cov: 15279 ft: 30014 corp: 255/110Mb lim: 605510 exec/s: 13 rss: 842Mb L: 482381/605510 MS: 1 ChangeByte-
+#324	NEW    cov: 15279 ft: 30015 corp: 256/110Mb lim: 605510 exec/s: 12 rss: 842Mb L: 352585/605510 MS: 2 EraseBytes-ShuffleBytes-
+#325	NEW    cov: 15279 ft: 30016 corp: 257/110Mb lim: 605510 exec/s: 13 rss: 842Mb L: 279216/605510 MS: 1 InsertRepeatedBytes-
+#327	NEW    cov: 15279 ft: 30017 corp: 258/111Mb lim: 605510 exec/s: 13 rss: 842Mb L: 482417/605510 MS: 2 PersAutoDict-ChangeASCIIInt- DE: "\0023333333"-
+#328	NEW    cov: 15279 ft: 30064 corp: 259/111Mb lim: 605510 exec/s: 13 rss: 842Mb L: 482280/605510 MS: 1 ChangeBit-
+#338	NEW    cov: 15279 ft: 30065 corp: 260/112Mb lim: 605510 exec/s: 13 rss: 842Mb L: 393312/605510 MS: 5 PersAutoDict-ChangeBit-EraseBytes-CrossOver-InsertByte- DE: "\0023333333"-
+	NEW_FUNC[1/1]: 0x0001002236cc in _RINvNtCs1eZMhyJvjos_4core3ptr9drop_glueINtNtCs15aG3uGCGCG_5alloc3vec3VecTjjEEECs1nZb6VDLA8y_4boko+0x0 (from_bytes:arm64+0x1000a76cc)
+#365	RELOAD cov: 15292 ft: 30698 corp: 276/119Mb lim: 605510 exec/s: 13 rss: 842Mb
+	NEW_FUNC[1/1]: 0x0001001cf778 in _RINvMs2_NtNtCs1nZb6VDLA8y_4boko5model4bookNtB6_8TocEntry3newRNtNtCs15aG3uGCGCG_5alloc6string6StringBW_EBa_+0x0 (from_bytes:arm64+0x100053778)
+#367	NEW    cov: 15322 ft: 30789 corp: 277/119Mb lim: 605510 exec/s: 13 rss: 842Mb L: 478061/605510 MS: 2 ChangeByte-CMP- DE: "\345\000\000\000\000\000\000\000"-
+#370	NEW    cov: 15322 ft: 30790 corp: 278/120Mb lim: 605510 exec/s: 12 rss: 842Mb L: 482288/605510 MS: 3 CrossOver-ChangeByte-ShuffleBytes-
+#374	NEW    cov: 15322 ft: 30791 corp: 279/120Mb lim: 605510 exec/s: 12 rss: 842Mb L: 440066/605510 MS: 4 CrossOver-ChangeBit-ShuffleBytes-EraseBytes-
+#401	RELOAD cov: 15369 ft: 31294 corp: 297/128Mb lim: 605510 exec/s: 11 rss: 842Mb
+#402	NEW    cov: 15369 ft: 31295 corp: 298/128Mb lim: 605510 exec/s: 10 rss: 842Mb L: 473598/605510 MS: 1 ShuffleBytes-
+#403	NEW    cov: 15369 ft: 31296 corp: 299/129Mb lim: 605510 exec/s: 10 rss: 842Mb L: 482402/605510 MS: 1 ChangeBit-
+#414	RELOAD cov: 15369 ft: 31317 corp: 307/132Mb lim: 605510 exec/s: 10 rss: 842Mb
+#416	NEW    cov: 15376 ft: 31346 corp: 308/132Mb lim: 605510 exec/s: 10 rss: 842Mb L: 50676/605510 MS: 2 ChangeByte-CrossOver-
+#420	NEW    cov: 15379 ft: 31412 corp: 309/132Mb lim: 605510 exec/s: 10 rss: 842Mb L: 412737/605510 MS: 4 InsertRepeatedBytes-CopyPart-CopyPart-ChangeBit-
+#426	RELOAD cov: 15379 ft: 31415 corp: 312/134Mb lim: 605510 exec/s: 9 rss: 842Mb
+#427	NEW    cov: 15379 ft: 31417 corp: 313/134Mb lim: 605510 exec/s: 9 rss: 842Mb L: 482288/605510 MS: 1 PersAutoDict- DE: "\345\000\000\000\000\000\000\000"-
+#429	NEW    cov: 15379 ft: 31419 corp: 314/135Mb lim: 605510 exec/s: 9 rss: 842Mb L: 482280/605510 MS: 2 ChangeBit-ChangeASCIIInt-
+#441	RELOAD cov: 15379 ft: 31451 corp: 322/138Mb lim: 605510 exec/s: 9 rss: 842Mb
+#448	NEW    cov: 15389 ft: 31483 corp: 323/138Mb lim: 605510 exec/s: 9 rss: 842Mb L: 301132/605510 MS: 2 ChangeBit-CMP- DE: "\030\002\000\000"-
+#449	NEW    cov: 15389 ft: 31492 corp: 324/138Mb lim: 605510 exec/s: 8 rss: 842Mb L: 482330/605510 MS: 1 ChangeBit-
+#451	NEW    cov: 15399 ft: 31542 corp: 325/139Mb lim: 605510 exec/s: 9 rss: 842Mb L: 447195/605510 MS: 2 ChangeByte-InsertRepeatedBytes-
+#455	NEW    cov: 15399 ft: 31543 corp: 326/139Mb lim: 605510 exec/s: 8 rss: 842Mb L: 511510/605510 MS: 4 InsertByte-ChangeBit-ChangeBinInt-CrossOver-
+#458	RELOAD cov: 15399 ft: 31545 corp: 328/140Mb lim: 605510 exec/s: 8 rss: 842Mb
+#459	NEW    cov: 15400 ft: 31546 corp: 329/141Mb lim: 605510 exec/s: 8 rss: 842Mb L: 440340/605510 MS: 1 ChangeASCIIInt-
+#460	NEW    cov: 15400 ft: 31549 corp: 330/141Mb lim: 605510 exec/s: 8 rss: 842Mb L: 538479/605510 MS: 1 InsertRepeatedBytes-
+#462	NEW    cov: 15407 ft: 31646 corp: 331/142Mb lim: 605510 exec/s: 8 rss: 842Mb L: 531350/605510 MS: 2 ChangeBit-CopyPart-
+#466	RELOAD cov: 15407 ft: 31677 corp: 333/143Mb lim: 605510 exec/s: 8 rss: 842Mb
+==11463== ERROR: libFuzzer: out-of-memory (malloc(2601293831))
+   To change the out-of-memory limit use -rss_limit_mb=<N>
+
+    #0 0x00010214759c in __sanitizer_print_stack_trace+0x28 (librustc-nightly_rt.asan.dylib:arm64+0x8759c)
+    #1 0x0001001956f4 in fuzzer::PrintStackTrace()+0x30 (from_bytes:arm64+0x1000196f4)
+    #2 0x0001001885a8 in fuzzer::Fuzzer::HandleMalloc(unsigned long)+0x50 (from_bytes:arm64+0x10000c5a8)
+    #3 0x00010018848c in fuzzer::MallocHook(void const volatile*, unsigned long)+0x38 (from_bytes:arm64+0x10000c48c)
+    #4 0x000102110314 in __sanitizer::RunMallocHooks(void*, unsigned long)+0x2c (librustc-nightly_rt.asan.dylib:arm64+0x50314)
+    #5 0x0001020c2fc0 in __asan::Allocator::Allocate(unsigned long, unsigned long, __sanitizer::BufferedStackTrace*, __asan::AllocType, bool)+0x688 (librustc-nightly_rt.asan.dylib:arm64+0x2fc0)
+    #6 0x0001020c290c in __asan::asan_malloc(unsigned long, __sanitizer::BufferedStackTrace*)+0x28 (librustc-nightly_rt.asan.dylib:arm64+0x290c)
+    #7 0x0001020fec38 in malloc+0xcc (librustc-nightly_rt.asan.dylib:arm64+0x3ec38)
+    #8 0x0001003b1f54 in _RNvMNtCs15aG3uGCGCG_5alloc5sliceSh6repeatCs1nZb6VDLA8y_4boko+0x98 (from_bytes:arm64+0x100235f54)
+    #9 0x0001004be830 in _RNvMs0_NtNtCs1nZb6VDLA8y_4boko3kfx3ionNtB5_9IonParser11parse_value+0x1bdc (from_bytes:arm64+0x100342830)
+    #10 0x0001004bd95c in _RNvMs0_NtNtCs1nZb6VDLA8y_4boko3kfx3ionNtB5_9IonParser11parse_value+0xd08 (from_bytes:arm64+0x10034195c)
+    #11 0x0001004bdbf0 in _RNvMs0_NtNtCs1nZb6VDLA8y_4boko3kfx3ionNtB5_9IonParser11parse_value+0xf9c (from_bytes:arm64+0x100341bf0)
+    #12 0x000100515754 in _RNvMs1_NtNtCs1nZb6VDLA8y_4boko6import3kfxNtB5_11KfxImporter16parse_entity_ion+0x2b8 (from_bytes:arm64+0x100399754)
+    #13 0x0001007903d8 in _RNvXs0_NtNtCs1nZb6VDLA8y_4boko6import3kfxNtB5_11KfxImporterNtB7_8Importer12load_chapter+0x808c (from_bytes:arm64+0x1006143d8)
+    #14 0x00010017fafc in _RNvNvCs4n2awEtnK7O_10from_bytes1__19___libfuzzer_sys_run from_bytes.rs:36
+    #15 0x00010018684c in rust_fuzzer_test_input lib.rs:276
+    #16 0x000100187714 in _RINvNvNtCsaGiJrKNlOxu_3std9panicking12catch_unwind7do_callNCNvCsgUodW2rPcLo_13libfuzzer_sys15test_input_wrap0lEBY_+0xc4 (from_bytes:arm64+0x10000b714)
+    #17 0x00010018834c in __rust_try+0x18 (from_bytes:arm64+0x10000c34c)
+    #18 0x000100186fe4 in LLVMFuzzerTestOneInput+0x16c (from_bytes:arm64+0x10000afe4)
+    #19 0x00010018a96c in fuzzer::Fuzzer::ExecuteCallback(unsigned char const*, unsigned long)+0x158 (from_bytes:arm64+0x10000e96c)
+    #20 0x00010018a010 in fuzzer::Fuzzer::RunOne(unsigned char const*, unsigned long, bool, fuzzer::InputInfo*, bool, bool*)+0x48 (from_bytes:arm64+0x10000e010)
+    #21 0x00010018bf08 in fuzzer::Fuzzer::MutateAndTestOne()+0x22c (from_bytes:arm64+0x10000ff08)
+    #22 0x00010018cc64 in fuzzer::Fuzzer::Loop(std::__1::vector<fuzzer::SizedFile, std::__1::allocator<fuzzer::SizedFile>>&)+0x354 (from_bytes:arm64+0x100010c64)
+    #23 0x0001001abd7c in fuzzer::FuzzerDriver(int*, char***, int (*)(unsigned char const*, unsigned long))+0x1a3c (from_bytes:arm64+0x10002fd7c)
+    #24 0x0001001b9884 in main+0x24 (from_bytes:arm64+0x10003d884)
+    #25 0x000194ecbbe8 in start+0x1a1c (dyld:arm64e+0x31be8)
+
+MS: 2 ChangeBinInt-CMP- DE: "\001\241"-; base unit: fb472c44f15475c77a8c85719d5a0f78e6c2fb13
+artifact_prefix='/Users/zach/code/boko/fuzz/artifacts/from_bytes/'; Test unit written to /Users/zach/code/boko/fuzz/artifacts/from_bytes/oom-e2c43dfa403cbcdfe78aa551cab17b5c8411ce5a
+SUMMARY: libFuzzer: out-of-memory
+stat::number_of_executed_units: 468
+stat::average_exec_per_sec:     8
+stat::new_units_added:          46
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              842

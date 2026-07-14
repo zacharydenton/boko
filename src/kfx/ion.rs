@@ -358,7 +358,17 @@ impl<'a> IonParser<'a> {
                         })?
                         .to_string()
                 } else {
-                    // Negative exponent: we have decimal places
+                    // Negative exponent: we have decimal places. Like the
+                    // positive branch, the exponent is attacker-controlled —
+                    // bound it before allocating `abs_exp` zero digits. An
+                    // i64 coefficient never has more than 19 significant
+                    // digits, so anything beyond a generous cap is garbage.
+                    if exponent < -64 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Ion decimal exponent out of range",
+                        ));
+                    }
                     let abs_exp = (-exponent) as usize;
                     let coef_str = coefficient.abs().to_string();
 
@@ -1026,6 +1036,17 @@ mod tests {
         // Decimal (0x52) with exponent VarInt 0x94 (= +20) and coefficient 1.
         // 10^20 overflows i64; must error instead of panicking on overflow.
         let data = [0xe0, 0x01, 0x00, 0xea, 0x52, 0x94, 0x01];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn test_decimal_large_negative_exponent_is_rejected() {
+        // Regression for a fuzzer-found OOM: a decimal with a large-magnitude
+        // negative exponent drove `"0".repeat(abs_exp)` to a multi-exabyte
+        // allocation. Exponent VarInt [0x40, 0xE4] = -100, coefficient 1.
+        // The parser must reject it instead of trying to allocate the zeros.
+        let data = [0xe0, 0x01, 0x00, 0xea, 0x53, 0x40, 0xE4, 0x01];
         let mut parser = IonParser::new(&data);
         assert!(parser.parse().is_err());
     }

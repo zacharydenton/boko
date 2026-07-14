@@ -2,6 +2,9 @@
 /fuzz/target
 /fuzz/artifacts
 /fuzz/Cargo.lock
+# Keep only the named seed inputs; libFuzzer regenerates the rest locally.
+/fuzz/corpus/from_bytes/*
+!/fuzz/corpus/from_bytes/seed_*
 perf.data
 /web/pkg
 *.pyc
