@@ -260,8 +260,11 @@ pub(super) fn detect_format_symbol(href: &str, data: &[u8]) -> u64 {
 }
 
 /// Check if a path is a media asset (image, font, etc.)
-pub(super) fn is_media_asset(path: &std::path::Path) -> bool {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+pub(super) fn is_media_asset(path: &str) -> bool {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     matches!(
         ext.to_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "svg" | "webp" | "ttf" | "otf" | "woff" | "woff2"

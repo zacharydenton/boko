@@ -154,7 +154,7 @@ fn test_kfx_named_resource_returns_binary_asset() {
 
     for (resource_name, expected_sha1) in expected {
         let bytes = book
-            .load_asset(Path::new(resource_name))
+            .load_asset(resource_name)
             .expect("Expected named resource to exist in epictetus.kfx");
 
         assert!(
@@ -188,12 +188,12 @@ fn test_kfx_direct_asset_id_1102_matches_named_resource_and_hash() {
     let mut book = Book::open(path).expect("Should open KFX");
 
     assert!(
-        book.list_assets().iter().any(|p| p == Path::new("#1102")),
+        book.list_assets().iter().any(|p| p == "#1102"),
         "Expected #1102 to be listed as a KFX asset"
     );
 
     let id_bytes = book
-        .load_asset(Path::new("#1102"))
+        .load_asset("#1102")
         .expect("Should load #1102 asset bytes");
     let id_sha1 = sha1_hex(id_bytes.as_slice());
 
@@ -203,7 +203,7 @@ fn test_kfx_direct_asset_id_1102_matches_named_resource_and_hash() {
     );
 
     let named_sha1 = book
-        .load_asset(Path::new("resource/rsrc1DT"))
+        .load_asset("resource/rsrc1DT")
         .map(|bytes| sha1_hex(bytes.as_slice()))
         .expect("Should load resource/rsrc1DT by name");
     assert_eq!(

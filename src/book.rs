@@ -352,13 +352,13 @@ impl Book {
         self.backend.resolve_href(from_chapter, href)
     }
 
-    /// Load an asset by path.
-    pub fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>> {
+    /// Load an asset by archive entry name (e.g. `"OEBPS/images/cover.jpg"`).
+    pub fn load_asset(&mut self, path: &str) -> crate::Result<Vec<u8>> {
         self.backend.load_asset(path)
     }
 
-    /// List all assets.
-    pub fn list_assets(&self) -> &[std::path::PathBuf] {
+    /// List all assets as archive entry names (forward-slash separated).
+    pub fn list_assets(&self) -> &[String] {
         self.backend.list_assets()
     }
 

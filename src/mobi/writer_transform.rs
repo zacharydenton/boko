@@ -60,10 +60,11 @@ pub fn rewrite_html_references_fast(
     let mut link_counter = link_counter_start;
     let mut pos = 0;
 
-    // Pre-compute base directory
-    let base_dir = std::path::Path::new(html_href)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
+    // Pre-compute base directory (hrefs are archive entry names with
+    // forward-slash separators)
+    let base_dir = html_href
+        .rsplit_once('/')
+        .map(|(dir, _)| dir.to_string())
         .unwrap_or_default();
 
     // Finders for tag detection, with memoized next-match positions. A

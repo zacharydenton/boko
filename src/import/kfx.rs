@@ -6,7 +6,7 @@
 //! Pure parsing functions are in `crate::kfx::container`.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::import::{ChapterId, Importer, SpineEntry};
@@ -40,7 +40,7 @@ pub struct KfxImporter {
     entities: Vec<EntityLoc>,
 
     /// Precomputed asset paths (bcRawMedia entity IDs + font paths).
-    asset_paths: Vec<PathBuf>,
+    asset_paths: Vec<String>,
 
     /// Font entity map: font path (e.g., "fonts/font_0000.otf") -> EntityLoc.
     font_entities: HashMap<String, EntityLoc>,
@@ -187,20 +187,18 @@ impl Importer for KfxImporter {
         self.read_entity(storyline_loc)
     }
 
-    fn list_assets(&self) -> &[PathBuf] {
+    fn list_assets(&self) -> &[String] {
         &self.asset_paths
     }
 
-    fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>> {
-        let name = path.to_string_lossy();
-
+    fn load_asset(&mut self, path: &str) -> crate::Result<Vec<u8>> {
         // Handle font path lookup (e.g., "fonts/font_0000.otf")
-        if let Some(loc) = self.font_entities.get(&*name) {
+        if let Some(loc) = self.font_entities.get(path) {
             return self.read_entity(*loc);
         }
 
         // Handle direct entity ID lookup (e.g., "#1102" from list_assets)
-        if let Some(id_str) = name.strip_prefix('#') {
+        if let Some(id_str) = path.strip_prefix('#') {
             if let Ok(id) = id_str.parse::<u32>() {
                 // Find entity by ID
                 if let Some(loc) = self.entities.iter().find(|e| e.id == id) {
@@ -208,7 +206,7 @@ impl Importer for KfxImporter {
                 }
             }
             return Err(crate::Error::NotFound {
-                what: format!("entity {}", name),
+                what: format!("entity {}", path),
             });
         }
 
@@ -219,9 +217,9 @@ impl Importer for KfxImporter {
 
         let loc = self
             .resources
-            .get(&*name)
+            .get(path)
             .ok_or_else(|| crate::Error::NotFound {
-                what: format!("asset {}", name),
+                what: format!("asset {}", path),
             })?;
 
         self.read_entity(*loc)
@@ -340,10 +338,10 @@ impl KfxImporter {
         let entities = parse_index_table(&index_data, header.header_len);
 
         // Build asset paths: bcRawMedia as entity IDs, bcRawFont as fonts/ paths
-        let mut asset_paths: Vec<PathBuf> = entities
+        let mut asset_paths: Vec<String> = entities
             .iter()
             .filter(|e| e.type_id == KfxSymbol::Bcrawmedia as u32)
-            .map(|e| PathBuf::from(format!("#{}", e.id)))
+            .map(|e| format!("#{}", e.id))
             .collect();
 
         let mut font_entities = HashMap::new();
@@ -354,7 +352,7 @@ impl KfxImporter {
         {
             let font_path = format!("fonts/font_{idx:04}.otf");
             font_entities.insert(font_path.clone(), *e);
-            asset_paths.push(PathBuf::from(font_path));
+            asset_paths.push(font_path);
         }
 
         let mut importer = Self {

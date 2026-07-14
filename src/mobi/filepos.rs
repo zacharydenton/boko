@@ -68,7 +68,7 @@ pub fn collect_filepos_targets(html: &[u8]) -> HashSet<usize> {
 /// attributes in the HTML.
 pub fn transform_mobi_html(
     html: &[u8],
-    assets: &[std::path::PathBuf],
+    assets: &[String],
     extra_anchor_positions: &[u32],
 ) -> Vec<u8> {
     use std::collections::HashMap;
@@ -103,7 +103,7 @@ pub fn transform_mobi_html(
     let mut recindex_map: HashMap<String, String> = HashMap::new();
     for (i, asset) in assets.iter().enumerate() {
         let recindex = format!("{:05}", i + 1);
-        recindex_map.insert(recindex, asset.to_string_lossy().to_string());
+        recindex_map.insert(recindex, asset.clone());
     }
 
     // Step 4: Insert anchors at positions (like KindleUnpack's dataList building)
@@ -226,7 +226,6 @@ fn remove_empty_anchors(html: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_collect_filepos_targets() {
@@ -285,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_transform_recindex() {
-        let assets = vec![PathBuf::from("images/image_0000.jpg")];
+        let assets = vec!["images/image_0000.jpg".to_string()];
         let html = b"<img recindex=\"00001\">";
         let result = transform_mobi_html(html, &assets, &[]);
         let result_str = String::from_utf8_lossy(&result);

@@ -18,7 +18,7 @@ fn missing_asset_is_not_found_for_every_format() {
         }
         let mut book = Book::open(path).expect("fixture opens");
         let err = book
-            .load_asset(Path::new("does/not/exist.xyz"))
+            .load_asset("does/not/exist.xyz")
             .expect_err("missing asset must error");
         assert!(
             matches!(err, Error::NotFound { .. }),

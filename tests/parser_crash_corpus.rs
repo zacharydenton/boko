@@ -36,7 +36,7 @@ fn drive(data: &[u8], format: Format) {
     for asset in assets.iter().take(8) {
         let _ = book.load_asset(asset);
     }
-    let _ = book.load_asset(Path::new("does/not/exist"));
+    let _ = book.load_asset("does/not/exist");
 }
 
 /// Deterministic malformed inputs derived from a valid fixture: truncations at a

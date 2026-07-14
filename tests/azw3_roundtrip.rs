@@ -140,7 +140,7 @@ fn azw3_roundtrip_resource_records_are_recognisable() {
     );
 
     let has_real_image = assets.iter().any(|p| {
-        let ext = p
+        let ext = std::path::Path::new(p)
             .extension()
             .and_then(|s| s.to_str())
             .map(str::to_ascii_lowercase);

@@ -56,7 +56,7 @@ fn epub_export_writes_font_assets_from_kfx() {
     let surfaced_fonts: Vec<_> = book
         .list_assets()
         .iter()
-        .filter(|p| p.to_string_lossy().starts_with("fonts/"))
+        .filter(|p| p.starts_with("fonts/"))
         .cloned()
         .collect();
     assert_eq!(
@@ -76,7 +76,7 @@ fn epub_export_writes_font_assets_from_kfx() {
 
     // The exporter must write every font asset the importer surfaced.
     for asset in &surfaced_fonts {
-        let zip_path = format!("OEBPS/{}", asset.to_string_lossy());
+        let zip_path = format!("OEBPS/{}", asset);
         let mut entry = zip
             .by_name(&zip_path)
             .unwrap_or_else(|_| panic!("missing {zip_path} in exported EPUB"));
@@ -98,10 +98,9 @@ fn epub_export_writes_font_assets_from_kfx() {
         .read_to_string(&mut opf)
         .expect("read opf");
     for asset in &surfaced_fonts {
-        let needle = asset.to_string_lossy().to_string();
         assert!(
-            opf.contains(&needle),
-            "content.opf manifest missing href \"{needle}\""
+            opf.contains(asset.as_str()),
+            "content.opf manifest missing href \"{asset}\""
         );
     }
 }

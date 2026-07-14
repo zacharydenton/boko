@@ -145,14 +145,13 @@ impl BookContext {
         // Collect assets, skipping spine documents already loaded above.
         let asset_paths: Vec<_> = book.list_assets().to_vec();
         for path in asset_paths {
-            let path_str = path.to_string_lossy().to_string();
-            if resources.contains_key(&path_str) {
+            if resources.contains_key(&path) {
                 continue;
             }
             let data = book.load_asset(&path)?;
-            let media_type = guess_media_type(&path_str);
+            let media_type = guess_media_type(&path);
 
-            resources.insert(path_str, Resource { data, media_type });
+            resources.insert(path, Resource { data, media_type });
         }
 
         Ok(Self {
@@ -203,7 +202,7 @@ impl BookContext {
 
         // Add referenced assets
         for asset_path in &normalized.assets {
-            if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
+            if let Ok(data) = book.load_asset(asset_path) {
                 let media_type = guess_media_type(asset_path);
                 resources.insert(asset_path.clone(), Resource { data, media_type });
             }

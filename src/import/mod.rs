@@ -14,7 +14,7 @@ pub use epub::EpubImporter;
 pub use kfx::KfxImporter;
 pub use mobi::MobiImporter;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::dom::{Origin, Stylesheet};
@@ -101,17 +101,20 @@ pub trait Importer: Send + Sync {
     // --- Assets ---
 
     /// List all assets (images, fonts, CSS, etc.).
-    fn list_assets(&self) -> &[PathBuf];
+    ///
+    /// Asset paths are archive entry names (e.g. `"OEBPS/images/cover.jpg"`),
+    /// always separated by forward slashes; they are not filesystem paths.
+    fn list_assets(&self) -> &[String];
 
-    /// Load an asset by path.
-    fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>>;
+    /// Load an asset by archive entry name.
+    fn load_asset(&mut self, path: &str) -> crate::Result<Vec<u8>>;
 
     /// Load and parse a stylesheet, optionally using a cache.
     ///
     /// The default implementation loads the asset bytes and parses CSS.
     /// Returns an `Arc` so cached sheets are shared across chapters instead
     /// of deep-cloning the parsed rules per chapter.
-    fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
+    fn load_stylesheet(&mut self, path: &str) -> Option<Arc<Stylesheet>> {
         if let Ok(css_bytes) = self.load_asset(path) {
             let css_str = String::from_utf8_lossy(&css_bytes);
             return Some(Arc::new(Stylesheet::parse(&css_str)));
@@ -135,7 +138,8 @@ pub trait Importer: Send + Sync {
             .list_assets()
             .iter()
             .filter(|p| {
-                p.extension()
+                Path::new(p.as_str())
+                    .extension()
                     .map(|e| e.eq_ignore_ascii_case("css"))
                     .unwrap_or(false)
             })
@@ -148,10 +152,7 @@ pub trait Importer: Send + Sync {
                 for font_face in &stylesheet.font_faces {
                     let mut font_face = font_face.clone();
                     // Resolve the src path relative to the CSS file location
-                    let resolved =
-                        resolve_relative_path(css_path.to_string_lossy().as_ref(), &font_face.src);
-                    // Normalize to forward slashes for archive paths.
-                    font_face.src = resolved.to_string_lossy().replace('\\', "/");
+                    font_face.src = resolve_relative_path(&css_path, &font_face.src);
                     font_faces.push(font_face);
                 }
             }
@@ -280,7 +281,7 @@ pub fn resolve_path_based_href(
 pub(crate) fn compile_chapter_html(
     html_bytes: &[u8],
     base_path: Option<&str>,
-    load_sheet: &mut dyn FnMut(&Path) -> Option<Arc<Stylesheet>>,
+    load_sheet: &mut dyn FnMut(&str) -> Option<Arc<Stylesheet>>,
 ) -> Chapter {
     let hint_encoding = crate::util::extract_xml_encoding(html_bytes);
     let html_str = crate::util::decode_text(html_bytes, hint_encoding);
@@ -296,7 +297,9 @@ pub(crate) fn compile_chapter_html(
     for href in linked {
         let css_path = match base_path {
             Some(chapter_path) => resolve_relative_path(chapter_path, &href),
-            None => PathBuf::from(&href),
+            // Archive lookup keys use forward slashes; hrefs come from parsed
+            // content and may use backslashes.
+            None => normalize_separators(href),
         };
         if let Some(sheet) = load_sheet(&css_path) {
             stylesheets.push((sheet, Origin::Author));
@@ -322,51 +325,55 @@ pub(crate) fn compile_chapter_html(
     chapter
 }
 
+/// Normalize backslashes to forward slashes.
+///
+/// Archive entry names always use forward slashes; backslashes can only
+/// arrive from parsed content (hrefs, CSS urls) written by sloppy tooling.
+fn normalize_separators(path: String) -> String {
+    if path.contains('\\') {
+        path.replace('\\', "/")
+    } else {
+        path
+    }
+}
+
 /// Resolve a relative path against a base path.
 ///
 /// For example, if base is "OEBPS/text/ch01.xhtml" and relative is "../styles/main.css",
 /// the result is "OEBPS/styles/main.css".
 ///
 /// Fragment-only paths (e.g., "#anchor") are resolved to "base#anchor".
-fn resolve_relative_path(base: &str, relative: &str) -> PathBuf {
+///
+/// Both inputs are archive entry names separated by forward slashes; the
+/// result is normalized to forward slashes as well.
+fn resolve_relative_path(base: &str, relative: &str) -> String {
     // Handle absolute paths and URLs
     if relative.starts_with('/') || relative.contains("://") {
-        return PathBuf::from(relative);
+        return normalize_separators(relative.to_string());
     }
 
     // Handle fragment-only paths (#anchor) - resolve to base file + fragment
     if relative.starts_with('#') {
-        return PathBuf::from(format!("{}{}", base, relative));
+        return normalize_separators(format!("{}{}", base, relative));
     }
 
     // Get the directory of the base path
-    let base_path = Path::new(base);
-    let base_dir = base_path.parent().unwrap_or(Path::new(""));
+    let base_dir = base.rsplit_once('/').map_or("", |(dir, _)| dir);
 
-    // Join and normalize
-    let joined = base_dir.join(relative);
-
-    // Normalize by iterating through components
-    let mut result = PathBuf::new();
-    for component in joined.components() {
+    // Join and normalize `.` / `..` / empty components
+    let mut result: Vec<&str> = Vec::new();
+    for component in base_dir.split('/').chain(relative.split('/')) {
         match component {
-            std::path::Component::ParentDir => {
+            "" | "." => {}
+            ".." => {
                 result.pop();
             }
-            std::path::Component::Normal(name) => {
-                result.push(name);
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::RootDir => {
-                result.push("/");
-            }
-            std::path::Component::Prefix(prefix) => {
-                result.push(prefix.as_os_str());
-            }
+            name => result.push(name),
         }
     }
 
-    result
+    let leading = if base.starts_with('/') { "/" } else { "" };
+    normalize_separators(format!("{}{}", leading, result.join("/")))
 }
 
 /// Resolve relative paths in a chapter's semantic attributes.
@@ -382,9 +389,7 @@ fn resolve_semantic_paths(chapter: &mut Chapter, base_path: &str) {
         }
 
         // Resolve relative path to absolute archive path
-        let resolved = resolve_relative_path(base_path, path);
-        // Normalize to forward slashes (archive paths, not filesystem paths)
-        resolved.to_string_lossy().replace('\\', "/")
+        resolve_relative_path(base_path, path)
     });
 }
 
@@ -400,39 +405,35 @@ mod tests {
     fn test_resolve_fragment_only_path() {
         // Fragment-only paths should resolve to base + fragment
         let result = resolve_relative_path("f_0004.xhtml", "#FOOTNOTE-1");
-        assert_eq!(result.to_string_lossy(), "f_0004.xhtml#FOOTNOTE-1");
+        assert_eq!(result, "f_0004.xhtml#FOOTNOTE-1");
 
         let result = resolve_relative_path("OEBPS/text/chapter.xhtml", "#anchor");
-        assert_eq!(result.to_string_lossy(), "OEBPS/text/chapter.xhtml#anchor");
+        assert_eq!(result, "OEBPS/text/chapter.xhtml#anchor");
     }
 
     #[test]
     fn test_resolve_relative_path_with_fragment() {
         // Relative paths with fragments should resolve normally
         let result = resolve_relative_path("text/ch1.xhtml", "ch2.xhtml#section");
-        // Normalize path separators for cross-platform comparison
-        let normalized: String = result.to_string_lossy().replace('\\', "/");
-        assert_eq!(normalized, "text/ch2.xhtml#section");
+        assert_eq!(result, "text/ch2.xhtml#section");
     }
 
     #[test]
     fn test_resolve_parent_directory() {
         let result = resolve_relative_path("OEBPS/text/ch01.xhtml", "../styles/main.css");
-        // Normalize path separators for cross-platform comparison
-        let normalized: String = result.to_string_lossy().replace('\\', "/");
-        assert_eq!(normalized, "OEBPS/styles/main.css");
+        assert_eq!(result, "OEBPS/styles/main.css");
     }
 
     #[test]
     fn test_resolve_absolute_path_unchanged() {
         let result = resolve_relative_path("text/chapter.xhtml", "/absolute/path.css");
-        assert_eq!(result.to_string_lossy(), "/absolute/path.css");
+        assert_eq!(result, "/absolute/path.css");
     }
 
     #[test]
     fn test_resolve_url_unchanged() {
         let result = resolve_relative_path("text/chapter.xhtml", "https://example.com/");
-        assert_eq!(result.to_string_lossy(), "https://example.com/");
+        assert_eq!(result, "https://example.com/");
     }
 
     #[test]
@@ -440,7 +441,7 @@ mod tests {
         struct TestImporter {
             chapters: HashMap<u32, String>,
             assets: HashMap<String, Vec<u8>>,
-            asset_list: Vec<PathBuf>,
+            asset_list: Vec<String>,
             css_cache: HashMap<String, Arc<Stylesheet>>,
             css_loads: usize,
             metadata: Metadata,
@@ -488,26 +489,24 @@ mod tests {
                     })
             }
 
-            fn list_assets(&self) -> &[PathBuf] {
+            fn list_assets(&self) -> &[String] {
                 &self.asset_list
             }
 
-            fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>> {
-                let key = path.to_string_lossy().replace('\\', "/");
-                self.assets.get(&key).cloned().ok_or_else(|| {
+            fn load_asset(&mut self, path: &str) -> crate::Result<Vec<u8>> {
+                self.assets.get(path).cloned().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::NotFound, "asset not found").into()
                 })
             }
 
-            fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
-                let key = path.to_string_lossy().replace('\\', "/");
-                if let Some(sheet) = self.css_cache.get(&key) {
+            fn load_stylesheet(&mut self, path: &str) -> Option<Arc<Stylesheet>> {
+                if let Some(sheet) = self.css_cache.get(path) {
                     return Some(Arc::clone(sheet));
                 }
                 let css_bytes = self.load_asset(path).ok()?;
                 let css_str = String::from_utf8_lossy(&css_bytes);
                 let sheet = Arc::new(Stylesheet::parse(&css_str));
-                self.css_cache.insert(key, sheet.clone());
+                self.css_cache.insert(path.to_string(), sheet.clone());
                 self.css_loads += 1;
                 Some(sheet)
             }
@@ -530,7 +529,7 @@ mod tests {
                 "text/style.css".to_string(),
                 b"p { color: red; }".to_vec(),
             )]),
-            asset_list: vec![PathBuf::from("text/style.css")],
+            asset_list: vec!["text/style.css".to_string()],
             css_cache: HashMap::new(),
             css_loads: 0,
             metadata: Metadata::default(),
@@ -558,7 +557,7 @@ mod tests {
     #[test]
     fn test_font_faces_uses_load_stylesheet() {
         struct TestImporter {
-            asset_list: Vec<PathBuf>,
+            asset_list: Vec<String>,
             metadata: Metadata,
             toc: Vec<TocEntry>,
             landmarks: Vec<Landmark>,
@@ -598,22 +597,22 @@ mod tests {
                 Err(io::Error::other("unused").into())
             }
 
-            fn list_assets(&self) -> &[PathBuf] {
+            fn list_assets(&self) -> &[String] {
                 &self.asset_list
             }
 
-            fn load_asset(&mut self, _path: &Path) -> crate::Result<Vec<u8>> {
+            fn load_asset(&mut self, _path: &str) -> crate::Result<Vec<u8>> {
                 Err(io::Error::other("load_asset should not be called").into())
             }
 
-            fn load_stylesheet(&mut self, _path: &Path) -> Option<Arc<Stylesheet>> {
+            fn load_stylesheet(&mut self, _path: &str) -> Option<Arc<Stylesheet>> {
                 let css = "@font-face { font-family: Test; src: url(../fonts/test.woff); }";
                 Some(Arc::new(Stylesheet::parse(css)))
             }
         }
 
         let mut importer = TestImporter {
-            asset_list: vec![PathBuf::from("styles/main.css")],
+            asset_list: vec!["styles/main.css".to_string()],
             metadata: Metadata::default(),
             toc: Vec::new(),
             landmarks: Vec::new(),
@@ -647,8 +646,7 @@ mod tests {
             target.push_str(".xhtml#");
             target.push_str(&fragment);
 
-            let resolved = resolve_relative_path(&base, &target);
-            let normalized = resolved.to_string_lossy().replace('\\', "/");
+            let normalized = resolve_relative_path(&base, &target);
 
             // Fragment preserved.
             let expected_fragment = format!("#{}", fragment);
@@ -670,10 +668,10 @@ mod tests {
             let url = format!("https://example.com/{}", path);
 
             let resolved_abs = resolve_relative_path(&base, &absolute_path);
-            prop_assert_eq!(resolved_abs.to_string_lossy(), absolute_path);
+            prop_assert_eq!(resolved_abs, absolute_path);
 
             let resolved_url = resolve_relative_path(&base, &url);
-            prop_assert_eq!(resolved_url.to_string_lossy(), url);
+            prop_assert_eq!(resolved_url, url);
         }
 
         #[test]
@@ -692,8 +690,7 @@ mod tests {
             target.push_str(&target_parts.join("/"));
             target.push_str(".xhtml");
 
-            let resolved = resolve_relative_path(&base, &target);
-            let normalized = resolved.to_string_lossy().replace('\\', "/");
+            let normalized = resolve_relative_path(&base, &target);
 
             prop_assert!(!normalized.contains("/../"));
         }
@@ -707,8 +704,7 @@ mod tests {
             base.push_str("/chapter.xhtml");
 
             let target = format!("#{}", fragment);
-            let resolved = resolve_relative_path(&base, &target);
-            let normalized = resolved.to_string_lossy().replace('\\', "/");
+            let normalized = resolve_relative_path(&base, &target);
 
             let expected = format!("{}#{}", base, fragment);
             prop_assert_eq!(normalized, expected);

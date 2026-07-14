@@ -47,7 +47,7 @@ fn test_kfx_font_assets_discovered() {
 
     let font_assets: Vec<_> = assets
         .iter()
-        .filter(|p| p.to_string_lossy().starts_with("fonts/"))
+        .filter(|p| p.starts_with("fonts/"))
         .collect();
 
     assert_eq!(
@@ -60,7 +60,7 @@ fn test_kfx_font_assets_discovered() {
     for (i, asset) in font_assets.iter().enumerate() {
         let expected = format!("fonts/font_{i:04}.otf");
         assert_eq!(
-            asset.to_string_lossy(),
+            asset.as_str(),
             expected,
             "Unexpected font path at index {i}"
         );
@@ -84,7 +84,7 @@ fn test_kfx_font_assets_loadable() {
 
     for font_path in &font_paths {
         let bytes = book
-            .load_asset(Path::new(font_path))
+            .load_asset(font_path)
             .unwrap_or_else(|e| panic!("Failed to load {font_path}: {e}"));
 
         // Font data should be substantial (real OTF files)
@@ -142,7 +142,7 @@ fn test_kfx_font_stable_hashes() {
 
     for (font_path, expected_sha1) in &expected {
         let bytes = book
-            .load_asset(Path::new(font_path))
+            .load_asset(font_path)
             .unwrap_or_else(|e| panic!("Failed to load {font_path}: {e}"));
         assert_eq!(
             sha1_hex(&bytes),

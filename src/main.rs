@@ -255,7 +255,7 @@ fn print_json(book: &mut Book, path: &str) -> Result<(), String> {
         .map(|p| {
             let size = book.load_asset(p).map_or(0, |d| d.len());
             AssetInfo {
-                path: p.to_string_lossy().to_string(),
+                path: p.clone(),
                 size,
             }
         })
@@ -428,7 +428,7 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     for asset in &assets {
         let size = book
             .load_asset(asset).map_or_else(|_| "?".to_string(), |data| format_bytes(data.len()));
-        println!("  {} ({})", asset.display(), size);
+        println!("  {} ({})", asset, size);
     }
 
     Ok(())

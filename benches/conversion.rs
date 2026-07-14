@@ -3,7 +3,6 @@
 //! Run with: cargo bench
 
 use std::io::Cursor;
-use std::path::Path;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -32,7 +31,7 @@ fn load_sample_content() -> (String, Stylesheet) {
     let html = String::from_utf8_lossy(&html_bytes).into_owned();
 
     // Load CSS
-    let css_bytes = book.load_asset(Path::new("epub/css/core.css")).unwrap();
+    let css_bytes = book.load_asset("epub/css/core.css").unwrap();
     let css = String::from_utf8_lossy(&css_bytes);
     let stylesheet = Stylesheet::parse(&css);
 

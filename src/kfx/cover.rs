@@ -4,7 +4,7 @@
 //! standalone cover sections when an EPUB's cover image differs from
 //! the first spine chapter's image.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::kfx::context::ExportContext;
 use crate::kfx::fragment::KfxFragment;
@@ -212,17 +212,17 @@ pub fn build_cover_section(
 /// EPUB metadata may use a shorter path (e.g., "images/cover.jpg") while
 /// the asset list uses a full path (e.g., "epub/images/cover.jpg").
 /// This matches by filename to find the correct asset path.
-pub fn normalize_cover_path(cover_path: &str, asset_paths: &[PathBuf]) -> String {
+pub fn normalize_cover_path(cover_path: &str, asset_paths: &[String]) -> String {
     let cover_filename = Path::new(cover_path)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(cover_path);
 
     for asset in asset_paths {
-        if let Some(asset_filename) = asset.file_name().and_then(|s| s.to_str())
+        if let Some(asset_filename) = Path::new(asset).file_name().and_then(|s| s.to_str())
             && asset_filename == cover_filename
         {
-            return asset.to_string_lossy().to_string();
+            return asset.clone();
         }
     }
 

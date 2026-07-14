@@ -238,10 +238,9 @@ fn build_kfx_container(book: &mut Book) -> crate::Result<Vec<u8>> {
     let asset_paths: Vec<_> = book.list_assets().to_vec();
     for asset_path in &asset_paths {
         if is_media_asset(asset_path) {
-            let href = asset_path.to_string_lossy().to_string();
-            ctx.resource_registry.register(&href, &mut ctx.symbols);
+            ctx.resource_registry.register(asset_path, &mut ctx.symbols);
             // Create and intern the short name (e.g., "e0")
-            let short_name = ctx.resource_registry.get_or_create_name(&href);
+            let short_name = ctx.resource_registry.get_or_create_name(asset_path);
             ctx.symbols.get_or_intern(&short_name);
         }
     }
@@ -370,11 +369,10 @@ fn build_kfx_container(book: &mut Book) -> crate::Result<Vec<u8>> {
         if is_media_asset(asset_path)
             && let Ok(data) = book.load_asset(asset_path)
         {
-            let href = asset_path.to_string_lossy().to_string();
             // external_resource ($164) - metadata about the resource
-            fragments.push(build_external_resource_fragment(&href, &data, &mut ctx));
+            fragments.push(build_external_resource_fragment(asset_path, &data, &mut ctx));
             // bcRawMedia ($417) - the actual bytes (moved, not copied)
-            fragments.push(build_resource_fragment(&href, data, &mut ctx));
+            fragments.push(build_resource_fragment(asset_path, data, &mut ctx));
         }
     }
 

@@ -151,13 +151,12 @@ impl EpubExporter {
         let mut asset_map: HashMap<String, String> = HashMap::new();
 
         for (i, asset_path) in assets.iter().enumerate() {
-            let path_str = asset_path.to_string_lossy();
-            let href = format!("OEBPS/{}", sanitize_path(&path_str));
+            let href = format!("OEBPS/{}", sanitize_path(asset_path));
             // Skip spine documents already emitted as chapters (see above).
             if chapter_paths.contains(&href) {
                 continue;
             }
-            let media_type = guess_media_type(&path_str);
+            let media_type = guess_media_type(asset_path);
             let id = format!("asset_{}", i);
 
             manifest_items.push(ManifestItem {
@@ -166,7 +165,7 @@ impl EpubExporter {
                 media_type,
                 properties: None,
             });
-            asset_map.insert(path_str.to_string(), href);
+            asset_map.insert(asset_path.clone(), href);
         }
 
         // 4. Write content.opf
@@ -196,7 +195,7 @@ impl EpubExporter {
 
         // 7. Write assets (skipping spine documents already written as chapters).
         for asset_path in &assets {
-            let zip_path = format!("OEBPS/{}", sanitize_path(&asset_path.to_string_lossy()));
+            let zip_path = format!("OEBPS/{}", sanitize_path(asset_path));
             if chapter_paths.contains(&zip_path) {
                 continue;
             }
@@ -308,17 +307,16 @@ impl EpubExporter {
         // `src:` URLs point at files we never wrote into the ZIP.
         let mut extra_font_idx = 0;
         for asset_path in &all_assets {
-            let path_str = asset_path.to_string_lossy();
-            if !path_str.starts_with("fonts/") {
+            if !asset_path.starts_with("fonts/") {
                 continue;
             }
-            if content.assets.iter().any(|a| a == &*path_str) {
+            if content.assets.contains(asset_path) {
                 continue;
             }
             manifest_items.push(ManifestItem {
                 id: format!("font_{}", extra_font_idx),
-                href: format!("OEBPS/{}", sanitize_path(&path_str)),
-                media_type: guess_media_type(&path_str),
+                href: format!("OEBPS/{}", sanitize_path(asset_path)),
+                media_type: guess_media_type(asset_path),
                 properties: None,
             });
             extra_font_idx += 1;
@@ -363,7 +361,7 @@ impl EpubExporter {
             let zip_path = format!("OEBPS/{}", sanitize_path(asset_path));
 
             // Try to load the asset from the book
-            if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
+            if let Ok(data) = book.load_asset(asset_path) {
                 let opts = asset_options(&zip_path, &data, stored, deflated);
                 zip.start_file(&zip_path, opts).map_err(io_error)?;
                 zip.write_all(&data)?;
@@ -373,14 +371,13 @@ impl EpubExporter {
         // 9. Write font assets not already covered by normalized content.
         // Matches the manifest entries added above.
         for asset_path in &all_assets {
-            let path_str = asset_path.to_string_lossy();
-            if !path_str.starts_with("fonts/") {
+            if !asset_path.starts_with("fonts/") {
                 continue;
             }
-            if content.assets.iter().any(|a| a == &*path_str) {
+            if content.assets.contains(asset_path) {
                 continue;
             }
-            let zip_path = format!("OEBPS/{}", sanitize_path(&path_str));
+            let zip_path = format!("OEBPS/{}", sanitize_path(asset_path));
             if let Ok(data) = book.load_asset(asset_path) {
                 let opts = asset_options(&zip_path, &data, stored, deflated);
                 zip.start_file(&zip_path, opts).map_err(io_error)?;

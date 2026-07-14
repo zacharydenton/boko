@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::dom::Stylesheet;
@@ -65,7 +65,7 @@ pub struct Azw3Importer {
     chapter_cache: HashMap<u32, Vec<u8>>,
 
     /// Discovered asset paths.
-    assets: Vec<PathBuf>,
+    assets: Vec<String>,
 
     /// Cached parsed stylesheets.
     css_cache: HashMap<String, Arc<Stylesheet>>,
@@ -148,37 +148,34 @@ impl Importer for Azw3Importer {
         Ok(content)
     }
 
-    fn list_assets(&self) -> &[PathBuf] {
+    fn list_assets(&self) -> &[String] {
         &self.assets
     }
 
-    fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>> {
-        let key = path.to_string_lossy();
-
+    fn load_asset(&mut self, path: &str) -> crate::Result<Vec<u8>> {
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
         // Images and fonts share the same record-index space, so the prefix
         // selects naming but the underlying lookup is the same.
-        let idx: usize = key
+        let idx: usize = path
             .strip_prefix("images/image_")
-            .or_else(|| key.strip_prefix("fonts/font_"))
+            .or_else(|| path.strip_prefix("fonts/font_"))
             .and_then(|s| s.split('.').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| crate::Error::NotFound {
-                what: format!("asset {}", key),
+                what: format!("asset {}", path),
             })?;
 
         Ok(self.load_image_record(idx)?)
     }
 
-    fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {
-        let key = path.to_string_lossy().replace('\\', "/");
-        if let Some(sheet) = self.css_cache.get(&key) {
+    fn load_stylesheet(&mut self, path: &str) -> Option<Arc<Stylesheet>> {
+        if let Some(sheet) = self.css_cache.get(path) {
             return Some(Arc::clone(sheet));
         }
         let css_bytes = self.load_asset(path).ok()?;
         let css_str = String::from_utf8_lossy(&css_bytes);
         let sheet = Arc::new(Stylesheet::parse(&css_str));
-        self.css_cache.insert(key, Arc::clone(&sheet));
+        self.css_cache.insert(path.to_string(), Arc::clone(&sheet));
         Some(sheet)
     }
 
@@ -585,7 +582,7 @@ impl Azw3Importer {
     }
 
     /// Discover asset paths by scanning image and font records.
-    fn discover_assets(&self) -> Vec<PathBuf> {
+    fn discover_assets(&self) -> Vec<String> {
         let mut assets = Vec::new();
 
         if self.mobi.first_image_index == NULL_INDEX {
@@ -616,9 +613,9 @@ impl Azw3Importer {
                             "image/gif" => "gif",
                             _ => "bin",
                         };
-                        assets.push(PathBuf::from(format!("images/image_{idx:04}.{ext}")));
+                        assets.push(format!("images/image_{idx:04}.{ext}"));
                     } else if let Some(font_ext) = detect_font_type(header) {
-                        assets.push(PathBuf::from(format!("fonts/font_{idx:04}.{font_ext}")));
+                        assets.push(format!("fonts/font_{idx:04}.{font_ext}"));
                     }
                 }
             }
