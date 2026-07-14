@@ -127,6 +127,13 @@ pub struct Node {
     pub parent: Option<NodeId>,
     /// First child node.
     pub first_child: Option<NodeId>,
+    /// Last child node. Maintained by [`Chapter::append_child`] so appends are
+    /// O(1); it is only guaranteed accurate during tree construction. The
+    /// optimizer passes rewire siblings directly and do not append afterward,
+    /// so they intentionally leave this field alone.
+    ///
+    /// [`Chapter::append_child`]: crate::model::Chapter::append_child
+    pub last_child: Option<NodeId>,
     /// Next sibling node.
     pub next_sibling: Option<NodeId>,
     /// Style identifier.
@@ -142,6 +149,7 @@ impl Node {
             role,
             parent: None,
             first_child: None,
+            last_child: None,
             next_sibling: None,
             style: StyleId::DEFAULT,
             text: TextRange::default(),
@@ -154,6 +162,7 @@ impl Node {
             role: Role::Text,
             parent: None,
             first_child: None,
+            last_child: None,
             next_sibling: None,
             style: StyleId::DEFAULT,
             text: range,

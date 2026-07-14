@@ -38,8 +38,6 @@ struct TransformContext<'a> {
     /// Reused across every element of the chapter (candidate buffer + selector caches).
     cascade_scratch: CascadeScratch,
     chapter: Chapter,
-    /// Map from ArenaNodeId to Chapter NodeId
-    node_map: std::collections::HashMap<ArenaNodeId, NodeId>,
 }
 
 impl<'a> TransformContext<'a> {
@@ -49,7 +47,6 @@ impl<'a> TransformContext<'a> {
             cascade_index: CascadeIndex::build(stylesheets),
             cascade_scratch: CascadeScratch::default(),
             chapter: Chapter::new(),
-            node_map: std::collections::HashMap::new(),
         }
     }
 
@@ -164,7 +161,6 @@ impl<'a> TransformContext<'a> {
                     let text_node = Node::text(range);
                     let ir_id = self.chapter.alloc_node(text_node);
                     self.chapter.append_child(ir_parent, ir_id);
-                    self.node_map.insert(dom_id, ir_id);
                     return;
                 }
 
@@ -189,7 +185,6 @@ impl<'a> TransformContext<'a> {
                 let text_node = Node::text(range);
                 let ir_id = self.chapter.alloc_node(text_node);
                 self.chapter.append_child(ir_parent, ir_id);
-                self.node_map.insert(dom_id, ir_id);
             }
 
             ArenaNodeData::Element { name, attrs, .. } => {
@@ -228,7 +223,6 @@ impl<'a> TransformContext<'a> {
 
                 let ir_id = self.chapter.alloc_node(ir_node);
                 self.chapter.append_child(ir_parent, ir_id);
-                self.node_map.insert(dom_id, ir_id);
 
                 // Store semantic attributes
                 for attr in attrs {

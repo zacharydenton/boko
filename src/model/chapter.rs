@@ -91,35 +91,35 @@ impl Chapter {
         &self.text
     }
 
-    /// Append a child node to a parent.
+    /// Append a child node to a parent. O(1) via the parent's `last_child`
+    /// pointer (previously O(children) per call, i.e. O(n²) to build a node
+    /// with n siblings).
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        // Set the child's parent
+        // Set the child's parent.
         if let Some(child_node) = self.nodes.get_mut(child.0 as usize) {
             child_node.parent = Some(parent);
         }
 
-        // Find the last child of parent and append
-        if let Some(parent_node) = self.nodes.get(parent.0 as usize) {
-            if let Some(first_child) = parent_node.first_child {
-                // Find last sibling
-                let mut current = first_child;
-                while let Some(node) = self.nodes.get(current.0 as usize) {
-                    if let Some(next) = node.next_sibling {
-                        current = next;
-                    } else {
-                        break;
-                    }
-                }
-                // Append as next sibling of last child
-                if let Some(last_node) = self.nodes.get_mut(current.0 as usize) {
+        let last = match self.nodes.get(parent.0 as usize) {
+            Some(p) => p.last_child,
+            None => return,
+        };
+        match last {
+            // Append after the current last child.
+            Some(last_id) => {
+                if let Some(last_node) = self.nodes.get_mut(last_id.0 as usize) {
                     last_node.next_sibling = Some(child);
                 }
-            } else {
-                // No children yet, set as first child
+            }
+            // First child.
+            None => {
                 if let Some(parent_node) = self.nodes.get_mut(parent.0 as usize) {
                     parent_node.first_child = Some(child);
                 }
             }
+        }
+        if let Some(parent_node) = self.nodes.get_mut(parent.0 as usize) {
+            parent_node.last_child = Some(child);
         }
     }
 
