@@ -1,15 +1,4 @@
-import init, {
-    epub_to_azw3,
-    epub_to_kfx,
-    epub_to_markdown,
-    azw3_to_epub,
-    azw3_to_markdown,
-    kfx_to_epub,
-    kfx_to_markdown,
-    mobi_to_epub,
-    mobi_to_azw3,
-    mobi_to_markdown
-} from './pkg/boko.js';
+import init, { convert as bokoConvert } from './pkg/boko.js';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -62,32 +51,19 @@ function getInputFormat(filename) {
     return null;
 }
 
-function updateOutputOptions(inputFormat) {
-    outputFormat.innerHTML = '';
+// Exportable formats (any importable input can convert to any of these).
+const outputFormats = [
+    { value: 'epub', label: 'EPUB' },
+    { value: 'azw3', label: 'AZW3' },
+    { value: 'kfx', label: 'KFX' },
+    { value: 'markdown', label: 'Markdown' },
+];
 
-    if (inputFormat === 'epub') {
-        outputFormat.innerHTML = `
-            <option value="azw3">AZW3</option>
-            <option value="kfx">KFX</option>
-            <option value="markdown">Markdown</option>
-        `;
-    } else if (inputFormat === 'azw3') {
-        outputFormat.innerHTML = `
-            <option value="epub">EPUB</option>
-            <option value="markdown">Markdown</option>
-        `;
-    } else if (inputFormat === 'kfx') {
-        outputFormat.innerHTML = `
-            <option value="epub">EPUB</option>
-            <option value="markdown">Markdown</option>
-        `;
-    } else if (inputFormat === 'mobi') {
-        outputFormat.innerHTML = `
-            <option value="epub">EPUB</option>
-            <option value="azw3">AZW3</option>
-            <option value="markdown">Markdown</option>
-        `;
-    }
+function updateOutputOptions(inputFormat) {
+    outputFormat.innerHTML = outputFormats
+        .filter(({ value }) => value !== inputFormat)
+        .map(({ value, label }) => `<option value="${value}">${label}</option>`)
+        .join('');
 }
 
 function handleFile(file) {
@@ -149,20 +125,6 @@ function showResult(blob, filename) {
     result.classList.remove('hidden');
 }
 
-// Conversion functions map
-const converters = {
-    'epub_azw3': epub_to_azw3,
-    'epub_kfx': epub_to_kfx,
-    'epub_markdown': epub_to_markdown,
-    'azw3_epub': azw3_to_epub,
-    'azw3_markdown': azw3_to_markdown,
-    'kfx_epub': kfx_to_epub,
-    'kfx_markdown': kfx_to_markdown,
-    'mobi_epub': mobi_to_epub,
-    'mobi_azw3': mobi_to_azw3,
-    'mobi_markdown': mobi_to_markdown,
-};
-
 const mimeTypes = {
     'epub': 'application/epub+zip',
     'azw3': 'application/x-mobi8-ebook',
@@ -190,13 +152,6 @@ async function convert() {
 
     const inputFormat = getInputFormat(currentFile.name);
     const targetFormat = outputFormat.value;
-    const converterKey = `${inputFormat}_${targetFormat}`;
-    const converter = converters[converterKey];
-
-    if (!converter) {
-        showError('Unsupported conversion: ' + inputFormat + ' to ' + targetFormat);
-        return;
-    }
 
     showProgress('Reading file...');
 
@@ -206,7 +161,7 @@ async function convert() {
 
         showProgress('Converting...');
 
-        const outputData = converter(inputData);
+        const outputData = bokoConvert(inputData, inputFormat, targetFormat);
         const baseName = currentFile.name.replace(/\.[^/.]+$/, '');
         const outputFilename = baseName + extensions[targetFormat];
         const mimeType = mimeTypes[targetFormat];

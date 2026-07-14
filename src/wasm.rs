@@ -5,7 +5,7 @@
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
-use crate::model::{Book, Format};
+use crate::model::{Book, Format, TocEntry};
 
 /// Initialize panic hook for better error messages in the browser console.
 #[wasm_bindgen(start)]
@@ -14,153 +14,104 @@ pub fn init() {
     console_error_panic_hook::set_once();
 }
 
-/// Convert EPUB to AZW3 (KF8 format).
+/// Parse a format name (as used by the JS API) into a [`Format`].
+fn parse_format(name: &str) -> Result<Format, JsValue> {
+    match name.to_ascii_lowercase().as_str() {
+        "epub" => Ok(Format::Epub),
+        "azw3" => Ok(Format::Azw3),
+        "mobi" | "azw" => Ok(Format::Mobi),
+        "kfx" => Ok(Format::Kfx),
+        "markdown" | "md" => Ok(Format::Markdown),
+        _ => Err(JsValue::from_str(&format!("unknown format: {name}"))),
+    }
+}
+
+fn js_err(e: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&e.to_string())
+}
+
+/// Convert an ebook from one format to another.
 ///
-/// Takes raw EPUB bytes and returns AZW3 bytes.
+/// `from` and `to` are format names: `"epub"`, `"azw3"`, `"mobi"`, `"kfx"`,
+/// or `"markdown"` (`"md"`). Any importable `from` (EPUB, AZW3, MOBI, KFX)
+/// can be converted to any exportable `to` (EPUB, AZW3, KFX, Markdown).
+///
+/// Takes the raw input bytes and returns the converted output bytes
+/// (UTF-8 text for Markdown).
 #[wasm_bindgen]
-pub fn epub_to_azw3(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Epub).map_err(|e| JsValue::from_str(&e.to_string()))?;
+pub fn convert(data: &[u8], from: &str, to: &str) -> Result<Vec<u8>, JsValue> {
+    let from = parse_format(from)?;
+    let to = parse_format(to)?;
+
+    if !from.can_import() {
+        return Err(JsValue::from_str(&format!(
+            "format not supported as input: {from:?}"
+        )));
+    }
+    if !to.can_export() {
+        return Err(JsValue::from_str(&format!(
+            "format not supported as output: {to:?}"
+        )));
+    }
+
+    let book = Book::from_bytes(data, from).map_err(js_err)?;
 
     let mut output = Cursor::new(Vec::new());
-    book.export(Format::Azw3, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    book.export(to, &mut output).map_err(js_err)?;
 
     Ok(output.into_inner())
 }
 
-/// Convert EPUB to KFX (Kindle Format 10).
+/// Inspect an ebook's metadata without converting it.
 ///
-/// Takes raw EPUB bytes and returns KFX bytes.
+/// `from` is the input format name (see [`convert`]). Returns a JSON string:
+/// `{"title": ..., "authors": [...], "language": ..., "chapters": n, "toc_entries": n}`.
+/// Call `JSON.parse` on the result in JavaScript.
 #[wasm_bindgen]
-pub fn epub_to_kfx(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Epub).map_err(|e| JsValue::from_str(&e.to_string()))?;
+pub fn book_info(data: &[u8], from: &str) -> Result<JsValue, JsValue> {
+    let from = parse_format(from)?;
+    if !from.can_import() {
+        return Err(JsValue::from_str(&format!(
+            "format not supported as input: {from:?}"
+        )));
+    }
 
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Kfx, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let book = Book::from_bytes(data, from).map_err(js_err)?;
+    let meta = book.metadata();
 
-    Ok(output.into_inner())
-}
+    fn count_toc(entries: &[TocEntry]) -> usize {
+        entries.iter().map(|e| 1 + count_toc(&e.children)).sum()
+    }
 
-/// Convert AZW3 to EPUB.
-///
-/// Takes raw AZW3 bytes and returns EPUB bytes.
-#[wasm_bindgen]
-pub fn azw3_to_epub(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Azw3).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    fn json_string(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    out.push_str(&format!("\\u{:04x}", c as u32));
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
 
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Epub, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let authors: Vec<String> = meta.authors.iter().map(|a| json_string(a)).collect();
+    let json = format!(
+        "{{\"title\":{},\"authors\":[{}],\"language\":{},\"chapters\":{},\"toc_entries\":{}}}",
+        json_string(&meta.title),
+        authors.join(","),
+        json_string(&meta.language),
+        book.spine().len(),
+        count_toc(book.toc()),
+    );
 
-    Ok(output.into_inner())
-}
-
-/// Convert KFX to EPUB.
-///
-/// Takes raw KFX bytes and returns EPUB bytes.
-#[wasm_bindgen]
-pub fn kfx_to_epub(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Kfx).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Epub, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert MOBI to EPUB.
-///
-/// Takes raw MOBI bytes and returns EPUB bytes.
-/// Handles both legacy MOBI and modern AZW3 (KF8) formats.
-#[wasm_bindgen]
-pub fn mobi_to_epub(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Mobi).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Epub, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert MOBI to AZW3 (upgrade legacy MOBI to KF8 format).
-///
-/// Takes raw MOBI bytes and returns AZW3 bytes.
-#[wasm_bindgen]
-pub fn mobi_to_azw3(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Mobi).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Azw3, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert EPUB to Markdown.
-///
-/// Takes raw EPUB bytes and returns Markdown text as UTF-8 bytes.
-#[wasm_bindgen]
-pub fn epub_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Epub).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Markdown, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert AZW3 to Markdown.
-///
-/// Takes raw AZW3 bytes and returns Markdown text as UTF-8 bytes.
-#[wasm_bindgen]
-pub fn azw3_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Azw3).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Markdown, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert KFX to Markdown.
-///
-/// Takes raw KFX bytes and returns Markdown text as UTF-8 bytes.
-#[wasm_bindgen]
-pub fn kfx_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Kfx).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Markdown, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
-}
-
-/// Convert MOBI to Markdown.
-///
-/// Takes raw MOBI bytes and returns Markdown text as UTF-8 bytes.
-#[wasm_bindgen]
-pub fn mobi_to_markdown(data: &[u8]) -> Result<Vec<u8>, JsValue> {
-    let mut book =
-        Book::from_bytes(data, Format::Mobi).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    let mut output = Cursor::new(Vec::new());
-    book.export(Format::Markdown, &mut output)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-    Ok(output.into_inner())
+    Ok(JsValue::from_str(&json))
 }
