@@ -1,3 +1,4 @@
+use boko::kfx::container::extract_doc_symbols;
 use boko::kfx::symbols::KFX_SYMBOL_TABLE;
 use clap::Parser;
 use ion_rs::{
@@ -1207,13 +1208,13 @@ fn extract_and_print_navigation(
                 match *cfield_id as u32 {
                     id if id == KfxSymbol::NavType as u32 => {
                         if let IonValue::Symbol(sym_id) = cfield_value {
-                            nav_type = resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
+                            nav_type = resolve_symbol(*sym_id, extended_symbols);
                         }
                     }
                     id if id == KfxSymbol::NavContainerName as u32 => {
                         if let IonValue::Symbol(sym_id) = cfield_value {
                             container_name =
-                                resolve_symbol(*sym_id, extended_symbols, base_symbol_count);
+                                resolve_symbol(*sym_id, extended_symbols);
                         }
                     }
                     id if id == KfxSymbol::Entries as u32 => {
@@ -1344,7 +1345,7 @@ fn extract_nav_entries(
                     // landmark_type is a symbol (h2, h3, cover_page, srl, etc.)
                     if let IonValue::Symbol(sym_id) = field_value {
                         landmark_type =
-                            Some(resolve_symbol(*sym_id, extended_symbols, base_symbol_count));
+                            Some(resolve_symbol(*sym_id, extended_symbols));
                     }
                 }
                 id if id == KfxSymbol::Representation as u32 => {
@@ -1440,19 +1441,10 @@ fn extract_nav_entries(
     }
 }
 
-/// Resolve a symbol ID to its text name
-fn resolve_symbol(sym_id: u64, extended_symbols: &[String], base_symbol_count: usize) -> String {
-    let idx = sym_id as usize;
-    if idx < base_symbol_count {
-        KFX_SYMBOL_TABLE
-            .get(idx).map_or_else(|| format!("${sym_id}"), std::string::ToString::to_string)
-    } else {
-        let ext_idx = idx - base_symbol_count;
-        extended_symbols
-            .get(ext_idx)
-            .cloned()
-            .unwrap_or_else(|| format!("${sym_id}"))
-    }
+/// Resolve a symbol ID to its text name, falling back to `$id` notation.
+fn resolve_symbol(sym_id: u64, extended_symbols: &[String]) -> String {
+    boko::kfx::container::resolve_symbol(sym_id, extended_symbols)
+        .map_or_else(|| format!("${sym_id}"), std::string::ToString::to_string)
 }
 
 /// Extract name and `content_list` texts from a content entity
@@ -1566,7 +1558,7 @@ fn extract_fragment_content_from_list(
                         && let IonValue::Symbol(sym_id) = field_value
                     {
                         container_type =
-                            Some(resolve_symbol(*sym_id, extended_symbols, base_symbol_count));
+                            Some(resolve_symbol(*sym_id, extended_symbols));
                     }
 
                     // Get content reference
@@ -1877,115 +1869,15 @@ fn extract_anchor_info(
 
 /// Parse container info Ion struct to extract index table offset/length
 fn parse_container_info_for_index(data: &[u8]) -> Option<(usize, usize)> {
-    // Skip first 10 entries - see dump_ion_data_extended for explanation
-    let mut catalog = MapCatalog::new();
-    if let Ok(table) =
-        SharedSymbolTable::new("YJ_symbols", 10, KFX_SYMBOL_TABLE[10..].iter().copied())
-    {
-        catalog.insert_table(table);
-    }
-
-    // Prepend symbol table import
-    let preamble = build_symbol_table_preamble();
-    let mut full_data = preamble;
-    if data.len() >= 4 && data[0..4] == ION_BVM {
-        full_data.extend_from_slice(&data[4..]);
-    } else {
-        full_data.extend_from_slice(data);
-    }
-
-    let reader = Reader::new(AnyEncoding.with_catalog(catalog), &full_data[..]);
-    if reader.is_err() {
-        return None;
-    }
-    let mut reader = reader.unwrap();
-
-    // Read the struct and extract key fields
-    // $413 = bcIndexTabOffset, $414 = bcIndexTabLength
-    let mut index_offset: Option<usize> = None;
-    let mut index_length: Option<usize> = None;
-
-    for element in reader.elements() {
-        if let Ok(elem) = element
-            && let Some(strukt) = elem.as_struct()
-        {
-            for field in strukt {
-                let (name, value) = field;
-                if let Some(field_name) = name.text() {
-                    if field_name == "bcIndexTabOffset"
-                        && let Some(i) = value.as_i64()
-                    {
-                        index_offset = Some(i as usize);
-                    }
-                    if field_name == "bcIndexTabLength"
-                        && let Some(i) = value.as_i64()
-                    {
-                        index_length = Some(i as usize);
-                    }
-                }
-            }
-        }
-    }
-
-    match (index_offset, index_length) {
-        (Some(off), Some(len)) => Some((off, len)),
-        _ => None,
-    }
+    boko::kfx::container::parse_container_info(data).ok()?.index
 }
 
 /// Parse container info to extract doc symbol table location
 fn parse_container_info_for_doc_symbols(data: &[u8]) -> Option<(usize, usize)> {
-    // Skip first 10 entries - see dump_ion_data_extended for explanation
-    let mut catalog = MapCatalog::new();
-    if let Ok(table) =
-        SharedSymbolTable::new("YJ_symbols", 10, KFX_SYMBOL_TABLE[10..].iter().copied())
-    {
-        catalog.insert_table(table);
-    }
-
-    let preamble = build_symbol_table_preamble();
-    let mut full_data = preamble;
-    if data.len() >= 4 && data[0..4] == ION_BVM {
-        full_data.extend_from_slice(&data[4..]);
-    } else {
-        full_data.extend_from_slice(data);
-    }
-
-    let reader = Reader::new(AnyEncoding.with_catalog(catalog), &full_data[..]);
-    if reader.is_err() {
-        return None;
-    }
-    let mut reader = reader.unwrap();
-
-    let mut doc_sym_offset: Option<usize> = None;
-    let mut doc_sym_length: Option<usize> = None;
-
-    for element in reader.elements() {
-        if let Ok(elem) = element
-            && let Some(strukt) = elem.as_struct()
-        {
-            for field in strukt {
-                let (name, value) = field;
-                if let Some(field_name) = name.text() {
-                    if field_name == "bcDocSymbolOffset"
-                        && let Some(i) = value.as_i64()
-                    {
-                        doc_sym_offset = Some(i as usize);
-                    }
-                    if field_name == "bcDocSymbolLength"
-                        && let Some(i) = value.as_i64()
-                    {
-                        doc_sym_length = Some(i as usize);
-                    }
-                }
-            }
-        }
-    }
-
-    match (doc_sym_offset, doc_sym_length) {
-        (Some(off), Some(len)) if len > 0 => Some((off, len)),
-        _ => None,
-    }
+    boko::kfx::container::parse_container_info(data)
+        .ok()?
+        .doc_symbols
+        .filter(|&(_, len)| len > 0)
 }
 
 /// Build entity map for resolving entity ID references.
@@ -2199,52 +2091,6 @@ fn ion_value_to_string(
         IonValue::Int(i) => Some(i.to_string()),
         _ => None,
     }
-}
-
-/// Extract document-specific symbols from the doc symbols section.
-/// The doc symbols section is Ion binary containing a $`ion_symbol_table` struct.
-/// We extract the "symbols" list which contains the local symbol names.
-fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
-    use boko::kfx::ion::{IonParser, IonValue};
-
-    // Use our own IonParser which doesn't do special symbol table handling
-    let mut parser = IonParser::new(data);
-    let value = match parser.parse() {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("DEBUG: Failed to parse Ion: {e}");
-            return Vec::new();
-        }
-    };
-
-    // The value should be an annotated struct: $3::{ imports: [...], symbols: [...] }
-    // We need to find the "symbols" field (symbol ID 7)
-    let inner = match &value {
-        IonValue::Annotated(_, inner) => inner.as_ref(),
-        _ => &value,
-    };
-
-    if let IonValue::Struct(fields) = inner {
-        for (field_id, field_value) in fields {
-            // Symbol ID 7 = "symbols"
-            if *field_id == 7
-                && let IonValue::List(items) = field_value
-            {
-                return items
-                    .iter()
-                    .filter_map(|item| {
-                        if let IonValue::String(s) = item {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-            }
-        }
-    }
-
-    Vec::new()
 }
 
 /// Parse and dump an entity (ENTY format)
