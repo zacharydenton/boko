@@ -277,7 +277,7 @@ pub fn compute_styles(
 /// Compute styles for an element using a prebuilt [`CascadeIndex`].
 ///
 /// `bloom`, when provided, must be an ancestor bloom filter containing the
-/// hashes ([`ElementRef::each_bloom_hash`]) of every *element ancestor* of
+/// hashes (`ElementRef::each_bloom_hash`) of every *element ancestor* of
 /// `elem` — and nothing else, in particular not `elem` itself. It lets
 /// selector matching fast-reject descendant/child-combinator candidates
 /// without walking the ancestor chain. Passing a filter that is missing an

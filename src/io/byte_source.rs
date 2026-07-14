@@ -46,12 +46,15 @@ pub trait ByteSource: Send + Sync {
 
 // --- Implementation: Local File ---
 
+/// A [`ByteSource`] backed by a local file, using positioned reads
+/// (`pread`) so no seek state is shared between readers.
 pub struct FileSource {
     file: File, // internal file handle
     len: u64,
 }
 
 impl FileSource {
+    /// Wrap an open file, capturing its current length for bounds checks.
     pub fn new(file: File) -> io::Result<Self> {
         let len = file.metadata()?.len();
         Ok(Self { file, len })

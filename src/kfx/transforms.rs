@@ -173,7 +173,7 @@ impl AttributeTransform for KfxLinkTransform {
 /// separator) plus the scheme-only forms `mailto:` and `tel:`.
 ///
 /// This is the single source of truth for the external-URL decision: both the
-/// import parser ([`parse_kfx_link`]) and the export anchor registry
+/// import parser (`parse_kfx_link`) and the export anchor registry
 /// (`AnchorRegistry::get_or_create_href_symbol`) must agree, otherwise one
 /// layer emits `link_to` references to anchor entities the other layer never
 /// creates (dangling anchors).

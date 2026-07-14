@@ -15,14 +15,23 @@ use crate::util::strip_ebook_chars;
 // ============================================================================
 
 /// A book's content as a hierarchical section tree.
+///
+/// Produced by [`extract_section_tree`]: chapters are flattened into a
+/// single stream, then re-nested under headings. Useful for text analysis
+/// and structured (e.g. JSON) output.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "cli", derive(serde::Serialize))]
 pub struct SectionTree {
+    /// Book title, from the book's metadata (e.g. OPF `dc:title`).
     pub title: String,
+    /// Author names, from the book's metadata (e.g. OPF `dc:creator`).
     pub authors: Vec<String>,
+    /// Language tag (e.g. "en"), from the book's metadata (`dc:language`).
     pub language: String,
+    /// Content appearing before the first heading in the book.
     #[cfg_attr(feature = "cli", serde(skip_serializing_if = "Vec::is_empty"))]
     pub preamble: Vec<ContentBlock>,
+    /// Top-level sections (each rooted at a heading), in reading order.
     pub sections: Vec<SectionNode>,
 }
 
@@ -42,35 +51,56 @@ pub struct SectionNode {
     pub children: Vec<SectionNode>,
 }
 
-/// An atomic content block.
+/// An atomic content block within a section.
+///
+/// Text is extracted plain (inline formatting dropped, whitespace collapsed,
+/// footnote bodies skipped), except code which is kept verbatim.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "cli", derive(serde::Serialize))]
 #[cfg_attr(feature = "cli", serde(tag = "type", rename_all = "snake_case"))]
 pub enum ContentBlock {
+    /// A paragraph or caption (`Role::Paragraph`/`Role::Caption`).
     Paragraph {
+        /// Plain text with whitespace collapsed.
         text: String,
     },
+    /// A code block (`Role::CodeBlock`), preserved verbatim.
     CodeBlock {
+        /// Programming language, if declared (e.g. from a `language-*` class).
         #[cfg_attr(feature = "cli", serde(skip_serializing_if = "Option::is_none"))]
         language: Option<String>,
+        /// The code with original whitespace and newlines preserved.
         code: String,
     },
+    /// A block quotation or sidebar (`Role::BlockQuote`/`Role::Sidebar`).
     BlockQuote {
+        /// Plain text with whitespace collapsed.
         text: String,
     },
+    /// An ordered, unordered, or definition list.
     List {
+        /// True for ordered (numbered) lists; definition lists are unordered
+        /// with items rendered as "term: description".
         ordered: bool,
+        /// One plain-text entry per list item; empty items are dropped.
         items: Vec<String>,
     },
+    /// A table flattened to header and body cell text.
     Table {
+        /// Header row cells (from `thead` or header cells), if any.
         #[cfg_attr(feature = "cli", serde(skip_serializing_if = "Vec::is_empty"))]
         headers: Vec<String>,
+        /// Body rows, each a list of cell texts.
         rows: Vec<Vec<String>>,
     },
+    /// An image reference.
     Image {
+        /// Image source path within the book.
         src: String,
+        /// Alternative text (empty string if none).
         alt: String,
     },
+    /// A thematic break (`<hr>` / `Role::Rule`).
     Rule,
 }
 

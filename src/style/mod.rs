@@ -14,7 +14,10 @@ mod style_pool;
 mod to_css;
 mod types;
 
-// Re-export the ToCss trait
+/// Serialize a style value back to its CSS text representation.
+///
+/// Implemented by all property value types and by `ComputedStyle` itself
+/// (which emits only non-default properties).
 pub trait ToCss {
     /// Write this value as CSS to the buffer.
     fn to_css(&self, buf: &mut String);

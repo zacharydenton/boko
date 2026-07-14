@@ -21,7 +21,9 @@ pub struct ChapterId(pub u32);
 /// a globally unique reference to any node in any chapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlobalNodeId {
+    /// The chapter (spine item) containing the node.
     pub chapter: ChapterId,
+    /// The node within that chapter's IR tree.
     pub node: NodeId,
 }
 

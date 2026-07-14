@@ -75,12 +75,20 @@ macro_rules! enum_property {
 // Export the macro for use within the crate
 pub(crate) use enum_property;
 
-/// Font weight (100-900, with named constants).
+/// CSS `font-weight` as a numeric weight (100-900).
+///
+/// `normal` parses to 400 and `bold` to 700; the derived default of 0 means
+/// "unset". Serializes back to the `normal`/`bold` keywords where possible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct FontWeight(pub u16);
+pub struct FontWeight(
+    /// Numeric weight (100-900); 0 means unset.
+    pub u16,
+);
 
 impl FontWeight {
+    /// `font-weight: normal` (400).
     pub const NORMAL: FontWeight = FontWeight(400);
+    /// `font-weight: bold` (700).
     pub const BOLD: FontWeight = FontWeight(700);
 }
 
@@ -95,110 +103,152 @@ impl ToCss for FontWeight {
 }
 
 enum_property! {
-    /// Font style (normal, italic, oblique).
+    /// CSS `font-style` values (normal, italic, oblique).
     pub enum FontStyle {
+        /// Upright glyphs (CSS initial value).
         #[default]
         Normal => "normal",
+        /// Cursive italic face.
         Italic => "italic",
+        /// Slanted (oblique) face; treated as italic by exporters.
         Oblique => "oblique",
     }
 }
 
 enum_property! {
-    /// Font variant (normal, small-caps).
+    /// CSS `font-variant` / `font-variant-caps` values.
     pub enum FontVariant {
+        /// Regular glyphs (CSS initial value).
         #[default]
         Normal => "normal",
+        /// Lowercase letters rendered as small capitals.
         SmallCaps => "small-caps",
     }
 }
 
 enum_property! {
-    /// Text transform values.
+    /// CSS `text-transform` values.
     pub enum TextTransform {
+        /// No case transformation (CSS initial value).
         #[default]
         None => "none",
+        /// Render all text in uppercase.
         Uppercase => "uppercase",
+        /// Render all text in lowercase.
         Lowercase => "lowercase",
+        /// Capitalize the first letter of each word.
         Capitalize => "capitalize",
     }
 }
 
 enum_property! {
-    /// Hyphenation mode.
+    /// CSS `hyphens` values (automatic hyphenation mode).
     /// Default is `Manual` so that explicit `hyphens: auto` is emitted in KFX output.
     pub enum Hyphens {
+        /// Break words at language-appropriate hyphenation points.
         Auto => "auto",
+        /// Break only at explicit hyphenation characters (CSS initial value).
         #[default]
         Manual => "manual",
+        /// Never hyphenate, even at explicit hyphenation characters.
         None => "none",
     }
 }
 
 enum_property! {
-    /// Text decoration line style.
+    /// CSS `text-decoration-style` values (how the decoration line is drawn).
+    ///
+    /// `None` is a boko extension meaning "unset" (CSS has no `none` keyword
+    /// here; the CSS initial value is `solid`).
     pub enum DecorationStyle {
+        /// Unset — no explicit decoration style (renders as solid).
         #[default]
         None => "none",
+        /// A single solid line.
         Solid => "solid",
+        /// A dotted line.
         Dotted => "dotted",
+        /// A dashed line.
         Dashed => "dashed",
+        /// A double line.
         Double => "double",
     }
 }
 
 enum_property! {
-    /// Float positioning.
+    /// CSS `float` values.
     pub enum Float {
+        /// Not floated (CSS initial value).
         #[default]
         None => "none",
+        /// Float to the left; content flows along the right side.
         Left => "left",
+        /// Float to the right; content flows along the left side.
         Right => "right",
     }
 }
 
 enum_property! {
-    /// Page break behavior.
+    /// CSS `break-before`/`break-after`/`break-inside` (and legacy
+    /// `page-break-*`) values controlling pagination.
     pub enum BreakValue {
+        /// No forced or avoided break (CSS initial value).
         #[default]
         Auto => "auto",
+        /// Force a page break.
         Always => "always",
+        /// Avoid a break if possible.
         Avoid => "avoid",
+        /// Force a column break.
         Column => "column",
     }
 }
 
 enum_property! {
-    /// Border style values.
+    /// CSS `border-style` values (per-side line style).
     pub enum BorderStyle {
+        /// No border (CSS initial value).
         #[default]
         None => "none",
+        /// A single solid line.
         Solid => "solid",
+        /// A dotted line.
         Dotted => "dotted",
+        /// A dashed line.
         Dashed => "dashed",
+        /// Two parallel solid lines.
         Double => "double",
+        /// Carved (3D grooved) appearance.
         Groove => "groove",
+        /// Extruded (3D ridged) appearance.
         Ridge => "ridge",
+        /// Embedded (3D inset) appearance.
         Inset => "inset",
+        /// Embossed (3D outset) appearance.
         Outset => "outset",
     }
 }
 
 enum_property! {
-    /// List style position.
+    /// CSS `list-style-position` values (marker placement).
     pub enum ListStylePosition {
+        /// Marker outside the list item's principal box (CSS initial value).
         #[default]
         Outside => "outside",
+        /// Marker inside the list item's box, as the first inline content.
         Inside => "inside",
     }
 }
 
 enum_property! {
-    /// CSS visibility values.
+    /// CSS `visibility` values.
     pub enum Visibility {
+        /// Element is rendered normally (CSS initial value).
         #[default]
         Visible => "visible",
+        /// Element is invisible but still occupies layout space.
         Hidden => "hidden",
+        /// Like `hidden`, but table rows/columns release their space.
         Collapse => "collapse",
     }
 }
@@ -215,33 +265,45 @@ enum_property! {
 }
 
 enum_property! {
-    /// CSS clear values for float clearing.
+    /// CSS `clear` values for float clearing.
     pub enum Clear {
+        /// Do not clear floats (CSS initial value).
         #[default]
         None => "none",
+        /// Move below any left-floated boxes.
         Left => "left",
+        /// Move below any right-floated boxes.
         Right => "right",
+        /// Move below floated boxes on both sides.
         Both => "both",
     }
 }
 
 enum_property! {
-    /// CSS word-break values.
+    /// CSS `word-break` values (where lines may break within words).
     pub enum WordBreak {
+        /// Default line-breaking rules (CSS initial value).
         #[default]
         Normal => "normal",
+        /// Allow breaks between any two characters.
         BreakAll => "break-all",
+        /// Disallow breaks within CJK words.
         KeepAll => "keep-all",
+        /// Deprecated alias behaving like `overflow-wrap: break-word`.
         BreakWord => "break-word",
     }
 }
 
 enum_property! {
-    /// CSS overflow-wrap values.
+    /// CSS `overflow-wrap` values (emergency breaking of long words).
     pub enum OverflowWrap {
+        /// Break only at normal word break points (CSS initial value).
         #[default]
         Normal => "normal",
+        /// Break otherwise-unbreakable words if a line would overflow.
         BreakWord => "break-word",
+        /// Like `break-word`, but soft-wrap opportunities affect
+        /// min-content sizing.
         Anywhere => "anywhere",
     }
 }
@@ -264,16 +326,27 @@ enum_property! {
 }
 
 enum_property! {
-    /// CSS vertical-align values for inline and table-cell elements.
+    /// CSS `vertical-align` values for inline and table-cell elements.
+    ///
+    /// `Super` and `Sub` are how boko represents superscript/subscript text
+    /// (see `ComputedStyle::is_superscript`/`is_subscript`).
     pub enum VerticalAlign {
+        /// Align with the parent's baseline (CSS initial value).
         #[default]
         Baseline => "baseline",
+        /// Align with the top of the line box (or table cell).
         Top => "top",
+        /// Align with the middle of the line box (or table cell).
         Middle => "middle",
+        /// Align with the bottom of the line box (or table cell).
         Bottom => "bottom",
+        /// Align with the top of the parent's font.
         TextTop => "text-top",
+        /// Align with the bottom of the parent's font.
         TextBottom => "text-bottom",
+        /// Superscript baseline shift.
         Super => "super",
+        /// Subscript baseline shift.
         Sub => "sub",
     }
 }
@@ -290,28 +363,44 @@ enum_property! {
 }
 
 enum_property! {
-    /// Text alignment.
+    /// CSS `text-align` values.
     pub enum TextAlign {
+        /// Align toward the start of the writing direction (CSS initial value).
         #[default]
         Start => "start",
+        /// Align toward the end of the writing direction.
         End => "end",
+        /// Left-align inline content.
         Left => "left",
+        /// Right-align inline content.
         Right => "right",
+        /// Center inline content.
         Center => "center",
+        /// Justify lines to both margins.
         Justify => "justify",
     }
 }
 
 enum_property! {
-    /// Display mode.
+    /// CSS `display` values (the subset boko models).
+    ///
+    /// Note: the default is `Block`, not CSS's `inline` — boko assigns
+    /// display per element role, so the struct default is only a fallback.
     pub enum Display {
+        /// Block-level box.
         #[default]
         Block => "block",
+        /// Inline box.
         Inline => "inline",
+        /// Inline-level block container.
         InlineBlock => "inline-block",
+        /// Element generates no boxes (removed from layout).
         None => "none",
+        /// Block box with a list marker (`li`).
         ListItem => "list-item",
+        /// Table cell box (`td`/`th`).
         TableCell => "table-cell",
+        /// Table row box (`tr`).
         TableRow => "table-row",
     }
 }
@@ -342,27 +431,38 @@ enum_property! {
 }
 
 /// RGBA color (8 bits per channel).
+///
+/// Parsed from any CSS color syntax (hex, `rgb()`/`rgba()`, named colors).
+/// Serializes as `#rrggbb` when opaque, `transparent` when fully
+/// transparent, and `rgba()` otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Color {
+    /// Red channel (0-255).
     pub r: u8,
+    /// Green channel (0-255).
     pub g: u8,
+    /// Blue channel (0-255).
     pub b: u8,
+    /// Alpha channel (0 = fully transparent, 255 = opaque).
     pub a: u8,
 }
 
 impl Color {
+    /// Opaque black (`#000000`).
     pub const BLACK: Color = Color {
         r: 0,
         g: 0,
         b: 0,
         a: 255,
     };
+    /// Opaque white (`#ffffff`).
     pub const WHITE: Color = Color {
         r: 255,
         g: 255,
         b: 255,
         a: 255,
     };
+    /// Fully transparent (all channels zero).
     pub const TRANSPARENT: Color = Color {
         r: 0,
         g: 0,
@@ -396,14 +496,25 @@ impl ToCss for Color {
     }
 }
 
-/// Length value with unit.
+/// CSS length value with unit.
+///
+/// Supports absolute pixels, font-relative `em`/`rem`, and percentages.
+/// At parse time `pt` is converted to `Px` (1pt = 96/72 px) and `ex` to
+/// `Em` (~0.5em). `Auto` doubles as both CSS `auto` and "property unset" —
+/// it is the `Default`, so a default-initialized field means the property
+/// was never specified.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Length {
+    /// The `auto` keyword; also the default, meaning "unset".
     #[default]
     Auto,
+    /// Absolute length in CSS pixels (other absolute units are converted).
     Px(f32),
+    /// Length relative to the element's font size.
     Em(f32),
+    /// Length relative to the root font size.
     Rem(f32),
+    /// Percentage of the containing block's corresponding dimension.
     Percent(f32),
 }
 

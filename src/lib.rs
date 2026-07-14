@@ -36,6 +36,8 @@
 //! # Ok::<(), boko::Error>(())
 //! ```
 
+#![warn(missing_docs)]
+
 mod book;
 pub(crate) mod dom;
 pub mod error;

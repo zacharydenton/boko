@@ -49,6 +49,9 @@ pub fn synthesize_html(ir: &Chapter, style_map: &HashMap<StyleId, String>) -> Sy
     synthesize_html_with_resolver(ir, &resolver)
 }
 
+/// Synthesize an XHTML body like [`synthesize_html`], but resolving class
+/// names from a slice indexed by `StyleId` (`None` = no class) instead of
+/// a hash map.
 pub fn synthesize_html_with_class_list(
     ir: &Chapter,
     class_list: &[Option<&str>],
@@ -99,6 +102,8 @@ pub fn synthesize_xhtml_document(
     synthesize_xhtml_from_body(body_result, title, stylesheet_href)
 }
 
+/// Synthesize a complete XHTML document like [`synthesize_xhtml_document`],
+/// but resolving class names from a slice indexed by `StyleId`.
 pub fn synthesize_xhtml_document_with_class_list(
     ir: &Chapter,
     class_list: &[Option<&str>],

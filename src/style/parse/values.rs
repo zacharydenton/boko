@@ -9,7 +9,9 @@ use crate::style::properties::{Color, Length};
 /// Text decoration value (can combine underline and line-through).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TextDecorationValue {
+    /// Whether the `underline` line is present.
     pub underline: bool,
+    /// Whether the `line-through` (strikethrough) line is present.
     pub line_through: bool,
 }
 

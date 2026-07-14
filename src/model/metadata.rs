@@ -29,22 +29,27 @@ pub enum Format {
 /// A resource (image, font, CSS, etc.) with its data and media type.
 #[derive(Debug, Clone)]
 pub struct Resource {
+    /// Raw resource bytes.
     pub data: Vec<u8>,
+    /// MIME type (e.g. "image/jpeg"), normalized to a known static string.
     pub media_type: &'static str,
 }
 
-/// A contributor with optional role and sort name.
+/// A contributor with optional role and sort name (EPUB `dc:contributor`).
 #[derive(Debug, Clone, Default)]
 pub struct Contributor {
+    /// Display name of the contributor.
     pub name: String,
+    /// Sort key (`file-as` refinement), e.g. "Doe, Jane".
     pub file_as: Option<String>,
     /// MARC relator code: "trl", "edt", "ill", etc.
     pub role: Option<String>,
 }
 
-/// Collection/series information.
+/// Collection/series information (EPUB 3 `belongs-to-collection`).
 #[derive(Debug, Clone)]
 pub struct CollectionInfo {
+    /// Collection or series name.
     pub name: String,
     /// "series" or "set"
     pub collection_type: Option<String>,
@@ -53,17 +58,32 @@ pub struct CollectionInfo {
 }
 
 /// Book metadata (Dublin Core + extensions)
+///
+/// Populated from the OPF `<metadata>` element for EPUB, or the
+/// corresponding EXTH/entity records for MOBI/AZW3/KFX. String fields
+/// default to empty and `Option` fields to `None` when a source book
+/// omits them.
 #[derive(Debug, Clone, Default)]
 pub struct Metadata {
+    /// Book title (`dc:title`).
     pub title: String,
+    /// Author display names (`dc:creator`), in declaration order.
     pub authors: Vec<String>,
+    /// Language tag such as "en" or "pt-BR" (`dc:language`).
     pub language: String,
+    /// Unique identifier (`dc:identifier`), e.g. ISBN, UUID, or URI.
     pub identifier: String,
+    /// Publisher name (`dc:publisher`).
     pub publisher: Option<String>,
+    /// Description or blurb (`dc:description`); may contain HTML markup.
     pub description: Option<String>,
+    /// Subject/genre keywords (`dc:subject`).
     pub subjects: Vec<String>,
+    /// Publication date (`dc:date`), as written in the source.
     pub date: Option<String>,
+    /// Copyright/license statement (`dc:rights`).
     pub rights: Option<String>,
+    /// Path of the cover image resource within the book, if identified.
     pub cover_image: Option<String>,
     /// dcterms:modified timestamp
     pub modified_date: Option<String>,
@@ -78,10 +98,16 @@ pub struct Metadata {
 }
 
 /// A table of contents entry (hierarchical)
+///
+/// Built from the EPUB 3 nav document or EPUB 2 NCX (or the equivalent
+/// Kindle TOC structures). Entries sort by `play_order` when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TocEntry {
+    /// Display label for the entry.
     pub title: String,
+    /// Link target: a spine document path, optionally with a `#fragment`.
     pub href: String,
+    /// Nested sub-entries (deeper TOC levels).
     pub children: Vec<TocEntry>,
     /// Play order for sorting (from NCX playOrder attribute)
     pub play_order: Option<usize>,
@@ -181,6 +207,8 @@ impl Format {
 }
 
 impl TocEntry {
+    /// Create a leaf entry with the given title and href (no children,
+    /// no play order, unresolved target).
     pub fn new(title: impl Into<String>, href: impl Into<String>) -> Self {
         Self {
             title: title.into(),
