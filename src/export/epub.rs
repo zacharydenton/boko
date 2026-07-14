@@ -200,7 +200,8 @@ impl EpubExporter {
             }
             let content = book.load_asset(asset_path)?;
 
-            zip.start_file(&zip_path, deflated).map_err(io_error)?;
+            let opts = asset_options(&zip_path, &content, stored, deflated);
+            zip.start_file(&zip_path, opts).map_err(io_error)?;
             zip.write_all(&content)?;
         }
 
@@ -361,7 +362,8 @@ impl EpubExporter {
 
             // Try to load the asset from the book
             if let Ok(data) = book.load_asset(std::path::Path::new(asset_path)) {
-                zip.start_file(&zip_path, deflated).map_err(io_error)?;
+                let opts = asset_options(&zip_path, &data, stored, deflated);
+                zip.start_file(&zip_path, opts).map_err(io_error)?;
                 zip.write_all(&data)?;
             }
         }
@@ -378,7 +380,8 @@ impl EpubExporter {
             }
             let zip_path = format!("OEBPS/{}", sanitize_path(&path_str));
             if let Ok(data) = book.load_asset(asset_path) {
-                zip.start_file(&zip_path, deflated).map_err(io_error)?;
+                let opts = asset_options(&zip_path, &data, stored, deflated);
+                zip.start_file(&zip_path, opts).map_err(io_error)?;
                 zip.write_all(&data)?;
             }
         }
@@ -408,6 +411,23 @@ struct ManifestItem {
     media_type: String,
     /// Optional OPF `properties` (e.g. `nav`, `cover-image`).
     properties: Option<&'static str>,
+}
+
+/// Pick a ZIP compression method for an asset. Images and fonts are already
+/// entropy-coded, so re-deflating them burns CPU for ~0% size gain (the
+/// dominant cost of exporting an image-heavy book) — store them uncompressed.
+fn asset_options(
+    path: &str,
+    data: &[u8],
+    stored: SimpleFileOptions,
+    deflated: SimpleFileOptions,
+) -> SimpleFileOptions {
+    let fmt = crate::util::detect_media_format(path, data);
+    if fmt.is_image() || fmt.is_font() {
+        stored
+    } else {
+        deflated
+    }
 }
 
 /// Generate content.opf from metadata and manifest.

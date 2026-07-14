@@ -3,7 +3,7 @@
 //! This module provides an efficient arena-allocated DOM tree that html5ever
 //! can parse into. The arena layout enables fast traversal and selector matching.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use html5ever::{LocalName, Namespace, QualName};
 
@@ -94,7 +94,7 @@ pub struct ArenaDom {
     /// Document root ID.
     document: ArenaNodeId,
     /// Map from id attribute to node ID for fast lookup.
-    id_map: HashMap<String, ArenaNodeId>,
+    id_map: FxHashMap<String, ArenaNodeId>,
 }
 
 impl ArenaDom {
@@ -103,7 +103,7 @@ impl ArenaDom {
         let mut dom = Self {
             nodes: Vec::new(),
             document: ArenaNodeId::NONE,
-            id_map: HashMap::new(),
+            id_map: FxHashMap::default(),
         };
         dom.document = dom.alloc(ArenaNode::new(ArenaNodeData::Document));
         dom

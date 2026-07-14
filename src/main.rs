@@ -560,10 +560,14 @@ fn convert(
             .map_err(|e| format!("Write failed: {e}"))?;
     } else {
         let output_path = output.unwrap();
-        let mut file = std::fs::File::create(output_path)
+        let file = std::fs::File::create(output_path)
             .map_err(|e| format!("Failed to create output: {e}"))?;
-        book.export(output_format, &mut file)
+        // Buffer the writer: the EPUB ZipWriter issues many small writes, each
+        // of which would otherwise be a syscall.
+        let mut writer = std::io::BufWriter::with_capacity(64 << 10, file);
+        book.export(output_format, &mut writer)
             .map_err(|e| format!("Conversion failed: {e}"))?;
+        std::io::Write::flush(&mut writer).map_err(|e| format!("Write failed: {e}"))?;
     }
 
     if !quiet && !to_stdout {

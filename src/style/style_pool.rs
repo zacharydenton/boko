@@ -1,6 +1,6 @@
 //! Style pool for interning and deduplication.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use super::types::{ComputedStyle, StyleId};
 
@@ -13,7 +13,7 @@ pub struct StylePool {
     /// All unique styles.
     styles: Vec<ComputedStyle>,
     /// Hash-based deduplication map.
-    intern_map: HashMap<ComputedStyle, StyleId>,
+    intern_map: FxHashMap<ComputedStyle, StyleId>,
 }
 
 impl Default for StylePool {
@@ -26,7 +26,7 @@ impl StylePool {
     /// Create a new style pool with the default style at index 0.
     pub fn new() -> Self {
         let default_style = ComputedStyle::default();
-        let mut intern_map = HashMap::new();
+        let mut intern_map = FxHashMap::default();
         intern_map.insert(default_style.clone(), StyleId::DEFAULT);
 
         Self {

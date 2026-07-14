@@ -5,7 +5,7 @@
 //! importance, and source order.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use selectors::context::{MatchingContext, SelectorCaches};
 use selectors::parser::{Component, Selector};
@@ -134,9 +134,9 @@ pub struct CascadeScratch {
 /// instead of every rule of every stylesheet (O(elements × rules)).
 pub struct CascadeIndex<'a> {
     stylesheets: &'a [(&'a Stylesheet, Origin)],
-    by_id: HashMap<String, Vec<RuleRef>>,
-    by_class: HashMap<String, Vec<RuleRef>>,
-    by_local: HashMap<String, Vec<RuleRef>>,
+    by_id: FxHashMap<String, Vec<RuleRef>>,
+    by_class: FxHashMap<String, Vec<RuleRef>>,
+    by_local: FxHashMap<String, Vec<RuleRef>>,
     universal: Vec<RuleRef>,
 }
 
@@ -148,9 +148,9 @@ impl<'a> CascadeIndex<'a> {
     pub fn build(stylesheets: &'a [(&'a Stylesheet, Origin)]) -> Self {
         let mut index = CascadeIndex {
             stylesheets,
-            by_id: HashMap::new(),
-            by_class: HashMap::new(),
-            by_local: HashMap::new(),
+            by_id: FxHashMap::default(),
+            by_class: FxHashMap::default(),
+            by_local: FxHashMap::default(),
             universal: Vec::new(),
         };
         for (sheet_idx, (sheet, _origin)) in stylesheets.iter().enumerate() {
