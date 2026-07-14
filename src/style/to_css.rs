@@ -231,18 +231,35 @@ const PROPERTIES: &[CssProperty] = &[
     prop!("border-spacing", border_spacing, in_blob: false),
 ];
 
+/// The default style every `emit` fn compares against. Built once: this is
+/// consulted per property per style on the KFX export hot path, and
+/// constructing the ~320-byte struct per lookup was measurable.
+static DEFAULT_STYLE: std::sync::LazyLock<ComputedStyle> =
+    std::sync::LazyLock::new(ComputedStyle::default);
+
+/// Property-name → table-entry index, so per-name lookups don't linear-scan
+/// the table's ~70 entries on the KFX export hot path.
+static PROPERTY_INDEX: std::sync::LazyLock<rustc_hash::FxHashMap<&'static str, usize>> =
+    std::sync::LazyLock::new(|| {
+        PROPERTIES
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name, i))
+            .collect()
+    });
+
 /// Visit every property that `ComputedStyle::to_css` emits — i.e. every blob
 /// property differing from its default — in emission order, as
 /// (css-property-name, css-value) pairs.
 pub fn for_each_changed_property(style: &ComputedStyle, f: &mut dyn FnMut(&str, &str)) {
-    let default = ComputedStyle::default();
+    let default = &*DEFAULT_STYLE;
     let mut value = String::new();
     for prop in PROPERTIES {
         if !prop.in_blob {
             continue;
         }
         value.clear();
-        if (prop.emit)(style, &default, &mut value) {
+        if (prop.emit)(style, default, &mut value) {
             f(prop.name, &value);
         }
     }
@@ -257,13 +274,12 @@ pub fn for_each_changed_property(style: &ComputedStyle, f: &mut dyn FnMut(&str, 
 /// constant names, so an unknown name is a bug (drift between the KFX schema
 /// and the table) that must not be silently ignored.
 pub fn changed_property_value(style: &ComputedStyle, name: &str) -> Option<String> {
-    let prop = PROPERTIES
-        .iter()
-        .find(|p| p.name == name)
+    let idx = *PROPERTY_INDEX
+        .get(name)
         .unwrap_or_else(|| panic!("unknown CSS property name: {name}"));
-    let default = ComputedStyle::default();
+    let prop = &PROPERTIES[idx];
     let mut value = String::new();
-    (prop.emit)(style, &default, &mut value).then_some(value)
+    (prop.emit)(style, &DEFAULT_STYLE, &mut value).then_some(value)
 }
 
 impl ToCss for ComputedStyle {
