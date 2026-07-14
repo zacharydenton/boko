@@ -10,7 +10,14 @@ use crate::style::{ComputedStyle, Display, Origin, Stylesheet, WhiteSpace, compu
 const UA_CSS: &str = include_str!("data/styles.css");
 
 pub fn user_agent_stylesheet() -> Stylesheet {
-    Stylesheet::parse(UA_CSS)
+    // The UA stylesheet is a constant, but `compile_html` is called once per
+    // chapter, so parsing UA_CSS every time is pure redundant work. Parse it
+    // once per thread and hand back a clone (cloning parsed rules is much
+    // cheaper than re-tokenizing and re-parsing the CSS).
+    thread_local! {
+        static UA_STYLESHEET: Stylesheet = Stylesheet::parse(UA_CSS);
+    }
+    UA_STYLESHEET.with(|ua| ua.clone())
 }
 
 /// Context for the transform operation.
