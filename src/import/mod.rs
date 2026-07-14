@@ -20,9 +20,9 @@ use std::sync::Arc;
 use crate::dom::{Origin, Stylesheet};
 use crate::model::{AnchorTarget, Chapter, FontFace, GlobalNodeId, Landmark, Metadata, TocEntry};
 
-/// Unique identifier for a chapter/spine item within a book.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ChapterId(pub u32);
+// `ChapterId` is a pure identifier defined in the data model; re-exported
+// here for backwards compatibility (`crate::import::ChapterId`).
+pub use crate::model::ChapterId;
 
 /// Entry in the reading order (spine).
 #[derive(Debug, Clone)]

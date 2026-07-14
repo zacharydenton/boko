@@ -36,6 +36,7 @@
 //! # Ok::<(), boko::Error>(())
 //! ```
 
+mod book;
 pub mod dom;
 pub mod error;
 pub mod export;
@@ -43,6 +44,7 @@ pub mod import;
 pub mod io;
 pub mod markdown;
 pub mod model;
+mod resolved;
 pub mod style;
 
 pub mod epub;

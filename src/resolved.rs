@@ -6,8 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::import::ChapterId;
-use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Role};
+use crate::model::{AnchorTarget, Chapter, ChapterId, GlobalNodeId, Role};
 
 /// Book-level link resolution result with forward and reverse mappings.
 ///
@@ -175,7 +174,7 @@ impl ResolvedLinksBuilder {
 /// 2. Calls importer's index_anchors() to build format-specific anchor maps
 /// 3. Walks all chapters, finds Link nodes, resolves via importer
 /// 4. Builds reverse maps for efficient lookup
-pub(crate) fn resolve_book_links(book: &mut crate::model::Book) -> crate::Result<ResolvedLinks> {
+pub(crate) fn resolve_book_links(book: &mut crate::book::Book) -> crate::Result<ResolvedLinks> {
     let mut builder = ResolvedLinksBuilder::new();
 
     // Step 1: Load all chapters as one batch, so importers with thread-safe

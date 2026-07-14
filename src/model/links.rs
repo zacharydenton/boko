@@ -9,8 +9,11 @@
 //! Links are stored as raw href strings in `SemanticMap.href` and parsed
 //! on-demand using `Link::parse()` when needed (e.g., for export).
 
-use crate::import::ChapterId;
 use crate::model::NodeId;
+
+/// Unique identifier for a chapter/spine item within a book.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChapterId(pub u32);
 
 /// Uniquely identifies a node across the entire book.
 ///
