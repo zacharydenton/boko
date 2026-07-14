@@ -18,16 +18,16 @@
 //! 5. Apply transformers to convert values
 
 use crate::kfx::container::get_field;
+use crate::kfx::context::ExportContext;
 use crate::kfx::ion::IonValue;
 use crate::kfx::schema::{SemanticTarget, schema};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, SpanStart, TokenStream};
 use crate::kfx::transforms::ImportContext;
-use crate::model::{Chapter, Node, NodeId};
-use std::collections::HashMap;
-use crate::kfx::context::ExportContext;
 use crate::model::Role;
+use crate::model::{Chapter, Node, NodeId};
 use crate::style::{BorderStyle, ComputedStyle, Length};
+use std::collections::HashMap;
 
 /// Shorthand for getting a KfxSymbol as u64.
 macro_rules! sym {
@@ -54,4 +54,3 @@ mod tests;
 pub use export::ir_to_tokens;
 pub use import::{build_ir_from_tokens, parse_storyline_to_ir, tokenize_storyline};
 pub use ion_synth::tokens_to_ion;
-

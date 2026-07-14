@@ -1,5 +1,5 @@
-use super::*;
 use super::guide::*;
+use super::*;
 
 pub(super) struct Kf8Builder {
     ctx: BookContext,

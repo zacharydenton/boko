@@ -457,7 +457,9 @@ mod tests {
                 self.chapters
                     .get(&id.0)
                     .map(|s| s.as_bytes().to_vec())
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "chapter not found").into())
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "chapter not found").into()
+                    })
             }
 
             fn list_assets(&self) -> &[PathBuf] {
@@ -466,10 +468,9 @@ mod tests {
 
             fn load_asset(&mut self, path: &Path) -> crate::Result<Vec<u8>> {
                 let key = path.to_string_lossy().replace('\\', "/");
-                self.assets
-                    .get(&key)
-                    .cloned()
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "asset not found").into())
+                self.assets.get(&key).cloned().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "asset not found").into()
+                })
             }
 
             fn load_stylesheet(&mut self, path: &Path) -> Option<Arc<Stylesheet>> {

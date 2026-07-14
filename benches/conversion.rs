@@ -95,9 +95,7 @@ fn build_synthetic_epub(chapters: usize) -> Vec<u8> {
             ));
         }
         body.push_str("<ul><li><strong>alpha</strong></li><li>beta</li><li>gamma</li></ul>");
-        body.push_str(
-            "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>",
-        );
+        body.push_str("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>");
 
         let doc = format!(
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\

@@ -315,12 +315,13 @@ impl KfxImporter {
         let container_info = parse_container_info(&container_info_data)?;
 
         // Get index table location (required)
-        let (index_offset, index_length) = container_info.index.ok_or_else(|| {
-            crate::Error::Malformed {
-                format: crate::Format::Kfx,
-                context: "missing index table in container".into(),
-            }
-        })?;
+        let (index_offset, index_length) =
+            container_info
+                .index
+                .ok_or_else(|| crate::Error::Malformed {
+                    format: crate::Format::Kfx,
+                    context: "missing index table in container".into(),
+                })?;
 
         // Read and parse document symbols (optional)
         let doc_symbols = if let Some((offset, length)) = container_info.doc_symbols {

@@ -3,19 +3,19 @@
 //! This module provides the `KfxExporter` which implements the `Exporter` trait
 //! for writing books in Amazon's KFX format.
 
-mod survey;
+mod content;
 mod metadata_frags;
 mod navigation;
-mod content;
-mod resources;
 mod positions;
+mod resources;
+mod survey;
 
-use survey::*;
+use content::*;
 use metadata_frags::*;
 use navigation::*;
-use content::*;
-use resources::*;
 use positions::*;
+use resources::*;
+use survey::*;
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{self, Seek, Write};

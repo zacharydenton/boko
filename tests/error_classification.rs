@@ -44,7 +44,13 @@ fn corrupt_kfx_is_malformed_not_io() {
     match Book::from_bytes(&corrupt, Format::Kfx) {
         // Failure at open time is acceptable, but it must be typed.
         Err(e) => assert!(
-            matches!(e, Error::Malformed { format: Format::Kfx, .. }),
+            matches!(
+                e,
+                Error::Malformed {
+                    format: Format::Kfx,
+                    ..
+                }
+            ),
             "corrupt KFX open should be Malformed, got {e:?}"
         ),
         // If it opens, driving a chapter must surface Malformed, never Io.
@@ -53,7 +59,13 @@ fn corrupt_kfx_is_malformed_not_io() {
             for entry in spine {
                 if let Err(e) = book.load_chapter(entry.id) {
                     assert!(
-                        matches!(e, Error::Malformed { format: Format::Kfx, .. }),
+                        matches!(
+                            e,
+                            Error::Malformed {
+                                format: Format::Kfx,
+                                ..
+                            }
+                        ),
                         "corrupt KFX chapter should be Malformed, got {e:?}"
                     );
                 }
@@ -65,10 +77,7 @@ fn corrupt_kfx_is_malformed_not_io() {
 #[test]
 fn markdown_import_is_unsupported_format() {
     match Book::from_bytes(b"# hi", Format::Markdown) {
-        Err(e) => assert!(
-            matches!(e, Error::UnsupportedFormat { .. }),
-            "got {e:?}"
-        ),
+        Err(e) => assert!(matches!(e, Error::UnsupportedFormat { .. }), "got {e:?}"),
         Ok(_) => panic!("markdown import should be unsupported"),
     }
 }

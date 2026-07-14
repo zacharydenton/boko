@@ -1015,4 +1015,3 @@ mod tests {
         assert!(ch0.contains("Ch1"), "Link text should be preserved");
     }
 }
-

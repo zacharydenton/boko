@@ -5,7 +5,10 @@ use super::*;
 /// Uses ctx.position_map to generate correct fid:off positions for TOC entries.
 /// Structure: [{reading_order_name: default, nav_containers: [nav_container::{...}, ...]}]
 /// Order matches reference KFX: headings, toc, landmarks
-pub(super) fn build_book_navigation_fragment_with_positions(book: &Book, ctx: &ExportContext) -> KfxFragment {
+pub(super) fn build_book_navigation_fragment_with_positions(
+    book: &Book,
+    ctx: &ExportContext,
+) -> KfxFragment {
     let mut nav_containers = Vec::new();
 
     // 1. Add headings nav container (first, per reference KFX order)

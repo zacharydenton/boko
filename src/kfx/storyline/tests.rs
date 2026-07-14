@@ -1,9 +1,9 @@
 #![allow(clippy::field_reassign_with_default)]
 
-use super::*;
 use super::export::*;
 use super::import::*;
 use super::ion_synth::*;
+use super::*;
 use crate::model::{GlobalNodeId, Role};
 
 #[test]
@@ -103,8 +103,7 @@ fn test_build_ir_with_heading() {
     }));
     stream.end_element();
 
-    let chapter =
-        build_ir_from_tokens(&stream, &[], None, |_, _| Some("Chapter 1".to_string()));
+    let chapter = build_ir_from_tokens(&stream, &[], None, |_, _| Some("Chapter 1".to_string()));
 
     let heading_id = chapter.children(chapter.root()).next().unwrap();
     let heading = chapter.node(heading_id).unwrap();

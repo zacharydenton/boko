@@ -220,7 +220,13 @@ pub fn compute_styles(
 ) -> ComputedStyle {
     let refs: Vec<(&Stylesheet, Origin)> = stylesheets.iter().map(|(s, o)| (s, *o)).collect();
     let index = CascadeIndex::build(&refs);
-    compute_styles_indexed(elem, &index, parent_style, style_pool, &mut CascadeScratch::default())
+    compute_styles_indexed(
+        elem,
+        &index,
+        parent_style,
+        style_pool,
+        &mut CascadeScratch::default(),
+    )
 }
 
 /// Compute styles for an element using a prebuilt [`CascadeIndex`].

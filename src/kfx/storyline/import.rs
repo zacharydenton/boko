@@ -40,7 +40,11 @@ pub fn tokenize_storyline(
 }
 
 /// Tokenize a content_list array.
-pub(super) fn tokenize_content_list(list: &IonValue, ctx: &TokenizeContext, stream: &mut TokenStream) {
+pub(super) fn tokenize_content_list(
+    list: &IonValue,
+    ctx: &TokenizeContext,
+    stream: &mut TokenStream,
+) {
     let items = match list.as_list() {
         Some(l) => l,
         None => return,
@@ -59,7 +63,11 @@ pub(super) fn tokenize_content_list(list: &IonValue, ctx: &TokenizeContext, stre
 /// 3. Executes the strategy to determine role
 /// 4. Extracts ALL attributes using schema rules (no hardcoded targets)
 /// 5. Applies transformers to values
-pub(super) fn tokenize_content_item(item: &IonValue, ctx: &TokenizeContext, stream: &mut TokenStream) {
+pub(super) fn tokenize_content_item(
+    item: &IonValue,
+    ctx: &TokenizeContext,
+    stream: &mut TokenStream,
+) {
     // Unwrap annotation if present
     let inner = item.unwrap_annotated();
     let fields = match inner.as_struct() {

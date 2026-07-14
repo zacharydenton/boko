@@ -53,7 +53,11 @@ impl fmt::Display for Error {
                 write!(f, "malformed {:?} input: {}", format, context)
             }
             Error::DrmProtected(format) => {
-                write!(f, "{:?} file is DRM-protected; boko does not decrypt", format)
+                write!(
+                    f,
+                    "{:?} file is DRM-protected; boko does not decrypt",
+                    format
+                )
             }
             Error::NotFound { what } => write!(f, "not found: {}", what),
         }
@@ -85,9 +89,7 @@ impl From<Error> for std::io::Error {
             Error::UnsupportedFormat { .. } => {
                 std::io::Error::new(std::io::ErrorKind::Unsupported, e)
             }
-            Error::DrmProtected(_) => {
-                std::io::Error::new(std::io::ErrorKind::PermissionDenied, e)
-            }
+            Error::DrmProtected(_) => std::io::Error::new(std::io::ErrorKind::PermissionDenied, e),
             Error::Malformed { .. } => std::io::Error::new(std::io::ErrorKind::InvalidData, e),
         }
     }

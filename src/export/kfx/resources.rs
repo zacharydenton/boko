@@ -45,7 +45,11 @@ pub(super) fn build_external_resource_fragment(
 }
 
 /// Build a resource fragment (bcRawMedia $417) - the actual bytes.
-pub(super) fn build_resource_fragment(href: &str, data: &[u8], ctx: &mut ExportContext) -> KfxFragment {
+pub(super) fn build_resource_fragment(
+    href: &str,
+    data: &[u8],
+    ctx: &mut ExportContext,
+) -> KfxFragment {
     // Use resource/ prefix to distinguish from external_resource fragment
     // This ensures bcRawMedia gets a different entity ID
     let resource_name = generate_resource_name(href, ctx);
@@ -159,7 +163,9 @@ pub(super) fn build_font_fragments(book: &mut Book, ctx: &mut ExportContext) -> 
 ///
 /// Returns (fragments, anchor_ids_by_fragment) where anchor_ids_by_fragment
 /// maps fragment_id → list of anchor symbol IDs for use in position_map.
-pub(super) fn build_anchor_fragments(ctx: &mut ExportContext) -> (Vec<KfxFragment>, HashMap<u64, Vec<u64>>) {
+pub(super) fn build_anchor_fragments(
+    ctx: &mut ExportContext,
+) -> (Vec<KfxFragment>, HashMap<u64, Vec<u64>>) {
     let mut fragments = Vec::new();
     let mut anchor_ids_by_fragment: HashMap<u64, Vec<u64>> = HashMap::new();
 
@@ -362,20 +368,21 @@ mod anchor_resolution_tests {
             if let AnchorTarget::Internal(gid) = target {
                 // Get the href for this link
                 if let Ok(chapter) = book.load_chapter(source.chapter)
-                    && let Some(href) = chapter.semantics.href(source.node) {
-                        // Both lookups should return the same symbol
-                        let href_symbol = ctx.anchor_registry.get_href_symbol(href);
-                        let node_symbol = ctx.anchor_registry.get_symbol(*gid);
+                    && let Some(href) = chapter.semantics.href(source.node)
+                {
+                    // Both lookups should return the same symbol
+                    let href_symbol = ctx.anchor_registry.get_href_symbol(href);
+                    let node_symbol = ctx.anchor_registry.get_symbol(*gid);
 
-                        assert_eq!(
-                            href_symbol, node_symbol,
-                            "href '{}' and GlobalNodeId {:?} should have same symbol",
-                            href, gid
-                        );
+                    assert_eq!(
+                        href_symbol, node_symbol,
+                        "href '{}' and GlobalNodeId {:?} should have same symbol",
+                        href, gid
+                    );
 
-                        // Only need to verify one link
-                        return;
-                    }
+                    // Only need to verify one link
+                    return;
+                }
             }
         }
 

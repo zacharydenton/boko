@@ -14,12 +14,12 @@ use std::sync::Arc;
 use crate::dom::Stylesheet;
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
+use crate::mobi::split::{split_mobi_html, split_mobi_html_ncx_only};
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
     build_toc_from_ncx, decode_font_record, detect_font_type, detect_image_type, filepos,
     is_metadata_record, palmdoc, parse_exth, parse_ncx_index, read_index, strip_trailing_data,
 };
-use crate::mobi::split::{split_mobi_html, split_mobi_html_ncx_only};
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
 
 /// MOBI6 format importer with chapter splitting.

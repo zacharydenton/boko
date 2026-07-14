@@ -5,8 +5,8 @@ use super::element_ref::ElementRef;
 use super::role_map::element_to_role;
 use crate::model::{Chapter, Node, NodeId, Role};
 use crate::style::{
-    CascadeIndex, CascadeScratch, ComputedStyle, Display, Origin, Stylesheet,
-    WhiteSpace, compute_styles_indexed,
+    CascadeIndex, CascadeScratch, ComputedStyle, Display, Origin, Stylesheet, WhiteSpace,
+    compute_styles_indexed,
 };
 
 /// User agent stylesheet (browser defaults).
