@@ -167,6 +167,20 @@ impl AttributeTransform for KfxLinkTransform {
     }
 }
 
+/// Return true if a URL points outside the book.
+///
+/// Covers `http://`/`https://` (and any other scheme using the `://`
+/// separator) plus the scheme-only forms `mailto:` and `tel:`.
+///
+/// This is the single source of truth for the external-URL decision: both the
+/// import parser ([`parse_kfx_link`]) and the export anchor registry
+/// (`AnchorRegistry::get_or_create_href_symbol`) must agree, otherwise one
+/// layer emits `link_to` references to anchor entities the other layer never
+/// creates (dangling anchors).
+pub fn is_external_url(url: &str) -> bool {
+    url.starts_with("mailto:") || url.starts_with("tel:") || url.contains("://")
+}
+
 /// Parse a KFX link value into structured data.
 ///
 /// If an anchor map is provided, anchor names are resolved to external URIs.
@@ -179,11 +193,7 @@ fn parse_kfx_link(raw: &str, anchors: Option<&HashMap<String, String>>) -> LinkD
     }
 
     // Check for external URLs (already resolved)
-    if raw.starts_with("http://")
-        || raw.starts_with("https://")
-        || raw.starts_with("mailto:")
-        || raw.starts_with("tel:")
-    {
+    if is_external_url(raw) {
         return LinkData::External(raw.to_string());
     }
 
@@ -410,6 +420,28 @@ mod tests {
             parse_kfx_link("mailto:test@example.com", None),
             LinkData::External("mailto:test@example.com".to_string())
         );
+        assert_eq!(
+            parse_kfx_link("tel:+15551234567", None),
+            LinkData::External("tel:+15551234567".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_external_url() {
+        // Known external schemes
+        assert!(is_external_url("http://example.com"));
+        assert!(is_external_url("https://example.com/page#frag"));
+        assert!(is_external_url("mailto:test@example.com"));
+        assert!(is_external_url("tel:+15551234567"));
+        // Any scheme using the "://" separator is external
+        assert!(is_external_url("ftp://example.com/file"));
+
+        // Internal references are not external
+        assert!(!is_external_url("chapter2.xhtml"));
+        assert!(!is_external_url("chapter2.xhtml#note-1"));
+        assert!(!is_external_url("#top"));
+        assert!(!is_external_url("a17H"));
+        assert!(!is_external_url("kindle:pos:fid:0001:off:0000012A"));
     }
 
     #[test]

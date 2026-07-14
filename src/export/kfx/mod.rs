@@ -154,8 +154,9 @@ fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
     let mut source_to_chapter: HashMap<String, ChapterId> = HashMap::new();
 
     for (chapter_id, section_name) in &spine_info {
-        // Register section name as symbol
-        let _section_id = ctx.register_section(section_name);
+        // Register section name as symbol, keyed to its chapter so the
+        // position map can pair them even if a later chapter fails to load.
+        let _section_id = ctx.register_spine_section(section_name, *chapter_id);
 
         // Get the source path for this chapter (for TOC resolution)
         let source_path = book.source_id(*chapter_id).unwrap_or("").to_string();

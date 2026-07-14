@@ -12,7 +12,7 @@ pub(super) fn build_position_map_fragment(
 
     // Handle standalone cover section (c0) if present
     // Cover contains both the page_template ID and the storyline content ID
-    let section_offset = if let Some(cover_fid) = ctx.cover_fragment_id {
+    if let Some(cover_fid) = ctx.cover_fragment_id {
         // Build contains list: [section_id, content_id]
         let mut contains_list = vec![IonValue::Int(cover_fid as i64)];
         if let Some(content_id) = ctx.cover_content_id {
@@ -26,36 +26,35 @@ pub(super) fn build_position_map_fragment(
             ),
         ]);
         entries.push(entry);
-        1 // Skip c0 when processing spine chapters
-    } else {
-        0
-    };
+    }
 
-    // Build entries for spine chapters (skip cover section if present)
-    // Sort chapters by fragment ID to maintain consistent ordering
-    let mut chapter_entries: Vec<_> = ctx.chapter_fragments.iter().collect();
-    chapter_entries.sort_by_key(|(_, fid)| **fid);
+    // Build entries for spine chapters, pairing each section with its chapter
+    // by key rather than by positional index: a chapter that failed to load
+    // has no entry in `chapter_fragments`, and index-based pairing would
+    // shift every later section onto the wrong chapter's EIDs.
+    for &(section_sym, chapter_id) in &ctx.spine_section_chapters {
+        // Skipped/unloadable chapter: emit no entry rather than a wrong one.
+        let Some(&fragment_id) = ctx.chapter_fragments.get(&chapter_id) else {
+            continue;
+        };
 
-    for (idx, &section_sym) in ctx.section_ids.iter().skip(section_offset).enumerate() {
-        if let Some(&(chapter_id, fragment_id)) = chapter_entries.get(idx) {
-            let mut eid_list = Vec::new();
+        let mut eid_list = Vec::new();
 
-            // Include page_template ID first (required for section start images)
-            eid_list.push(IonValue::Int(*fragment_id as i64));
+        // Include page_template ID first (required for section start images)
+        eid_list.push(IonValue::Int(fragment_id as i64));
 
-            // Add all content fragment IDs for this chapter
-            if let Some(content_ids) = ctx.content_ids_by_chapter.get(chapter_id) {
-                for &content_id in content_ids {
-                    eid_list.push(IonValue::Int(content_id as i64));
-                }
+        // Add all content fragment IDs for this chapter
+        if let Some(content_ids) = ctx.content_ids_by_chapter.get(&chapter_id) {
+            for &content_id in content_ids {
+                eid_list.push(IonValue::Int(content_id as i64));
             }
-
-            let entry = IonValue::Struct(vec![
-                (KfxSymbol::Contains as u64, IonValue::List(eid_list)),
-                (KfxSymbol::SectionName as u64, IonValue::Symbol(section_sym)),
-            ]);
-            entries.push(entry);
         }
+
+        let entry = IonValue::Struct(vec![
+            (KfxSymbol::Contains as u64, IonValue::List(eid_list)),
+            (KfxSymbol::SectionName as u64, IonValue::Symbol(section_sym)),
+        ]);
+        entries.push(entry);
     }
 
     let ion = IonValue::List(entries);
@@ -270,4 +269,97 @@ pub(super) fn build_container_entity_map_fragment(
     let ion = IonValue::Struct(ion_fields);
 
     KfxFragment::singleton(KfxSymbol::ContainerEntityMap, ion)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ChapterId;
+    use crate::kfx::fragment::FragmentData;
+
+    /// Extract (section_symbol, contains_eids) pairs from a position_map fragment.
+    fn extract_entries(frag: &KfxFragment) -> Vec<(u64, Vec<i64>)> {
+        let FragmentData::Ion(IonValue::List(entries)) = &frag.data else {
+            panic!("expected Ion list fragment data");
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                let IonValue::Struct(fields) = entry else {
+                    panic!("expected struct entry");
+                };
+                let mut section = None;
+                let mut eids = Vec::new();
+                for (id, value) in fields {
+                    if *id == KfxSymbol::SectionName as u64 {
+                        if let IonValue::Symbol(s) = value {
+                            section = Some(*s);
+                        }
+                    } else if *id == KfxSymbol::Contains as u64
+                        && let IonValue::List(list) = value
+                    {
+                        for item in list {
+                            if let IonValue::Int(i) = item {
+                                eids.push(*i);
+                            }
+                        }
+                    }
+                }
+                (section.expect("entry must have section_name"), eids)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn position_map_pairs_sections_with_chapters_by_key() {
+        let mut ctx = ExportContext::new();
+        let (ch1, ch2, ch3) = (ChapterId(1), ChapterId(2), ChapterId(3));
+        let c0 = ctx.register_spine_section("c0", ch1);
+        let c1 = ctx.register_spine_section("c1", ch2);
+        let c2 = ctx.register_spine_section("c2", ch3);
+
+        ctx.chapter_fragments.insert(ch1, 90);
+        ctx.chapter_fragments.insert(ch2, 95);
+        ctx.chapter_fragments.insert(ch3, 100);
+        ctx.content_ids_by_chapter.insert(ch1, vec![91]);
+        ctx.content_ids_by_chapter.insert(ch2, vec![96, 97]);
+        ctx.content_ids_by_chapter.insert(ch3, vec![101]);
+
+        let frag = build_position_map_fragment(&ctx, &HashMap::new());
+        let entries = extract_entries(&frag);
+        assert_eq!(
+            entries,
+            vec![
+                (c0, vec![90, 91]),
+                (c1, vec![95, 96, 97]),
+                (c2, vec![100, 101]),
+            ]
+        );
+    }
+
+    #[test]
+    fn position_map_skips_failed_chapter_without_shifting_sections() {
+        // Simulate chapter 2 failing to load: its spine section was
+        // registered, but the chapter was never surveyed, so it has no
+        // fragment ID and no content IDs.
+        let mut ctx = ExportContext::new();
+        let (ch1, ch2, ch3) = (ChapterId(1), ChapterId(2), ChapterId(3));
+        let c0 = ctx.register_spine_section("c0", ch1);
+        let _c1 = ctx.register_spine_section("c1", ch2);
+        let c2 = ctx.register_spine_section("c2", ch3);
+
+        // Only chapters 1 and 3 were surveyed successfully.
+        ctx.chapter_fragments.insert(ch1, 90);
+        ctx.chapter_fragments.insert(ch3, 100);
+        ctx.content_ids_by_chapter.insert(ch1, vec![91]);
+        ctx.content_ids_by_chapter.insert(ch3, vec![101]);
+
+        let frag = build_position_map_fragment(&ctx, &HashMap::new());
+        let entries = extract_entries(&frag);
+
+        // The failed chapter's section produces no entry, and — critically —
+        // section c2 still maps to chapter 3's EIDs. (The old positional
+        // pairing would have placed chapter 3's EIDs under section c1.)
+        assert_eq!(entries, vec![(c0, vec![90, 91]), (c2, vec![100, 101])]);
+    }
 }

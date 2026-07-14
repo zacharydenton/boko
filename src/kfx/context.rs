@@ -387,7 +387,8 @@ impl AnchorRegistry {
         symbol
     }
 
-    /// Register an external link target (http/https URL).
+    /// Register an external link target (http/https/mailto/tel URL — see
+    /// [`crate::kfx::transforms::is_external_url`]).
     ///
     /// Returns the anchor symbol for use in `link_to` style events.
     pub fn register_external(&mut self, url: &str) -> String {
@@ -417,8 +418,12 @@ impl AnchorRegistry {
             return symbol.clone();
         }
 
-        // Check if this is an external link
-        if href.starts_with("http://") || href.starts_with("https://") {
+        // Check if this is an external link. This must use the same predicate
+        // as the KFX import parser (`transforms::parse_kfx_link`): if import
+        // classifies a URL (e.g. `mailto:`) as external but export treats it
+        // as internal, the storyline would reference an anchor entity that is
+        // never emitted.
+        if crate::kfx::transforms::is_external_url(href) {
             return self.register_external(href);
         }
 
@@ -591,6 +596,15 @@ pub struct ExportContext {
     /// Section IDs in spine order (for reading order).
     pub section_ids: Vec<u64>,
 
+    /// Spine (section symbol, chapter) pairs in spine order.
+    ///
+    /// Populated by `register_spine_section` during Pass 1. Consumers must
+    /// pair sections with chapters through this keyed association rather
+    /// than by positional index: a chapter that fails to load never enters
+    /// `chapter_fragments`, and index-based pairing would silently shift
+    /// every later section onto the wrong chapter's EIDs.
+    pub spine_section_chapters: Vec<(u64, ChapterId)>,
+
     /// Text accumulator for current content entity.
     /// Captures strings "falling out" of token conversion for the Assembler.
     text_accumulator: TextAccumulator,
@@ -713,6 +727,7 @@ impl ExportContext {
             fragment_ids: IdGenerator::new(),
             resource_registry: ResourceRegistry::new(),
             section_ids: Vec::new(),
+            spine_section_chapters: Vec::new(),
             text_accumulator: TextAccumulator::new(),
             current_content_name: 0,
             position_map: FxHashMap::default(),
@@ -807,6 +822,18 @@ impl ExportContext {
     pub fn register_section(&mut self, name: &str) -> u64 {
         let id = self.intern(name);
         self.section_ids.push(id);
+        id
+    }
+
+    /// Register a spine section together with the chapter it belongs to.
+    ///
+    /// Records the (section symbol, chapter) pair in `spine_section_chapters`
+    /// so downstream consumers (e.g. the position map) can associate sections
+    /// with chapters by key instead of by positional index. Returns the
+    /// section symbol ID.
+    pub fn register_spine_section(&mut self, name: &str, chapter_id: ChapterId) -> u64 {
+        let id = self.register_section(name);
+        self.spine_section_chapters.push((id, chapter_id));
         id
     }
 
@@ -1168,6 +1195,38 @@ mod tests {
         let externals = registry.drain_external_anchors();
         assert_eq!(externals.len(), 1);
         assert_eq!(externals[0].uri, url);
+    }
+
+    #[test]
+    fn test_href_symbol_mailto_registers_external_anchor() {
+        // Regression: `get_or_create_href_symbol` must classify external URLs
+        // the same way the import parser does. A `mailto:` link previously
+        // fell into the "unknown internal" branch, handing out a link_to
+        // symbol with no backing anchor entity (a dangling KFX anchor).
+        let mut registry = AnchorRegistry::new();
+
+        let mailto_sym = registry.get_or_create_href_symbol("mailto:test@example.com");
+        let tel_sym = registry.get_or_create_href_symbol("tel:+15551234567");
+        assert_ne!(mailto_sym, tel_sym);
+
+        let externals = registry.drain_external_anchors();
+        assert_eq!(externals.len(), 2);
+        // Every symbol handed out has a backing external anchor entity.
+        assert!(
+            externals
+                .iter()
+                .any(|a| a.symbol == mailto_sym && a.uri == "mailto:test@example.com")
+        );
+        assert!(
+            externals
+                .iter()
+                .any(|a| a.symbol == tel_sym && a.uri == "tel:+15551234567")
+        );
+
+        // Internal-looking hrefs still don't create external anchor entities.
+        let mut registry = AnchorRegistry::new();
+        registry.get_or_create_href_symbol("chapter2.xhtml#note-1");
+        assert!(registry.drain_external_anchors().is_empty());
     }
 
     #[test]
