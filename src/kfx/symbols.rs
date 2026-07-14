@@ -860,7 +860,9 @@ pub const KFX_MAX_SYMBOL_ID: usize = 851;
 /// This is the preferred way to look up symbol names.
 #[inline]
 pub fn symbol_name(id: u64) -> Option<&'static str> {
-    KFX_SYMBOL_TABLE.get(id as usize).copied()
+    // Ids come from untrusted files; `as usize` would truncate on 32-bit
+    // targets and alias a huge id to a valid symbol name.
+    KFX_SYMBOL_TABLE.get(usize::try_from(id).ok()?).copied()
 }
 
 /// KFX symbol enum with values matching KFX_SYMBOL_TABLE indices.

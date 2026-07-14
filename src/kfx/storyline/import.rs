@@ -75,16 +75,21 @@ pub(super) fn tokenize_content_item(
         None => return,
     };
 
-    // Get element type symbol ID (u64 from IonValue, cast to u32 for schema)
+    // Get element type symbol ID (u64 from IonValue, converted to u32 for the
+    // schema). The symbol is untrusted: `as u32` would alias an id above
+    // u32::MAX to a valid type, so out-of-range ids fall back to Container.
     let kfx_type_id = get_field(fields, sym!(Type))
         .and_then(|v| v.as_symbol())
-        .unwrap_or(sym!(Container)) as u32;
+        .and_then(|s| u32::try_from(s).ok())
+        .unwrap_or(KfxSymbol::Container as u32);
 
-    // Use schema to resolve role with attribute lookup closure
-    // Return int values directly, or symbol IDs cast to i64 for symbol-based attributes
+    // Use schema to resolve role with attribute lookup closure.
+    // Return int values directly, or symbol IDs converted to i64 for
+    // symbol-based attributes (ids above i64::MAX would wrap negative under
+    // `as i64`, so they're treated as absent).
     let mut role = schema().resolve_element_role(kfx_type_id, |symbol| {
         get_field(fields, symbol as u64)
-            .and_then(|v| v.as_int().or_else(|| v.as_symbol().map(|s| s as i64)))
+            .and_then(|v| v.as_int().or_else(|| v.as_symbol().and_then(|s| i64::try_from(s).ok())))
     });
 
     // Check for semantic type annotation (yj.semantics.type) which uses local symbols.
@@ -100,8 +105,10 @@ pub(super) fn tokenize_content_item(
         && let Some(hints_list) = layout_hints.as_list()
     {
         for hint in hints_list {
-            if let Some(hint_id) = hint.as_symbol()
-                && let Some(mapped_role) = schema().role_for_layout_hint(hint_id as u32)
+            // `as u32` would alias an untrusted id above u32::MAX to a valid
+            // hint; skip out-of-range ids instead.
+            if let Some(hint_id) = hint.as_symbol().and_then(|s| u32::try_from(s).ok())
+                && let Some(mapped_role) = schema().role_for_layout_hint(hint_id)
             {
                 role = mapped_role;
                 break;
@@ -129,9 +136,10 @@ pub(super) fn tokenize_content_item(
         .and_then(|content_fields| {
             let name = get_field(content_fields, sym!(Name))
                 .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))?;
+            // Reject negative indexes: `as usize` would wrap them to huge values.
             let index = get_field(content_fields, sym!(Index))
                 .and_then(|v| v.as_int())
-                .map(|n| n as usize)?;
+                .and_then(|n| usize::try_from(n).ok())?;
             Some(ContentRef { name, index })
         });
 

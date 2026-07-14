@@ -140,20 +140,25 @@ pub fn parse_container_info(data: &[u8]) -> Result<ContainerInfo, ContainerError
 
     let mut info = ContainerInfo::default();
 
+    // The offsets/lengths are untrusted i64s: `as usize` would wrap a
+    // negative value to a huge offset (and truncate >4 GiB values on 32-bit
+    // targets to small in-bounds ones). Treat out-of-range values as absent.
+    let get_usize = |name| get_field_int(fields, name).and_then(|v| usize::try_from(v).ok());
+
     // Index table
     if let (Some(offset), Some(length)) = (
-        get_field_int(fields, "bcIndexTabOffset"),
-        get_field_int(fields, "bcIndexTabLength"),
+        get_usize("bcIndexTabOffset"),
+        get_usize("bcIndexTabLength"),
     ) {
-        info.index = Some((offset as usize, length as usize));
+        info.index = Some((offset, length));
     }
 
     // Document symbols
     if let (Some(offset), Some(length)) = (
-        get_field_int(fields, "bcDocSymbolOffset"),
-        get_field_int(fields, "bcDocSymbolLength"),
+        get_usize("bcDocSymbolOffset"),
+        get_usize("bcDocSymbolLength"),
     ) {
-        info.doc_symbols = Some((offset as usize, length as usize));
+        info.doc_symbols = Some((offset, length));
     }
 
     Ok(info)
@@ -287,7 +292,9 @@ pub fn extract_doc_symbols(data: &[u8]) -> Vec<String> {
 ///
 /// Checks the base KFX symbol table first, then document-local symbols.
 pub fn resolve_symbol(id: u64, doc_symbols: &[String]) -> Option<&str> {
-    let id = id as usize;
+    // The id is untrusted; `as usize` would truncate on 32-bit targets and
+    // alias a huge id to a valid symbol. Out-of-range ids resolve to None.
+    let id = usize::try_from(id).ok()?;
     if id < KFX_SYMBOL_TABLE.len() {
         Some(KFX_SYMBOL_TABLE[id])
     } else {

@@ -477,10 +477,11 @@ impl<'a> IonParser<'a> {
     /// Read a VarUInt (7 bits per byte, MSB set on last byte).
     #[inline]
     fn read_varuint(&mut self) -> io::Result<u32> {
-        let mut result: u32 = 0;
-        // A u32 holds at most 5 seven-bit groups; beyond that the value would
-        // silently lose its high bits (aliasing a huge length to a small one).
-        // Cap the byte count and reject overlong encodings instead.
+        // Accumulate in u64: 5 seven-bit groups are 35 bits, so a u32
+        // accumulator would silently shift the high bits out on the fifth
+        // byte (aliasing a huge length to a small one). Cap the byte count
+        // and reject values that don't fit a u32 instead.
+        let mut result: u64 = 0;
         for _ in 0..5 {
             if self.pos >= self.data.len() {
                 return Err(io::Error::new(
@@ -490,9 +491,11 @@ impl<'a> IonParser<'a> {
             }
             let byte = self.data[self.pos];
             self.pos += 1;
-            result = (result << 7) | (byte & 0x7f) as u32;
+            result = (result << 7) | (byte & 0x7f) as u64;
             if byte & 0x80 != 0 {
-                return Ok(result);
+                return u32::try_from(result).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "VarUInt too large")
+                });
             }
         }
         Err(io::Error::new(

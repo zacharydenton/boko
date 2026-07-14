@@ -792,7 +792,12 @@ impl KfxSchema {
             } => {
                 if let Some(value) = get_attr(*modifier_attr) {
                     match modifier_effect {
-                        ModifierEffect::HeadingLevel => Role::Heading(value as u8),
+                        // The level is untrusted: `as u8` would truncate an
+                        // out-of-range value to an arbitrary heading level, so
+                        // fall back to the default role instead.
+                        ModifierEffect::HeadingLevel => {
+                            u8::try_from(value).map_or(*default_role, Role::Heading)
+                        }
                         ModifierEffect::ListOrdered => {
                             // list_style is a symbol; check for numeric (343)
                             if value == KfxSymbol::Numeric as i64 {
