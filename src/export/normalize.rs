@@ -145,6 +145,112 @@ pub struct NormalizedContent {
     pub assets: HashSet<String>,
     /// The unified CSS stylesheet.
     pub css: String,
+    /// Maps each chapter's original source path to its emitted `chapter_{i}.xhtml`.
+    pub source_to_output: HashMap<String, String>,
+    /// Maps an element/anchor id to the emitted file that defines it. Lets
+    /// callers turn a bare `#anchor` (as KFX TOCs use) or a cross-chapter link
+    /// into a `chapter_{i}.xhtml#anchor` reference that actually resolves.
+    pub anchor_to_output: HashMap<String, String>,
+}
+
+impl NormalizedContent {
+    /// Rewrite a TOC tree's hrefs to target the emitted chapter files.
+    pub fn rewrite_toc(&self, toc: &[crate::model::TocEntry]) -> Vec<crate::model::TocEntry> {
+        toc.iter().map(|e| self.rewrite_toc_entry(e)).collect()
+    }
+
+    fn rewrite_toc_entry(&self, entry: &crate::model::TocEntry) -> crate::model::TocEntry {
+        let mut out = entry.clone();
+        out.href = rewrite_href(&self.source_to_output, &self.anchor_to_output, None, &entry.href);
+        out.children = entry
+            .children
+            .iter()
+            .map(|c| self.rewrite_toc_entry(c))
+            .collect();
+        out
+    }
+}
+
+/// Resolve a link/TOC href that referenced an original source path or a bare
+/// anchor fragment into one targeting the emitted `chapter_{i}.xhtml` files.
+///
+/// `base_source` is the source path of the document the href appears in (used to
+/// resolve relative file references); pass `None` for book-global hrefs like TOC
+/// entries.
+fn rewrite_href(
+    source_to_output: &HashMap<String, String>,
+    anchor_to_output: &HashMap<String, String>,
+    base_source: Option<&str>,
+    href: &str,
+) -> String {
+    // Leave external and non-navigational links untouched.
+    if href.is_empty() || href.contains("://") || href.starts_with("mailto:") {
+        return href.to_string();
+    }
+
+    let (file, frag) = match href.split_once('#') {
+        Some((f, fr)) => (f, Some(fr)),
+        None => (href, None),
+    };
+
+    let output = if file.is_empty() {
+        // Bare "#frag": find the chapter that defines the anchor; otherwise
+        // assume it targets the current document.
+        frag.and_then(|fr| anchor_to_output.get(fr).cloned())
+            .or_else(|| base_source.and_then(|b| source_to_output.get(b).cloned()))
+    } else {
+        let resolved = match base_source {
+            Some(b) => crate::dom::resolve_path(b, file),
+            None => file.to_string(),
+        };
+        source_to_output
+            .get(&resolved)
+            .or_else(|| source_to_output.get(file))
+            .cloned()
+    };
+
+    match (output, frag) {
+        (Some(o), Some(fr)) => format!("{o}#{fr}"),
+        (Some(o), None) => o,
+        // Unknown target: keep a same-document fragment as-is; leave other
+        // unresolved hrefs unchanged rather than inventing a target.
+        (None, Some(fr)) if file.is_empty() => format!("#{fr}"),
+        _ => href.to_string(),
+    }
+}
+
+/// Rewrite the `href="…"` attributes inside a synthesized document so internal
+/// links point at the emitted chapter files.
+fn rewrite_document_hrefs(
+    doc: &str,
+    base_source: &str,
+    source_to_output: &HashMap<String, String>,
+    anchor_to_output: &HashMap<String, String>,
+) -> String {
+    const NEEDLE: &str = " href=\"";
+    if !doc.contains(NEEDLE) {
+        return doc.to_string();
+    }
+    let mut out = String::with_capacity(doc.len());
+    let mut rest = doc;
+    while let Some(pos) = rest.find(NEEDLE) {
+        let (before, after) = rest.split_at(pos + NEEDLE.len());
+        out.push_str(before);
+        if let Some(end) = after.find('"') {
+            let rewritten = rewrite_href(
+                source_to_output,
+                anchor_to_output,
+                Some(base_source),
+                &after[..end],
+            );
+            out.push_str(&rewritten);
+            rest = &after[end..];
+        } else {
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Normalize all chapters in a book through the IR pipeline.
@@ -172,6 +278,9 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
 
     let mut global_styles = GlobalStylePool::new();
     let mut ir_chapters: Vec<(ChapterId, String, Arc<Chapter>)> = Vec::with_capacity(spine.len());
+    // Link-rewrite maps: original source path / anchor id -> emitted filename.
+    let mut source_to_output: HashMap<String, String> = HashMap::new();
+    let mut anchor_to_output: HashMap<String, String> = HashMap::new();
 
     for (idx, entry) in spine.iter().enumerate() {
         let source_path = book
@@ -184,6 +293,19 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
 
         // Merge styles into global pool
         global_styles.merge(idx, &chapter);
+
+        // Record where this chapter and its anchors will live in the output, so
+        // TOC entries and internal links can be remapped from the original
+        // source paths / bare `#anchor`s to the emitted `chapter_{i}.xhtml`.
+        let output_name = format!("chapter_{idx}.xhtml");
+        source_to_output.insert(source_path.clone(), output_name.clone());
+        for node_id in chapter.iter_dfs() {
+            if let Some(id) = chapter.semantics.id(node_id) {
+                anchor_to_output
+                    .entry(id.to_string())
+                    .or_insert_with(|| output_name.clone());
+            }
+        }
 
         ir_chapters.push((entry.id, source_path, chapter));
     }
@@ -229,10 +351,14 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
         // Collect assets
         all_assets.extend(result.assets);
 
+        // Rewrite internal links to target the emitted chapter files.
+        let document =
+            rewrite_document_hrefs(&result.body, source_path, &source_to_output, &anchor_to_output);
+
         chapters.push(ChapterContent {
             id: *chapter_id,
             source_path: source_path.clone(),
-            document: result.body,
+            document,
         });
     }
 
@@ -241,6 +367,8 @@ pub fn normalize_book(book: &mut Book) -> io::Result<NormalizedContent> {
         chapters,
         assets: all_assets,
         css: css_artifact.stylesheet,
+        source_to_output,
+        anchor_to_output,
     })
 }
 
@@ -362,5 +490,23 @@ mod tests {
         let chapter = Chapter::new();
         let title = extract_chapter_title(&chapter);
         assert_eq!(title, None);
+    }
+
+    #[test]
+    fn rewrite_href_maps_anchors_and_paths() {
+        let source_to_output =
+            HashMap::from([("text/ch2.xhtml".to_string(), "chapter_1.xhtml".to_string())]);
+        let anchor_to_output =
+            HashMap::from([("sec3".to_string(), "chapter_1.xhtml".to_string())]);
+        let rw = |href: &str| rewrite_href(&source_to_output, &anchor_to_output, None, href);
+
+        // Bare "#anchor" (as KFX TOCs use) -> the chapter that defines it.
+        assert_eq!(rw("#sec3"), "chapter_1.xhtml#sec3");
+        // Source path, with and without a fragment -> emitted file.
+        assert_eq!(rw("text/ch2.xhtml#x"), "chapter_1.xhtml#x");
+        assert_eq!(rw("text/ch2.xhtml"), "chapter_1.xhtml");
+        // Unknown anchor stays a same-document fragment; externals untouched.
+        assert_eq!(rw("#missing"), "#missing");
+        assert_eq!(rw("https://example.com/a"), "https://example.com/a");
     }
 }

@@ -116,13 +116,15 @@ fn synthesize_xhtml_from_body(
 ) -> SynthesisResult {
     let mut doc = String::new();
 
-    // XHTML 1.1 DOCTYPE (compatible with EPUB)
+    // EPUB 3 content documents use the HTML5 DOCTYPE and a UTF-8 charset meta;
+    // the XHTML 1.1 DOCTYPE and application/xhtml+xml content-type are rejected
+    // by epubcheck (HTM-004 / RSC-005).
     doc.push_str(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <meta http-equiv="Content-Type" content="application/xhtml+xml; charset=utf-8"/>
+  <meta charset="utf-8"/>
   <title>"#,
     );
     escape_xml_into(&mut doc, title);

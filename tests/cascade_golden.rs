@@ -80,9 +80,13 @@ fn descendant_book() -> EpubBuilder {
 // Baseline fingerprints captured on master before the cascade optimization.
 // If a cascade change alters computed styles, these fail — investigate before
 // updating them.
-const FP_EPICTETUS: &str = "23692035fc442a1a0319e934836fec4cc8727937";
-const FP_CLASS: &str = "e29fe88c61c92164a1dc1b15ef3500539ec520c4";
-const FP_DESCENDANT: &str = "1301ace8fc599a4e9f301b9c6f7ececff626140d";
+// Updated after the normalized-export document template moved to the EPUB 3
+// HTML5 DOCTYPE / `<meta charset>` and internal-link href rewriting. The cascade
+// output (matched declarations) is unchanged — only the surrounding document
+// markup differs.
+const FP_EPICTETUS: &str = "92888004a84273c70366220364f8007dd6619760";
+const FP_CLASS: &str = "8e084650371da2cab255c51438fd8bdb401ebc42";
+const FP_DESCENDANT: &str = "e6c0a96d4233a78a589342f442811d84bd15c23f";
 
 #[test]
 fn cascade_output_is_stable_epictetus() {
