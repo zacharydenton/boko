@@ -914,7 +914,10 @@ mod tests {
         let resolved = ResolvedLinks::default();
         let heading_slugs = HashMap::new();
         let out = render_chapter(&chapter, ChapterId(0), &resolved, &heading_slugs, 0).content;
-        assert!(out.contains("| A | B\\|C |"), "header + escaped pipe: {out}");
+        assert!(
+            out.contains("| A | B\\|C |"),
+            "header + escaped pipe: {out}"
+        );
         assert!(out.contains("| --- | --- |"), "delimiter row: {out}");
         assert!(out.contains("| 1 | 2 |"), "body row: {out}");
     }
@@ -974,7 +977,10 @@ mod tests {
 
     #[test]
     fn paragraph_text_resembling_list_markers_is_escaped() {
-        for (text, escaped) in [("- not a list", "\\- not a list"), ("1. not a list", "1\\. not a list")] {
+        for (text, escaped) in [
+            ("- not a list", "\\- not a list"),
+            ("1. not a list", "1\\. not a list"),
+        ] {
             let mut chapter = Chapter::new();
             let p = chapter.alloc_node(Node::new(Role::Paragraph));
             chapter.append_child(NodeId::ROOT, p);

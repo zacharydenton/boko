@@ -68,7 +68,13 @@ impl Exporter for MarkdownExporter {
             first = false;
 
             // Pure rendering
-            let result = render_chapter(chapter, *chapter_id, &resolved, &heading_slugs, footnote_total);
+            let result = render_chapter(
+                chapter,
+                *chapter_id,
+                &resolved,
+                &heading_slugs,
+                footnote_total,
+            );
             footnote_total += result.footnotes.len();
 
             // I/O: write content

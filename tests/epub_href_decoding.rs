@@ -126,7 +126,9 @@ fn percent_encoded_manifest_href_resolves_to_literal_zip_name() {
         Some("OEBPS/text/my chapter.xhtml"),
         "spine path must be the decoded, literal archive name"
     );
-    let raw = book.load_raw(id).expect("chapter bytes load via decoded path");
+    let raw = book
+        .load_raw(id)
+        .expect("chapter bytes load via decoded path");
     let text = String::from_utf8(raw).unwrap();
     assert!(text.contains("PERCENT-MARKER"));
 }

@@ -32,7 +32,9 @@ pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == b"full-path" {
-                        return attr.unescape_value().map(|v| v.into_owned())
+                        return attr
+                            .unescape_value()
+                            .map(|v| v.into_owned())
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
                     }
                 }
@@ -81,7 +83,9 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
             Ok(Event::Start(e)) => parser.handle_start(&e)?,
             Ok(Event::Empty(e)) => parser.handle_empty(&e)?,
             Ok(Event::Text(e)) if parser.collecting_text() => {
-                parser.buf_text.push_str(&String::from_utf8_lossy(e.as_ref()));
+                parser
+                    .buf_text
+                    .push_str(&String::from_utf8_lossy(e.as_ref()));
             }
             Ok(Event::GeneralRef(e)) if parser.collecting_text() => {
                 let entity = String::from_utf8_lossy(e.as_ref());
@@ -141,8 +145,8 @@ impl OpfParser {
 
         match local {
             b"metadata" => self.in_metadata = true,
-            b"title" | b"creator" | b"language" | b"identifier" | b"publisher"
-            | b"description" | b"subject" | b"date" | b"rights" | b"contributor"
+            b"title" | b"creator" | b"language" | b"identifier" | b"publisher" | b"description"
+            | b"subject" | b"date" | b"rights" | b"contributor"
                 if self.in_metadata =>
             {
                 self.start_dc_element(local, e)?;
@@ -598,7 +602,9 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                             && let Some(state) = stack.last_mut()
                         {
                             state.src = Some(
-                                attr.unescape_value().map(|v| v.into_owned()).map_err(io::Error::other)?,
+                                attr.unescape_value()
+                                    .map(|v| v.into_owned())
+                                    .map_err(io::Error::other)?,
                             );
                         }
                     }
@@ -763,10 +769,8 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
                             // Keep linked entries and unlinked headings that
                             // still contribute children; drop empty <li>s.
                             if item.href.is_some() || !item.children.is_empty() {
-                                let mut entry = TocEntry::new(
-                                    item.title.trim(),
-                                    item.href.unwrap_or_default(),
-                                );
+                                let mut entry =
+                                    TocEntry::new(item.title.trim(), item.href.unwrap_or_default());
                                 entry.children = item.children;
                                 match stack.last_mut() {
                                     Some(parent) => parent.children.push(entry),
@@ -834,13 +838,15 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                             match key_local {
                                 b"href" => {
                                     current_href = Some(
-                                        attr.unescape_value().map(|v| v.into_owned())
+                                        attr.unescape_value()
+                                            .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"type" => {
                                     current_epub_type = Some(
-                                        attr.unescape_value().map(|v| v.into_owned())
+                                        attr.unescape_value()
+                                            .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }

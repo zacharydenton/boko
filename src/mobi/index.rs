@@ -743,7 +743,10 @@ impl IndxBuilder {
             idxt_entries.push(offset);
             let name_bytes = name.as_bytes();
             let name_len = u8::try_from(name_bytes.len()).map_err(|_| {
-                io::Error::new(io::ErrorKind::InvalidData, "INDX entry name exceeds 255 bytes")
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "INDX entry name exceeds 255 bytes",
+                )
             })?;
             geometry.push(name_len);
             geometry.extend_from_slice(name_bytes);
@@ -815,7 +818,6 @@ impl IndxBuilder {
 
         tagx
     }
-
 }
 
 /// Serialize a run of entries into one data record's entry-data block plus
@@ -831,7 +833,10 @@ fn build_entries(entries: &[(String, Vec<u8>)]) -> io::Result<(Vec<u8>, Vec<u16>
         let name_bytes = name.as_bytes();
         // The entry name is length-prefixed with a single byte on disk.
         let name_len = u8::try_from(name_bytes.len()).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "INDX entry name exceeds 255 bytes")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "INDX entry name exceeds 255 bytes",
+            )
         })?;
         data.push(name_len);
         data.extend_from_slice(name_bytes);
@@ -1450,7 +1455,12 @@ mod tests {
         // encoding `record_number << 16 | offset_within_record` — the exact
         // convention Cncx::parse (and calibre) use.
         let labels: Vec<String> = (0..3000)
-            .map(|i| format!("Section {i:05} of the Extended Compendium, Volume {}", i % 7))
+            .map(|i| {
+                format!(
+                    "Section {i:05} of the Extended Compendium, Volume {}",
+                    i % 7
+                )
+            })
             .collect();
 
         let records = build_cncx(&labels).unwrap();
@@ -1459,7 +1469,10 @@ mod tests {
         assert!(records.len() >= 2, "must split into multiple records");
         for rec in &records {
             assert!(rec.len() <= CNCX_RECORD_LIMIT + 3, "record too large");
-            assert!(rec.len().is_multiple_of(4), "records must be 4-byte aligned");
+            assert!(
+                rec.len().is_multiple_of(4),
+                "records must be 4-byte aligned"
+            );
         }
         assert!(
             offsets.iter().any(|&o| o >= 0x10000),
@@ -1527,14 +1540,25 @@ mod tests {
 
         assert_eq!(elems.len(), 3000);
         for (i, elem) in elems.iter().enumerate() {
-            assert_eq!(elem.insert_pos as usize, i * 8192, "insert_pos of chunk {i}");
+            assert_eq!(
+                elem.insert_pos as usize,
+                i * 8192,
+                "insert_pos of chunk {i}"
+            );
             assert_eq!(
                 elem.toc_text.as_deref(),
                 Some(format!("P-//*[@aid='{i:07}']").as_str()),
                 "selector of chunk {i}"
             );
-            assert_eq!(elem.file_number as usize, i / 100, "file_number of chunk {i}");
-            assert_eq!(elem.sequence_number as usize, i, "sequence_number of chunk {i}");
+            assert_eq!(
+                elem.file_number as usize,
+                i / 100,
+                "file_number of chunk {i}"
+            );
+            assert_eq!(
+                elem.sequence_number as usize, i,
+                "sequence_number of chunk {i}"
+            );
             assert_eq!(elem.start_pos as usize, i * 8192, "start_pos of chunk {i}");
             assert_eq!(elem.length, 8192, "length of chunk {i}");
         }

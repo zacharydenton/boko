@@ -144,10 +144,7 @@ fn azw3_roundtrip_resource_records_are_recognisable() {
             .extension()
             .and_then(|s| s.to_str())
             .map(str::to_ascii_lowercase);
-        matches!(
-            ext.as_deref(),
-            Some("jpg" | "jpeg" | "png" | "gif")
-        )
+        matches!(ext.as_deref(), Some("jpg" | "jpeg" | "png" | "gif"))
     });
     assert!(
         has_real_image,

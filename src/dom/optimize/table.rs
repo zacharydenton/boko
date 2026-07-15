@@ -214,10 +214,7 @@ mod tests {
 
     /// Roles of a node's direct children, in order.
     fn child_roles(chapter: &Chapter, id: NodeId) -> Vec<Role> {
-        chapter
-            .children(id)
-            .map(|c| role_of(chapter, c))
-            .collect()
+        chapter.children(id).map(|c| role_of(chapter, c)).collect()
     }
 
     #[test]

@@ -176,10 +176,7 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelRuleParser<'_> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
-        let selector_specificities = prelude
-            .iter()
-            .map(Specificity::from_selector)
-            .collect();
+        let selector_specificities = prelude.iter().map(Specificity::from_selector).collect();
 
         let mut declarations = Vec::new();
         let mut important_declarations = Vec::new();

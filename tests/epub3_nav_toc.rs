@@ -120,10 +120,7 @@ fn chapters() -> Vec<(&'static str, String)> {
     vec![
         (
             "OEBPS/text/ch1.xhtml",
-            xhtml(
-                "One",
-                r#"<h1>One</h1><p id="sec1">Section text.</p>"#,
-            ),
+            xhtml("One", r#"<h1>One</h1><p id="sec1">Section text.</p>"#),
         ),
         ("OEBPS/text/ch2.xhtml", xhtml("Two", "<h1>Two</h1>")),
     ]

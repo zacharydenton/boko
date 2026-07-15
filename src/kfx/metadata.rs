@@ -270,7 +270,9 @@ pub fn generate_book_id(identifier: &str) -> String {
     // (Previously `DefaultHasher`, whose output is explicitly not guaranteed
     // stable across Rust releases — a toolchain bump would silently change
     // every "stable" book ID.)
-    let digest = sha1_smol::Sha1::from(identifier.as_bytes()).digest().bytes();
+    let digest = sha1_smol::Sha1::from(identifier.as_bytes())
+        .digest()
+        .bytes();
     bytes.extend_from_slice(&digest[..16]);
 
     // URL-safe Base64 encode (no padding), 17 bytes → 23 chars

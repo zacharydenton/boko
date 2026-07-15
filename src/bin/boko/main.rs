@@ -428,7 +428,8 @@ fn print_human(book: &mut Book, path: &str) -> Result<(), String> {
     println!("\nAssets ({}):", assets.len());
     for asset in assets {
         let size = book
-            .load_asset(asset).map_or_else(|_| "?".to_string(), |data| format_bytes(data.len()));
+            .load_asset(asset)
+            .map_or_else(|_| "?".to_string(), |data| format_bytes(data.len()));
         println!("  {} ({})", asset, size);
     }
 

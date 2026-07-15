@@ -583,7 +583,12 @@ mod tests {
         let _ = importer.load_chapter(ChapterId(0)).unwrap();
         let _ = importer.load_chapter(ChapterId(1)).unwrap();
 
-        assert_eq!(importer.css_loads.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            importer
+                .css_loads
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 
     #[test]

@@ -168,8 +168,7 @@ impl HuffCdicReader {
         let n = std::cmp::min(entry_cap, phrases.saturating_sub(self.dictionary.len()));
 
         // Read offset table
-        if n
-            .checked_mul(2)
+        if n.checked_mul(2)
             .and_then(|b| b.checked_add(16))
             .is_none_or(|end| cdic.len() < end)
         {

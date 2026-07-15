@@ -493,9 +493,8 @@ impl<'a> IonParser<'a> {
             self.pos += 1;
             result = (result << 7) | (byte & 0x7f) as u64;
             if byte & 0x80 != 0 {
-                return u32::try_from(result).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "VarUInt too large")
-                });
+                return u32::try_from(result)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "VarUInt too large"));
             }
         }
         Err(io::Error::new(

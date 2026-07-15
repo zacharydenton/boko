@@ -211,11 +211,7 @@ impl EpubExporter {
     }
 
     /// Export with normalized content (IR pipeline produces clean, consistent output).
-    fn export_normalized<W: Write + Seek>(
-        &self,
-        book: &Book,
-        writer: &mut W,
-    ) -> io::Result<()> {
+    fn export_normalized<W: Write + Seek>(&self, book: &Book, writer: &mut W) -> io::Result<()> {
         use super::normalize::normalize_book;
 
         // Resolve TOC fragments before generating the NCX. Same rationale as

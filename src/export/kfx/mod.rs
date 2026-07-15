@@ -119,8 +119,12 @@ fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
 
     // 2g. Chapter entities - collect separately for proper grouping
     // Note: This also collects styles during token generation
-    let (section_fragments, storyline_fragments, content_fragments) =
-        build_spine_entities(book, &spine_info, standalone_cover_path.as_deref(), &mut ctx);
+    let (section_fragments, storyline_fragments, content_fragments) = build_spine_entities(
+        book,
+        &spine_info,
+        standalone_cover_path.as_deref(),
+        &mut ctx,
+    );
 
     // Fix landmark IDs to use storyline content IDs instead of section IDs
     ctx.fix_landmark_content_ids();
@@ -191,10 +195,7 @@ type SpineInfo = Vec<(ChapterId, String)>;
 ///
 /// Returns the standalone cover path (if any) and the spine info
 /// (chapter ID, short section name) pairs.
-fn survey_book(
-    book: &Book,
-    ctx: &mut ExportContext,
-) -> crate::Result<(Option<String>, SpineInfo)> {
+fn survey_book(book: &Book, ctx: &mut ExportContext) -> crate::Result<(Option<String>, SpineInfo)> {
     // Check if we need a standalone cover section
     let standalone_cover_path = detect_standalone_cover(book);
 

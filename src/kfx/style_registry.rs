@@ -252,8 +252,9 @@ impl StyleRegistry {
 
         let bucket = self.styles.entry(hash).or_default();
         // Confirm a hash hit is a real match, not a collision.
-        if let Some((_, name_symbol, _)) =
-            bucket.iter().find(|(_, _, existing)| existing.same_properties(&style))
+        if let Some((_, name_symbol, _)) = bucket
+            .iter()
+            .find(|(_, _, existing)| existing.same_properties(&style))
         {
             return *name_symbol;
         }

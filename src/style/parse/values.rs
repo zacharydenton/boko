@@ -335,7 +335,10 @@ mod tests {
     fn parses_rgba_and_extended_named_colors() {
         assert_eq!(color("orange"), Some(Color::rgb(255, 165, 0)));
         assert_eq!(color("PURPLE"), Some(Color::rgb(128, 0, 128)));
-        assert_eq!(color("rgba(10, 20, 30, 0.5)"), Some(Color::rgba(10, 20, 30, 128)));
+        assert_eq!(
+            color("rgba(10, 20, 30, 0.5)"),
+            Some(Color::rgba(10, 20, 30, 128))
+        );
         // Modern space + slash-alpha syntax.
         assert_eq!(color("rgb(1 2 3 / 50%)"), Some(Color::rgba(1, 2, 3, 128)));
         // Non-color keywords are not treated as colors.

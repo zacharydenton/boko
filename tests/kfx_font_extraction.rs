@@ -45,10 +45,7 @@ fn test_kfx_font_assets_discovered() {
     let book = Book::open(tmp.path()).expect("Should open stripped KFX");
     let assets = book.list_assets();
 
-    let font_assets: Vec<_> = assets
-        .iter()
-        .filter(|p| p.starts_with("fonts/"))
-        .collect();
+    let font_assets: Vec<_> = assets.iter().filter(|p| p.starts_with("fonts/")).collect();
 
     assert_eq!(
         font_assets.len(),

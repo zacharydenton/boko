@@ -389,8 +389,8 @@ fn split_at_ncx_anchors(body: &str, positions: &[u32]) -> Vec<String> {
         }
         // Match the exact needle shape: canonical decimal (no leading zeros)
         // followed by the closing quote.
-        let canonical = end > digits_start
-            && (body_bytes[digits_start] != b'0' || end == digits_start + 1);
+        let canonical =
+            end > digits_start && (body_bytes[digits_start] != b'0' || end == digits_start + 1);
         if canonical
             && body_bytes.get(end) == Some(&b'"')
             && let Ok(pos) = body[digits_start..end].parse::<u32>()

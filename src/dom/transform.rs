@@ -99,7 +99,11 @@ impl<'a> TransformContext<'a> {
         // Compute body's style so its properties (like hyphens: auto) are inherited
         let mut body_style = {
             let elem_ref = ElementRef::new(self.dom, body);
-            let bloom = if self.use_bloom { Some(&self.bloom) } else { None };
+            let bloom = if self.use_bloom {
+                Some(&self.bloom)
+            } else {
+                None
+            };
             compute_styles_indexed(
                 elem_ref,
                 &self.cascade_index,
@@ -228,7 +232,11 @@ impl<'a> TransformContext<'a> {
                 // hashes of this element's ancestors (maintained by the
                 // push/pop around process_children below).
                 let elem_ref = ElementRef::new(self.dom, dom_id);
-                let bloom = if self.use_bloom { Some(&self.bloom) } else { None };
+                let bloom = if self.use_bloom {
+                    Some(&self.bloom)
+                } else {
+                    None
+                };
                 let mut computed = compute_styles_indexed(
                     elem_ref,
                     &self.cascade_index,

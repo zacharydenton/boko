@@ -4,8 +4,8 @@
 //! which style declarations apply to an element based on specificity,
 //! importance, and source order.
 
-use std::cmp::Ordering;
 use rustc_hash::FxHashMap;
+use std::cmp::Ordering;
 
 use selectors::bloom::BloomFilter;
 use selectors::context::{MatchingContext, QuirksMode, SelectorCaches};

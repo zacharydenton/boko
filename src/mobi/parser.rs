@@ -358,8 +358,8 @@ pub fn decode_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
     // otherwise inflate to gigabytes. No real font approaches this cap.
     if is_compressed {
         use std::io::Read;
-        let mut decoder = flate2::read::ZlibDecoder::new(&font_data[..])
-            .take(MAX_FONT_DECOMPRESSED as u64 + 1);
+        let mut decoder =
+            flate2::read::ZlibDecoder::new(&font_data[..]).take(MAX_FONT_DECOMPRESSED as u64 + 1);
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed).map_err(|e| {
             io::Error::new(io::ErrorKind::InvalidData, format!("FONT zlib error: {e}"))
@@ -521,8 +521,7 @@ mod tests {
 
     fn zlib_compress(data: &[u8]) -> Vec<u8> {
         use std::io::Write;
-        let mut enc =
-            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
         enc.write_all(data).unwrap();
         enc.finish().unwrap()
     }

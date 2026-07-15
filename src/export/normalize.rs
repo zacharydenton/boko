@@ -160,7 +160,12 @@ impl NormalizedContent {
 
     fn rewrite_toc_entry(&self, entry: &crate::model::TocEntry) -> crate::model::TocEntry {
         let mut out = entry.clone();
-        out.href = rewrite_href(&self.source_to_output, &self.anchor_to_output, None, &entry.href);
+        out.href = rewrite_href(
+            &self.source_to_output,
+            &self.anchor_to_output,
+            None,
+            &entry.href,
+        );
         out.children = entry
             .children
             .iter()
@@ -354,8 +359,12 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
         );
 
         // Rewrite internal links to target the emitted chapter files.
-        let document =
-            rewrite_document_hrefs(&result.body, source_path, &source_to_output, &anchor_to_output);
+        let document = rewrite_document_hrefs(
+            &result.body,
+            source_path,
+            &source_to_output,
+            &anchor_to_output,
+        );
 
         (
             ChapterContent {
@@ -521,8 +530,7 @@ mod tests {
     fn rewrite_href_maps_anchors_and_paths() {
         let source_to_output =
             HashMap::from([("text/ch2.xhtml".to_string(), "chapter_1.xhtml".to_string())]);
-        let anchor_to_output =
-            HashMap::from([("sec3".to_string(), "chapter_1.xhtml".to_string())]);
+        let anchor_to_output = HashMap::from([("sec3".to_string(), "chapter_1.xhtml".to_string())]);
         let rw = |href: &str| rewrite_href(&source_to_output, &anchor_to_output, None, href);
 
         // Bare "#anchor" (as KFX TOCs use) -> the chapter that defines it.

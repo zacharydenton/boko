@@ -146,10 +146,9 @@ pub fn parse_container_info(data: &[u8]) -> Result<ContainerInfo, ContainerError
     let get_usize = |name| get_field_int(fields, name).and_then(|v| usize::try_from(v).ok());
 
     // Index table
-    if let (Some(offset), Some(length)) = (
-        get_usize("bcIndexTabOffset"),
-        get_usize("bcIndexTabLength"),
-    ) {
+    if let (Some(offset), Some(length)) =
+        (get_usize("bcIndexTabOffset"), get_usize("bcIndexTabLength"))
+    {
         info.index = Some((offset, length));
     }
 

@@ -166,12 +166,7 @@ impl Importer for EpubImporter {
             from_path,
             href,
             |p| self.path_to_chapter.get(p).copied(),
-            |k| {
-                self.anchor_map
-                    .read()
-                    .ok()
-                    .and_then(|m| m.get(k).copied())
-            },
+            |k| self.anchor_map.read().ok().and_then(|m| m.get(k).copied()),
         )
     }
 }
@@ -224,8 +219,7 @@ impl EpubImporter {
 
         for spine_id in &opf.spine_ids {
             if let Some((href, _media_type)) = opf.manifest.get(spine_id) {
-                let full_path =
-                    format!("{}{}", opf_base, crate::util::percent_decode_href(href));
+                let full_path = format!("{}{}", opf_base, crate::util::percent_decode_href(href));
                 let size_estimate = zip_index
                     .get(&full_path)
                     .map(|loc| loc.compressed_size as usize)
@@ -247,10 +241,12 @@ impl EpubImporter {
         // TOC fallback (step 5) and landmarks (step 6).
         let nav_str: Option<String> = opf.nav_href.as_ref().and_then(|nav_href| {
             let nav_path = format!("{}{}", opf_base, crate::util::percent_decode_href(nav_href));
-            read_entry(&source, &zip_index, &nav_path).ok().map(|nav_bytes| {
-                let hint_encoding = crate::util::extract_xml_encoding(&nav_bytes);
-                crate::util::decode_text(&nav_bytes, hint_encoding).into_owned()
-            })
+            read_entry(&source, &zip_index, &nav_path)
+                .ok()
+                .map(|nav_bytes| {
+                    let hint_encoding = crate::util::extract_xml_encoding(&nav_bytes);
+                    crate::util::decode_text(&nav_bytes, hint_encoding).into_owned()
+                })
         });
 
         // 5. Parse TOC. The NCX is used when it yields entries (existing
@@ -338,7 +334,6 @@ impl EpubImporter {
     fn read_entry(&self, path: &str) -> crate::Result<Vec<u8>> {
         read_entry(&self.source, &self.zip_index, path)
     }
-
 }
 
 // ----------------------------------------------------------------------------
@@ -399,11 +394,7 @@ fn prepend_base_to_toc(entries: &[TocEntry], base: &str) -> Vec<TocEntry> {
             } else if entry.href.starts_with('#') {
                 crate::util::percent_decode_href(&entry.href).into_owned()
             } else {
-                format!(
-                    "{}{}",
-                    base,
-                    crate::util::percent_decode_href(&entry.href)
-                )
+                format!("{}{}", base, crate::util::percent_decode_href(&entry.href))
             };
             TocEntry {
                 title: entry.title.clone(),

@@ -35,8 +35,7 @@ pub fn bounded_inflate(
     const MAX_RESERVE: u64 = 16 * 1024 * 1024;
     let reserve = claimed_len.min(hard_cap as u64).min(MAX_RESERVE) as usize;
     let mut out = Vec::with_capacity(reserve);
-    let mut reader =
-        flate2::read::DeflateDecoder::new(compressed).take(hard_cap as u64 + 1);
+    let mut reader = flate2::read::DeflateDecoder::new(compressed).take(hard_cap as u64 + 1);
     reader.read_to_end(&mut out)?;
     if out.len() > hard_cap {
         return Err(io::Error::new(
@@ -536,8 +535,7 @@ mod tests {
         // below its true size: it must error instead of allocating unbounded.
         use std::io::Write;
         let raw = vec![0u8; 1 << 20]; // 1 MiB of zeros -> tiny deflate stream
-        let mut enc =
-            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
         enc.write_all(&raw).unwrap();
         let compressed = enc.finish().unwrap();
         assert!(compressed.len() < 4096, "payload should compress tiny");

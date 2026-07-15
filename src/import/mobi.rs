@@ -134,9 +134,7 @@ impl Importer for MobiImporter {
         let css_str = String::from_utf8_lossy(&css_bytes);
         let sheet = Arc::new(Stylesheet::parse(&css_str));
         match self.css_cache.write() {
-            Ok(mut cache) => Some(Arc::clone(
-                cache.entry(path.to_string()).or_insert(sheet),
-            )),
+            Ok(mut cache) => Some(Arc::clone(cache.entry(path.to_string()).or_insert(sheet))),
             Err(_) => Some(sheet),
         }
     }

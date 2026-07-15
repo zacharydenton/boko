@@ -224,11 +224,8 @@ impl Kf8Builder {
         #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
         {
             use rayon::prelude::*;
-            self.records.par_extend(
-                all_flows
-                    .par_chunks(RECORD_SIZE)
-                    .map(compress_record),
-            );
+            self.records
+                .par_extend(all_flows.par_chunks(RECORD_SIZE).map(compress_record));
         }
         #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
         {

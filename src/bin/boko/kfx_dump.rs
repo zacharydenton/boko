@@ -165,9 +165,7 @@ fn dump_kfx_container(data: &[u8], resolve: bool) -> IonResult<()> {
 
     eprintln!("Container version: {version}");
     eprintln!("Header length: {header_len}");
-    eprintln!(
-        "Container info: offset={container_info_offset}, length={container_info_length}"
-    );
+    eprintln!("Container info: offset={container_info_offset}, length={container_info_length}");
     eprintln!();
 
     // Extended symbols from doc symbol table
@@ -187,9 +185,7 @@ fn dump_kfx_container(data: &[u8], resolve: bool) -> IonResult<()> {
         if let Some((doc_sym_offset, doc_sym_length)) =
             parse_container_info_for_doc_symbols(container_info_data)
         {
-            eprintln!(
-                "Document symbols: offset={doc_sym_offset}, length={doc_sym_length}"
-            );
+            eprintln!("Document symbols: offset={doc_sym_offset}, length={doc_sym_length}");
             if doc_sym_offset + doc_sym_length <= data.len() {
                 let doc_sym_data = &data[doc_sym_offset..doc_sym_offset + doc_sym_length];
                 extended_symbols = extract_doc_symbols(doc_sym_data);
@@ -205,9 +201,7 @@ fn dump_kfx_container(data: &[u8], resolve: bool) -> IonResult<()> {
         let index_info = parse_container_info_for_index(container_info_data);
 
         if let Some((index_offset, index_length)) = index_info {
-            eprintln!(
-                "Index table: offset={index_offset}, length={index_length}"
-            );
+            eprintln!("Index table: offset={index_offset}, length={index_length}");
 
             // Parse index table - each entry is 24 bytes
             let entry_size = 24;
@@ -1187,8 +1181,7 @@ fn extract_and_print_navigation(
                     }
                     id if id == KfxSymbol::NavContainerName as u32 => {
                         if let IonValue::Symbol(sym_id) = cfield_value {
-                            container_name =
-                                resolve_symbol(*sym_id, extended_symbols);
+                            container_name = resolve_symbol(*sym_id, extended_symbols);
                         }
                     }
                     id if id == KfxSymbol::Entries as u32 => {
@@ -1318,8 +1311,7 @@ fn extract_nav_entries(
                 id if id == KfxSymbol::LandmarkType as u32 => {
                     // landmark_type is a symbol (h2, h3, cover_page, srl, etc.)
                     if let IonValue::Symbol(sym_id) = field_value {
-                        landmark_type =
-                            Some(resolve_symbol(*sym_id, extended_symbols));
+                        landmark_type = Some(resolve_symbol(*sym_id, extended_symbols));
                     }
                 }
                 id if id == KfxSymbol::Representation as u32 => {
@@ -1531,8 +1523,7 @@ fn extract_fragment_content_from_list(
                     if *field_id == KfxSymbol::Type as u64
                         && let IonValue::Symbol(sym_id) = field_value
                     {
-                        container_type =
-                            Some(resolve_symbol(*sym_id, extended_symbols));
+                        container_type = Some(resolve_symbol(*sym_id, extended_symbols));
                     }
 
                     // Get content reference
@@ -4973,9 +4964,7 @@ fn report_content(data: &[u8]) -> IonResult<()> {
                     content_len = payload_len;
                 }
 
-                println!(
-                    "{entity_name:<20} {content_type_str:<12} {content_len} bytes"
-                );
+                println!("{entity_name:<20} {content_type_str:<12} {content_len} bytes");
             } else {
                 println!("{:<20} {:<12} {} bytes (raw)", entity_name, "", payload_len);
             }

@@ -88,8 +88,10 @@ pub(super) fn tokenize_content_item(
     // symbol-based attributes (ids above i64::MAX would wrap negative under
     // `as i64`, so they're treated as absent).
     let mut role = schema().resolve_element_role(kfx_type_id, |symbol| {
-        get_field(fields, symbol as u64)
-            .and_then(|v| v.as_int().or_else(|| v.as_symbol().and_then(|s| i64::try_from(s).ok())))
+        get_field(fields, symbol as u64).and_then(|v| {
+            v.as_int()
+                .or_else(|| v.as_symbol().and_then(|s| i64::try_from(s).ok()))
+        })
     });
 
     // Check for semantic type annotation (yj.semantics.type) which uses local symbols.

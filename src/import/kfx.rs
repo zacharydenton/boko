@@ -81,7 +81,6 @@ pub struct KfxImporter {
     styles: OnceLock<Arc<StyleIndex>>,
 
     // --- Link resolution ---
-
     /// Maps element string ID -> GlobalNodeId (built during index_anchors)
     element_id_map: RwLock<HashMap<String, GlobalNodeId>>,
 }
@@ -908,7 +907,8 @@ impl KfxImporter {
     /// Index external resources.
     /// The resource-name → entity-location index, built on first use.
     fn resource_index(&self) -> &HashMap<String, EntityLoc> {
-        self.resource_index.get_or_init(|| self.build_resource_index())
+        self.resource_index
+            .get_or_init(|| self.build_resource_index())
     }
 
     fn build_resource_index(&self) -> HashMap<String, EntityLoc> {
@@ -1046,7 +1046,8 @@ impl KfxImporter {
     /// The style_name → properties index, built on first use. Style entities
     /// ($157) contain properties like font_weight, text_alignment, margins.
     fn style_index(&self) -> &Arc<StyleIndex> {
-        self.styles.get_or_init(|| Arc::new(self.build_style_index()))
+        self.styles
+            .get_or_init(|| Arc::new(self.build_style_index()))
     }
 
     fn build_style_index(&self) -> StyleIndex {
