@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::kfx::ion::IonValue;
-use crate::kfx::style_schema::{KfxValue, StyleContext, StyleSchema, extract_ir_field};
+use crate::kfx::style_schema::{KfxValue, StyleSchema, extract_ir_field};
 use crate::kfx::symbols::KfxSymbol;
 use crate::style as ir_style;
 
@@ -82,61 +82,6 @@ impl ComputedStyle {
         a.sort_by_key(|(s, _)| *s as u64);
         b.sort_by_key(|(s, _)| *s as u64);
         a == b
-    }
-
-    /// Check if this style contains any block-only properties.
-    pub fn has_block_properties(&self, schema: &StyleSchema) -> bool {
-        for (symbol, _) in &self.properties {
-            // Find the rule for this symbol
-            for rule in schema.rules() {
-                if rule.kfx_symbol == *symbol && rule.context == StyleContext::BlockOnly {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Check if this style contains any inline-safe properties.
-    pub fn has_inline_properties(&self, schema: &StyleSchema) -> bool {
-        for (symbol, _) in &self.properties {
-            for rule in schema.rules() {
-                if rule.kfx_symbol == *symbol && rule.context == StyleContext::InlineSafe {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Split into block and inline styles.
-    ///
-    /// Returns (block_style, inline_style) where each contains only
-    /// properties appropriate for that context.
-    pub fn split_by_context(&self, schema: &StyleSchema) -> (ComputedStyle, ComputedStyle) {
-        let mut block = ComputedStyle::new();
-        let mut inline = ComputedStyle::new();
-
-        for (symbol, value) in &self.properties {
-            let mut found_context = None;
-            for rule in schema.rules() {
-                if rule.kfx_symbol == *symbol {
-                    found_context = Some(rule.context);
-                    break;
-                }
-            }
-
-            match found_context {
-                Some(StyleContext::BlockOnly) => block.set(*symbol, value.clone()),
-                Some(StyleContext::InlineSafe) => inline.set(*symbol, value.clone()),
-                Some(StyleContext::Any) | None => {
-                    // Properties with Any context go to both (or default to block)
-                    block.set(*symbol, value.clone());
-                }
-            }
-        }
-
-        (block, inline)
     }
 
     /// Compute a hash for this style (for deduplication).
@@ -358,19 +303,6 @@ impl<'a> StyleBuilder<'a> {
         }
     }
 
-    /// Apply a CSS property.
-    pub fn apply(&mut self, property: &str, value: &str) -> &mut Self {
-        // Handle shorthand properties first
-        if let Some(expanded) = expand_shorthand(property, value) {
-            for (prop, val) in expanded {
-                self.apply_single(&prop, &val);
-            }
-        } else {
-            self.apply_single(property, value);
-        }
-        self
-    }
-
     /// Apply a single (non-shorthand) property.
     fn apply_single(&mut self, property: &str, value: &str) {
         for rule in self.schema.get(property) {
@@ -410,81 +342,6 @@ impl<'a> StyleBuilder<'a> {
     /// Build the final computed style.
     pub fn build(self) -> ComputedStyle {
         self.style
-    }
-}
-
-/// Expand CSS shorthand properties into individual properties.
-fn expand_shorthand(property: &str, value: &str) -> Option<Vec<(String, String)>> {
-    let parts: Vec<&str> = value.split_whitespace().collect();
-
-    match property {
-        "margin" => Some(expand_box_shorthand("margin", &parts)),
-        "padding" => Some(expand_box_shorthand("padding", &parts)),
-        "border-width" => Some(
-            expand_box_shorthand("border", &parts)
-                .into_iter()
-                .map(|(p, v)| (format!("{}-width", p), v))
-                .collect(),
-        ),
-        "font" => expand_font_shorthand(value),
-        _ => None,
-    }
-}
-
-/// Expand a box model shorthand (margin, padding) into four individual properties.
-fn expand_box_shorthand(prefix: &str, parts: &[&str]) -> Vec<(String, String)> {
-    let (top, right, bottom, left) = match parts.len() {
-        1 => (parts[0], parts[0], parts[0], parts[0]),
-        2 => (parts[0], parts[1], parts[0], parts[1]),
-        3 => (parts[0], parts[1], parts[2], parts[1]),
-        4 => (parts[0], parts[1], parts[2], parts[3]),
-        _ => return vec![],
-    };
-
-    vec![
-        (format!("{}-top", prefix), top.to_string()),
-        (format!("{}-right", prefix), right.to_string()),
-        (format!("{}-bottom", prefix), bottom.to_string()),
-        (format!("{}-left", prefix), left.to_string()),
-    ]
-}
-
-/// Expand font shorthand (complex, partial support).
-fn expand_font_shorthand(value: &str) -> Option<Vec<(String, String)>> {
-    // font: [style] [weight] size[/line-height] family
-    // This is complex; for now just extract what we can
-    let mut result = Vec::new();
-    let parts: Vec<&str> = value.split_whitespace().collect();
-
-    for part in &parts {
-        let lower = part.to_lowercase();
-        if lower == "italic" || lower == "oblique" {
-            result.push(("font-style".to_string(), lower));
-        } else if lower == "bold" || lower == "normal" || lower == "lighter" || lower == "bolder" {
-            result.push(("font-weight".to_string(), lower));
-        } else if part.contains("px")
-            || part.contains("em")
-            || part.contains("pt")
-            || part.contains('%')
-        {
-            // This might be size or size/line-height
-            if part.contains('/') {
-                let size_parts: Vec<&str> = part.split('/').collect();
-                if size_parts.len() == 2 {
-                    result.push(("font-size".to_string(), size_parts[0].to_string()));
-                    result.push(("line-height".to_string(), size_parts[1].to_string()));
-                }
-            } else {
-                result.push(("font-size".to_string(), part.to_string()));
-            }
-        }
-        // Font family is harder to parse reliably, skip for now
-    }
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
     }
 }
 
@@ -540,21 +397,6 @@ mod tests {
         // Same style should get same ID
         assert_eq!(id1, id2);
         assert_eq!(registry.len(), 1);
-    }
-
-    #[test]
-    fn test_expand_margin_shorthand() {
-        let parts = vec!["10px"];
-        let expanded = expand_box_shorthand("margin", &parts);
-        assert_eq!(expanded.len(), 4);
-        assert_eq!(expanded[0], ("margin-top".to_string(), "10px".to_string()));
-
-        let parts = vec!["10px", "20px"];
-        let expanded = expand_box_shorthand("margin", &parts);
-        assert_eq!(expanded[0].1, "10px"); // top
-        assert_eq!(expanded[1].1, "20px"); // right
-        assert_eq!(expanded[2].1, "10px"); // bottom
-        assert_eq!(expanded[3].1, "20px"); // left
     }
 
     #[test]
@@ -645,13 +487,14 @@ mod tests {
 
     #[test]
     fn test_transparent_background_is_omitted() {
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.background_color = Some(crate::style::Color::TRANSPARENT);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
-        builder.apply("background-color", "transparent");
+        builder.ingest_ir_style(&ir);
         let style = builder.build();
         // `transparent` used to export as opaque black fill/text background.
         assert!(style.get(KfxSymbol::FillColor).is_none());
         assert!(style.get(KfxSymbol::TextBackgroundColor).is_none());
-        assert!(style.is_empty());
     }
 
     #[test]
@@ -679,14 +522,14 @@ mod tests {
 
     #[test]
     fn test_style_builder() {
-        let schema = StyleSchema::standard();
-        let mut builder = StyleBuilder::new(schema);
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.font_weight = crate::style::FontWeight::BOLD;
+        ir.font_style = crate::style::FontStyle::Italic;
 
-        builder.apply("font-weight", "bold");
-        builder.apply("font-style", "italic");
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
 
         let style = builder.build();
-        assert_eq!(style.len(), 2);
         assert!(style.get(KfxSymbol::FontWeight).is_some());
         assert!(style.get(KfxSymbol::FontStyle).is_some());
     }

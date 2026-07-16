@@ -36,25 +36,6 @@ impl KfxFragment {
         }
     }
 
-    /// Create a new fragment with a numeric fragment ID.
-    ///
-    /// This is used when the fragment ID was pre-assigned during Pass 1.
-    pub fn new_with_id(
-        ftype: impl Into<u64>,
-        fragment_id: u64,
-        name: impl Into<String>,
-        value: IonValue,
-    ) -> Self {
-        // Store the name as fid for debugging, but the fragment_id is what matters
-        // for serialization
-        let _ = fragment_id; // ID is embedded in the entity table during serialization
-        Self {
-            ftype: ftype.into(),
-            fid: name.into(),
-            data: FragmentData::Ion(value),
-        }
-    }
-
     /// Create a new fragment with raw binary data.
     pub fn raw(ftype: impl Into<u64>, fid: impl Into<String>, bytes: Vec<u8>) -> Self {
         Self {

@@ -853,8 +853,8 @@ pub static KFX_SYMBOL_TABLE: [&str; 852] = [
     "vertex_list",                       // 851
 ];
 
-pub const KFX_SYMBOL_TABLE_SIZE: usize = 852;
-pub const KFX_MAX_SYMBOL_ID: usize = 851;
+pub const KFX_SYMBOL_TABLE_SIZE: usize = KFX_SYMBOL_TABLE.len();
+pub const KFX_MAX_SYMBOL_ID: usize = KFX_SYMBOL_TABLE.len() - 1;
 
 /// Get the symbol name for a given symbol ID.
 /// This is the preferred way to look up symbol names.

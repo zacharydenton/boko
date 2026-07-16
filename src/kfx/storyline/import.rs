@@ -473,13 +473,6 @@ pub(super) fn build_text_with_spans(
     doc_symbols: &[String],
     styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
 ) {
-    // Sort spans by offset, then by length (shorter first for same offset)
-    let mut sorted_spans: Vec<_> = spans.iter().collect();
-    sorted_spans.sort_by_key(|s| (s.offset, s.length));
-
-    // Filter out spans that are completely contained within larger spans at the same offset.
-    // This handles the case of nested inlines where both outer and inner emit spans.
-    // We keep the shorter (more specific) spans and discard the longer encompassing ones.
     // Build a proper nested span tree to handle overlapping/nested spans.
     // KFX style_events can have nested spans (e.g., Link containing Inline).
     // Sort by offset, then by length DESCENDING (enclosing spans first).

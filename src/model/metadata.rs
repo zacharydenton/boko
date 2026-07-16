@@ -100,7 +100,7 @@ pub struct Metadata {
 /// A table of contents entry (hierarchical)
 ///
 /// Built from the EPUB 3 nav document or EPUB 2 NCX (or the equivalent
-/// Kindle TOC structures). Entries sort by `play_order` when present.
+/// Kindle TOC structures).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TocEntry {
     /// Display label for the entry.
@@ -113,18 +113,6 @@ pub struct TocEntry {
     pub play_order: Option<usize>,
     /// Resolved target (set by `resolve_links()`)
     pub target: Option<AnchorTarget>,
-}
-
-impl Ord for TocEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.play_order.cmp(&other.play_order)
-    }
-}
-
-impl PartialOrd for TocEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 /// Type of landmark in a book's navigation.

@@ -134,8 +134,7 @@ pub(super) fn build_chapter_entities_grouped(
             IonValue::List(vec![page_template]),
         ),
     ]);
-    let section_fragment =
-        KfxFragment::new_with_id(KfxSymbol::Section, section_id, section_name, section_ion);
+    let section_fragment = KfxFragment::new(KfxSymbol::Section, section_name, section_ion);
 
     (section_fragment, storyline_fragment, content_fragment)
 }

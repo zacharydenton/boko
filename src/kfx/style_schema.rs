@@ -9,7 +9,6 @@
 //! 1. **StylePropertyRule** - Declares how a single property maps (e.g., font-weight → fontWeight)
 //! 2. **ValueTransform** - Defines the conversion logic (enum lookup, unit scaling, etc.)
 //! 3. **StyleSchema** - Registry of all rules with fast lookup
-//! 4. **StyleContext** - Whether a property can be inline or requires a block container
 
 use std::collections::HashMap;
 
@@ -42,55 +41,13 @@ pub enum ValueTransform {
     /// Example: "bold" -> Symbol(fontWeight_bold)
     Map(Vec<(String, KfxValue)>),
 
-    /// Number scaling: multiply input by factor, clamp, round.
-    /// Example: line-height 1.5 -> 150 (factor=100)
-    ScaleFloat {
-        factor: f64,
-        min: Option<f64>,
-        max: Option<f64>,
-        precision: RoundingMode,
-    },
-
-    /// Unit conversion: CSS units (px, em, rem) -> KFX units.
-    ConvertUnit {
-        base_pixels: f64,
-        target_unit: KfxUnitType,
-    },
-
-    /// Color parsing: CSS color -> KFX integer or struct.
-    ParseColor { output_format: ColorFormat },
-
-    /// Shorthand extraction: extracts Nth component from CSS shorthand.
-    /// Example: "margin: 10px 20px" with index=1 extracts "20px"
-    ExtractShorthand {
-        index: usize,
-        default_value: Option<KfxValue>,
-    },
+    /// Color parsing: CSS color -> packed KFX ARGB integer.
+    ParseColor,
 
     /// Dimensioned value: wraps a number with a unit symbol.
     /// Example: 1.2 with unit=em -> { value: 1.2, unit: em }
-    /// NOTE: This does NOT convert units - use ConvertToDimensioned for that.
+    /// NOTE: This does NOT convert units.
     Dimensioned { unit: KfxSymbol },
-
-    /// Convert CSS units and output as KFX dimensioned value.
-    ///
-    /// This is the proper transform for block layout properties:
-    /// 1. Parses CSS length (e.g., "20px", "1.5em", "10%")
-    /// 2. Converts to target unit using base_font_size
-    /// 3. Outputs as { value: N, unit: $symbol }
-    ///
-    /// Percentages are preserved as-is with the `percent` unit:
-    /// - "75%" → { value: 75., unit: percent }
-    /// - "20px" with base=16, target=Em → { value: 1.25, unit: em }
-    ConvertToDimensioned {
-        /// Base font size in pixels (for em/rem conversion)
-        base_pixels: f64,
-        /// Target KFX unit (used for non-percentage values)
-        target_unit: KfxSymbol,
-    },
-
-    /// Symbol lookup: converts string to KFX symbol ID.
-    ToSymbol,
 
     /// Wrap integer in a struct with a single field.
     /// Used for orphans/widows: `3` -> `{ first: 3 }` or `{ last: 3 }`
@@ -187,50 +144,6 @@ impl KfxValue {
         }
         Some(KfxValue::StructFields(fields))
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RoundingMode {
-    Floor,
-    Ceil,
-    Round,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum KfxUnitType {
-    /// Model pixels (1/260th inch, Kindle specific)
-    ModelPixels,
-    /// Percentage as integer (100% = 1000)
-    Percentage1000,
-    /// Percentage as integer (100% = 100)
-    Percentage100,
-    /// Em units (relative to font size)
-    Em,
-    /// Rem units (relative to root font size)
-    Rem,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColorFormat {
-    /// Pack as 0xRRGGBB integer
-    PackedInt,
-    /// Struct with r, g, b fields
-    RgbStruct,
-}
-
-// ============================================================================
-// Style Context
-// ============================================================================
-
-/// Defines where a style property can be applied in KFX.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StyleContext {
-    /// Can apply to text spans (color, bold, italic)
-    InlineSafe,
-    /// Requires a structural container (margins, alignment)
-    BlockOnly,
-    /// Can apply anywhere
-    Any,
 }
 
 // ============================================================================
@@ -337,9 +250,6 @@ pub struct StylePropertyRule {
 
     /// How to convert the raw value
     pub transform: ValueTransform,
-
-    /// Where this property can be applied
-    pub context: StyleContext,
 }
 
 // ============================================================================
@@ -445,7 +355,6 @@ impl StyleSchema {
                 ("800".into(), KfxValue::Symbol(KfxSymbol::UltraBold)),
                 ("900".into(), KfxValue::Symbol(KfxSymbol::Heavy)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -457,7 +366,6 @@ impl StyleSchema {
                 ("oblique".into(), KfxValue::Symbol(KfxSymbol::Oblique)),
                 ("normal".into(), KfxValue::Symbol(KfxSymbol::Normal)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -468,7 +376,6 @@ impl StyleSchema {
             // number with its unit symbol without converting, which would
             // turn "24px" into 24rem (~38x too large on device).
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::Any,
         });
 
         // font-variant: small-caps -> glyph_transform: small_caps
@@ -480,7 +387,6 @@ impl StyleSchema {
                 "small-caps".into(),
                 KfxValue::Symbol(KfxSymbol::SmallCaps),
             )]),
-            context: StyleContext::InlineSafe,
         });
 
         // ====================================================================
@@ -500,7 +406,6 @@ impl StyleSchema {
                 ("start".into(), KfxValue::Symbol(KfxSymbol::Start)),
                 ("end".into(), KfxValue::Symbol(KfxSymbol::End)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -508,7 +413,6 @@ impl StyleSchema {
             ir_field: Some(IrField::TextIndent),
             kfx_symbol: KfxSymbol::TextIndent,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -516,7 +420,6 @@ impl StyleSchema {
             ir_field: Some(IrField::LineHeight),
             kfx_symbol: KfxSymbol::LineHeight,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         // text-decoration: underline -> underline: solid (symbol, not bool)
@@ -541,7 +444,6 @@ impl StyleSchema {
                 ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         // text-decoration: line-through -> strikethrough: solid (symbol, not bool)
@@ -555,7 +457,6 @@ impl StyleSchema {
                 ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         // ====================================================================
@@ -570,7 +471,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MarginTop),
             kfx_symbol: KfxSymbol::MarginTop,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -578,7 +478,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MarginBottom),
             kfx_symbol: KfxSymbol::MarginBottom,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -586,7 +485,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MarginLeft),
             kfx_symbol: KfxSymbol::MarginLeft,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -594,7 +492,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MarginRight),
             kfx_symbol: KfxSymbol::MarginRight,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -606,7 +503,6 @@ impl StyleSchema {
             ir_field: Some(IrField::PaddingTop),
             kfx_symbol: KfxSymbol::PaddingTop,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -614,7 +510,6 @@ impl StyleSchema {
             ir_field: Some(IrField::PaddingBottom),
             kfx_symbol: KfxSymbol::PaddingBottom,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -622,7 +517,6 @@ impl StyleSchema {
             ir_field: Some(IrField::PaddingLeft),
             kfx_symbol: KfxSymbol::PaddingLeft,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -630,7 +524,6 @@ impl StyleSchema {
             ir_field: Some(IrField::PaddingRight),
             kfx_symbol: KfxSymbol::PaddingRight,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -641,10 +534,7 @@ impl StyleSchema {
             ir_key: "color",
             ir_field: Some(IrField::Color),
             kfx_symbol: KfxSymbol::TextColor,
-            transform: ValueTransform::ParseColor {
-                output_format: ColorFormat::PackedInt,
-            },
-            context: StyleContext::InlineSafe,
+            transform: ValueTransform::ParseColor,
         });
 
         // text_background_color: for inline text spans
@@ -652,10 +542,7 @@ impl StyleSchema {
             ir_key: "background-color",
             ir_field: Some(IrField::BackgroundColor),
             kfx_symbol: KfxSymbol::TextBackgroundColor,
-            transform: ValueTransform::ParseColor {
-                output_format: ColorFormat::PackedInt,
-            },
-            context: StyleContext::InlineSafe,
+            transform: ValueTransform::ParseColor,
         });
 
         // fill_color: for block container backgrounds
@@ -663,10 +550,7 @@ impl StyleSchema {
             ir_key: "background-color",
             ir_field: None, // Don't extract twice from IR
             kfx_symbol: KfxSymbol::FillColor,
-            transform: ValueTransform::ParseColor {
-                output_format: ColorFormat::PackedInt,
-            },
-            context: StyleContext::BlockOnly,
+            transform: ValueTransform::ParseColor,
         });
 
         // ====================================================================
@@ -683,7 +567,6 @@ impl StyleSchema {
                 ("sub".into(), KfxValue::Symbol(KfxSymbol::Subscript)),
                 ("baseline".into(), KfxValue::Symbol(KfxSymbol::TextBaseline)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         // vertical-align → yj.vertical_align (for table cell alignment)
@@ -697,7 +580,6 @@ impl StyleSchema {
                 ("middle".into(), KfxValue::Symbol(KfxSymbol::Center)),
                 ("bottom".into(), KfxValue::Symbol(KfxSymbol::Bottom)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -709,7 +591,6 @@ impl StyleSchema {
             ir_field: Some(IrField::LetterSpacing),
             kfx_symbol: KfxSymbol::Letterspacing,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -717,7 +598,6 @@ impl StyleSchema {
             ir_field: Some(IrField::WordSpacing),
             kfx_symbol: KfxSymbol::Wordspacing,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -730,7 +610,6 @@ impl StyleSchema {
                 ("lowercase".into(), KfxValue::Symbol(KfxSymbol::Lowercase)),
                 ("capitalize".into(), KfxValue::Symbol(KfxSymbol::Titlecase)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -742,7 +621,6 @@ impl StyleSchema {
                 ("manual".into(), KfxValue::Symbol(KfxSymbol::Manual)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -753,7 +631,6 @@ impl StyleSchema {
                 ("nowrap".into(), KfxValue::Bool(true)),
                 ("normal".into(), KfxValue::Bool(false)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -773,7 +650,6 @@ impl StyleSchema {
                 ("double".into(), KfxValue::Symbol(KfxSymbol::Double)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
@@ -786,17 +662,13 @@ impl StyleSchema {
                 ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
-            context: StyleContext::InlineSafe,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "text-decoration-color",
             ir_field: Some(IrField::UnderlineColor),
             kfx_symbol: KfxSymbol::UnderlineColor,
-            transform: ValueTransform::ParseColor {
-                output_format: ColorFormat::PackedInt,
-            },
-            context: StyleContext::InlineSafe,
+            transform: ValueTransform::ParseColor,
         });
 
         // ====================================================================
@@ -808,7 +680,6 @@ impl StyleSchema {
             ir_field: Some(IrField::Width),
             kfx_symbol: KfxSymbol::Width,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -816,7 +687,6 @@ impl StyleSchema {
             ir_field: Some(IrField::Height),
             kfx_symbol: KfxSymbol::Height,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -824,7 +694,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MaxWidth),
             kfx_symbol: KfxSymbol::MaxWidth,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -832,7 +701,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MinHeight),
             kfx_symbol: KfxSymbol::MinHeight,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -840,7 +708,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MinWidth),
             kfx_symbol: KfxSymbol::MinWidth,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -848,7 +715,6 @@ impl StyleSchema {
             ir_field: Some(IrField::MaxHeight),
             kfx_symbol: KfxSymbol::MaxHeight,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -860,7 +726,6 @@ impl StyleSchema {
                 ("left".into(), KfxValue::Symbol(KfxSymbol::Left)),
                 ("right".into(), KfxValue::Symbol(KfxSymbol::Right)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // box_align: derived from margin-left: auto + margin-right: auto
@@ -872,7 +737,6 @@ impl StyleSchema {
                 "center".into(),
                 KfxValue::Symbol(KfxSymbol::Center),
             )]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -891,7 +755,6 @@ impl StyleSchema {
                 // Legacy CSS2 page-break-* values
                 ("page".into(), KfxValue::Symbol(KfxSymbol::Always)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -905,7 +768,6 @@ impl StyleSchema {
                 ("column".into(), KfxValue::Symbol(KfxSymbol::Column)),
                 ("page".into(), KfxValue::Symbol(KfxSymbol::Always)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -916,7 +778,6 @@ impl StyleSchema {
                 ("auto".into(), KfxValue::Symbol(KfxSymbol::Auto)),
                 ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // Kindle-specific break properties (yj_break_before/after)
@@ -930,7 +791,6 @@ impl StyleSchema {
                 ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
                 ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -942,7 +802,6 @@ impl StyleSchema {
                 ("always".into(), KfxValue::Symbol(KfxSymbol::Always)),
                 ("avoid".into(), KfxValue::Symbol(KfxSymbol::Avoid)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -967,7 +826,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderStyleTop),
             kfx_symbol: KfxSymbol::BorderStyleTop,
             transform: border_style_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -975,7 +833,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderStyleRight),
             kfx_symbol: KfxSymbol::BorderStyleRight,
             transform: border_style_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -983,7 +840,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderStyleBottom),
             kfx_symbol: KfxSymbol::BorderStyleBottom,
             transform: border_style_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -991,7 +847,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderStyleLeft),
             kfx_symbol: KfxSymbol::BorderStyleLeft,
             transform: border_style_transform,
-            context: StyleContext::BlockOnly,
         });
 
         // Border widths - preserve original units (px, em, etc.)
@@ -1002,7 +857,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderWidthTop),
             kfx_symbol: KfxSymbol::BorderWeightTop,
             transform: border_width_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1010,7 +864,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderWidthRight),
             kfx_symbol: KfxSymbol::BorderWeightRight,
             transform: border_width_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1018,7 +871,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderWidthBottom),
             kfx_symbol: KfxSymbol::BorderWeightBottom,
             transform: border_width_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1026,20 +878,16 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderWidthLeft),
             kfx_symbol: KfxSymbol::BorderWeightLeft,
             transform: border_width_transform,
-            context: StyleContext::BlockOnly,
         });
 
         // Border colors
-        let border_color_transform = ValueTransform::ParseColor {
-            output_format: ColorFormat::PackedInt,
-        };
+        let border_color_transform = ValueTransform::ParseColor;
 
         schema.register(StylePropertyRule {
             ir_key: "border-top-color",
             ir_field: Some(IrField::BorderColorTop),
             kfx_symbol: KfxSymbol::BorderColorTop,
             transform: border_color_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1047,7 +895,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderColorRight),
             kfx_symbol: KfxSymbol::BorderColorRight,
             transform: border_color_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1055,7 +902,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderColorBottom),
             kfx_symbol: KfxSymbol::BorderColorBottom,
             transform: border_color_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1063,7 +909,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderColorLeft),
             kfx_symbol: KfxSymbol::BorderColorLeft,
             transform: border_color_transform,
-            context: StyleContext::BlockOnly,
         });
 
         // Border radius - preserve original units
@@ -1074,7 +919,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderRadiusTopLeft),
             kfx_symbol: KfxSymbol::BorderRadiusTopLeft,
             transform: border_radius_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1082,7 +926,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderRadiusTopRight),
             kfx_symbol: KfxSymbol::BorderRadiusTopRight,
             transform: border_radius_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1090,7 +933,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderRadiusBottomLeft),
             kfx_symbol: KfxSymbol::BorderRadiusBottomLeft,
             transform: border_radius_transform.clone(),
-            context: StyleContext::BlockOnly,
         });
 
         schema.register(StylePropertyRule {
@@ -1098,7 +940,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderRadiusBottomRight),
             kfx_symbol: KfxSymbol::BorderRadiusBottomRight,
             transform: border_radius_transform,
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1113,7 +954,6 @@ impl StyleSchema {
                 ("outside".into(), KfxValue::Symbol(KfxSymbol::Outside)),
                 ("inside".into(), KfxValue::Symbol(KfxSymbol::Inside)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // list-style-type → list_style (symbol values)
@@ -1153,7 +993,6 @@ impl StyleSchema {
                     KfxValue::Symbol(KfxSymbol::AlphaUpper),
                 ),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1165,7 +1004,6 @@ impl StyleSchema {
             ir_field: Some(IrField::FontFamily),
             kfx_symbol: KfxSymbol::FontFamily,
             transform: ValueTransform::Identity, // String passthrough
-            context: StyleContext::InlineSafe,
         });
 
         // ====================================================================
@@ -1178,7 +1016,6 @@ impl StyleSchema {
             ir_field: Some(IrField::Language),
             kfx_symbol: KfxSymbol::Language,
             transform: ValueTransform::Identity,
-            context: StyleContext::Any,
         });
 
         // Visibility
@@ -1191,7 +1028,6 @@ impl StyleSchema {
                 ("hidden".into(), KfxValue::Symbol(KfxSymbol::Hide)),
                 ("collapse".into(), KfxValue::Symbol(KfxSymbol::Hide)),
             ]),
-            context: StyleContext::Any,
         });
 
         // Box-sizing → sizing_bounds
@@ -1210,7 +1046,6 @@ impl StyleSchema {
                     KfxValue::Symbol(KfxSymbol::BorderBounds),
                 ),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1228,7 +1063,6 @@ impl StyleSchema {
                 ("right".into(), KfxValue::Symbol(KfxSymbol::Right)),
                 ("both".into(), KfxValue::Symbol(KfxSymbol::Both)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1244,7 +1078,6 @@ impl StyleSchema {
                 field: KfxSymbol::First,
                 min_value: Some(1), // KFX enforces minimum of 1
             },
-            context: StyleContext::BlockOnly,
         });
 
         // widows → keep_lines_together: { last: N }
@@ -1256,7 +1089,6 @@ impl StyleSchema {
                 field: KfxSymbol::Last,
                 min_value: Some(1), // KFX enforces minimum of 1
             },
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1274,7 +1106,6 @@ impl StyleSchema {
                 ("normal".into(), KfxValue::Symbol(KfxSymbol::Normal)),
                 ("break-all".into(), KfxValue::Symbol(KfxSymbol::BreakAll)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // ====================================================================
@@ -1290,7 +1121,6 @@ impl StyleSchema {
                 ("separate".into(), KfxValue::Bool(false)),
                 ("collapse".into(), KfxValue::Bool(true)),
             ]),
-            context: StyleContext::BlockOnly,
         });
 
         // border-spacing → border_spacing_vertical
@@ -1299,7 +1129,6 @@ impl StyleSchema {
             ir_field: Some(IrField::BorderSpacing),
             kfx_symbol: KfxSymbol::BorderSpacingVertical,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         // border-spacing → border_spacing_horizontal (same value to both)
@@ -1308,7 +1137,6 @@ impl StyleSchema {
             ir_field: None, // Don't extract twice from IR
             kfx_symbol: KfxSymbol::BorderSpacingHorizontal,
             transform: ValueTransform::PreserveUnit,
-            context: StyleContext::BlockOnly,
         });
 
         schema
@@ -1333,94 +1161,15 @@ impl ValueTransform {
                     .map(|(_, v)| v.clone())
             }
 
-            ValueTransform::ScaleFloat {
-                factor,
-                min,
-                max,
-                precision,
-            } => {
-                let num = parse_number(raw)?;
-                let mut scaled = num * factor;
-
-                // Guard against NaN from multiplication
-                if scaled.is_nan() {
-                    return None;
-                }
-
-                if let Some(min_val) = min {
-                    scaled = scaled.max(*min_val);
-                }
-                if let Some(max_val) = max {
-                    scaled = scaled.min(*max_val);
-                }
-
-                let result = match precision {
-                    RoundingMode::Floor => scaled.floor(),
-                    RoundingMode::Ceil => scaled.ceil(),
-                    RoundingMode::Round => scaled.round(),
-                };
-
-                // Guard against Infinity after clamping (shouldn't happen with proper min/max)
-                if result.is_infinite() || result.is_nan() {
-                    return None;
-                }
-
-                // Safe conversion: clamp to i64 range
-                let clamped = result.clamp(i64::MIN as f64, i64::MAX as f64);
-                Some(KfxValue::Integer(clamped as i64))
-            }
-
-            ValueTransform::ConvertUnit {
-                base_pixels,
-                target_unit,
-            } => {
-                let (num, unit) = parse_css_length(raw)?;
-                let pixels = convert_to_pixels(num, &unit, *base_pixels);
-
-                // Guard against division by zero
-                if *base_pixels == 0.0 {
-                    return None;
-                }
-
-                let result = match target_unit {
-                    KfxUnitType::ModelPixels => pixels * (260.0 / 96.0), // 96 DPI -> 260 DPI
-                    KfxUnitType::Percentage1000 => pixels / base_pixels * 1000.0,
-                    KfxUnitType::Percentage100 => pixels / base_pixels * 100.0,
-                    KfxUnitType::Em => pixels / base_pixels,
-                    KfxUnitType::Rem => pixels / base_pixels,
-                };
-
-                // Guard against NaN/Infinity
-                if result.is_nan() || result.is_infinite() {
-                    return None;
-                }
-
-                Some(KfxValue::Float(result))
-            }
-
-            ValueTransform::ParseColor { output_format } => {
+            ValueTransform::ParseColor => {
                 // Fully transparent colors (`transparent`, zero-alpha rgba)
                 // parse to None and the property is omitted entirely —
                 // coercing them to an opaque value would paint black boxes.
                 let (r, g, b, a) = parse_css_color(raw)?;
-                match output_format {
-                    ColorFormat::PackedInt | ColorFormat::RgbStruct => {
-                        // KFX uses ARGB packing; alpha is preserved.
-                        let packed = ((a as i64) << 24)
-                            | ((r as i64) << 16)
-                            | ((g as i64) << 8)
-                            | (b as i64);
-                        Some(KfxValue::Integer(packed))
-                    }
-                }
-            }
-
-            ValueTransform::ExtractShorthand {
-                index,
-                default_value,
-            } => {
-                let parts: Vec<&str> = raw.split_whitespace().collect();
-                extract_shorthand_value(&parts, *index, default_value.clone())
+                // KFX uses ARGB packing; alpha is preserved.
+                let packed =
+                    ((a as i64) << 24) | ((r as i64) << 16) | ((g as i64) << 8) | (b as i64);
+                Some(KfxValue::Integer(packed))
             }
 
             ValueTransform::Dimensioned { unit } => {
@@ -1436,52 +1185,6 @@ impl ValueTransform {
                     unit: actual_unit,
                 })
             }
-
-            ValueTransform::ConvertToDimensioned {
-                base_pixels,
-                target_unit,
-            } => {
-                let (num, css_unit) = parse_css_length(raw)?;
-
-                // Preserve percentage values as-is (don't convert to em)
-                if css_unit == "%" {
-                    return Some(KfxValue::Dimensioned {
-                        value: num,
-                        unit: KfxSymbol::Percent,
-                    });
-                }
-
-                // Guard against zero base
-                if *base_pixels == 0.0 {
-                    return None;
-                }
-
-                // Convert CSS value to pixels first
-                let pixels = convert_to_pixels(num, &css_unit, *base_pixels);
-
-                // Then convert pixels to target unit
-                // KFX uses Em for most relative dimensions
-                let result = match target_unit {
-                    // Em/Rem: relative to base font size (most common for KFX)
-                    KfxSymbol::Em | KfxSymbol::Rem => pixels / base_pixels,
-                    // Percentage: 100% = base_pixels
-                    KfxSymbol::YjPercentage => pixels / base_pixels * 100.0,
-                    // Default: convert to em (safest for KFX compatibility)
-                    _ => pixels / base_pixels,
-                };
-
-                // Guard against NaN/Infinity
-                if result.is_nan() || result.is_infinite() {
-                    return None;
-                }
-
-                Some(KfxValue::Dimensioned {
-                    value: result,
-                    unit: *target_unit,
-                })
-            }
-
-            ValueTransform::ToSymbol => Some(KfxValue::String(raw.to_string())),
 
             ValueTransform::WrapInStruct { field, min_value } => {
                 let num = parse_number(raw)? as i64;
@@ -1555,21 +1258,6 @@ fn parse_css_length(s: &str) -> Option<(f64, String)> {
     };
 
     Some((num, unit))
-}
-
-/// Convert a value with CSS unit to pixels.
-fn convert_to_pixels(value: f64, unit: &str, base_font_size: f64) -> f64 {
-    match unit {
-        "px" => value,
-        "em" => value * base_font_size,
-        "rem" => value * base_font_size,
-        "pt" => value * (96.0 / 72.0), // 72 pt per inch, 96 px per inch
-        "%" => value * base_font_size / 100.0,
-        "in" => value * 96.0,
-        "cm" => value * (96.0 / 2.54),
-        "mm" => value * (96.0 / 25.4),
-        _ => value, // Unknown unit, assume pixels
-    }
 }
 
 /// Parse a CSS color into (r, g, b, a).
@@ -1715,48 +1403,6 @@ fn parse_color_component(s: &str) -> Option<u8> {
         Some((pct * 255.0 / 100.0).round() as u8)
     } else {
         s.parse().ok()
-    }
-}
-
-/// Extract a value from a CSS shorthand property.
-///
-/// CSS shorthands expand in specific ways:
-/// - 1 value: applies to all sides (top, right, bottom, left)
-/// - 2 values: (top/bottom, left/right)
-/// - 3 values: (top, left/right, bottom)
-/// - 4 values: (top, right, bottom, left)
-fn extract_shorthand_value(
-    parts: &[&str],
-    index: usize,
-    default: Option<KfxValue>,
-) -> Option<KfxValue> {
-    let value = match (parts.len(), index) {
-        // 1 value: all sides get the same value
-        (1, _) => parts.first(),
-
-        // 2 values: (vertical, horizontal)
-        // index 0,2 = top/bottom = parts[0]
-        // index 1,3 = left/right = parts[1]
-        (2, 0) | (2, 2) => parts.first(),
-        (2, 1) | (2, 3) => parts.get(1),
-
-        // 3 values: (top, horizontal, bottom)
-        // index 0 = top = parts[0]
-        // index 1,3 = left/right = parts[1]
-        // index 2 = bottom = parts[2]
-        (3, 0) => parts.first(),
-        (3, 1) | (3, 3) => parts.get(1),
-        (3, 2) => parts.get(2),
-
-        // 4 values: (top, right, bottom, left)
-        (4, i) => parts.get(i),
-
-        _ => None,
-    };
-
-    match value {
-        Some(v) => Some(KfxValue::String((*v).to_string())),
-        None => default,
     }
 }
 
@@ -1996,9 +1642,7 @@ impl ValueTransform {
                 None
             }
 
-            ValueTransform::Dimensioned { .. }
-            | ValueTransform::ConvertToDimensioned { .. }
-            | ValueTransform::PreserveUnit => {
+            ValueTransform::Dimensioned { .. } | ValueTransform::PreserveUnit => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers), Float, or Decimal (Amazon uses all three)
                 let fields = value.as_struct()?;
@@ -2028,7 +1672,7 @@ impl ValueTransform {
                 Some(format!("{}{}", num, unit_str))
             }
 
-            ValueTransform::ParseColor { .. } => {
+            ValueTransform::ParseColor => {
                 // Packed integer: 0xRRGGBB
                 let packed = value.as_int()? as u32;
                 let r = (packed >> 16) & 0xFF;
@@ -2037,21 +1681,12 @@ impl ValueTransform {
                 Some(format!("#{:02x}{:02x}{:02x}", r, g, b))
             }
 
-            ValueTransform::ScaleFloat { factor, .. } => {
-                // Reverse scaling
-                let i = value.as_int()?;
-                let original = i as f64 / factor;
-                Some(original.to_string())
-            }
-
             ValueTransform::WrapInStruct { field, .. } => {
                 // Parse struct { field: N } and extract integer value
                 let fields = value.as_struct()?;
                 let int_value = get_field_by_symbol(fields, *field)?.as_int()?;
                 Some(int_value.to_string())
             }
-
-            _ => None, // Other transforms not commonly used for styles
         }
     }
 }
@@ -2603,45 +2238,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_shorthand_one_value() {
-        let parts = vec!["10px"];
-        assert!(extract_shorthand_value(&parts, 0, None).is_some());
-        assert!(extract_shorthand_value(&parts, 1, None).is_some());
-        assert!(extract_shorthand_value(&parts, 2, None).is_some());
-        assert!(extract_shorthand_value(&parts, 3, None).is_some());
-    }
-
-    #[test]
-    fn test_extract_shorthand_two_values() {
-        let parts = vec!["10px", "20px"];
-        // top/bottom = 10px
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 0, None) {
-            assert_eq!(s, "10px");
-        }
-        // left/right = 20px
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 1, None) {
-            assert_eq!(s, "20px");
-        }
-    }
-
-    #[test]
-    fn test_extract_shorthand_four_values() {
-        let parts = vec!["1px", "2px", "3px", "4px"];
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 0, None) {
-            assert_eq!(s, "1px"); // top
-        }
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 1, None) {
-            assert_eq!(s, "2px"); // right
-        }
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 2, None) {
-            assert_eq!(s, "3px"); // bottom
-        }
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 3, None) {
-            assert_eq!(s, "4px"); // left
-        }
-    }
-
-    #[test]
     fn test_map_transform() {
         let transform = ValueTransform::Map(vec![
             ("bold".into(), KfxValue::Integer(700)),
@@ -2652,19 +2248,6 @@ mod tests {
         assert_eq!(transform.apply("BOLD"), Some(KfxValue::Integer(700)));
         assert_eq!(transform.apply("normal"), Some(KfxValue::Integer(400)));
         assert_eq!(transform.apply("unknown"), None);
-    }
-
-    #[test]
-    fn test_scale_float_transform() {
-        let transform = ValueTransform::ScaleFloat {
-            factor: 100.0,
-            min: Some(0.0),
-            max: Some(1000.0),
-            precision: RoundingMode::Round,
-        };
-
-        assert_eq!(transform.apply("1.5"), Some(KfxValue::Integer(150)));
-        assert_eq!(transform.apply("0.5"), Some(KfxValue::Integer(50)));
     }
 
     #[test]
@@ -2863,162 +2446,10 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_extract_shorthand_three_values() {
-        // 3 values: (top, horizontal, bottom)
-        let parts = vec!["1px", "2px", "3px"];
-
-        // index 0 = top
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 0, None) {
-            assert_eq!(s, "1px");
-        } else {
-            panic!("Expected Some for index 0");
-        }
-
-        // index 1 = right (uses horizontal)
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 1, None) {
-            assert_eq!(s, "2px");
-        } else {
-            panic!("Expected Some for index 1");
-        }
-
-        // index 2 = bottom
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 2, None) {
-            assert_eq!(s, "3px");
-        } else {
-            panic!("Expected Some for index 2");
-        }
-
-        // index 3 = left (uses horizontal)
-        if let Some(KfxValue::String(s)) = extract_shorthand_value(&parts, 3, None) {
-            assert_eq!(s, "2px");
-        } else {
-            panic!("Expected Some for index 3");
-        }
-    }
-
-    #[test]
-    fn test_whitespace_handling() {
-        // ExtractShorthand with excessive whitespace
-        let transform = ValueTransform::ExtractShorthand {
-            index: 1,
-            default_value: None,
-        };
-
-        // Multiple spaces between values
-        let result = transform.apply("  10px    20px  ");
-        if let Some(KfxValue::String(s)) = result {
-            assert_eq!(s, "20px");
-        } else {
-            panic!("Expected Some with whitespace handling");
-        }
-    }
-
-    #[test]
     fn test_css_length_with_whitespace() {
         // Leading/trailing whitespace
         assert_eq!(parse_css_length("  10px  "), Some((10.0, "px".into())));
         assert_eq!(parse_css_length("\t1.5em\n"), Some((1.5, "em".into())));
-    }
-
-    #[test]
-    fn test_scale_float_clamping() {
-        let transform = ValueTransform::ScaleFloat {
-            factor: 100.0,
-            min: Some(0.0),
-            max: Some(500.0),
-            precision: RoundingMode::Round,
-        };
-
-        // Should clamp to max
-        assert_eq!(transform.apply("10.0"), Some(KfxValue::Integer(500)));
-
-        // Should clamp to min
-        assert_eq!(transform.apply("-5.0"), Some(KfxValue::Integer(0)));
-
-        // Within range
-        assert_eq!(transform.apply("2.5"), Some(KfxValue::Integer(250)));
-    }
-
-    #[test]
-    fn test_scale_float_rounding_modes() {
-        // Test Floor
-        let floor_transform = ValueTransform::ScaleFloat {
-            factor: 1.0,
-            min: None,
-            max: None,
-            precision: RoundingMode::Floor,
-        };
-        assert_eq!(floor_transform.apply("1.9"), Some(KfxValue::Integer(1)));
-        assert_eq!(floor_transform.apply("-1.1"), Some(KfxValue::Integer(-2)));
-
-        // Test Ceil
-        let ceil_transform = ValueTransform::ScaleFloat {
-            factor: 1.0,
-            min: None,
-            max: None,
-            precision: RoundingMode::Ceil,
-        };
-        assert_eq!(ceil_transform.apply("1.1"), Some(KfxValue::Integer(2)));
-        assert_eq!(ceil_transform.apply("-1.9"), Some(KfxValue::Integer(-1)));
-
-        // Test Round
-        let round_transform = ValueTransform::ScaleFloat {
-            factor: 1.0,
-            min: None,
-            max: None,
-            precision: RoundingMode::Round,
-        };
-        assert_eq!(round_transform.apply("1.4"), Some(KfxValue::Integer(1)));
-        assert_eq!(round_transform.apply("1.5"), Some(KfxValue::Integer(2)));
-    }
-
-    #[test]
-    fn test_scale_float_handles_nan() {
-        let transform = ValueTransform::ScaleFloat {
-            factor: 100.0,
-            min: None,
-            max: None,
-            precision: RoundingMode::Round,
-        };
-
-        // Invalid input that would produce NaN
-        assert_eq!(transform.apply("not_a_number"), None);
-        assert_eq!(transform.apply(""), None);
-    }
-
-    #[test]
-    fn test_convert_unit_division_by_zero() {
-        let transform = ValueTransform::ConvertUnit {
-            base_pixels: 0.0, // Division by zero
-            target_unit: KfxUnitType::Em,
-        };
-
-        // Should return None, not panic
-        assert_eq!(transform.apply("10px"), None);
-    }
-
-    #[test]
-    fn test_shorthand_empty_input() {
-        let parts: Vec<&str> = vec![];
-        let default = Some(KfxValue::String("0px".to_string()));
-
-        // Should return default when no parts
-        let result = extract_shorthand_value(&parts, 0, default.clone());
-        assert_eq!(result, default);
-    }
-
-    #[test]
-    fn test_shorthand_out_of_bounds_uses_default() {
-        let _parts = ["10px", "20px"];
-        let default = Some(KfxValue::String("0px".to_string()));
-
-        // Index 4 is out of bounds for 2 values, but our logic handles it
-        // Actually for 2 values, index 0-3 are all valid due to expansion
-        // Let's test with 4 values and index 5
-        let parts4 = vec!["1px", "2px", "3px", "4px"];
-        let result = extract_shorthand_value(&parts4, 5, default.clone());
-        // parts.get(5) returns None, so should use default
-        assert_eq!(result, default);
     }
 
     #[test]
@@ -3055,19 +2486,6 @@ mod tests {
         // Negative values are valid in CSS (e.g., text-indent: -10px)
         assert_eq!(parse_css_length("-10px"), Some((-10.0, "px".into())));
         assert_eq!(parse_css_length("-1.5em"), Some((-1.5, "em".into())));
-    }
-
-    #[test]
-    fn test_unit_conversion_factors() {
-        // Verify unit conversion is correct
-        let base = 16.0; // Standard base font size
-
-        assert_eq!(convert_to_pixels(1.0, "px", base), 1.0);
-        assert_eq!(convert_to_pixels(1.0, "em", base), 16.0);
-        assert_eq!(convert_to_pixels(1.0, "rem", base), 16.0);
-        assert_eq!(convert_to_pixels(72.0, "pt", base), 96.0); // 72pt = 1 inch = 96px
-        assert_eq!(convert_to_pixels(100.0, "%", base), 16.0); // 100% of 16px
-        assert_eq!(convert_to_pixels(1.0, "in", base), 96.0);
     }
 
     // ========================================================================
@@ -3312,89 +2730,6 @@ mod tests {
         assert_eq!(ir_style.font_weight, FontWeight::BOLD);
         assert_eq!(ir_style.text_align, TextAlign::Center);
         assert_eq!(ir_style.margin_top, crate::style::Length::Em(2.0));
-    }
-
-    #[test]
-    fn test_convert_to_dimensioned_transform() {
-        // Test: CSS "32px" with 16px base → 2em
-        let transform = ValueTransform::ConvertToDimensioned {
-            base_pixels: 16.0,
-            target_unit: KfxSymbol::Em,
-        };
-
-        let result = transform.apply("32px").unwrap();
-        match result {
-            KfxValue::Dimensioned { value, unit } => {
-                assert!(
-                    (value - 2.0).abs() < 0.001,
-                    "32px / 16px should be 2em, got {}",
-                    value
-                );
-                assert_eq!(unit, KfxSymbol::Em);
-            }
-            _ => panic!("Expected Dimensioned, got {:?}", result),
-        }
-
-        // Test: CSS "1.5em" → 1.5em (em to em is 1:1 when using base)
-        let result = transform.apply("1.5em").unwrap();
-        match result {
-            KfxValue::Dimensioned { value, unit } => {
-                // 1.5em * 16 = 24px, 24px / 16 = 1.5em
-                assert!(
-                    (value - 1.5).abs() < 0.001,
-                    "1.5em should stay 1.5em, got {}",
-                    value
-                );
-                assert_eq!(unit, KfxSymbol::Em);
-            }
-            _ => panic!("Expected Dimensioned, got {:?}", result),
-        }
-
-        // Test: CSS "50%" → preserved as { value: 50, unit: percent }
-        let result = transform.apply("50%").unwrap();
-        match result {
-            KfxValue::Dimensioned { value, unit } => {
-                assert!(
-                    (value - 50.0).abs() < 0.001,
-                    "50% should be preserved as 50, got {}",
-                    value
-                );
-                assert_eq!(unit, KfxSymbol::Percent);
-            }
-            _ => panic!("Expected Dimensioned, got {:?}", result),
-        }
-    }
-
-    #[test]
-    fn test_convert_to_dimensioned_inverse() {
-        // Test inverse: {value: 2.0, unit: em} → "2em"
-        let transform = ValueTransform::ConvertToDimensioned {
-            base_pixels: 16.0,
-            target_unit: KfxSymbol::Em,
-        };
-
-        let kfx_value = IonValue::Struct(vec![
-            (KfxSymbol::Value as u64, IonValue::Float(2.0)),
-            (
-                KfxSymbol::Unit as u64,
-                IonValue::Symbol(KfxSymbol::Em as u64),
-            ),
-        ]);
-
-        let css = transform.inverse(&kfx_value).unwrap();
-        assert_eq!(css, "2em");
-
-        // Test with Int value (Amazon sometimes stores whole numbers as Int)
-        let kfx_value = IonValue::Struct(vec![
-            (KfxSymbol::Value as u64, IonValue::Int(3)),
-            (
-                KfxSymbol::Unit as u64,
-                IonValue::Symbol(KfxSymbol::Em as u64),
-            ),
-        ]);
-
-        let css = transform.inverse(&kfx_value).unwrap();
-        assert_eq!(css, "3em");
     }
 
     // ========================================================================

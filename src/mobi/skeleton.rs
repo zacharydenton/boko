@@ -445,17 +445,14 @@ fn extract_body_aid(skel_prefix: &[u8]) -> Option<String> {
 /// Split body-content bytes into chunks of at most ~`max_size` bytes each,
 /// always cutting at HTML element boundaries (after a closing tag).
 ///
-/// We walk the bytes tracking tag nesting depth. After each closing tag or
-/// self-closing tag we're at a safe boundary between sibling elements. Cut
-/// there once the in-progress chunk has reached `max_size`, preferring the
-/// *shallowest* such boundary so each chunk ends with a complete (possibly
-/// nested) element rather than mid-way through some deeply-nested run.
+/// We walk the bytes looking for tag boundaries. After each closing tag or
+/// self-closing tag we're at a safe boundary, so we cut at the first such
+/// boundary once the in-progress chunk has reached `max_size` (first-fit).
 ///
-/// In practice this gives chunks that always contain whole `<p>` /
-/// `<li>` / `<section>` etc. units. Comments, processing instructions,
-/// CDATA, and doctypes don't affect depth. A single element larger than
-/// `max_size` becomes one oversized chunk (rare; would need to recurse
-/// inside it to split further, which we don't here).
+/// Comments, processing instructions, CDATA, and doctypes are skipped over.
+/// A single element larger than `max_size` becomes one oversized chunk
+/// (rare; would need to recurse inside it to split further, which we don't
+/// here).
 fn split_body_into_chunks(body: &[u8], max_size: usize) -> Vec<Vec<u8>> {
     if body.is_empty() {
         return vec![Vec::new()];
@@ -463,7 +460,6 @@ fn split_body_into_chunks(body: &[u8], max_size: usize) -> Vec<Vec<u8>> {
 
     let mut chunks = Vec::new();
     let mut chunk_start = 0;
-    let mut depth: i32 = 0;
     let mut i = 0;
 
     while i < body.len() {
@@ -506,12 +502,6 @@ fn split_body_into_chunks(body: &[u8], max_size: usize) -> Vec<Vec<u8>> {
         let tag_end = j + 1;
 
         let self_closing = j > 0 && body[j - 1] == b'/';
-
-        if is_close {
-            depth = depth.saturating_sub(1);
-        } else if !self_closing {
-            depth += 1;
-        }
 
         i = tag_end;
 

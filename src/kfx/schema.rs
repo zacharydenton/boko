@@ -33,7 +33,6 @@ use crate::kfx::transforms::{
     AttributeTransform, IdentityTransform, KfxLinkTransform, ResourceTransform,
 };
 use crate::model::{LandmarkType, Role};
-use crate::style::{ComputedStyle, FontStyle, FontWeight};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -65,16 +64,6 @@ pub enum Strategy {
         modifier_attr: KfxSymbol,
         /// How to transform the role based on attribute value.
         modifier_effect: ModifierEffect,
-        /// KFX type symbol for export.
-        kfx_type: KfxSymbol,
-    },
-
-    /// Apply a style modifier without creating a new node.
-    ///
-    /// Usage: Bold, italic wrappers in style_events.
-    Style {
-        /// The style modification to apply.
-        modifier: StyleModifier,
         /// KFX type symbol for export.
         kfx_type: KfxSymbol,
     },
@@ -123,7 +112,6 @@ impl Strategy {
         match self {
             Strategy::Structure { kfx_type, .. } => *kfx_type,
             Strategy::StructureWithModifier { kfx_type, .. } => *kfx_type,
-            Strategy::Style { kfx_type, .. } => *kfx_type,
             Strategy::Dynamic { kfx_type, .. } => *kfx_type,
             Strategy::Transparent { kfx_type } => *kfx_type,
             Strategy::StructureWithSemanticType { kfx_type, .. } => *kfx_type,
@@ -146,31 +134,6 @@ pub enum ModifierEffect {
     HeadingLevel,
     /// Attribute presence switches to ordered list.
     ListOrdered,
-}
-
-/// Style modifications that can be applied without creating nodes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StyleModifier {
-    Bold,
-    Italic,
-    Underline,
-    Strikethrough,
-    Superscript,
-    Subscript,
-}
-
-impl StyleModifier {
-    /// Apply this modifier to a ComputedStyle.
-    pub fn apply(&self, style: &mut ComputedStyle) {
-        match self {
-            StyleModifier::Bold => style.font_weight = FontWeight::BOLD,
-            StyleModifier::Italic => style.font_style = FontStyle::Italic,
-            StyleModifier::Underline => style.text_decoration_underline = true,
-            StyleModifier::Strikethrough => style.text_decoration_line_through = true,
-            StyleModifier::Superscript => style.vertical_align = crate::style::VerticalAlign::Super,
-            StyleModifier::Subscript => style.vertical_align = crate::style::VerticalAlign::Sub,
-        }
-    }
 }
 
 /// Semantic attribute targets for attribute mapping.
@@ -830,7 +793,6 @@ impl KfxSchema {
                 }
             }
 
-            Strategy::Style { .. } => Role::Inline, // Style strategies don't create structure
             Strategy::Transparent { .. } => Role::Container,
             Strategy::StructureWithSemanticType { role, .. } => *role,
         }
@@ -926,63 +888,6 @@ impl KfxSchema {
     /// This includes: Link, Inline (for bold/italic spans).
     pub fn is_inline_role(&self, role: Role) -> bool {
         matches!(role, Role::Link | Role::Inline)
-    }
-
-    /// Export span attributes for an inline role.
-    ///
-    /// Similar to export_attributes but uses span rules instead of element rules.
-    /// Used when generating style_events for inline spans.
-    pub fn export_span_attributes<F>(
-        &self,
-        role: Role,
-        get_semantic: F,
-        export_ctx: &crate::kfx::transforms::ExportContext,
-    ) -> Vec<(u64, String)>
-    where
-        F: Fn(SemanticTarget) -> Option<String>,
-    {
-        let mut attrs = Vec::new();
-
-        // Find the matching span rule for this role
-        // For export, we match by examining the strategy's trigger_role or role
-        for span_rule in &self.span_rules {
-            let rule_matches = match &span_rule.strategy {
-                Strategy::Dynamic { trigger_role, .. } => *trigger_role == role,
-                Strategy::Structure { role: r, .. } => *r == role,
-                Strategy::StructureWithModifier { default_role, .. } => *default_role == role,
-                Strategy::StructureWithSemanticType { role: r, .. } => *r == role,
-                Strategy::Style { .. } => role == Role::Inline,
-                Strategy::Transparent { .. } => false,
-            };
-
-            if rule_matches {
-                // Apply attribute rules for this span type
-                for attr_rule in &span_rule.attr_rules {
-                    if let Some(value) = get_semantic(attr_rule.target) {
-                        let parsed = crate::kfx::transforms::ParsedAttribute::String(value);
-                        let kfx_value = attr_rule.transform.export(&parsed, export_ctx);
-                        attrs.push((attr_rule.kfx_field as u64, kfx_value));
-                    }
-                }
-
-                // Apply conditional export rules (e.g., noteref → YjDisplay)
-                for cond_rule in &span_rule.conditional_export_rules {
-                    if let Some(value) = get_semantic(cond_rule.source)
-                        && value.contains(cond_rule.trigger_value)
-                    {
-                        // Emit KFX symbol ID as string (will be parsed in tokens_to_ion)
-                        attrs.push((
-                            cond_rule.kfx_field as u64,
-                            (cond_rule.kfx_value as u64).to_string(),
-                        ));
-                    }
-                }
-
-                break;
-            }
-        }
-
-        attrs
     }
 
     // =========================================================================
@@ -1165,17 +1070,6 @@ mod tests {
         let schema = KfxSchema::new();
         let strategy = schema.export_strategy(Role::Paragraph).unwrap();
         assert_eq!(strategy.kfx_type(), KfxSymbol::Text);
-    }
-
-    #[test]
-    fn test_style_modifier_apply() {
-        let mut style = ComputedStyle::default();
-        StyleModifier::Bold.apply(&mut style);
-        assert!(style.is_bold());
-
-        let mut style = ComputedStyle::default();
-        StyleModifier::Italic.apply(&mut style);
-        assert!(style.is_italic());
     }
 
     #[test]

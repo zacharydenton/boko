@@ -94,9 +94,6 @@ pub(super) fn walk_node_for_export(
         return;
     }
 
-    // Get KFX type from schema (will be used in tokens_to_ion)
-    let _kfx_type = sch.kfx_type_for_role(node.role);
-
     // Build element start with semantics
     let mut elem = ElementStart::new(node.role);
     elem.node_id = Some(node_id);

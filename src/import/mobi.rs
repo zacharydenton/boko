@@ -289,10 +289,10 @@ impl MobiImporter {
         // Try pagebreak-based splitting first. If it produces only 1 chapter
         // and NCX positions are available, re-transform with NCX anchors and
         // force NCX-based splitting (bypassing the pagebreak check that failed).
-        let (split, transformed) = {
+        let split = {
             let initial = split_mobi_html(&transformed, None);
             if initial.chapters.len() > 1 || ncx_positions.is_empty() {
-                (initial, transformed)
+                initial
             } else {
                 // Re-transform with NCX anchors at byte positions, force NCX split
                 let with_ncx = ensure_utf8(
@@ -301,14 +301,12 @@ impl MobiImporter {
                 );
                 let ncx_split = split_mobi_html_ncx_only(&with_ncx, &ncx_positions);
                 if ncx_split.chapters.len() > 1 {
-                    (ncx_split, with_ncx)
+                    ncx_split
                 } else {
-                    (initial, transformed)
+                    initial
                 }
             }
         };
-        // Keep transformed for potential later use
-        let _ = transformed;
 
         // Build spine from split chapters
         let spine: Vec<SpineEntry> = (0..split.chapters.len())

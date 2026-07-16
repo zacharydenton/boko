@@ -101,8 +101,8 @@ impl Default for SymbolTable {
 
 /// Fragment ID generator.
 ///
-/// Generates unique IDs for fragments, starting at 200 to avoid
-/// collision with system fragments (0-199 are reserved).
+/// Generates unique IDs for fragments, starting at `FRAGMENT_MIN_ID` (866)
+/// to avoid collision with symbols in the base and local symbol tables.
 pub struct IdGenerator {
     next_id: u64,
 }
@@ -587,7 +587,7 @@ pub struct ExportContext {
     /// Global symbol table - strings → symbol IDs.
     pub symbols: SymbolTable,
 
-    /// Fragment ID generator (starts at 200).
+    /// Fragment ID generator (starts at `IdGenerator::FRAGMENT_MIN_ID`, 866).
     pub fragment_ids: IdGenerator,
 
     /// Resource tracking: href → resource symbol.
@@ -895,11 +895,6 @@ impl ExportContext {
         self.current_chapter = None;
     }
 
-    /// Get the fragment ID for a given source path.
-    pub fn get_fragment_for_path(&self, path: &str) -> Option<u64> {
-        self.path_to_fragment.get(path).copied()
-    }
-
     /// Record position for a node during Pass 1.
     pub fn record_position(&mut self, node_id: NodeId) {
         if let Some(chapter_id) = self.current_chapter {
@@ -911,15 +906,6 @@ impl ExportContext {
                 },
             );
         }
-    }
-
-    /// Record a heading position for headings navigation.
-    pub fn record_heading(&mut self, level: u8) {
-        self.heading_positions.push(HeadingPosition {
-            level,
-            fragment_id: self.current_fragment_id,
-            offset: self.current_text_offset,
-        });
     }
 
     /// Record heading position during Pass 2 with actual content fragment ID.
