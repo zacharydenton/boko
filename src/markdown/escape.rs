@@ -55,6 +55,13 @@ pub fn escape_markdown_at(text: &str, mut at_line_start: bool) -> String {
                 result.push('\\');
                 result.push(c);
             }
+            '-' | '=' if at_line_start && is_line_of(bytes, i, c) => {
+                // A whole line of `-` or `=` is a thematic break or a setext
+                // heading underline; escaping the first char defuses both
+                // (`---` scene separators are common in ebooks).
+                result.push('\\');
+                result.push(c);
+            }
             '-' | '+' if at_line_start && is_marker_terminator(bytes.get(i + 1)) => {
                 // A bullet list marker at a line start would turn the text
                 // into a list item.
@@ -111,6 +118,29 @@ pub fn escape_markdown_at(text: &str, mut at_line_start: bool) -> String {
 /// whitespace or end of text.
 fn is_marker_terminator(byte: Option<&u8>) -> bool {
     matches!(byte, None | Some(b' ' | b'\t' | b'\n'))
+}
+
+/// Whether the line starting at byte `i` consists solely of the character `c`
+/// (plus trailing spaces), i.e. a thematic break / setext underline. `c` must
+/// be at a line start (the caller guarantees this).
+fn is_line_of(bytes: &[u8], i: usize, c: char) -> bool {
+    let c = c as u8;
+    let mut j = i;
+    let mut count = 0;
+    while j < bytes.len() && bytes[j] == c {
+        j += 1;
+        count += 1;
+    }
+    // `-` needs three for a thematic break, but a single `-` is already
+    // handled as a bullet marker; `=` needs at least one for setext. Require
+    // the rest of the line to be blank.
+    if count == 0 {
+        return false;
+    }
+    while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+        j += 1;
+    }
+    matches!(bytes.get(j), None | Some(b'\n'))
 }
 
 /// Calculate the minimum fence length needed for a code block.
@@ -249,6 +279,20 @@ mod tests {
         // Digits not followed by a list delimiter are untouched.
         assert_eq!(escape_markdown("1990 was"), "1990 was");
         assert_eq!(escape_markdown("3.14 is pi"), "3.14 is pi");
+    }
+
+    #[test]
+    fn test_escape_thematic_break_and_setext() {
+        // A line of dashes/equals must not become a rule or heading underline.
+        assert_eq!(escape_markdown("---"), "\\---");
+        assert_eq!(escape_markdown("***"), "\\*\\*\\*"); // already escaped char-wise
+        assert_eq!(escape_markdown("==="), "\\===");
+        assert_eq!(escape_markdown("Title\n==="), "Title\n\\===");
+        assert_eq!(escape_markdown("Body\n---"), "Body\n\\---");
+        // Dashes with trailing content are a bullet, not a break.
+        assert_eq!(escape_markdown("- item"), "\\- item");
+        // Equals mid-line is untouched.
+        assert_eq!(escape_markdown("a = b"), "a = b");
     }
 
     #[test]

@@ -91,7 +91,8 @@ fn table_cells_escape_markdown_markers() {
 
     assert!(md.contains("a\\|b"), "pipe escaped: {md}");
     assert!(md.contains("\\*em\\*"), "asterisks escaped: {md}");
-    assert!(md.contains("\\[br]"), "bracket escaped: {md}");
+    // Table cells now go through full body escaping, so both brackets escape.
+    assert!(md.contains("\\[br\\]"), "bracket escaped: {md}");
 }
 
 // ---------------------------------------------------------------------------

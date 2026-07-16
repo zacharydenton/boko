@@ -394,7 +394,9 @@ impl<'a> RenderContext<'a> {
                 } else {
                     self.output.push('[');
                     self.walk_children(id);
-                    self.output.push_str(&format!("]({})", anchor));
+                    self.output.push_str("](");
+                    self.output.push_str(&format_link_destination(&anchor));
+                    self.output.push(')');
                 }
             }
 
@@ -402,7 +404,13 @@ impl<'a> RenderContext<'a> {
                 self.start_block();
                 let alt = self.chapter.semantics.alt(id).unwrap_or("image");
                 let src = self.chapter.semantics.src(id).unwrap_or("");
-                self.output.push_str(&format!("![{}]({})", alt, src));
+                // The alt goes inside `[...]`, so escape `]`/`[`/backslash or
+                // it terminates the label early; the src goes inside `(...)`.
+                self.output.push_str("![");
+                self.output.push_str(&escape_link_text(alt));
+                self.output.push_str("](");
+                self.output.push_str(&format_link_destination(src));
+                self.output.push(')');
                 self.end_block(role);
             }
 
@@ -499,7 +507,11 @@ impl<'a> RenderContext<'a> {
 
             Role::Footnote => {
                 self.ensure_line_started();
-                let text = self.collect_text(id);
+                // Escape like body text: the content is emitted verbatim after
+                // `[^n]:`, so unescaped `*`/`` ` ``/`[` would be interpreted as
+                // markdown. Newlines are flattened since the definition is one
+                // line.
+                let text = escape_markdown_at(&self.collect_text(id), false).replace('\n', " ");
                 let note_num = self.footnote_start + self.footnotes.len() + 1;
                 self.footnotes.push(Footnote {
                     number: note_num,
@@ -624,20 +636,18 @@ impl<'a> RenderContext<'a> {
         }
     }
 
-    /// Collect the cell texts of a table row, escaped for a GFM table cell
-    /// (backslashes, pipes, and inline markers escaped, newlines flattened
-    /// to spaces).
+    /// Collect the cell texts of a table row, escaped for a GFM table cell:
+    /// full markdown escaping (so `_italic_`, `` `code` ``, `<tag>`, `#` are
+    /// all handled like body text) plus the table-specific pipe escape and
+    /// newline flattening.
     fn table_cells(&mut self, row_id: NodeId) -> Vec<String> {
         let cell_ids: Vec<NodeId> = self.chapter.children(row_id).collect();
         cell_ids
             .into_iter()
             .map(|cell| {
-                self.collect_text(cell)
-                    .replace('\\', "\\\\")
-                    .replace('|', "\\|")
-                    .replace('*', "\\*")
-                    .replace('[', "\\[")
-                    .replace('\n', " ")
+                // escape_markdown_at already escapes `|`; only the newline
+                // flatten is table-specific.
+                escape_markdown_at(&self.collect_text(cell), false).replace('\n', " ")
             })
             .collect()
     }
@@ -743,6 +753,67 @@ impl<'a> RenderContext<'a> {
     }
 }
 
+/// Escape text destined for a link/image label (`[...]`): the brackets and
+/// backslash would otherwise terminate the label early.
+fn escape_link_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        if c == '\n' {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Format a link destination for `(...)`. CommonMark allows an unwrapped
+/// destination only when it has no spaces/control chars and balanced parens;
+/// anything else must be `<...>`-wrapped (with `<`, `>`, and `\` escaped
+/// inside the wrap).
+fn format_link_destination(dest: &str) -> String {
+    let needs_wrap =
+        dest.chars().any(|c| c.is_whitespace() || c.is_control()) || !parens_balanced(dest);
+    if !needs_wrap {
+        return dest.to_string();
+    }
+    let mut out = String::with_capacity(dest.len() + 2);
+    out.push('<');
+    for c in dest.chars() {
+        match c {
+            '<' | '>' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            // A literal newline can't appear inside <...>; drop it.
+            '\n' | '\r' => {}
+            _ => out.push(c),
+        }
+    }
+    out.push('>');
+    out
+}
+
+fn parens_balanced(s: &str) -> bool {
+    let mut depth: i32 = 0;
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
 /// Render a single chapter to markdown.
 ///
 /// This is the main entry point for chapter rendering. It creates a
@@ -779,6 +850,45 @@ mod tests {
         let heading_slugs = HashMap::new();
         let result = render_chapter(chapter, ChapterId(0), &resolved, &heading_slugs, 0);
         result.content
+    }
+
+    #[test]
+    fn image_alt_and_src_are_escaped() {
+        let mut chapter = Chapter::new();
+        let img = chapter.alloc_node(Node::new(Role::Image));
+        chapter.append_child(NodeId::ROOT, img);
+        chapter.semantics.set_alt(img, "a [bracket] tag");
+        chapter.semantics.set_src(img, "images/a b(1).png");
+
+        let out = render_to_string(&chapter);
+        // `]` in the alt must be escaped; the spacey/paren src must be wrapped.
+        assert!(out.contains(r"![a \[bracket\] tag]"), "{out}");
+        assert!(out.contains("(<images/a b(1).png>)"), "{out}");
+    }
+
+    #[test]
+    fn footnote_content_is_escaped() {
+        let mut chapter = Chapter::new();
+        let note = chapter.alloc_node(Node::new(Role::Footnote));
+        chapter.append_child(NodeId::ROOT, note);
+        let t = chapter.append_text("see *ibid* [1]");
+        let tn = chapter.alloc_node(Node::text(t));
+        chapter.append_child(note, tn);
+
+        let resolved = ResolvedLinks::default();
+        let slugs = HashMap::new();
+        let result = render_chapter(&chapter, ChapterId(0), &resolved, &slugs, 0);
+        assert_eq!(result.footnotes.len(), 1);
+        assert_eq!(result.footnotes[0].content, r"see \*ibid\* \[1\]");
+    }
+
+    #[test]
+    fn format_link_destination_wraps_spaces_and_unbalanced_parens() {
+        assert_eq!(format_link_destination("simple.png"), "simple.png");
+        assert_eq!(format_link_destination("a b.png"), "<a b.png>");
+        assert_eq!(format_link_destination("bad)paren"), "<bad)paren>");
+        // Balanced parens are legal bare.
+        assert_eq!(format_link_destination("ok(1).png"), "ok(1).png");
     }
 
     #[test]
@@ -975,7 +1085,8 @@ mod tests {
 
         let out = render_to_string(&chapter);
         assert!(out.contains("\\*star\\*"), "star escaped: {out}");
-        assert!(out.contains("\\[link]"), "bracket escaped: {out}");
+        // Both brackets are now escaped (full body escaping), which is safe.
+        assert!(out.contains("\\[link\\]"), "bracket escaped: {out}");
     }
 
     #[test]
