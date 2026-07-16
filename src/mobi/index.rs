@@ -314,13 +314,24 @@ pub fn read_index(
 
     let (control_byte_count, tagx) = parse_tagx(&header_data[tagx_start..])?;
 
-    // Parse CNCX records if present
+    // Parse CNCX records if present. num_cncx is an untrusted u32: clamp it
+    // to the PDB's structural maximum (65535 records) and stop at the first
+    // failed read — a claimed count of 4 billion used to spin through 4e9
+    // failing reads, each allocating a formatted error.
     let cncx = if header.num_cncx > 0 {
-        let cncx_start = index_record + header.entry_count as usize + 1;
+        let cncx_start = index_record
+            .checked_add(header.entry_count as usize)
+            .and_then(|s| s.checked_add(1));
         let mut cncx_records = Vec::new();
-        for i in 0..header.num_cncx as usize {
-            if let Ok(rec) = read_record(cncx_start + i) {
-                cncx_records.push(rec);
+        if let Some(cncx_start) = cncx_start {
+            for i in 0..(header.num_cncx as usize).min(0x1_0000) {
+                let Some(idx) = cncx_start.checked_add(i) else {
+                    break;
+                };
+                match read_record(idx) {
+                    Ok(rec) => cncx_records.push(rec),
+                    Err(_) => break,
+                }
             }
         }
         Cncx::parse(&cncx_records, codec)

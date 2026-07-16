@@ -127,7 +127,11 @@ impl ByteSource for MemorySource {
     }
 
     fn read_at_into(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-        let offset = offset as usize;
+        // try_from, not `as`: on 32-bit targets a >4 GiB offset would
+        // truncate, pass the bounds check, and silently read wrong bytes.
+        let offset = usize::try_from(offset).map_err(|_| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "offset beyond end of data")
+        })?;
         if offset > self.data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,

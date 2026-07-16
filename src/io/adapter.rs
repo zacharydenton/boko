@@ -39,20 +39,26 @@ impl Read for ByteSourceCursor {
 
 impl Seek for ByteSourceCursor {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let total_len = self.inner.len() as i64;
-        let current_pos = self.position as i64;
+        let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "Seek out of range");
 
+        // All arithmetic checked: offsets can come from pathological archive
+        // metadata, and an i64 add here would abort under the release
+        // overflow checks (or a >i64::MAX Start would wrap negative).
         let new_pos = match pos {
-            SeekFrom::Start(p) => p as i64,
-            SeekFrom::End(p) => total_len + p,
-            SeekFrom::Current(p) => current_pos + p,
+            SeekFrom::Start(p) => p,
+            SeekFrom::End(p) => {
+                let total_len = i64::try_from(self.inner.len()).map_err(|_| invalid())?;
+                u64::try_from(total_len.checked_add(p).ok_or_else(invalid)?)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Seek before 0"))?
+            }
+            SeekFrom::Current(p) => {
+                let current = i64::try_from(self.position).map_err(|_| invalid())?;
+                u64::try_from(current.checked_add(p).ok_or_else(invalid)?)
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Seek before 0"))?
+            }
         };
 
-        if new_pos < 0 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Seek before 0"));
-        }
-
-        self.position = new_pos as u64;
+        self.position = new_pos;
         Ok(self.position)
     }
 }

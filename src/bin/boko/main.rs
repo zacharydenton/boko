@@ -94,6 +94,11 @@ enum Command {
     },
 }
 
+/// Hard recursion cap for tree walkers, mirroring the library's internal
+/// `util::MAX_TREE_DEPTH`: a hostile chapter can nest arbitrarily deep and
+/// would otherwise overflow the stack.
+const MAX_TREE_DEPTH: usize = 512;
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -732,7 +737,12 @@ fn dump_node_json(chapter: &Chapter, id: NodeId, opts: &DumpOptions, depth: usiz
     };
 
     // Collect children
-    let children: Vec<NodeDump> = if opts.depth.is_none() || depth < opts.depth.unwrap() {
+    // Hard cap independent of --depth: a hostile chapter can nest
+    // arbitrarily deep and would otherwise overflow the stack (same guard
+    // every recursive walker in the library carries).
+    let within_depth =
+        (opts.depth.is_none() || depth < opts.depth.unwrap()) && depth <= MAX_TREE_DEPTH;
+    let children: Vec<NodeDump> = if within_depth {
         chapter
             .children(id)
             .map(|child_id| dump_node_json(chapter, child_id, opts, depth + 1))
@@ -815,7 +825,11 @@ fn dump_ir_tree(book: &mut Book, path: &str, opts: &DumpOptions) -> Result<(), S
 }
 
 fn dump_node_tree(chapter: &Chapter, id: NodeId, opts: &DumpOptions, depth: usize) {
-    // Check depth limit
+    // Check depth limit (plus the hard anti-stack-overflow cap; see
+    // dump_node_json).
+    if depth > MAX_TREE_DEPTH {
+        return;
+    }
     if let Some(max_depth) = opts.depth
         && depth > max_depth
     {

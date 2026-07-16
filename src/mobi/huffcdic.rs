@@ -15,6 +15,18 @@ const MAX_HUFF_DEPTH: usize = 32;
 /// decompress to at most tens of KB; this ceiling is far above that.
 const MAX_DECOMPRESSED_RECORD: usize = 16 * 1024 * 1024;
 
+/// Total decompressed bytes allowed across every text record of one book,
+/// proportional to the compressed input size. Real HUFF/CDIC ratios are well
+/// under 10x; 64x plus a fixed floor leaves generous headroom while stopping
+/// the per-record cap from being multiplied across 65k tiny records into
+/// terabyte-scale output from a sub-megabyte file.
+pub fn total_text_budget(compressed_len: u64) -> usize {
+    let proportional = compressed_len.saturating_mul(64);
+    usize::try_from(proportional)
+        .unwrap_or(usize::MAX)
+        .saturating_add(4 * 1024 * 1024)
+}
+
 /// Charge `n` bytes against the remaining decompression budget, erroring if the
 /// record would exceed [`MAX_DECOMPRESSED_RECORD`].
 fn take_budget(budget: &mut usize, n: usize) -> io::Result<()> {
@@ -208,10 +220,17 @@ impl HuffCdicReader {
     }
 
     /// Decompress a text record
-    pub fn decompress(&mut self, data: &[u8]) -> io::Result<Vec<u8>> {
+    /// Decompress one text record, charging output bytes against both the
+    /// per-record cap and `shared_budget` (the whole-book allowance from
+    /// [`total_text_budget`]). The shared budget is what stops a crafted
+    /// file with thousands of maximally-amplifying records from producing
+    /// terabytes of output 16 MiB at a time.
+    pub fn decompress(&mut self, data: &[u8], shared_budget: &mut usize) -> io::Result<Vec<u8>> {
         let mut result = Vec::new();
-        let mut budget = MAX_DECOMPRESSED_RECORD;
+        let allowed = MAX_DECOMPRESSED_RECORD.min(*shared_budget);
+        let mut budget = allowed;
         self.unpack_into(data, &mut result, 0, &mut budget)?;
+        *shared_budget -= allowed - budget;
         Ok(result)
     }
 

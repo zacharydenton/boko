@@ -272,7 +272,9 @@ fn encode_strands_as_sequences(
                 extra.bit0010 = Some(tbs_type);
             }
             if entries.len() > 1 {
-                extra.bit0100 = Some(entries.len() as u8);
+                // >255 sibling entries in one record would wrap mod 256 and
+                // corrupt the device position map; saturate instead.
+                extra.bit0100 = Some(u8::try_from(entries.len()).unwrap_or(u8::MAX));
             }
             let parent = if entries[0].parent < 0 {
                 0u32

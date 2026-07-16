@@ -171,6 +171,12 @@ pub struct IonParser<'a> {
     data: &'a [u8],
     pos: usize,
     depth: usize,
+    /// Remaining value budget. The depth cap bounds nesting but not the total
+    /// node count: a small crafted input can still expand into tens of
+    /// millions of `IonValue`s (a memory/CPU bomb — one 432-byte fuzz input
+    /// produced 33M nodes). A well-formed document has at most one value per
+    /// input byte, so a generous multiple of the input length is a safe cap.
+    budget: usize,
 }
 
 impl<'a> IonParser<'a> {
@@ -181,6 +187,7 @@ impl<'a> IonParser<'a> {
             data,
             pos: 0,
             depth: 0,
+            budget: data.len().saturating_mul(16).saturating_add(1024),
         }
     }
 
@@ -221,6 +228,15 @@ impl<'a> IonParser<'a> {
                 "Ion nesting too deep",
             ));
         }
+        let budget = self.budget.checked_sub(1);
+        let Some(budget) = budget else {
+            self.depth -= 1;
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Ion value count exceeds limit",
+            ));
+        };
+        self.budget = budget;
         let result = self.parse_value_inner();
         self.depth -= 1;
         result
@@ -321,8 +337,17 @@ impl<'a> IonParser<'a> {
 
                 let end = self.span_end(length)?;
 
-                // Read exponent as VarInt (signed)
+                // Read exponent as VarInt (signed). It must stay inside this
+                // value's span: a crafted exponent that runs past `end` would
+                // consume bytes belonging to sibling values and silently
+                // mis-structure the document.
                 let (exponent, _) = self.read_varint()?;
+                if self.pos > end {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Ion decimal exponent overruns value",
+                    ));
+                }
 
                 // Read coefficient as signed Int (remaining bytes)
                 let coef_len = end.saturating_sub(self.pos);
@@ -437,9 +462,17 @@ impl<'a> IonParser<'a> {
             IonType::Annotation => {
                 let end = self.span_end(length)?;
 
-                // Read annotation length (VarUInt)
+                // Read annotation length (VarUInt). The annotation-symbol
+                // span must stay inside the wrapper's own span, or a crafted
+                // length lets this value consume its siblings' bytes.
                 let ann_len = self.read_varuint()? as usize;
                 let ann_end = self.span_end(ann_len)?;
+                if ann_end > end {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Ion annotation overruns wrapper",
+                    ));
+                }
 
                 // Read annotation symbol IDs
                 let mut annotations = Vec::new();
@@ -453,6 +486,11 @@ impl<'a> IonParser<'a> {
                 } else {
                     IonValue::Null
                 };
+
+                // Contain any malformed inner value: whatever it did or
+                // didn't consume, the wrapper ends exactly at `end`, so the
+                // parent's loop resumes at the right sibling boundary.
+                self.pos = end;
 
                 Ok(IonValue::Annotated(annotations, Box::new(inner)))
             }
@@ -525,7 +563,16 @@ impl<'a> IonParser<'a> {
 
     /// Read a VarInt (signed, 7 bits per byte, MSB set on last byte).
     /// Returns (value, bytes_read).
+    ///
+    /// Like `read_varuint`, the byte count is capped and accumulation is
+    /// checked: an unbounded loop would let a crafted input shift the high
+    /// bits out silently (aliasing huge values onto small ones), and a
+    /// 10-byte VarInt encoding 1<<63 would make the final negation overflow
+    /// (a release-mode abort, since the crate ships with overflow-checks).
     fn read_varint(&mut self) -> io::Result<(i64, usize)> {
+        const MAX_BYTES: usize = 9;
+        let too_large = || io::Error::new(io::ErrorKind::InvalidData, "VarInt too large");
+
         if self.pos >= self.data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -544,6 +591,9 @@ impl<'a> IonParser<'a> {
         // If stop bit not set, read more bytes
         if (first_byte & 0x80) == 0 {
             loop {
+                if bytes_read >= MAX_BYTES {
+                    return Err(too_large());
+                }
                 if self.pos >= self.data.len() {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
@@ -553,7 +603,11 @@ impl<'a> IonParser<'a> {
                 let byte = self.data[self.pos];
                 self.pos += 1;
                 bytes_read += 1;
-                result = (result << 7) | (byte & 0x7f) as i64;
+                result = result
+                    .checked_shl(7)
+                    .filter(|r| r >> 7 == result)
+                    .ok_or_else(too_large)?
+                    | (byte & 0x7f) as i64;
                 if byte & 0x80 != 0 {
                     break;
                 }
@@ -561,7 +615,7 @@ impl<'a> IonParser<'a> {
         }
 
         if is_negative {
-            result = -result;
+            result = result.checked_neg().ok_or_else(too_large)?;
         }
 
         Ok((result, bytes_read))
@@ -899,6 +953,64 @@ fn write_varuint_to(buf: &mut Vec<u8>, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_varint_errors_instead_of_panicking() {
+        // Decimal (type 5, len 11) whose exponent VarInt encodes 1<<63:
+        // 0x41 (sign bit, no stop), seven 0x00 continuation bytes, 0x80 stop,
+        // then one coefficient byte. Accumulates i64::MIN as a magnitude and
+        // used to abort on `-result` ("attempt to negate with overflow").
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, // BVM
+            0x5b, // Decimal, length 11
+            0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // exponent VarInt
+            0x01, 0x01, // coefficient bytes
+        ];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+
+        // Even longer VarInts must error (previously the high bits were
+        // silently shifted out, aliasing huge exponents onto small values).
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, //
+            0x5e, 0x8e, // Decimal, VarUInt length 14
+            0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x80, // 14-byte exponent VarInt
+        ];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
+
+    #[test]
+    fn value_count_bomb_is_bounded() {
+        // A crafted container that expands into tens of millions of nodes
+        // from a few hundred bytes (found by the container fuzz target) must
+        // error out fast instead of exhausting memory/CPU.
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, 0xcc, 0xcc, 0xcc, 0x00, 0x01, 0x00, 0xcc, 0xea, 0x86, 0x86,
+            0x4d, 0xff, 0xdb, 0xff, 0xcc, 0xc4, 0xcc, 0xcc, 0xcc, 0xea, 0x86, 0x86, 0x4d, 0xff,
+            0xdb, 0x0c, 0x00, 0xcc, 0xc4, 0xcc, 0xea, 0x86, 0x86, 0x4d, 0xff, 0xdb, 0xff, 0xcc,
+            0xc4, 0xcc, 0xcc, 0xcc, 0xea, 0x86, 0x86, 0x4d, 0xff, 0xe9, 0x00, 0x00, 0x00, 0xcc,
+            0xcc, 0xcc, 0xcc, 0xcc, 0x00, 0x01, 0x00, 0xcc,
+        ];
+        // The point is that it returns (Ok or Err) quickly without OOM; the
+        // budget guarantees termination.
+        let mut parser = IonParser::new(&data);
+        let _ = parser.parse();
+    }
+
+    #[test]
+    fn decimal_exponent_cannot_overrun_value_span() {
+        // Decimal claims length 1, but its exponent VarInt runs 9 bytes deep
+        // into what would be sibling values.
+        let data = [
+            0xe0, 0x01, 0x00, 0xea, // BVM
+            0x51, // Decimal, length 1
+            0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // runaway VarInt
+        ];
+        let mut parser = IonParser::new(&data);
+        assert!(parser.parse().is_err());
+    }
 
     #[test]
     fn test_parse_bool() {

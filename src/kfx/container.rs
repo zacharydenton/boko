@@ -228,10 +228,13 @@ pub fn parse_index_table(data: &[u8], header_len: usize) -> Vec<EntityLoc> {
 ///
 /// Returns the slice after the ENTY header, or the original slice if no header.
 pub fn skip_enty_header(data: &[u8]) -> &[u8] {
+    // A valid ENTY header is at least 10 bytes (magic + version + length);
+    // a corrupt smaller value would return a slice starting inside the
+    // magic bytes and feed garbage to the Ion parser.
     if data.len() >= 10
         && &data[0..4] == b"ENTY"
         && let Some(header_len) = read_u32_le(data, 6)
-        && (header_len as usize) < data.len()
+        && (10..data.len() as u64).contains(&(header_len as u64))
     {
         return &data[header_len as usize..];
     }

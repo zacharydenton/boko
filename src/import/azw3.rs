@@ -536,7 +536,9 @@ impl Azw3Importer {
             None
         };
 
-        // Read and decompress text records
+        // Read and decompress text records, sharing one whole-book output
+        // budget across records (see `total_text_budget`).
+        let mut text_budget = crate::mobi::huffcdic::total_text_budget(self.file_len);
         for i in 1..=self.mobi.text_record_count as usize {
             let record = read_record(i)?;
             let stripped = strip_trailing_data(&record, self.mobi.extra_data_flags);
@@ -546,7 +548,7 @@ impl Azw3Importer {
                 Compression::PalmDoc => palmdoc::decompress(stripped)?,
                 Compression::Huffman => {
                     if let Some(ref mut reader) = huff_reader {
-                        reader.decompress(stripped)?
+                        reader.decompress(stripped, &mut text_budget)?
                     } else {
                         stripped.to_vec()
                     }

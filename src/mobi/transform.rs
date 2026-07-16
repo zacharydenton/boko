@@ -148,8 +148,14 @@ fn generate_replacement(
             format!("styles/style{:04}.css", css_idx).into_bytes()
         }
         RefKind::PosFid { elem_idx, offset } => {
+            // Both operands are attacker-controlled (insert_pos parses from
+            // the div-index entry name, offset from base32 in the book's own
+            // HTML); an unchecked add aborts in release builds.
             let (file_num, target_pos) = if let Some(elem) = elems.get(*elem_idx) {
-                (elem.file_number as usize, elem.insert_pos + *offset as u32)
+                (
+                    elem.file_number as usize,
+                    elem.insert_pos.saturating_add(*offset as u32),
+                )
             } else {
                 (0, 0)
             };

@@ -125,9 +125,13 @@ impl MobiHeader {
                 u32::from_be_bytes([data[0x54], data[0x55], data[0x56], data[0x57]]) as usize;
             let title_length =
                 u32::from_be_bytes([data[0x58], data[0x59], data[0x5A], data[0x5B]]) as usize;
-            if title_offset + title_length <= data.len() {
-                String::from_utf8_lossy(&data[title_offset..title_offset + title_length])
-                    .to_string()
+            // checked_add: both fields are untrusted u32s whose sum overflows
+            // 32-bit usize (wasm32) under the release overflow checks.
+            if let Some(end) = title_offset
+                .checked_add(title_length)
+                .filter(|&end| end <= data.len())
+            {
+                String::from_utf8_lossy(&data[title_offset..end]).to_string()
             } else {
                 String::new()
             }
@@ -295,11 +299,16 @@ impl ExthHeader {
 
             // record_len covers the 8-byte record header plus its content, so a
             // value below 8 would make the content slice start past its end.
-            if record_len < 8 || pos + record_len > data.len() {
+            // checked_add: pos + an untrusted u32 length overflows 32-bit
+            // usize (wasm32) under the release overflow checks.
+            let Some(record_end) = pos.checked_add(record_len).filter(|&e| e <= data.len()) else {
+                break;
+            };
+            if record_len < 8 {
                 break;
             }
 
-            let content = &data[pos + 8..pos + record_len];
+            let content = &data[pos + 8..record_end];
 
             match record_type {
                 100 => exth.authors.push(decode(content).trim().to_string()),

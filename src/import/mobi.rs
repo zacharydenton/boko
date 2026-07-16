@@ -279,8 +279,12 @@ impl MobiImporter {
         let text = extract_text_from_source(&source, &pdb, &mobi, file_len)?;
         let wrapped = wrap_text_as_html(&text, &metadata.title, &mobi);
 
-        // Transform HTML (without NCX anchors initially for clean pagebreak splitting)
-        let transformed = filepos::transform_mobi_html(&wrapped, &assets, &[]);
+        // Transform HTML (without NCX anchors initially for clean pagebreak splitting).
+        // Re-encode as UTF-8 *after* the transform (anchor insertion works on
+        // raw byte offsets, which decoding would shift) and *before* splitting
+        // (the split emits documents that declare utf-8; CP1252 bytes used to
+        // survive to a from_utf8_lossy and turn every curly quote into U+FFFD).
+        let transformed = ensure_utf8(filepos::transform_mobi_html(&wrapped, &assets, &[]), codec);
 
         // Try pagebreak-based splitting first. If it produces only 1 chapter
         // and NCX positions are available, re-transform with NCX anchors and
@@ -291,7 +295,10 @@ impl MobiImporter {
                 (initial, transformed)
             } else {
                 // Re-transform with NCX anchors at byte positions, force NCX split
-                let with_ncx = filepos::transform_mobi_html(&wrapped, &assets, &ncx_positions);
+                let with_ncx = ensure_utf8(
+                    filepos::transform_mobi_html(&wrapped, &assets, &ncx_positions),
+                    codec,
+                );
                 let ncx_split = split_mobi_html_ncx_only(&with_ncx, &ncx_positions);
                 if ncx_split.chapters.len() > 1 {
                     (ncx_split, with_ncx)
@@ -411,7 +418,9 @@ fn extract_text_from_source(
             None
         };
 
-    // Read and decompress text records
+    // Read and decompress text records, sharing one whole-book output budget
+    // across records (see `total_text_budget`).
+    let mut text_budget = crate::mobi::huffcdic::total_text_budget(file_len);
     for i in 1..=mobi.text_record_count as usize {
         let record = read_record(i)?;
         let stripped = strip_trailing_data(&record, mobi.extra_data_flags);
@@ -421,7 +430,7 @@ fn extract_text_from_source(
             Compression::PalmDoc => palmdoc::decompress(stripped)?,
             Compression::Huffman => {
                 if let Some(ref mut reader) = huff_reader {
-                    reader.decompress(stripped)?
+                    reader.decompress(stripped, &mut text_budget)?
                 } else {
                     stripped.to_vec()
                 }
@@ -525,6 +534,18 @@ fn build_metadata(
 }
 
 /// Wrap raw text as HTML.
+/// Re-encode text as UTF-8 using the MOBI header's declared codec.
+///
+/// No-op (and allocation-free) when the bytes are already valid UTF-8, so it
+/// is safe to apply to both the CP1252 passthrough and the already-decoded
+/// wrapped output.
+fn ensure_utf8(bytes: Vec<u8>, codec: &str) -> Vec<u8> {
+    match crate::util::decode_text(&bytes, Some(codec)) {
+        std::borrow::Cow::Borrowed(_) => bytes,
+        std::borrow::Cow::Owned(s) => s.into_bytes(),
+    }
+}
+
 fn wrap_text_as_html(text: &[u8], title: &str, mobi: &MobiHeader) -> Vec<u8> {
     // Decode using the header-declared encoding *before* wrapping. Previously
     // the bytes were run through `from_utf8_lossy` — which replaces every

@@ -208,19 +208,29 @@ pub fn transform_mobi_html(
 }
 
 /// Remove empty anchor tags: `<a />` and `<a></a>`
+///
+/// Operates on raw bytes: the text may be CP1252 (the MOBI default), and the
+/// previous `from_utf8_lossy` round-trip irreversibly replaced every
+/// non-ASCII byte (curly quotes, accents) with U+FFFD. The patterns are pure
+/// ASCII, so a single byte-level pass is both correct and allocation-light.
 fn remove_empty_anchors(html: &mut Vec<u8>) {
-    // This is a simple implementation - could be optimized
-    let html_str = String::from_utf8_lossy(html);
+    const PATTERNS: [&[u8]; 4] = [b"<a />", b"<a  />", b"<a></a>", b"<a ></a>"];
 
-    // Remove <a /> and <a  /> patterns
-    let cleaned = html_str
-        .replace("<a />", "")
-        .replace("<a  />", "")
-        .replace("<a></a>", "")
-        .replace("<a ></a>", "");
-
-    html.clear();
-    html.extend_from_slice(cleaned.as_bytes());
+    let mut cleaned = Vec::with_capacity(html.len());
+    let mut pos = 0;
+    'outer: while pos < html.len() {
+        if html[pos] == b'<' {
+            for pattern in PATTERNS {
+                if html[pos..].starts_with(pattern) {
+                    pos += pattern.len();
+                    continue 'outer;
+                }
+            }
+        }
+        cleaned.push(html[pos]);
+        pos += 1;
+    }
+    *html = cleaned;
 }
 
 #[cfg(test)]

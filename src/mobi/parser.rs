@@ -134,7 +134,9 @@ impl MobiFormat {
 /// Parse EXTH header if present.
 pub fn parse_exth(record0: &[u8], header: &MobiHeader) -> Option<ExthHeader> {
     if header.has_exth() && header.header_length > 0 {
-        let exth_start = 16 + header.header_length as usize;
+        // checked_add: header_length is an untrusted u32; 16 + u32::MAX
+        // overflows 32-bit usize (wasm32) under the release overflow checks.
+        let exth_start = (header.header_length as usize).checked_add(16)?;
         if exth_start < record0.len() {
             return ExthHeader::parse(&record0[exth_start..], header.encoding).ok();
         }
@@ -157,10 +159,15 @@ pub fn parse_fdst(data: &[u8]) -> io::Result<Vec<(usize, usize)>> {
     // check runs.
     let mut flows = Vec::with_capacity(num_sections.min(data.len() / 8));
     for i in 0..num_sections {
-        let offset = sec_start + i * 8;
-        if offset + 8 > data.len() {
+        // Checked: sec_start + i*8 can overflow 32-bit usize for a bogus
+        // num_sections before the bounds check gets a chance to break.
+        let Some(offset) = i
+            .checked_mul(8)
+            .and_then(|o| o.checked_add(sec_start))
+            .filter(|&o| o.checked_add(8).is_some_and(|e| e <= data.len()))
+        else {
             break;
-        }
+        };
 
         let start = u32::from_be_bytes([
             data[offset],
