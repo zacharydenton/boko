@@ -311,7 +311,7 @@ fn parse_siblings(events: &[Event], mut i: usize, min_level: u8) -> (Vec<Section
 fn collect_text(chapter: &Chapter, node_id: NodeId) -> String {
     let mut result = String::new();
     collect_text_recursive(chapter, node_id, &mut result, 0);
-    strip_ebook_chars(&result)
+    strip_ebook_chars(&result).into_owned()
 }
 
 fn collect_text_recursive(chapter: &Chapter, node_id: NodeId, result: &mut String, depth: usize) {
@@ -360,7 +360,7 @@ fn collect_text_recursive(chapter: &Chapter, node_id: NodeId, result: &mut Strin
 fn collect_text_verbatim(chapter: &Chapter, node_id: NodeId) -> String {
     let mut result = String::new();
     collect_text_verbatim_recursive(chapter, node_id, &mut result, 0);
-    strip_ebook_chars(&result)
+    strip_ebook_chars(&result).into_owned()
 }
 
 fn collect_text_verbatim_recursive(

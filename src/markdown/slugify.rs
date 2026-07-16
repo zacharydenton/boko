@@ -2,7 +2,7 @@
 //!
 //! Generates GitHub-style slugs from heading text for use in internal links.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::import::ChapterId;
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, NodeId, ResolvedLinks, Role};
@@ -101,11 +101,16 @@ pub fn build_heading_slugs<C: std::ops::Deref<Target = Chapter>>(
     chapters: &[(ChapterId, C)],
     resolved: &ResolvedLinks,
 ) -> HashMap<GlobalNodeId, String> {
-    // Collect all internal link targets
-    let mut targets: HashSet<GlobalNodeId> = HashSet::new();
+    // Collect internal link targets, grouped by chapter, so each chapter is
+    // matched only against its own targets instead of the whole set
+    // (was O(chapters x targets)).
+    let mut targets_by_chapter: HashMap<ChapterId, Vec<GlobalNodeId>> = HashMap::new();
     for (_, target) in resolved.iter() {
         if let AnchorTarget::Internal(gid) = target {
-            targets.insert(*gid);
+            targets_by_chapter
+                .entry(gid.chapter)
+                .or_default()
+                .push(*gid);
         }
     }
 
@@ -114,11 +119,10 @@ pub fn build_heading_slugs<C: std::ops::Deref<Target = Chapter>>(
     // Check each target - if it's a heading, compute and store its slug
     for (chapter_id, chapter) in chapters {
         let chapter: &Chapter = chapter;
-        for &target in &targets {
-            if target.chapter != *chapter_id {
-                continue;
-            }
-
+        let Some(targets) = targets_by_chapter.get(chapter_id) else {
+            continue;
+        };
+        for &target in targets {
             if let Some(node) = chapter.node(target.node)
                 && matches!(node.role, Role::Heading(_))
             {

@@ -715,7 +715,7 @@ impl<'a> RenderContext<'a> {
     fn collect_text_inner(&self, id: NodeId, verbatim: bool) -> String {
         let mut result = String::new();
         self.collect_text_recursive(id, &mut result, verbatim);
-        strip_ebook_chars(&result)
+        strip_ebook_chars(&result).into_owned()
     }
 
     fn collect_text_recursive(&self, id: NodeId, result: &mut String, verbatim: bool) {

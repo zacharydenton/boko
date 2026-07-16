@@ -61,6 +61,11 @@ pub struct Azw3Importer {
     /// Cached decompressed text (loaded on first chapter request).
     text_cache: OnceLock<Vec<u8>>,
 
+    /// Cached per-chapter (name, raw HTML) parts, assembled once. Without
+    /// this, every `build_chapter` cache miss re-ran `build_parts` over the
+    /// whole book, making a full N-chapter load O(N x book size).
+    parts_cache: OnceLock<Vec<(String, Vec<u8>)>>,
+
     /// Serializes the first text extraction: parallel chapter loads would
     /// otherwise each decompress the whole book before the OnceLock settles.
     text_init: Mutex<()>,
@@ -482,6 +487,7 @@ impl Azw3Importer {
                 elems,
             },
             text_cache: OnceLock::new(),
+            parts_cache: OnceLock::new(),
             text_init: Mutex::new(()),
             chapter_cache: RwLock::new(HashMap::new()),
             assets: Vec::new(),
@@ -573,8 +579,10 @@ impl Azw3Importer {
             .unwrap_or((0, text.len()));
         let html_text = flow_slice(text, html_start, html_end);
 
-        // Build all parts and return the requested one
-        let parts = build_parts(html_text, &self.kf8.files, &self.kf8.elems);
+        // Assemble all parts once and reuse across chapters.
+        let parts = self
+            .parts_cache
+            .get_or_init(|| build_parts(html_text, &self.kf8.files, &self.kf8.elems));
 
         let content = parts
             .get(chapter_id as usize)

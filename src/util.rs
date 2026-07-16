@@ -431,14 +431,21 @@ pub(crate) fn guess_media_type(path: &str) -> &'static str {
 /// Removes:
 /// - U+00AD SOFT HYPHEN (hyphenation hints)
 /// - U+200B ZERO WIDTH SPACE (word-break hints)
-pub fn strip_ebook_chars(s: &str) -> String {
+pub fn strip_ebook_chars(s: &str) -> std::borrow::Cow<'_, str> {
+    // Soft hyphens / zero-width spaces are rare; scan first and borrow the
+    // input unchanged in the common case (this runs per text node on the
+    // markdown hot path), allocating only when there is actually something
+    // to strip.
+    if !s.contains(['\u{00AD}', '\u{200B}']) {
+        return std::borrow::Cow::Borrowed(s);
+    }
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         if c != '\u{00AD}' && c != '\u{200B}' {
             out.push(c);
         }
     }
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 /// Detect MIME type from file extension or magic bytes.

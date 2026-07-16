@@ -192,16 +192,18 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
             ctx.out.push_str(&escape_xml(anchor));
             ctx.out.push_str("\">");
         }
-        // KFX uses \n in text content for forced line breaks — emit as <br/>
+        // KFX uses \n in text content for forced line breaks — emit as <br/>.
+        // escape_xml_into writes straight into the output buffer, avoiding a
+        // temporary String per text node (this is the hottest synth loop).
         if text.contains('\n') {
             for (i, segment) in text.split('\n').enumerate() {
                 if i > 0 {
                     ctx.out.push_str("<br/>");
                 }
-                ctx.out.push_str(&escape_xml(segment));
+                escape_xml_into(&mut ctx.out, segment);
             }
         } else {
-            ctx.out.push_str(&escape_xml(text));
+            escape_xml_into(&mut ctx.out, text);
         }
         if anchor.is_some() {
             ctx.out.push_str("</span>");

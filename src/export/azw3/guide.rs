@@ -254,36 +254,17 @@ pub(super) fn resolve_filepos_entry(
 
 /// Resolve MOBI filepos anchor to (fid, offset) for link resolution.
 ///
-/// Similar to resolve_filepos but returns the seq_num and offset_in_chunk
-/// needed for kindle:pos:fid:XXXX:off:YYYYYY link format.
+/// Same lookup as [`resolve_filepos_entry`], dropping the third tuple element
+/// (only seq_num and offset_in_chunk are needed for the
+/// kindle:pos:fid:XXXX:off:YYYYYY link format).
 pub(super) fn resolve_filepos_to_offset(
     file: &str,
     fragment: &str,
     filepos_map: &HashMap<String, Vec<(usize, String)>>,
     aid_offset_map: &HashMap<String, (usize, usize, usize)>,
 ) -> Option<(usize, usize)> {
-    // Parse the filepos number
-    let filepos_str = fragment.strip_prefix("filepos")?;
-    let target_pos: usize = filepos_str.parse().ok()?;
-
-    // Get the position map for this file
-    let positions = filepos_map.get(file)?;
-    if positions.is_empty() {
-        return None;
-    }
-
-    // Find the aid at or before target_pos using binary search
-    let idx = match positions.binary_search_by_key(&target_pos, |(pos, _)| *pos) {
-        Ok(i) => i,
-        Err(i) => i.saturating_sub(1),
-    };
-
-    let (_, aid) = &positions[idx];
-
-    // Look up the aid's position - return (seq_num, offset_in_chunk)
-    aid_offset_map
-        .get(aid)
-        .map(|&(seq_num, offset_in_chunk, _)| (seq_num, offset_in_chunk))
+    resolve_filepos_entry(file, fragment, filepos_map, aid_offset_map)
+        .map(|(seq_num, offset_in_chunk, _)| (seq_num, offset_in_chunk))
 }
 
 #[cfg(test)]

@@ -71,6 +71,11 @@ pub struct KfxImporter {
     /// Resources: name -> EntityLoc (lazily populated)
     resource_index: OnceLock<HashMap<String, EntityLoc>>,
 
+    /// Content-entity name → location, built once. Without it,
+    /// `load_content_entity` was a linear scan that fully Ion-parsed every
+    /// content entity on each miss — O(C^2) parses per book.
+    content_index: OnceLock<HashMap<String, EntityLoc>>,
+
     /// Content cache: name -> list of strings (lazily populated)
     content_cache: RwLock<HashMap<String, Vec<String>>>,
 
@@ -358,6 +363,7 @@ impl KfxImporter {
             section_storylines: HashMap::new(),
             section_storylines_indexed: false,
             resource_index: OnceLock::new(),
+            content_index: OnceLock::new(),
             content_cache: RwLock::new(HashMap::new()),
             anchors: OnceLock::new(),
             styles: OnceLock::new(),
@@ -879,29 +885,34 @@ impl KfxImporter {
 
     /// Load a content entity by name and return its string list.
     fn load_content_entity(&self, name: &str) -> Option<Vec<String>> {
-        // Find content entity with matching name
-        for loc in &self.entities {
-            if loc.type_id == KfxSymbol::Content as u32
-                && let Ok(elem) = self.parse_entity_ion(*loc)
-                && let Some(fields) = elem.as_struct()
-            {
-                // Check if name matches
-                let entity_name =
-                    get_field(fields, sym!(Name)).and_then(|v| self.get_symbol_text(v));
+        let loc = *self.content_index().get(name)?;
+        let elem = self.parse_entity_ion(loc).ok()?;
+        let fields = elem.as_struct()?;
+        let list = get_field(fields, sym!(ContentList)).and_then(|v| v.as_list())?;
+        Some(
+            list.iter()
+                .filter_map(|v| v.as_string().map(|s| s.to_string()))
+                .collect(),
+        )
+    }
 
-                if entity_name == Some(name)
-                    && let Some(list) =
-                        get_field(fields, sym!(ContentList)).and_then(|v| v.as_list())
+    /// The content-entity-name → location index, built on first use.
+    fn content_index(&self) -> &HashMap<String, EntityLoc> {
+        self.content_index.get_or_init(|| {
+            let mut index = HashMap::new();
+            for loc in &self.entities {
+                if loc.type_id == KfxSymbol::Content as u32
+                    && let Ok(elem) = self.parse_entity_ion(*loc)
+                    && let Some(fields) = elem.as_struct()
+                    && let Some(entity_name) =
+                        get_field(fields, sym!(Name)).and_then(|v| self.get_symbol_text(v))
                 {
-                    return Some(
-                        list.iter()
-                            .filter_map(|v| v.as_string().map(|s| s.to_string()))
-                            .collect(),
-                    );
+                    // First occurrence wins, matching the old forward scan.
+                    index.entry(entity_name.to_string()).or_insert(*loc);
                 }
             }
-        }
-        None
+            index
+        })
     }
 
     /// Index external resources.

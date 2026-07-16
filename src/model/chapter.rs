@@ -163,11 +163,11 @@ impl Chapter {
         }
     }
 
-    /// Iterate over all nodes in depth-first order.
+    /// Iterate over all nodes in depth-first (preorder) order.
     pub fn iter_dfs(&self) -> DfsIter<'_> {
         DfsIter {
             chapter: self,
-            stack: vec![NodeId::ROOT],
+            next: Some(NodeId::ROOT),
         }
     }
 }
@@ -214,22 +214,36 @@ impl Iterator for ChildIter<'_> {
     }
 }
 
-/// Depth-first iterator over all nodes.
+/// Depth-first (preorder) iterator over all nodes.
+///
+/// Allocation-free: the first-child/next-sibling/parent links let it walk the
+/// tree with a single cursor instead of a heap stack, so a full traversal
+/// (every export path runs several) makes zero allocations.
 pub struct DfsIter<'a> {
     chapter: &'a Chapter,
-    stack: Vec<NodeId>,
+    next: Option<NodeId>,
 }
 
 impl Iterator for DfsIter<'_> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let current = self.stack.pop()?;
+        let current = self.next?;
 
-        // Push children in reverse order so they're visited left-to-right
-        let mut children: Vec<NodeId> = self.chapter.children(current).collect();
-        children.reverse();
-        self.stack.extend(children);
+        // Descend to the first child; else move to the next sibling; else
+        // climb through ancestors until one has a next sibling.
+        self.next = self.chapter.node(current).and_then(|node| {
+            if let Some(child) = node.first_child {
+                return Some(child);
+            }
+            let mut n = node;
+            loop {
+                if let Some(sib) = n.next_sibling {
+                    return Some(sib);
+                }
+                n = self.chapter.node(n.parent?)?;
+            }
+        });
 
         Some(current)
     }

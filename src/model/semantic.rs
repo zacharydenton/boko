@@ -6,7 +6,7 @@
 //! String values are stored in a single contiguous buffer, with TextRange
 //! references into that buffer. This avoids per-attribute String allocations.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use super::node::{NodeId, TextRange};
 
