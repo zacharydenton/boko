@@ -79,7 +79,13 @@ pub(super) fn register_link_targets(
     ctx: &mut ExportContext,
 ) -> io::Result<()> {
     for (chapter_id, _) in spine_info {
-        let chapter = book.load_chapter_cached(*chapter_id)?;
+        // Skip chapters that fail to load, like every other export stage
+        // (survey, landmarks, spine building) does — one broken chapter must
+        // not abort the whole export, and the position map has dedicated
+        // handling for chapters that never loaded.
+        let Ok(chapter) = book.load_chapter_cached(*chapter_id) else {
+            continue;
+        };
         register_chapter_link_targets(&chapter, *chapter_id, resolved, ctx);
     }
     Ok(())

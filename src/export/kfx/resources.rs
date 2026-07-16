@@ -246,16 +246,28 @@ pub(super) fn detect_format_symbol(href: &str, data: &[u8]) -> u64 {
     format_to_kfx_symbol(format)
 }
 
-/// Check if a path is a media asset (image, font, etc.)
-pub(super) fn is_media_asset(path: &str) -> bool {
+/// Check if a path is a media asset (image or font).
+///
+/// Known media extensions short-circuit without touching the bytes; known
+/// document/style extensions are rejected outright. Anything else (unusual
+/// names like `.jfif`/`.bmp`, or extensionless entries) is sniffed by magic
+/// bytes so a real image referenced from content isn't silently dropped —
+/// a storyline pointing at an unregistered resource renders a broken image
+/// with no warning.
+pub(super) fn is_media_asset(book: &crate::model::Book, path: &str) -> bool {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    matches!(
-        ext.to_lowercase().as_str(),
+    match ext.to_lowercase().as_str() {
         "jpg" | "jpeg" | "png" | "gif" | "svg" | "webp" | "ttf" | "otf" | "woff" | "woff2"
-    )
+        | "jfif" | "jpe" | "bmp" => true,
+        "css" | "xhtml" | "html" | "htm" | "xml" | "opf" | "ncx" | "txt" | "js" | "json" => false,
+        _ => book.load_asset(path).is_ok_and(|data| {
+            let format = detect_media_format(path, &data);
+            format.is_image() || format.is_font()
+        }),
+    }
 }
 
 #[cfg(test)]

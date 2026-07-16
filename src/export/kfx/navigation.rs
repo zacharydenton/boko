@@ -265,9 +265,15 @@ pub(super) fn build_toc_entries_with_positions(
 ) -> Vec<IonValue> {
     entries
         .iter()
-        .filter_map(|entry| {
-            // Use pre-resolved target to look up position
-            let (fragment_id, offset) = resolve_toc_target(&entry.target, &entry.href, ctx)?;
+        .flat_map(|entry| {
+            // Use pre-resolved target to look up position. An unresolvable
+            // entry is dropped, but its children are hoisted in its place —
+            // one broken structural entry must not erase a whole subtree of
+            // working ones.
+            let Some((fragment_id, offset)) = resolve_toc_target(&entry.target, &entry.href, ctx)
+            else {
+                return build_toc_entries_with_positions(&entry.children, ctx);
+            };
 
             let mut fields = Vec::new();
 
@@ -295,10 +301,10 @@ pub(super) fn build_toc_entries_with_positions(
 
             let nav_unit = IonValue::Struct(fields);
             // Annotate with nav_unit::
-            Some(IonValue::Annotated(
+            vec![IonValue::Annotated(
                 vec![KfxSymbol::NavUnit as u64],
                 Box::new(nav_unit),
-            ))
+            )]
         })
         .collect()
 }
@@ -331,7 +337,9 @@ pub(super) fn resolve_toc_target(
         None => {}
     }
 
-    eprintln!("Warning: TOC href not resolved: {}", href);
+    // Unresolved: the caller hoists this entry's children. (No eprintln —
+    // library code must not write to stderr.)
+    let _ = href;
     None
 }
 

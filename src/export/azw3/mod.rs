@@ -117,6 +117,13 @@ impl BookContext {
 
     /// Collect raw (passthrough) content from the book.
     fn from_raw(book: &Book) -> crate::Result<Self> {
+        // Resolve TOC fragments before snapshotting: MOBI/AZW3 importers
+        // leave entries with bare chapter hrefs until this populates the
+        // `#fileposN` / `#id` suffixes. Without it every intra-chapter NCX
+        // target collapses to the chapter start (the EPUB exporter makes the
+        // same call for the same reason).
+        book.resolve_toc();
+
         // Collect metadata and TOC (these are borrowed, so clone)
         let metadata = book.metadata().clone();
         let toc = book.toc().to_vec();
@@ -170,11 +177,25 @@ impl BookContext {
     fn from_normalized(book: &Book) -> crate::Result<Self> {
         use super::normalize::normalize_book;
 
+        book.resolve_toc();
         let normalized = normalize_book(book)?;
 
-        // Collect metadata and TOC
+        // Collect metadata and TOC. The TOC (and landmarks below) must be
+        // rewritten onto the emitted `chapter_{i}.xhtml` names: the chunker's
+        // position maps are keyed by those, so original source-path hrefs
+        // would all miss and resolve to offset 0 (this hit every KFX→AZW3
+        // conversion, which is unconditionally normalized).
         let metadata = book.metadata().clone();
-        let toc = book.toc().to_vec();
+        let toc = normalized.rewrite_toc(book.toc());
+        let landmarks: Vec<crate::model::Landmark> = book
+            .landmarks()
+            .iter()
+            .map(|lm| {
+                let mut lm = lm.clone();
+                lm.href = normalized.rewrite_link(&lm.href);
+                lm
+            })
+            .collect();
 
         let mut resources = HashMap::new();
 
@@ -216,7 +237,7 @@ impl BookContext {
             spine,
             toc,
             metadata,
-            landmarks: book.landmarks().to_vec(),
+            landmarks,
         })
     }
 }

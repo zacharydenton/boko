@@ -410,6 +410,10 @@ pub fn is_metadata_record(data: &[u8]) -> bool {
 pub struct TocNode {
     pub title: String,
     pub href: String,
+    /// Index of this node's entry in the flat NCX list (its play order).
+    /// Lets importers key per-entry side data (e.g. byte positions) without
+    /// relying on (title, href) pairs, which collide for duplicate titles.
+    pub ncx_index: usize,
     pub children: Vec<TocNode>,
 }
 
@@ -421,7 +425,7 @@ pub struct TocNode {
 /// - KF8/AZW3: `part{file_number:04}.html`
 pub fn build_toc_from_ncx<F>(ncx: &[NcxEntry], mut href_fn: F) -> Vec<TocNode>
 where
-    F: FnMut(&NcxEntry) -> String,
+    F: FnMut(usize, &NcxEntry) -> String,
 {
     use quick_xml::escape::unescape;
     use std::collections::HashMap;
@@ -433,14 +437,16 @@ where
     // Build flat entries
     let entries: Vec<TocNode> = ncx
         .iter()
-        .map(|entry| {
-            let href = href_fn(entry);
+        .enumerate()
+        .map(|(i, entry)| {
+            let href = href_fn(i, entry);
             let title = unescape(&entry.text)
                 .map(|s| s.into_owned())
                 .unwrap_or_else(|_| entry.text.clone());
             TocNode {
                 title,
                 href,
+                ncx_index: i,
                 children: Vec::new(),
             }
         })
@@ -894,7 +900,7 @@ mod tests {
             },
         ];
 
-        let toc = build_toc_from_ncx(&ncx, |e| format!("ch{}.html", e.pos));
+        let toc = build_toc_from_ncx(&ncx, |_, e| format!("ch{}.html", e.pos));
 
         assert_eq!(toc.len(), 2);
         assert_eq!(toc[0].title, "Chapter 1");
@@ -935,7 +941,7 @@ mod tests {
             },
         ];
 
-        let toc = build_toc_from_ncx(&ncx, |e| format!("#{}", e.pos));
+        let toc = build_toc_from_ncx(&ncx, |_, e| format!("#{}", e.pos));
 
         assert_eq!(toc.len(), 1);
         assert_eq!(toc[0].title, "Part 1");
@@ -946,7 +952,7 @@ mod tests {
 
     #[test]
     fn test_build_toc_from_ncx_empty() {
-        let toc = build_toc_from_ncx(&[], |_| String::new());
+        let toc = build_toc_from_ncx(&[], |_, _| String::new());
         assert!(toc.is_empty());
     }
 
@@ -962,7 +968,7 @@ mod tests {
             pos_fid: None,
         }];
 
-        let toc = build_toc_from_ncx(&ncx, |_| "#0".to_string());
+        let toc = build_toc_from_ncx(&ncx, |_, _| "#0".to_string());
         assert_eq!(toc[0].title, "Tom & Jerry");
     }
 }

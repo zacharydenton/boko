@@ -194,7 +194,11 @@ impl EpubImporter {
                     compression: compression_to_u16(file.compression()),
                 },
             );
-            assets.push(name);
+            // Directory entries are ZIP bookkeeping, not assets; surfacing
+            // them made re-exports reference "files" like `OEBPS/images/`.
+            if !name.ends_with('/') {
+                assets.push(name);
+            }
         }
 
         // 2. Find OPF path from container.xml
@@ -258,7 +262,9 @@ impl EpubImporter {
             if let Ok(ncx_bytes) = read_entry(&source, &zip_index, &ncx_path) {
                 let hint_encoding = crate::util::extract_xml_encoding(&ncx_bytes);
                 let ncx_str = crate::util::decode_text(&ncx_bytes, hint_encoding);
-                let toc_entries = parse_ncx(&ncx_str)?;
+                // Navigation is auxiliary: a malformed NCX degrades to an
+                // empty TOC (like a missing one) instead of failing the open.
+                let toc_entries = parse_ncx(&ncx_str).unwrap_or_default();
                 // Prepend base path to hrefs (NCX uses relative paths)
                 prepend_base_to_toc(&toc_entries, &opf_base)
             } else {
@@ -270,13 +276,15 @@ impl EpubImporter {
         if toc.is_empty()
             && let Some(nav_str) = &nav_str
         {
-            let toc_entries = parse_nav_toc(nav_str)?;
+            // Same leniency as the NCX: a malformed nav document must not
+            // fail the whole book.
+            let toc_entries = parse_nav_toc(nav_str).unwrap_or_default();
             toc = prepend_base_to_toc(&toc_entries, &opf_base);
         }
 
         // 6. Parse landmarks from EPUB 3 nav document
         let landmarks = if let Some(nav_str) = &nav_str {
-            let mut parsed = parse_nav_landmarks(nav_str)?;
+            let mut parsed = parse_nav_landmarks(nav_str).unwrap_or_default();
             // Prepend base path to hrefs (nav uses relative, URL-encoded paths)
             for landmark in &mut parsed {
                 if !landmark.href.starts_with('#') && !landmark.href.is_empty() {

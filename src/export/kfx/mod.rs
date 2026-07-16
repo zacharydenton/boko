@@ -403,7 +403,7 @@ fn register_nav_and_resource_symbols(book: &Book, ctx: &mut ExportContext) {
     // consistent symbol IDs when they're referenced later in storylines
     let asset_paths = book.list_assets();
     for asset_path in asset_paths {
-        if is_media_asset(asset_path) {
+        if is_media_asset(book, asset_path) {
             ctx.resource_registry.register(asset_path, &mut ctx.symbols);
             // Create and intern the short name (e.g., "e0")
             let short_name = ctx.resource_registry.get_or_create_name(asset_path);
@@ -507,7 +507,7 @@ fn append_resource_fragments(
     ctx: &mut ExportContext,
 ) {
     for asset_path in book.list_assets() {
-        if is_media_asset(asset_path)
+        if is_media_asset(book, asset_path)
             && let Ok(data) = book.load_asset(asset_path)
         {
             // external_resource ($164) - metadata about the resource

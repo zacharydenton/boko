@@ -299,15 +299,12 @@ fn start_element_fields(
     // Add schema-driven attributes from kfx_attrs
     // The schema handles Image src→resource_name, Link href→link_to, etc.
     for (field_id, value_str) in &elem.kfx_attrs {
-        // Determine if this field should be a symbol or string
-        // - ResourceName: always symbol (e.g., e0, e1)
-        // - LinkTo: always symbol (anchor references)
-        // - References with # or /: symbol
-        // - Alt text, other strings: string
-        let is_symbol_field = *field_id == sym!(ResourceName)
-            || *field_id == sym!(LinkTo)
-            || value_str.starts_with('#')
-            || value_str.contains('/');
+        // Symbol-vs-string is decided by the FIELD, not the value: reference
+        // fields (resource_name, link_to) are interned symbols; everything
+        // else (alt text, titles) is a plain string. Sniffing the value used
+        // to intern prose like alt="black/white photo" into the symbol
+        // table and emit the wrong Ion type for it.
+        let is_symbol_field = *field_id == sym!(ResourceName) || *field_id == sym!(LinkTo);
 
         if is_symbol_field {
             let sym_id = ctx.symbols.get_or_intern(value_str);

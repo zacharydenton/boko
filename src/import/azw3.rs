@@ -79,8 +79,9 @@ pub struct Azw3Importer {
     element_id_map: RwLock<HashMap<String, GlobalNodeId>>,
 
     // --- TOC resolution ---
-    /// NCX positions for TOC entries, keyed by (title, chapter_path).
-    toc_positions: HashMap<(String, String), TocPosition>,
+    /// NCX byte positions keyed by flat NCX entry index (carried on
+    /// `TocEntry::play_order`), so duplicate titles can't collide.
+    toc_positions: HashMap<usize, TocPosition>,
 }
 
 /// Position metadata for a TOC entry (from NCX).
@@ -274,16 +275,13 @@ impl Azw3Importer {
 /// Recursively resolve TOC entry hrefs with fragment IDs using position map.
 fn resolve_toc_with_positions(
     entries: &mut [TocEntry],
-    positions: &HashMap<(String, String), TocPosition>,
+    positions: &HashMap<usize, TocPosition>,
     html_text: &[u8],
     file_starts: &[(u32, u32)],
 ) {
     for entry in entries {
-        // Look up position by (title, chapter_path)
-        let chapter_path = entry.href.split('#').next().unwrap_or(&entry.href);
-        let key = (entry.title.clone(), chapter_path.to_string());
-
-        if let Some(pos) = positions.get(&key) {
+        // Look up position by the entry's flat NCX index (play_order).
+        if let Some(pos) = entry.play_order.and_then(|po| positions.get(&po)) {
             // Find nearest ID at this position
             if let Some(id) = transform::find_nearest_id_fast(
                 html_text,
@@ -368,7 +366,7 @@ impl Azw3Importer {
         }
 
         // Build metadata
-        let mut metadata = build_metadata(&pdb, &mobi, &exth);
+        let metadata = build_metadata(&pdb, &mobi, &exth);
 
         // Parse KF8 indices (without reading text content)
         let codec = match mobi.encoding {
@@ -434,7 +432,7 @@ impl Azw3Importer {
         // Build hierarchical TOC and collect positions for later resolution
         let mut toc_positions = HashMap::new();
         let toc = {
-            let nodes = build_toc_from_ncx(&ncx, |entry| {
+            let nodes = build_toc_from_ncx(&ncx, |ncx_idx, entry| {
                 // KF8 uses pos_fid (frag_idx, offset) - calculate actual byte position
                 // frag_idx is index into fragment/div table, offset is added to insert_pos
                 let (file_num, byte_pos) = if let Some((frag_idx, offset)) = entry.pos_fid
@@ -452,14 +450,8 @@ impl Azw3Importer {
 
                 let chapter_path = format!("part{:04}.html", file_num);
 
-                // Store position keyed by (title, chapter_path)
-                // Use unescaped title to match TocEntry.title
-                let title = quick_xml::escape::unescape(&entry.text)
-                    .map(|s| s.into_owned())
-                    .unwrap_or_else(|_| entry.text.clone());
-                let key = (title, chapter_path.clone());
                 toc_positions.insert(
-                    key,
+                    ncx_idx,
                     TocPosition {
                         byte_pos,
                         file_num: file_num as u32,
@@ -471,12 +463,7 @@ impl Azw3Importer {
             nodes.into_iter().map(toc_node_to_entry).collect()
         };
 
-        // Find cover image
-        if let Some(exth) = exth
-            && let Some(cover_idx) = exth.cover_offset
-        {
-            metadata.cover_image = Some(format!("images/image_{:04}.jpg", cover_idx));
-        }
+        let cover_record_idx = exth.and_then(|e| e.cover_offset);
 
         let mut importer = Self {
             source,
@@ -504,6 +491,17 @@ impl Azw3Importer {
         };
 
         importer.assets = importer.discover_assets();
+
+        // Find the cover among the discovered assets: their names embed the
+        // record index and the record's *real* extension (the cover may be
+        // PNG or GIF, not the .jpg previously hardcoded here, and a metadata
+        // entry that matches no asset breaks cover export downstream).
+        if let Some(cover_idx) = cover_record_idx {
+            let needle = format!("images/image_{cover_idx:04}.");
+            if let Some(path) = importer.assets.iter().find(|p| p.starts_with(&needle)) {
+                importer.metadata.cover_image = Some(path.clone());
+            }
+        }
 
         Ok(importer)
     }
@@ -823,6 +821,7 @@ fn find_file_for_position(files: &[SkeletonFile], pos: u32) -> Option<&SkeletonF
 /// Convert TocNode to TocEntry recursively.
 fn toc_node_to_entry(node: TocNode) -> TocEntry {
     let mut entry = TocEntry::new(&node.title, &node.href);
+    entry.play_order = Some(node.ncx_index);
     entry.children = node.children.into_iter().map(toc_node_to_entry).collect();
     entry
 }

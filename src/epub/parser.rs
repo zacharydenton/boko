@@ -74,7 +74,9 @@ struct Refinement {
 /// Parse OPF package document.
 pub fn parse_opf(content: &str) -> io::Result<OpfData> {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
+    // No trim_text: values may contain nested markup (<dc:title>Foo <i>Bar</i>
+    // Baz</dc:title>) whose surrounding spaces per-event trimming would eat.
+    // Values are trimmed once fully assembled instead.
 
     let mut parser = OpfParser::default();
 
@@ -131,6 +133,9 @@ struct OpfParser {
     meta_property: Option<String>,
     meta_refines: Option<String>,
     meta_id: Option<String>,
+    /// `content` attribute of a non-self-closing meta (fallback value when
+    /// the element has no text content).
+    meta_content: Option<String>,
 }
 
 impl OpfParser {
@@ -152,6 +157,11 @@ impl OpfParser {
                 self.start_dc_element(local, e)?;
             }
             b"meta" if self.in_metadata => self.start_meta(e)?,
+            // <item ...></item> is XML-equivalent to <item .../>; an OPF
+            // authored with explicit close tags must not lose its entire
+            // manifest and spine.
+            b"item" => self.parse_manifest_item(e)?,
+            b"itemref" => self.parse_spine_itemref(e)?,
             b"spine" => {
                 if let Some(toc) = attr(e, b"toc")? {
                     self.toc_id = Some(toc);
@@ -184,7 +194,14 @@ impl OpfParser {
             self.end_meta();
         }
 
-        if self.current_element.is_some() {
+        // Commit only on the element's own end tag: nested markup like
+        // <dc:title>Foo <i>Bar</i> Baz</dc:title> must not commit early on
+        // </i> and lose the trailing text.
+        if self
+            .current_element
+            .as_ref()
+            .is_some_and(|cur| cur.as_bytes() == local)
+        {
             self.end_dc_element();
         }
     }
@@ -204,6 +221,20 @@ impl OpfParser {
         self.meta_property = attr(e, b"property")?;
         self.meta_refines = attr(e, b"refines")?;
         self.meta_id = attr(e, b"id")?;
+        self.meta_content = attr(e, b"content")?;
+
+        // EPUB2 <meta name="cover" content="..."> may be written with an
+        // explicit close tag; its data lives entirely in attributes.
+        let is_cover = e
+            .attributes()
+            .flatten()
+            .any(|a| a.key.as_ref() == b"name" && &*a.value == b"cover");
+        if is_cover
+            && let Some(ref cover_id) = self.meta_content
+            && !cover_id.is_empty()
+        {
+            self.epub2_cover_id = Some(cover_id.clone());
+        }
         Ok(())
     }
 
@@ -279,10 +310,16 @@ impl OpfParser {
         Ok(())
     }
 
-    /// Finish an EPUB3 meta element whose value was in its text content.
+    /// Finish an EPUB3 meta element whose value was in its text content
+    /// (falling back to its `content` attribute when the body is empty).
     fn end_meta(&mut self) {
         if let Some(ref prop) = self.meta_property {
-            let value = self.buf_text.trim().to_string();
+            let mut value = self.buf_text.trim().to_string();
+            if value.is_empty()
+                && let Some(ref content) = self.meta_content
+            {
+                value = content.trim().to_string();
+            }
             if !value.is_empty() {
                 if let Some(ref r) = self.meta_refines {
                     let refines_id = r.strip_prefix('#').unwrap_or(r).to_string();
@@ -306,6 +343,7 @@ impl OpfParser {
         self.meta_property = None;
         self.meta_refines = None;
         self.meta_id = None;
+        self.meta_content = None;
         self.buf_text.clear();
     }
 
@@ -315,7 +353,9 @@ impl OpfParser {
         let Some(elem) = self.current_element.take() else {
             return;
         };
-        let text = std::mem::take(&mut self.buf_text);
+        // trim_text is off (values may span nested markup), so trim the
+        // assembled value once here.
+        let text = std::mem::take(&mut self.buf_text).trim().to_string();
         let elem_id = self.current_element_id.take();
 
         match elem.as_str() {
@@ -453,16 +493,6 @@ fn apply_refinements(
     element_ids: &HashMap<String, MetaElement>,
     refinements: &[Refinement],
 ) {
-    // Track collection refinements by collection element ID
-    let mut collection_id: Option<String> = None;
-
-    for (id, elem) in element_ids {
-        if matches!(elem, MetaElement::Collection) {
-            collection_id = Some(id.clone());
-            break;
-        }
-    }
-
     for refinement in refinements {
         let prop_local = refinement
             .property
@@ -510,24 +540,6 @@ fn apply_refinements(
                             _ => {}
                         }
                     }
-                }
-            }
-        } else {
-            // Check if this is a refinement for a collection that wasn't tracked
-            // by belongs-to-collection (some EPUBs use meta property="belongs-to-collection"
-            // with an id, then refine that)
-            if let Some(ref coll_id) = collection_id
-                && &refinement.refines == coll_id
-                && let Some(ref mut coll) = metadata.collection
-            {
-                match prop_local {
-                    "collection-type" => {
-                        coll.collection_type = Some(refinement.value.clone());
-                    }
-                    "group-position" => {
-                        coll.position = refinement.value.parse().ok();
-                    }
-                    _ => {}
                 }
             }
         }
@@ -636,18 +648,27 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                 match local {
                     b"text" => in_text = false,
                     b"navPoint" => {
-                        if let Some(state) = stack.pop()
-                            && let (Some(text), Some(src)) = (state.text, state.src)
-                            // Whitespace-only labels are dropped, as they were
-                            // when per-event trimming removed them entirely.
-                            && !text.trim().is_empty()
-                        {
-                            let mut entry = TocEntry::new(text.trim(), src);
-                            entry.children = state.children;
-                            entry.play_order = state.play_order;
-
-                            if let Some(parent) = stack.last_mut() {
-                                parent.children.push(entry);
+                        if let Some(state) = stack.pop() {
+                            match (&state.text, &state.src) {
+                                // Whitespace-only labels are dropped, as they
+                                // were when per-event trimming removed them
+                                // entirely.
+                                (Some(text), Some(src)) if !text.trim().is_empty() => {
+                                    let mut entry = TocEntry::new(text.trim(), src.clone());
+                                    entry.children = state.children;
+                                    entry.play_order = state.play_order;
+                                    if let Some(parent) = stack.last_mut() {
+                                        parent.children.push(entry);
+                                    }
+                                }
+                                // A structural navPoint missing its label or
+                                // src must not take its whole subtree with
+                                // it: hoist the already-parsed children.
+                                _ => {
+                                    if let Some(parent) = stack.last_mut() {
+                                        parent.children.extend(state.children);
+                                    }
+                                }
                             }
                         }
                     }
@@ -672,7 +693,9 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
 /// the importer falls back to this when no usable NCX exists.
 pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
+    // No trim_text: labels may contain nested inline elements
+    // (`<a>Chapter <span>1</span>: The Start</a>`) whose surrounding spaces
+    // per-event trimming would eat. Titles are trimmed once assembled.
 
     struct ItemState {
         title: String,
@@ -687,6 +710,10 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
     let mut stack: Vec<ItemState> = Vec::new();
     let mut in_toc_nav = false;
     let mut in_label = false;
+    // Nesting depth of <a>/<span> elements inside the current label, so a
+    // nested </span> doesn't terminate label collection early and drop the
+    // rest of the title.
+    let mut label_depth = 0usize;
 
     loop {
         match reader.read_event() {
@@ -724,11 +751,15 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
                         });
                     }
                     b"a" | b"span" if in_toc_nav => {
-                        if let Some(item) = stack.last_mut()
+                        if in_label {
+                            // Nested inline element within the label.
+                            label_depth += 1;
+                        } else if let Some(item) = stack.last_mut()
                             && !item.labeled
                         {
                             item.labeled = true;
                             in_label = true;
+                            label_depth = 1;
                             if local == b"a" {
                                 for attr in e.attributes().flatten() {
                                     if local_name(attr.key.as_ref()) == b"href" {
@@ -763,7 +794,14 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
                 let local = local_name(name.as_ref());
 
                 match local {
-                    b"a" | b"span" => in_label = false,
+                    b"a" | b"span" => {
+                        if in_label {
+                            label_depth = label_depth.saturating_sub(1);
+                            if label_depth == 0 {
+                                in_label = false;
+                            }
+                        }
+                    }
                     b"li" if in_toc_nav => {
                         if let Some(item) = stack.pop() {
                             // Keep linked entries and unlinked headings that
@@ -798,7 +836,8 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
 /// an ordered list of anchor elements with epub:type attributes.
 pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
+    // No trim_text (see parse_nav_toc): labels with nested markup would lose
+    // their internal spaces. Labels are trimmed once assembled.
 
     let mut landmarks = Vec::new();
     let mut in_landmarks_nav = false;
@@ -885,7 +924,7 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                             landmarks.push(Landmark {
                                 landmark_type,
                                 href,
-                                label: current_label.clone(),
+                                label: current_label.trim().to_string(),
                             });
                         }
                         current_label.clear();
@@ -1067,6 +1106,79 @@ fn resolve_named_entity(entity: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_opf_accepts_explicit_close_tags() {
+        // <item ...></item> is XML-equivalent to <item .../>; an OPF written
+        // this way used to parse to an EMPTY manifest and spine (whole book
+        // silently lost).
+        let opf = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>T</dc:title>
+    <meta name="cover" content="cov"></meta>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"></item>
+    <item id="cov" href="cover.jpg" media-type="image/jpeg"></item>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"></itemref>
+  </spine>
+</package>"#;
+        let data = parse_opf(opf).unwrap();
+        assert_eq!(data.manifest.len(), 2);
+        assert_eq!(data.spine_ids, vec!["ch1"]);
+        assert_eq!(data.metadata.cover_image.as_deref(), Some("cover.jpg"));
+    }
+
+    #[test]
+    fn parse_opf_keeps_text_after_nested_markup() {
+        // Nested inline markup inside a DC element must not commit the value
+        // early on the inner end tag (previously yielded "FooBar", losing
+        // " Baz" and the internal spaces).
+        let opf = r#"<package xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Foo <i>Bar</i> Baz</dc:title>
+    <dc:creator>A <span>B</span></dc:creator>
+  </metadata>
+  <manifest/><spine/>
+</package>"#;
+        let data = parse_opf(opf).unwrap();
+        assert_eq!(data.metadata.title, "Foo Bar Baz");
+        assert_eq!(data.metadata.authors, vec!["A B"]);
+    }
+
+    #[test]
+    fn parse_nav_toc_keeps_label_after_nested_span() {
+        // A nested <span> inside the <a> label used to terminate collection
+        // and drop everything after it ("Chapter1" instead of the full title).
+        let nav = r#"<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+<nav epub:type="toc"><ol>
+  <li><a href="ch1.xhtml">Chapter <span>1</span>: The Start</a></li>
+</ol></nav>
+</body></html>"#;
+        let toc = parse_nav_toc(nav).unwrap();
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "Chapter 1: The Start");
+        assert_eq!(toc[0].href, "ch1.xhtml");
+    }
+
+    #[test]
+    fn parse_ncx_hoists_children_of_unlabeled_navpoint() {
+        // A structural navPoint without its own label/src must not take its
+        // whole subtree with it.
+        let ncx = r#"<ncx><navMap>
+  <navPoint>
+    <navPoint><navLabel><text>One</text></navLabel><content src="a.xhtml"/></navPoint>
+    <navPoint><navLabel><text>Two</text></navLabel><content src="b.xhtml"/></navPoint>
+  </navPoint>
+</navMap></ncx>"#;
+        let toc = parse_ncx(ncx).unwrap();
+        assert_eq!(toc.len(), 2);
+        assert_eq!(toc[0].title, "One");
+        assert_eq!(toc[1].title, "Two");
+    }
 
     #[test]
     fn parse_ncx_rejects_pathological_nesting() {

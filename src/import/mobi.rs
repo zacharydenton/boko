@@ -232,12 +232,16 @@ impl MobiImporter {
         // Discover assets to get cover image path with correct extension
         let assets = discover_assets_from_source(&source, &pdb, &mobi, file_len);
 
-        // Find cover image using discovered asset path
+        // Find cover image using discovered asset path. EXTH cover_offset is
+        // a record index relative to first_image_index, and the asset names
+        // embed exactly that index — so match by name. Indexing the compacted
+        // asset list positionally would desync whenever a metadata or
+        // unrecognized record precedes the cover.
         if let Some(ref exth) = exth
             && let Some(cover_idx) = exth.cover_offset
         {
-            // cover_offset is 0-indexed relative to first image
-            if let Some(cover_path) = assets.get(cover_idx as usize) {
+            let needle = format!("images/image_{cover_idx:04}.");
+            if let Some(cover_path) = assets.iter().find(|p| p.starts_with(&needle)) {
                 metadata.cover_image = Some(cover_path.clone());
             }
         }
@@ -309,7 +313,7 @@ impl MobiImporter {
 
         // Build TOC from NCX entries (using split result for chapter mapping)
         let toc = if let Some(ref ncx) = ncx_entries {
-            let nodes = build_toc_from_ncx(ncx, |entry| {
+            let nodes = build_toc_from_ncx(ncx, |_, entry| {
                 let filepos_key = format!("filepos{}", entry.pos);
                 let chapter_idx = split
                     .filepos_to_chapter
@@ -324,7 +328,9 @@ impl MobiImporter {
             vec![TocEntry::new(&metadata.title, &split.chapter_paths[0])]
         };
 
-        let mut importer = Self {
+        // `assets` was already discovered above for the cover/filepos
+        // transformation; reuse it instead of re-scanning every record.
+        let importer = Self {
             source,
             pdb,
             mobi,
@@ -335,57 +341,12 @@ impl MobiImporter {
             spine,
             chapter_cache: split.chapters,
             chapter_paths: split.chapter_paths,
-            assets: Vec::new(),
+            assets,
             css_cache: RwLock::new(HashMap::new()),
             element_id_map: RwLock::new(HashMap::new()),
         };
 
-        importer.assets = importer.discover_assets();
-
         Ok(importer)
-    }
-
-    /// Discover asset paths by scanning image and font records.
-    fn discover_assets(&self) -> Vec<String> {
-        let mut assets = Vec::new();
-
-        if self.mobi.first_image_index == NULL_INDEX {
-            return assets;
-        }
-
-        let first_img = self.mobi.first_image_index as usize;
-        for i in first_img..self.pdb.num_records as usize {
-            if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
-                // min against a small constant before the cast so a >4 GiB
-                // record length can't truncate on 32-bit targets.
-                let read_len = (end - start).min(16) as usize;
-                let mut header = [0u8; 16];
-                if self
-                    .source
-                    .read_at_into(start, &mut header[..read_len])
-                    .is_ok()
-                {
-                    let header = &header[..read_len];
-                    if is_metadata_record(header) {
-                        continue;
-                    }
-                    let idx = i - first_img;
-                    if let Some(media_type) = detect_image_type(header) {
-                        let ext = match media_type {
-                            "image/jpeg" => "jpg",
-                            "image/png" => "png",
-                            "image/gif" => "gif",
-                            _ => "bin",
-                        };
-                        assets.push(format!("images/image_{idx:04}.{ext}"));
-                    } else if let Some(font_ext) = detect_font_type(header) {
-                        assets.push(format!("fonts/font_{idx:04}.{font_ext}"));
-                    }
-                }
-            }
-        }
-
-        assets
     }
 
     /// Load an image or font record by index.
@@ -612,6 +573,7 @@ fn html_escape(s: &str) -> String {
 /// Convert TocNode to TocEntry recursively.
 fn toc_node_to_entry(node: TocNode) -> TocEntry {
     let mut entry = TocEntry::new(&node.title, &node.href);
+    entry.play_order = Some(node.ncx_index);
     entry.children = node.children.into_iter().map(toc_node_to_entry).collect();
     entry
 }

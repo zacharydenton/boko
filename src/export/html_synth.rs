@@ -183,6 +183,15 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
     // Handle leaf text nodes (Text role with text content, no children)
     if role == Role::Text && !node.text.is_empty() && node.first_child.is_none() {
         let text = ctx.ir.text(node.text);
+        // A text node carrying an anchor id must stay addressable: KFX
+        // anchors land on text nodes, and emitting bare text would leave
+        // every internal link to them (`chapter_5.xhtml#a19F`) dangling.
+        let anchor = ctx.ir.semantics.id(id);
+        if let Some(anchor) = anchor {
+            ctx.out.push_str("<span id=\"");
+            ctx.out.push_str(&escape_xml(anchor));
+            ctx.out.push_str("\">");
+        }
         // KFX uses \n in text content for forced line breaks — emit as <br/>
         if text.contains('\n') {
             for (i, segment) in text.split('\n').enumerate() {
@@ -194,6 +203,9 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
         } else {
             ctx.out.push_str(&escape_xml(text));
         }
+        if anchor.is_some() {
+            ctx.out.push_str("</span>");
+        }
         return;
     }
 
@@ -203,6 +215,22 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
     // For table cells, use th for header cells
     if role == Role::TableCell && ctx.ir.semantics.is_header_cell(id) {
         tag = "th";
+    }
+
+    // <p> and headings cannot legally contain block-level children in
+    // (X)HTML; KFX containers routinely import as Paragraph with nested
+    // headings/paragraphs. Demote to <div> — presentation comes from the
+    // class anyway, and browsers would otherwise auto-close the <p> and
+    // mangle the structure.
+    if matches!(tag, "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+        let has_block_child = ctx.ir.children(id).any(|child_id| {
+            ctx.ir
+                .node(child_id)
+                .is_some_and(|child| role_to_tag(child.role).2)
+        });
+        if has_block_child {
+            tag = "div";
+        }
     }
 
     // Build attributes

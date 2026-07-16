@@ -150,6 +150,11 @@ pub struct NormalizedContent {
     /// callers turn a bare `#anchor` (as KFX TOCs use) or a cross-chapter link
     /// into a `chapter_{i}.xhtml#anchor` reference that actually resolves.
     pub anchor_to_output: HashMap<String, String>,
+    /// Resolved-link overrides: original href string -> emitted target.
+    /// Built from `Book::resolve_links()`, this bridges importer-specific
+    /// anchor schemes (KFX `#a1CJ` anchor symbols) to the target node's real
+    /// emitted id, which the id-based maps above cannot do.
+    pub href_remap: HashMap<String, String>,
 }
 
 impl NormalizedContent {
@@ -158,14 +163,19 @@ impl NormalizedContent {
         toc.iter().map(|e| self.rewrite_toc_entry(e)).collect()
     }
 
+    /// Rewrite a single book-global href (e.g. a landmark target) onto the
+    /// emitted `chapter_{i}.xhtml` files, like [`Self::rewrite_toc`] does for
+    /// TOC entries.
+    pub fn rewrite_link(&self, href: &str) -> String {
+        if let Some(mapped) = self.href_remap.get(href) {
+            return mapped.clone();
+        }
+        rewrite_href(&self.source_to_output, &self.anchor_to_output, None, href)
+    }
+
     fn rewrite_toc_entry(&self, entry: &crate::model::TocEntry) -> crate::model::TocEntry {
         let mut out = entry.clone();
-        out.href = rewrite_href(
-            &self.source_to_output,
-            &self.anchor_to_output,
-            None,
-            &entry.href,
-        );
+        out.href = self.rewrite_link(&entry.href);
         out.children = entry
             .children
             .iter()
@@ -230,6 +240,7 @@ fn rewrite_document_hrefs(
     base_source: &str,
     source_to_output: &HashMap<String, String>,
     anchor_to_output: &HashMap<String, String>,
+    href_remap: &HashMap<String, String>,
 ) -> String {
     const NEEDLE: &str = " href=\"";
     if !doc.contains(NEEDLE) {
@@ -241,12 +252,13 @@ fn rewrite_document_hrefs(
         let (before, after) = rest.split_at(pos + NEEDLE.len());
         out.push_str(before);
         if let Some(end) = after.find('"') {
-            let rewritten = rewrite_href(
-                source_to_output,
-                anchor_to_output,
-                Some(base_source),
-                &after[..end],
-            );
+            let raw = &after[..end];
+            // Resolved-link overrides win: they carry importer knowledge the
+            // string-based maps below don't have (see `href_remap`).
+            let rewritten = match href_remap.get(raw) {
+                Some(mapped) => mapped.clone(),
+                None => rewrite_href(source_to_output, anchor_to_output, Some(base_source), raw),
+            };
             out.push_str(&rewritten);
             rest = &after[end..];
         } else {
@@ -318,6 +330,58 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
     }
 
     // =========================================================================
+    // Resolve importer-specific link anchors
+    // =========================================================================
+    //
+    // Some importers use anchor schemes that don't correspond to element ids
+    // in the IR (KFX links carry anchor *symbols* like "#a1CJ" while the
+    // target nodes carry numeric eids). The string maps above can't bridge
+    // that, so consult the book's resolved links and point each such href at
+    // the target node's real emitted location.
+    let chapter_pos: HashMap<ChapterId, usize> = ir_chapters
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _, _))| (*id, i))
+        .collect();
+    let mut per_chapter_remap: Vec<HashMap<String, String>> =
+        vec![HashMap::new(); ir_chapters.len()];
+    let mut href_remap: HashMap<String, String> = HashMap::new();
+    if let Ok(resolved) = book.resolve_links() {
+        for (idx, (chapter_id, _, chapter)) in ir_chapters.iter().enumerate() {
+            for node_id in chapter.iter_dfs() {
+                let Some(href) = chapter.semantics.href(node_id) else {
+                    continue;
+                };
+                if href.is_empty() || href.contains("://") || href.starts_with("mailto:") {
+                    continue;
+                }
+                let target = resolved.get(crate::model::GlobalNodeId::new(*chapter_id, node_id));
+                let output = match target {
+                    Some(crate::model::AnchorTarget::Internal(gid)) => {
+                        let Some(&tidx) = chapter_pos.get(&gid.chapter) else {
+                            continue;
+                        };
+                        let frag = ir_chapters[tidx].2.semantics.id(gid.node);
+                        match frag {
+                            Some(frag) => format!("chapter_{tidx}.xhtml#{frag}"),
+                            None => format!("chapter_{tidx}.xhtml"),
+                        }
+                    }
+                    Some(crate::model::AnchorTarget::Chapter(cid)) => {
+                        let Some(&tidx) = chapter_pos.get(cid) else {
+                            continue;
+                        };
+                        format!("chapter_{tidx}.xhtml")
+                    }
+                    _ => continue,
+                };
+                per_chapter_remap[idx].insert(href.to_string(), output.clone());
+                href_remap.entry(href.to_string()).or_insert(output);
+            }
+        }
+    }
+
+    // =========================================================================
     // Generate unified CSS
     // =========================================================================
 
@@ -364,6 +428,7 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
             source_path,
             &source_to_output,
             &anchor_to_output,
+            &per_chapter_remap[idx],
         );
 
         (
@@ -403,6 +468,7 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
         css: css_artifact.stylesheet,
         source_to_output,
         anchor_to_output,
+        href_remap,
     })
 }
 
