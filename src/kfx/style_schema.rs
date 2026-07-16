@@ -127,6 +127,10 @@ pub enum KfxValue {
         field: KfxSymbol,
         value: i64,
     },
+    /// Multi-field struct accumulated from several StructField writes to the
+    /// same KFX symbol (e.g. orphans + widows merging into
+    /// `keep_lines_together: { first: N, last: M }`).
+    StructFields(Vec<(KfxSymbol, i64)>),
 }
 
 impl KfxValue {
@@ -150,7 +154,38 @@ impl KfxValue {
             KfxValue::StructField { field, value } => {
                 IonValue::Struct(vec![(*field as u64, IonValue::Int(*value))])
             }
+            KfxValue::StructFields(fields) => IonValue::Struct(
+                fields
+                    .iter()
+                    .map(|(field, value)| (*field as u64, IonValue::Int(*value)))
+                    .collect(),
+            ),
         }
+    }
+
+    /// Merge two struct-shaped values for the same KFX symbol into one
+    /// multi-field struct (later writes to the same field win). Returns
+    /// `None` when either side is not struct-shaped; callers should then
+    /// replace the old value.
+    pub(crate) fn merge_struct_fields(&self, other: &KfxValue) -> Option<KfxValue> {
+        let mut fields: Vec<(KfxSymbol, i64)> = match self {
+            KfxValue::StructField { field, value } => vec![(*field, *value)],
+            KfxValue::StructFields(fields) => fields.clone(),
+            _ => return None,
+        };
+        let incoming: Vec<(KfxSymbol, i64)> = match other {
+            KfxValue::StructField { field, value } => vec![(*field, *value)],
+            KfxValue::StructFields(fields) => fields.clone(),
+            _ => return None,
+        };
+        for (field, value) in incoming {
+            if let Some(existing) = fields.iter_mut().find(|(f, _)| *f == field) {
+                existing.1 = value;
+            } else {
+                fields.push((field, value));
+            }
+        }
+        Some(KfxValue::StructFields(fields))
     }
 }
 
@@ -312,9 +347,16 @@ pub struct StylePropertyRule {
 // ============================================================================
 
 /// The master schema for style property mappings.
+///
+/// Rules are stored in registration order and every iteration API walks them
+/// in that order. This is load-bearing: property order in emitted KFX style
+/// structs (and the winner when two rules share a KFX symbol) follows rule
+/// order, so it must be deterministic for output to be byte-reproducible.
 pub struct StyleSchema {
-    /// Fast lookup from IR key -> Rules (multiple rules per key supported)
-    rules: HashMap<&'static str, Vec<StylePropertyRule>>,
+    /// All rules, in registration order.
+    rules: Vec<StylePropertyRule>,
+    /// Fast lookup from IR key -> indexes into `rules`.
+    by_key: HashMap<&'static str, Vec<usize>>,
 }
 
 impl Default for StyleSchema {
@@ -327,37 +369,44 @@ impl StyleSchema {
     /// Create an empty schema.
     pub fn new() -> Self {
         Self {
-            rules: HashMap::new(),
+            rules: Vec::new(),
+            by_key: HashMap::new(),
         }
     }
 
     /// Register a property rule.
     pub fn register(&mut self, rule: StylePropertyRule) {
-        self.rules.entry(rule.ir_key).or_default().push(rule);
+        self.by_key
+            .entry(rule.ir_key)
+            .or_default()
+            .push(self.rules.len());
+        self.rules.push(rule);
     }
 
-    /// Look up rules by IR key.
-    pub fn get(&self, ir_key: &str) -> Option<&[StylePropertyRule]> {
-        self.rules.get(ir_key).map(|v| v.as_slice())
+    /// Look up rules by IR key, in registration order.
+    pub fn get<'a>(&'a self, ir_key: &str) -> impl Iterator<Item = &'a StylePropertyRule> + 'a {
+        self.by_key
+            .get(ir_key)
+            .into_iter()
+            .flatten()
+            .map(|&i| &self.rules[i])
     }
 
     /// Look up the first rule by IR key (convenience for single-rule properties).
     #[cfg(test)]
     pub fn get_first(&self, ir_key: &str) -> Option<&StylePropertyRule> {
-        self.rules.get(ir_key).and_then(|v| v.first())
+        self.get(ir_key).next()
     }
 
-    /// Get all rules (flattened).
+    /// Get all rules, in registration order.
     pub fn rules(&self) -> impl Iterator<Item = &StylePropertyRule> {
-        self.rules.values().flatten()
+        self.rules.iter()
     }
 
-    /// Get rules that have IR field mappings (for schema-driven IR extraction).
+    /// Get rules that have IR field mappings (for schema-driven IR extraction),
+    /// in registration order.
     pub fn ir_mapped_rules(&self) -> impl Iterator<Item = &StylePropertyRule> {
-        self.rules
-            .values()
-            .flatten()
-            .filter(|r| r.ir_field.is_some())
+        self.rules.iter().filter(|r| r.ir_field.is_some())
     }
 
     /// Get the standard KFX style schema (cached).
@@ -415,9 +464,10 @@ impl StyleSchema {
             ir_key: "font-size",
             ir_field: Some(IrField::FontSize),
             kfx_symbol: KfxSymbol::FontSize,
-            transform: ValueTransform::Dimensioned {
-                unit: KfxSymbol::Rem,
-            },
+            // PreserveUnit, not Dimensioned{Rem}: Dimensioned relabels the
+            // number with its unit symbol without converting, which would
+            // turn "24px" into 24rem (~38x too large on device).
+            transform: ValueTransform::PreserveUnit,
             context: StyleContext::Any,
         });
 
@@ -470,6 +520,13 @@ impl StyleSchema {
         });
 
         // text-decoration: underline -> underline: solid (symbol, not bool)
+        //
+        // The style names are included so that import can round-trip
+        // `underline: dotted` etc. back to the underline flag ("underline"
+        // must stay first so Solid inverts to it). The specific style comes
+        // from the `text-decoration-style` rule below, which shares this KFX
+        // symbol and is registered later, so it deterministically overrides
+        // the plain Solid emitted here whenever both are present.
         schema.register(StylePropertyRule {
             ir_key: "text-decoration",
             ir_field: Some(IrField::TextDecorationUnderline),
@@ -477,6 +534,10 @@ impl StyleSchema {
             transform: ValueTransform::Map(vec![
                 ("underline".into(), KfxValue::Symbol(KfxSymbol::Solid)),
                 ("true".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("solid".into(), KfxValue::Symbol(KfxSymbol::Solid)),
+                ("dotted".into(), KfxValue::Symbol(KfxSymbol::Dotted)),
+                ("dashed".into(), KfxValue::Symbol(KfxSymbol::Dashed)),
+                ("double".into(), KfxValue::Symbol(KfxSymbol::Double)),
                 ("false".into(), KfxValue::Symbol(KfxSymbol::None)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
             ]),
@@ -1338,22 +1399,17 @@ impl ValueTransform {
             }
 
             ValueTransform::ParseColor { output_format } => {
-                let color = parse_css_color(raw)?;
+                // Fully transparent colors (`transparent`, zero-alpha rgba)
+                // parse to None and the property is omitted entirely —
+                // coercing them to an opaque value would paint black boxes.
+                let (r, g, b, a) = parse_css_color(raw)?;
                 match output_format {
-                    ColorFormat::PackedInt => {
-                        // KFX uses ARGB format with 0xFF alpha for opaque colors
-                        let packed = (0xFF_i64 << 24)
-                            | ((color.0 as i64) << 16)
-                            | ((color.1 as i64) << 8)
-                            | (color.2 as i64);
-                        Some(KfxValue::Integer(packed))
-                    }
-                    ColorFormat::RgbStruct => {
-                        // Would need a KfxValue variant for this
-                        let packed = (0xFF_i64 << 24)
-                            | ((color.0 as i64) << 16)
-                            | ((color.1 as i64) << 8)
-                            | (color.2 as i64);
+                    ColorFormat::PackedInt | ColorFormat::RgbStruct => {
+                        // KFX uses ARGB packing; alpha is preserved.
+                        let packed = ((a as i64) << 24)
+                            | ((r as i64) << 16)
+                            | ((g as i64) << 8)
+                            | (b as i64);
                         Some(KfxValue::Integer(packed))
                     }
                 }
@@ -1479,10 +1535,13 @@ fn parse_number(s: &str) -> Option<f64> {
 fn parse_css_length(s: &str) -> Option<(f64, String)> {
     let s = s.trim();
 
-    // Find where the unit starts
+    // Find where the unit starts. Must be a byte offset (char_indices), not a
+    // char count: a multi-byte character before the unit would otherwise make
+    // the slices below panic on a non-char boundary.
     let unit_start = s
-        .chars()
-        .position(|c| c.is_alphabetic() || c == '%')
+        .char_indices()
+        .find(|(_, c)| c.is_alphabetic() || *c == '%')
+        .map(|(i, _)| i)
         .unwrap_or(s.len());
 
     let num_str = &s[..unit_start];
@@ -1513,8 +1572,12 @@ fn convert_to_pixels(value: f64, unit: &str, base_font_size: f64) -> f64 {
     }
 }
 
-/// Parse a CSS color into (r, g, b).
-fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
+/// Parse a CSS color into (r, g, b, a).
+///
+/// Returns `None` for unparseable colors and for **fully transparent** ones
+/// (`transparent`, zero-alpha rgba/hex): an invisible color must be omitted,
+/// not coerced to an opaque value.
+fn parse_css_color(s: &str) -> Option<(u8, u8, u8, u8)> {
     let s = s.trim().to_lowercase();
 
     // Named colors
@@ -1542,12 +1605,12 @@ fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
         "lime" => Some((0, 255, 0)),
         "aqua" => Some((0, 255, 255)),
         "fuchsia" => Some((255, 0, 255)),
-        "transparent" => Some((0, 0, 0)), // Treat as black
+        "transparent" => return None,
         _ => None,
     };
 
-    if let Some(color) = named {
-        return Some(color);
+    if let Some((r, g, b)) = named {
+        return Some((r, g, b, 0xFF));
     }
 
     // Hex colors
@@ -1563,41 +1626,53 @@ fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
     None
 }
 
-fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8, u8)> {
+    // All slicing below is by byte range; reject non-ASCII up front so a
+    // multi-byte character can't land on a slice boundary and panic.
+    if !hex.is_ascii() {
+        return None;
+    }
     match hex.len() {
         3 => {
             // #RGB -> #RRGGBB
             let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
             let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
             let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
-            Some((r, g, b))
+            Some((r, g, b, 0xFF))
         }
         6 => {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            Some((r, g, b))
+            Some((r, g, b, 0xFF))
         }
         8 => {
-            // #RRGGBBAA - ignore alpha
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            Some((r, g, b))
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            if a == 0 {
+                return None; // Fully transparent: omit the property
+            }
+            Some((r, g, b, a))
         }
         _ => None,
     }
 }
 
-fn parse_rgb_function(s: &str) -> Option<(u8, u8, u8)> {
+fn parse_rgb_function(s: &str) -> Option<(u8, u8, u8, u8)> {
     // Extract content between parentheses
     let start = s.find('(')?;
     let end = s.find(')')?;
+    // A malformed value like "rgb)x(" would put `end` before `start`.
+    if end <= start {
+        return None;
+    }
     let content = &s[start + 1..end];
 
-    // Split by comma or space
+    // Split by comma, slash (rgb(r g b / a) syntax), or space
     let parts: Vec<&str> = content
-        .split([',', ' '])
+        .split([',', ' ', '/'])
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1609,7 +1684,28 @@ fn parse_rgb_function(s: &str) -> Option<(u8, u8, u8)> {
     let g = parse_color_component(parts[1])?;
     let b = parse_color_component(parts[2])?;
 
-    Some((r, g, b))
+    // Optional alpha: 0..1 float or percentage.
+    let a = match parts.get(3) {
+        Some(alpha) => {
+            let alpha = alpha.trim();
+            let value = if let Some(pct) = alpha.strip_suffix('%') {
+                pct.parse::<f64>().ok()? / 100.0
+            } else {
+                alpha.parse::<f64>().ok()?
+            };
+            if value.is_nan() {
+                return None;
+            }
+            (value.clamp(0.0, 1.0) * 255.0).round() as u8
+        }
+        None => 0xFF,
+    };
+
+    if a == 0 {
+        return None; // Fully transparent: omit the property
+    }
+
+    Some((r, g, b, a))
 }
 
 fn parse_color_component(s: &str) -> Option<u8> {
@@ -1705,6 +1801,18 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
                 None
             }
         }
+        // Gate the decoration style on the underline flag: in CSS,
+        // text-decoration-style without text-decoration-line: underline
+        // draws nothing, and the KFX `underline` property this feeds
+        // (shared with the text-decoration rule) would otherwise turn the
+        // style into a phantom underline.
+        IrField::UnderlineStyle => {
+            if ir_style.text_decoration_underline {
+                shared("text-decoration-style")
+            } else {
+                None
+            }
+        }
         // KNOWN DISCREPANCY: to_css emits `text-decoration-line: overline`,
         // while KFX maps the overline flag to a decoration style ("solid").
         // Kept as-is to preserve byte-identical output on both sides.
@@ -1786,7 +1894,6 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
         IrField::TextTransform => shared("text-transform"),
         IrField::Hyphens => shared("hyphens"),
         IrField::WhiteSpace => shared("white-space"),
-        IrField::UnderlineStyle => shared("text-decoration-style"),
         IrField::UnderlineColor => shared("text-decoration-color"),
         IrField::Width => shared("width"),
         IrField::Height => shared("height"),
@@ -1829,12 +1936,20 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
 // ============================================================================
 
 impl StyleSchema {
-    /// Look up a schema rule by its KFX symbol.
+    /// Look up the first schema rule with the given KFX symbol
+    /// (deterministic: registration order).
     pub fn get_by_kfx_symbol(&self, kfx_symbol: u64) -> Option<&StylePropertyRule> {
+        self.rules_by_kfx_symbol(kfx_symbol).next()
+    }
+
+    /// Look up all schema rules with the given KFX symbol, in registration
+    /// order. Several rules can share one symbol (e.g. orphans and widows
+    /// both land in `keep_lines_together`), and import must consult each of
+    /// them to recover every IR field encoded in the value.
+    pub fn rules_by_kfx_symbol(&self, kfx_symbol: u64) -> impl Iterator<Item = &StylePropertyRule> {
         self.rules
-            .values()
-            .flatten()
-            .find(|r| r.kfx_symbol as u64 == kfx_symbol)
+            .iter()
+            .filter(move |r| r.kfx_symbol as u64 == kfx_symbol)
     }
 }
 
@@ -2045,12 +2160,12 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             }
         }
         IrField::Color => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.color = Some(ir_style::Color::rgb(r, g, b));
             }
         }
         IrField::BackgroundColor => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.background_color = Some(ir_style::Color::rgb(r, g, b));
             }
         }
@@ -2060,7 +2175,12 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             }
         }
         IrField::TextDecorationUnderline => {
-            ir_style.text_decoration_underline = css_value == "underline";
+            // A concrete decoration style (dotted, dashed, ...) coming back
+            // from KFX `underline` also means the underline flag is on.
+            ir_style.text_decoration_underline = matches!(
+                css_value,
+                "underline" | "true" | "solid" | "dotted" | "dashed" | "double"
+            );
         }
         IrField::TextDecorationStrikethrough => {
             ir_style.text_decoration_line_through = css_value == "line-through";
@@ -2115,7 +2235,7 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             ir_style.overline = css_value == "solid" || css_value == "true";
         }
         IrField::UnderlineColor => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.underline_color = Some(ir_style::Color::rgb(r, g, b));
             }
         }
@@ -2214,22 +2334,22 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
             }
         }
         IrField::BorderColorTop => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.border_color_top = Some(ir_style::Color::rgb(r, g, b));
             }
         }
         IrField::BorderColorRight => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.border_color_right = Some(ir_style::Color::rgb(r, g, b));
             }
         }
         IrField::BorderColorBottom => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.border_color_bottom = Some(ir_style::Color::rgb(r, g, b));
             }
         }
         IrField::BorderColorLeft => {
-            if let Some((r, g, b)) = parse_css_color(css_value) {
+            if let Some((r, g, b, _)) = parse_css_color(css_value) {
                 ir_style.border_color_left = Some(ir_style::Color::rgb(r, g, b));
             }
         }
@@ -2378,25 +2498,45 @@ fn parse_css_length_to_ir(s: &str) -> Option<ir_style::Length> {
 
 /// Import KFX style properties to an IR ComputedStyle using the schema.
 ///
-/// This is the inverse of the export direction:
-/// 1. For each KFX property, look up the schema rule by kfx_symbol
-/// 2. Apply inverse transform to get CSS value
-/// 3. Apply CSS value to IR field
+/// This is the inverse of the export direction. Every rule sharing a KFX
+/// symbol is consulted, because one KFX value can encode several IR fields
+/// (`keep_lines_together: {first, last}` carries both orphans and widows;
+/// `underline: dotted` carries both the underline flag and its style).
+///
+/// A second pass gives rules without their own IR field (e.g. `fill_color`,
+/// which exists only to mirror `background-color` onto block containers) a
+/// fallback: they populate their sibling key rule's field, but only when
+/// that field wasn't already set directly — so a style carrying only
+/// `fill_color` still imports a background color.
 pub fn import_kfx_style(
     schema: &StyleSchema,
     props: &[(u64, IonValue)],
 ) -> ir_style::ComputedStyle {
     let mut style = ir_style::ComputedStyle::default();
+    let mut applied: Vec<IrField> = Vec::new();
 
     for (kfx_symbol, kfx_value) in props {
-        // Look up the schema rule for this KFX symbol
-        if let Some(rule) = schema.get_by_kfx_symbol(*kfx_symbol) {
-            // Apply inverse transform to get CSS value
-            if let Some(css_value) = rule.transform.inverse(kfx_value) {
-                // Apply to IR field (if the rule has an IR field mapping)
-                if let Some(ir_field) = rule.ir_field {
-                    apply_ir_field(&mut style, ir_field, &css_value);
+        for rule in schema.rules_by_kfx_symbol(*kfx_symbol) {
+            if let Some(ir_field) = rule.ir_field
+                && let Some(css_value) = rule.transform.inverse(kfx_value)
+            {
+                apply_ir_field(&mut style, ir_field, &css_value);
+                if !applied.contains(&ir_field) {
+                    applied.push(ir_field);
                 }
+            }
+        }
+    }
+
+    for (kfx_symbol, kfx_value) in props {
+        for rule in schema.rules_by_kfx_symbol(*kfx_symbol) {
+            if rule.ir_field.is_none()
+                && let Some(sibling_field) = schema.get(rule.ir_key).find_map(|r| r.ir_field)
+                && !applied.contains(&sibling_field)
+                && let Some(css_value) = rule.transform.inverse(kfx_value)
+            {
+                apply_ir_field(&mut style, sibling_field, &css_value);
+                applied.push(sibling_field);
             }
         }
     }
@@ -2434,17 +2574,32 @@ mod tests {
 
     #[test]
     fn test_parse_hex_color() {
-        assert_eq!(parse_hex_color("fff"), Some((255, 255, 255)));
-        assert_eq!(parse_hex_color("000"), Some((0, 0, 0)));
-        assert_eq!(parse_hex_color("ff0000"), Some((255, 0, 0)));
-        assert_eq!(parse_hex_color("00ff00"), Some((0, 255, 0)));
+        assert_eq!(parse_hex_color("fff"), Some((255, 255, 255, 255)));
+        assert_eq!(parse_hex_color("000"), Some((0, 0, 0, 255)));
+        assert_eq!(parse_hex_color("ff0000"), Some((255, 0, 0, 255)));
+        assert_eq!(parse_hex_color("00ff00"), Some((0, 255, 0, 255)));
+        // Alpha is preserved; fully transparent is rejected outright.
+        assert_eq!(parse_hex_color("ff000080"), Some((255, 0, 0, 128)));
+        assert_eq!(parse_hex_color("ff000000"), None);
+        // Multi-byte input must not panic on the byte slices.
+        assert_eq!(parse_hex_color("aé"), None);
+        assert_eq!(parse_hex_color("ééé"), None);
     }
 
     #[test]
     fn test_parse_named_color() {
-        assert_eq!(parse_css_color("red"), Some((255, 0, 0)));
-        assert_eq!(parse_css_color("BLACK"), Some((0, 0, 0)));
-        assert_eq!(parse_css_color("White"), Some((255, 255, 255)));
+        assert_eq!(parse_css_color("red"), Some((255, 0, 0, 255)));
+        assert_eq!(parse_css_color("BLACK"), Some((0, 0, 0, 255)));
+        assert_eq!(parse_css_color("White"), Some((255, 255, 255, 255)));
+        // `transparent` must be omitted, never coerced to opaque black.
+        assert_eq!(parse_css_color("transparent"), None);
+        assert_eq!(parse_css_color("rgba(0, 0, 0, 0)"), None);
+        assert_eq!(
+            parse_css_color("rgba(10, 20, 30, 0.5)"),
+            Some((10, 20, 30, 128))
+        );
+        // Malformed rgb with reversed parens must not panic.
+        assert_eq!(parse_css_color("rgb)x("), None);
     }
 
     #[test]
@@ -2869,24 +3024,30 @@ mod tests {
     #[test]
     fn test_parse_color_with_whitespace() {
         // Colors should handle whitespace
-        assert_eq!(parse_css_color("  red  "), Some((255, 0, 0)));
-        assert_eq!(parse_css_color("  #ff0000  "), Some((255, 0, 0)));
+        assert_eq!(parse_css_color("  red  "), Some((255, 0, 0, 255)));
+        assert_eq!(parse_css_color("  #ff0000  "), Some((255, 0, 0, 255)));
     }
 
     #[test]
     fn test_rgb_function_parsing() {
-        assert_eq!(parse_css_color("rgb(255, 0, 0)"), Some((255, 0, 0)));
-        assert_eq!(parse_css_color("rgb(0, 128, 255)"), Some((0, 128, 255)));
+        assert_eq!(parse_css_color("rgb(255, 0, 0)"), Some((255, 0, 0, 255)));
+        assert_eq!(
+            parse_css_color("rgb(0, 128, 255)"),
+            Some((0, 128, 255, 255))
+        );
         assert_eq!(
             parse_css_color("rgba(255, 255, 255, 0.5)"),
-            Some((255, 255, 255))
+            Some((255, 255, 255, 128))
         );
     }
 
     #[test]
     fn test_rgb_percentage_parsing() {
-        assert_eq!(parse_css_color("rgb(100%, 0%, 0%)"), Some((255, 0, 0)));
-        assert_eq!(parse_css_color("rgb(50%, 50%, 50%)"), Some((128, 128, 128)));
+        assert_eq!(parse_css_color("rgb(100%, 0%, 0%)"), Some((255, 0, 0, 255)));
+        assert_eq!(
+            parse_css_color("rgb(50%, 50%, 50%)"),
+            Some((128, 128, 128, 255))
+        );
     }
 
     #[test]
@@ -3623,7 +3784,7 @@ mod tests {
         let schema = StyleSchema::standard();
 
         // border-spacing should have two rules (vertical and horizontal)
-        let rules = schema.get("border-spacing").unwrap();
+        let rules: Vec<_> = schema.get("border-spacing").collect();
         assert_eq!(rules.len(), 2);
 
         // Both rules should use PreserveUnit transform
@@ -3646,7 +3807,7 @@ mod tests {
         let schema = StyleSchema::standard();
 
         // vertical-align should have two rules (baseline_style and yj.vertical_align)
-        let rules = schema.get("vertical-align").unwrap();
+        let rules: Vec<_> = schema.get("vertical-align").collect();
         assert_eq!(rules.len(), 2);
 
         let symbols: Vec<_> = rules.iter().map(|r| r.kfx_symbol).collect();
@@ -3706,8 +3867,7 @@ mod tests {
     #[test]
     fn test_preserve_unit_transform() {
         let schema = StyleSchema::standard();
-        let rules = schema.get("border-spacing").unwrap();
-        let rule = &rules[0];
+        let rule = schema.get("border-spacing").next().unwrap();
 
         // Test various units are preserved
         assert!(matches!(
@@ -3722,6 +3882,80 @@ mod tests {
             rule.transform.apply("50%"),
             Some(KfxValue::Dimensioned { value, unit }) if value == 50.0 && unit == KfxSymbol::Percent
         ));
+    }
+
+    #[test]
+    fn test_import_keep_lines_together_recovers_both_fields() {
+        let schema = StyleSchema::standard();
+        // keep_lines_together: { first: 3, last: 4 } encodes orphans AND
+        // widows; import used to consult only one arbitrary rule and drop
+        // the other.
+        let props = vec![(
+            KfxSymbol::KeepLinesTogether as u64,
+            IonValue::Struct(vec![
+                (KfxSymbol::First as u64, IonValue::Int(3)),
+                (KfxSymbol::Last as u64, IonValue::Int(4)),
+            ]),
+        )];
+        let style = import_kfx_style(schema, &props);
+        assert_eq!(style.orphans, 3);
+        assert_eq!(style.widows, 4);
+
+        // A last-only struct must still populate widows.
+        let props = vec![(
+            KfxSymbol::KeepLinesTogether as u64,
+            IonValue::Struct(vec![(KfxSymbol::Last as u64, IonValue::Int(5))]),
+        )];
+        let style = import_kfx_style(schema, &props);
+        assert_eq!(style.widows, 5);
+    }
+
+    #[test]
+    fn test_import_underline_dotted_sets_flag_and_style() {
+        let schema = StyleSchema::standard();
+        let props = vec![(
+            KfxSymbol::Underline as u64,
+            IonValue::Symbol(KfxSymbol::Dotted as u64),
+        )];
+        let style = import_kfx_style(schema, &props);
+        assert!(style.text_decoration_underline);
+        assert_eq!(style.underline_style, crate::style::DecorationStyle::Dotted);
+
+        let props = vec![(
+            KfxSymbol::Underline as u64,
+            IonValue::Symbol(KfxSymbol::Solid as u64),
+        )];
+        let style = import_kfx_style(schema, &props);
+        assert!(style.text_decoration_underline);
+    }
+
+    #[test]
+    fn test_import_fill_color_falls_back_to_background() {
+        let schema = StyleSchema::standard();
+        // A style carrying only fill_color (typical for block containers)
+        // must import as a background color instead of being dropped.
+        let packed = 0xFF112233u32 as i64;
+        let props = vec![(KfxSymbol::FillColor as u64, IonValue::Int(packed))];
+        let style = import_kfx_style(schema, &props);
+        assert_eq!(
+            style.background_color,
+            Some(crate::style::Color::rgb(0x11, 0x22, 0x33))
+        );
+
+        // When text_background_color is present it wins; fill_color must not
+        // overwrite it.
+        let props = vec![
+            (
+                KfxSymbol::TextBackgroundColor as u64,
+                IonValue::Int(0xFFAABBCCu32 as i64),
+            ),
+            (KfxSymbol::FillColor as u64, IonValue::Int(packed)),
+        ];
+        let style = import_kfx_style(schema, &props);
+        assert_eq!(
+            style.background_color,
+            Some(crate::style::Color::rgb(0xAA, 0xBB, 0xCC))
+        );
     }
 
     #[test]

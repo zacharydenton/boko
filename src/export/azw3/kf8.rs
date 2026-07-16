@@ -582,7 +582,9 @@ impl Kf8Builder {
         record0.extend_from_slice(&mobi_header_len.to_be_bytes());
         record0.extend_from_slice(&2u32.to_be_bytes()); // Book type
         record0.extend_from_slice(&65001u32.to_be_bytes()); // UTF-8
-        record0.extend_from_slice(&rand_uid().to_be_bytes());
+        record0.extend_from_slice(
+            &book_uid(&self.ctx.metadata.identifier, &self.ctx.metadata.title).to_be_bytes(),
+        );
         record0.extend_from_slice(&8u32.to_be_bytes()); // KF8 version
 
         // Meta indices (40-80)
@@ -953,9 +955,14 @@ pub(super) fn write_font_record(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(record)
 }
 
-pub(super) fn rand_uid() -> u32 {
-    let seed = crate::util::time_seed_nanos() as u32;
-    seed.wrapping_mul(1103515245).wrapping_add(12345)
+/// Derive the MOBI-header unique ID deterministically from the book's
+/// identity, so exporting the same book twice is byte-reproducible.
+/// (Previously clock-seeded, which made every export differ.)
+pub(super) fn book_uid(identifier: &str, title: &str) -> u32 {
+    let digest = sha1_smol::Sha1::from(format!("{identifier}\n{title}").as_bytes())
+        .digest()
+        .bytes();
+    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
 }
 
 pub(super) fn sanitize_title(title: &str) -> String {

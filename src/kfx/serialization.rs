@@ -248,32 +248,24 @@ pub fn serialize_annotated_ion(annotation_id: u64, value: &IonValue) -> Vec<u8> 
     writer.into_bytes()
 }
 
-/// Generate a unique container ID.
-pub fn generate_container_id() -> String {
-    // Get seed from platform-appropriate time source
-    #[cfg(target_arch = "wasm32")]
-    let seed = {
-        // In WASM, use js_sys::Date::now() which returns milliseconds
-        (js_sys::Date::now() as u128) * 1_000_000 // Convert to nanoseconds scale
-    };
+/// Generate a container ID deterministically from a seed string.
+///
+/// The same seed always yields the same ID, so converting the same book
+/// twice produces byte-identical output (reproducible builds). Distinct
+/// books get distinct IDs via the SHA-1 of their identifier — this was
+/// previously clock-seeded, which both broke reproducibility and could
+/// collide for two exports in the same clock tick.
+pub fn generate_container_id(seed: &str) -> String {
+    let digest = sha1_smol::Sha1::from(seed.as_bytes()).digest().bytes();
+    let mut state = u128::from_be_bytes(digest[..16].try_into().expect("sha1 digest >= 16 bytes"));
 
-    #[cfg(not(target_arch = "wasm32"))]
-    let seed = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    };
-
-    let mut state = seed;
-    let chars: Vec<char> = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect();
+    const CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let mut id = String::from("CR!");
 
     for _ in 0..28 {
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let idx = ((state >> 56) as usize) % chars.len();
-        id.push(chars[idx]);
+        let idx = ((state >> 56) as usize) % CHARS.len();
+        id.push(CHARS[idx] as char);
     }
 
     id
@@ -285,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_container_id_format() {
-        let id = generate_container_id();
+        let id = generate_container_id("test-seed");
         assert!(id.starts_with("CR!"));
         assert_eq!(id.len(), 31); // CR! + 28 chars
 

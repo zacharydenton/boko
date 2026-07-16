@@ -276,7 +276,7 @@ mod entity_structure_tests {
     fn test_entity_order_matches_reference() {
         // Build KFX from EPUB and verify entity order matches Amazon reference
         let book = Book::open("tests/fixtures/epictetus.epub").unwrap();
-        let container_id = generate_container_id();
+        let container_id = generate_container_id("test-seed");
         let mut ctx = ExportContext::new();
 
         // Collect spine info

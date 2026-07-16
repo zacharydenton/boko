@@ -33,10 +33,18 @@ impl ComputedStyle {
     }
 
     /// Add a property to this style.
+    ///
+    /// Setting the same symbol twice replaces the value, except when both
+    /// values are struct-shaped: those merge into one multi-field struct so
+    /// that orphans (`{first: N}`) and widows (`{last: M}`) can coexist in a
+    /// single `keep_lines_together` instead of one silently clobbering the
+    /// other.
     pub fn set(&mut self, symbol: KfxSymbol, value: KfxValue) {
-        // Remove any existing value for this symbol
-        self.properties.retain(|(s, _)| *s != symbol);
-        self.properties.push((symbol, value));
+        if let Some(existing) = self.properties.iter_mut().find(|(s, _)| *s == symbol) {
+            existing.1 = existing.1.merge_struct_fields(&value).unwrap_or(value);
+        } else {
+            self.properties.push((symbol, value));
+        }
     }
 
     /// Get a property value.
@@ -185,6 +193,12 @@ fn hash_kfx_value<H: Hasher>(value: &KfxValue, hasher: &mut H) {
         KfxValue::StructField { field, value } => {
             (*field as u64).hash(hasher);
             value.hash(hasher);
+        }
+        KfxValue::StructFields(fields) => {
+            for (field, value) in fields {
+                (*field as u64).hash(hasher);
+                value.hash(hasher);
+            }
         }
     }
 }
@@ -359,11 +373,9 @@ impl<'a> StyleBuilder<'a> {
 
     /// Apply a single (non-shorthand) property.
     fn apply_single(&mut self, property: &str, value: &str) {
-        if let Some(rules) = self.schema.get(property) {
-            for rule in rules {
-                if let Some(kfx_value) = rule.transform.apply(value) {
-                    self.style.set(rule.kfx_symbol, kfx_value);
-                }
+        for rule in self.schema.get(property) {
+            if let Some(kfx_value) = rule.transform.apply(value) {
+                self.style.set(rule.kfx_symbol, kfx_value);
             }
         }
     }
@@ -542,6 +554,126 @@ mod tests {
         assert_eq!(expanded[1].1, "20px"); // right
         assert_eq!(expanded[2].1, "10px"); // bottom
         assert_eq!(expanded[3].1, "20px"); // left
+    }
+
+    #[test]
+    fn test_orphans_widows_merge_into_one_struct() {
+        use crate::kfx::style_schema::StyleSchema;
+
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.orphans = 3;
+        ir.widows = 4;
+
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        let style = builder.build();
+
+        // Both must survive in a single keep_lines_together value; before the
+        // merge fix, whichever rule ran last silently clobbered the other.
+        match style.get(KfxSymbol::KeepLinesTogether) {
+            Some(KfxValue::StructFields(fields)) => {
+                assert_eq!(
+                    fields.as_slice(),
+                    &[(KfxSymbol::First, 3), (KfxSymbol::Last, 4),]
+                );
+            }
+            other => panic!("expected merged StructFields, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_underline_style_overrides_plain_underline() {
+        use crate::kfx::style_schema::StyleSchema;
+
+        // Flag only -> solid underline.
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.text_decoration_underline = true;
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        assert_eq!(
+            builder.build().get(KfxSymbol::Underline),
+            Some(&KfxValue::Symbol(KfxSymbol::Solid))
+        );
+
+        // Flag + style -> the specific style wins, deterministically.
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.text_decoration_underline = true;
+        ir.underline_style = crate::style::DecorationStyle::Dotted;
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        assert_eq!(
+            builder.build().get(KfxSymbol::Underline),
+            Some(&KfxValue::Symbol(KfxSymbol::Dotted))
+        );
+
+        // Style without the flag draws nothing in CSS -> no KFX underline.
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.underline_style = crate::style::DecorationStyle::Dotted;
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        assert_eq!(builder.build().get(KfxSymbol::Underline), None);
+    }
+
+    #[test]
+    fn test_font_size_preserves_css_unit() {
+        use crate::kfx::style_schema::StyleSchema;
+
+        // 24px must stay 24px — the old Dimensioned{Rem} transform relabeled
+        // it as 24rem (~38x too large on device).
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.font_size = crate::style::Length::Px(24.0);
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        match builder.build().get(KfxSymbol::FontSize) {
+            Some(KfxValue::Dimensioned { value, unit }) => {
+                assert_eq!(*value, 24.0);
+                assert_eq!(*unit, KfxSymbol::Px);
+            }
+            other => panic!("expected dimensioned font-size, got {other:?}"),
+        }
+
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.font_size = crate::style::Length::Em(0.833);
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.ingest_ir_style(&ir);
+        match builder.build().get(KfxSymbol::FontSize) {
+            Some(KfxValue::Dimensioned { unit, .. }) => assert_eq!(*unit, KfxSymbol::Em),
+            other => panic!("expected dimensioned font-size, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_transparent_background_is_omitted() {
+        let mut builder = StyleBuilder::new(StyleSchema::standard());
+        builder.apply("background-color", "transparent");
+        let style = builder.build();
+        // `transparent` used to export as opaque black fill/text background.
+        assert!(style.get(KfxSymbol::FillColor).is_none());
+        assert!(style.get(KfxSymbol::TextBackgroundColor).is_none());
+        assert!(style.is_empty());
+    }
+
+    #[test]
+    fn test_ingest_is_deterministic_registration_order() {
+        use crate::kfx::style_schema::StyleSchema;
+
+        let mut ir = crate::style::ComputedStyle::default();
+        ir.text_decoration_underline = true;
+        ir.orphans = 2;
+        ir.widows = 3;
+        ir.font_size = crate::style::Length::Px(12.0);
+        ir.background_color = Some(crate::style::Color::rgb(1, 2, 3));
+
+        let build = || {
+            let mut b = StyleBuilder::new(StyleSchema::standard());
+            b.ingest_ir_style(&ir);
+            b.build()
+        };
+        let a = build();
+        let b = build();
+        // Property *order* must match, not just the set: emitted Ion structs
+        // follow this order and KFX output must be byte-reproducible.
+        assert_eq!(a.iter().collect::<Vec<_>>(), b.iter().collect::<Vec<_>>());
     }
 
     #[test]

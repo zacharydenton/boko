@@ -72,7 +72,11 @@ impl Exporter for KfxExporter {
 /// - Pass 1 (Survey): Walk IR, build position map, intern symbols - NO ION GENERATION
 /// - Pass 2 (Synthesis): Generate Ion using pre-computed positions
 fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
-    let container_id = generate_container_id();
+    // Seed the container ID from the book's identity so the same book always
+    // exports byte-identically; the title is included so books without an
+    // identifier still diverge from each other.
+    let meta = book.metadata();
+    let container_id = generate_container_id(&format!("{}\n{}", meta.identifier, meta.title));
     let mut ctx = ExportContext::new();
 
     // ========================================================================

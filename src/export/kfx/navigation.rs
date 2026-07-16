@@ -200,12 +200,18 @@ pub(super) fn build_landmarks_entries(_book: &Book, ctx: &ExportContext) -> Vec<
 
     let mut entries = Vec::new();
 
-    // Sort landmarks for consistent output (Cover first, then StartReading, then others)
+    // Sort landmarks for consistent output (Cover first, then StartReading,
+    // then others). The secondary key totally orders the "others": they come
+    // out of a HashMap, and a bare priority of 2 would leave their relative
+    // order to HashMap iteration, making output non-reproducible.
     let mut landmarks: Vec<_> = ctx.landmark_fragments.iter().collect();
-    landmarks.sort_by_key(|(lt, _)| match lt {
-        LandmarkType::Cover => 0,
-        LandmarkType::StartReading => 1,
-        _ => 2,
+    landmarks.sort_by_key(|(lt, _)| {
+        let priority = match lt {
+            LandmarkType::Cover => 0,
+            LandmarkType::StartReading => 1,
+            _ => 2,
+        };
+        (priority, **lt as u8)
     });
 
     for (landmark_type, target) in landmarks {
@@ -470,7 +476,7 @@ mod tests {
         // Load a real book from fixtures
         let book = Book::open("tests/fixtures/epictetus.epub").unwrap();
         let ctx = ExportContext::new();
-        let container_id = generate_container_id();
+        let container_id = generate_container_id("test-seed");
 
         let frag = build_book_metadata_fragment(&book, &container_id, &ctx);
 
