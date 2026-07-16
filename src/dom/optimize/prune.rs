@@ -3,7 +3,7 @@
 use crate::model::{Chapter, NodeId};
 
 use super::pass::walk_bottom_up;
-use super::predicates::is_prunable_role;
+use super::predicates::{has_semantic_attrs, is_prunable_role};
 
 /// Remove empty containers in post-order (cascading).
 ///
@@ -71,13 +71,11 @@ fn should_prune(chapter: &Chapter, node_id: NodeId) -> bool {
         return false;
     }
 
-    // Safety: Don't prune if it has an ID (might be a link target)
-    if chapter.semantics.id(node_id).is_some() {
-        return false;
-    }
-
-    // Safety: Don't prune if it has src (might be loading content)
-    if chapter.semantics.src(node_id).is_some() {
+    // Safety: Don't prune anything carrying semantic attributes. This is the
+    // same guard merge/fuse use — an id might be a link target, and an empty
+    // `<span epub:type="pagebreak" title="23"/>` page marker is meaningful
+    // content even without one.
+    if has_semantic_attrs(chapter, node_id) {
         return false;
     }
 

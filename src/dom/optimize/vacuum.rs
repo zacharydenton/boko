@@ -3,7 +3,7 @@
 use crate::model::{Chapter, NodeId, Role};
 
 use super::pass::walk_bottom_up;
-use super::predicates::is_structural_container;
+use super::predicates::{is_inline_role, is_structural_container};
 
 /// Remove whitespace-only Text nodes that are structurally irrelevant.
 ///
@@ -40,7 +40,18 @@ fn vacuum_siblings(chapter: &mut Chapter, parent_id: NodeId) {
     while let Some(current_id) = cursor_opt {
         let next_opt = chapter.node(current_id).and_then(|n| n.next_sibling);
 
-        if should_vacuum(chapter, current_id) {
+        // Whitespace flanked by two inline-level siblings is a word
+        // separator, not indentation: divs routinely hold inline content
+        // directly (`<div><i>A</i> <i>B</i></div>` must keep its space even
+        // though Container is a "structural" parent).
+        let flanked_by_inline = prev_opt
+            .and_then(|id| chapter.node(id))
+            .is_some_and(|n| is_inline_role(n.role))
+            && next_opt
+                .and_then(|id| chapter.node(id))
+                .is_some_and(|n| is_inline_role(n.role));
+
+        if !flanked_by_inline && should_vacuum(chapter, current_id) {
             // Unlink this node
             if let Some(prev_id) = prev_opt {
                 // Middle or end of list: prev.next_sibling = current.next_sibling

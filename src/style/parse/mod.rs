@@ -9,5 +9,5 @@ pub(crate) mod values;
 mod stylesheet;
 
 // Public types only
-pub use stylesheet::{CssRule, Origin, Specificity, Stylesheet};
+pub use stylesheet::{CssRule, InlineStyle, Origin, Specificity, Stylesheet};
 pub use values::TextDecorationValue;

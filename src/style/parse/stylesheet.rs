@@ -116,6 +116,45 @@ impl Stylesheet {
     }
 }
 
+/// Declarations parsed from an HTML `style` attribute.
+///
+/// In the cascade these sit in the author origin with higher precedence than
+/// any selector-matched normal declaration.
+#[derive(Debug, Clone, Default)]
+pub struct InlineStyle {
+    /// Normal-priority declarations, in source order.
+    pub declarations: Vec<Declaration>,
+    /// `!important` declarations, in source order.
+    pub important_declarations: Vec<Declaration>,
+}
+
+impl InlineStyle {
+    /// Parse a bare declaration list (the value of a `style` attribute).
+    /// Lenient: invalid declarations are skipped.
+    pub fn parse(css: &str) -> Self {
+        let mut input = ParserInput::new(css);
+        let mut parser = Parser::new(&mut input);
+        let mut declarations = Vec::new();
+        let mut important_declarations = Vec::new();
+        let mut decl_parser = DeclarationListParser {
+            declarations: &mut declarations,
+            important_declarations: &mut important_declarations,
+        };
+        for result in RuleBodyParser::new(&mut parser, &mut decl_parser) {
+            let _ = result;
+        }
+        Self {
+            declarations,
+            important_declarations,
+        }
+    }
+
+    /// Whether no declaration parsed successfully.
+    pub fn is_empty(&self) -> bool {
+        self.declarations.is_empty() && self.important_declarations.is_empty()
+    }
+}
+
 /// Parser for top-level stylesheet rules.
 struct TopLevelRuleParser<'a> {
     rules: &'a mut Vec<CssRule>,

@@ -493,6 +493,7 @@ fn expand_font_shorthand(value: &str) -> Option<Vec<(String, String)>> {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

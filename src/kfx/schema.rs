@@ -794,10 +794,14 @@ impl KfxSchema {
                     match modifier_effect {
                         // The level is untrusted: `as u8` would truncate an
                         // out-of-range value to an arbitrary heading level, so
-                        // fall back to the default role instead.
-                        ModifierEffect::HeadingLevel => {
-                            u8::try_from(value).map_or(*default_role, Role::Heading)
-                        }
+                        // fall back to the default role instead. Values that
+                        // fit u8 but fall outside HTML's 1..=6 (e.g. 0 or
+                        // 200) would render as zero or hundreds of `#`s in
+                        // markdown, so reject those too.
+                        ModifierEffect::HeadingLevel => u8::try_from(value)
+                            .ok()
+                            .filter(|level| (1..=6).contains(level))
+                            .map_or(*default_role, Role::Heading),
                         ModifierEffect::ListOrdered => {
                             // list_style is a symbol; check for numeric (343)
                             if value == KfxSymbol::Numeric as i64 {

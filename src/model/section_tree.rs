@@ -283,8 +283,9 @@ fn parse_siblings(events: &[Event], mut i: usize, min_level: u8) -> (Vec<Section
                     }
                 }
 
-                // Recurse for child sections (deeper headings)
-                let (children, next_i) = parse_siblings(events, i, level + 1);
+                // Recurse for child sections (deeper headings). Saturate:
+                // a hostile heading level of 255 must not overflow the u8.
+                let (children, next_i) = parse_siblings(events, i, level.saturating_add(1));
                 i = next_i;
 
                 sections.push(SectionNode {
@@ -358,11 +359,22 @@ fn collect_text_recursive(chapter: &Chapter, node_id: NodeId, result: &mut Strin
 
 fn collect_text_verbatim(chapter: &Chapter, node_id: NodeId) -> String {
     let mut result = String::new();
-    collect_text_verbatim_recursive(chapter, node_id, &mut result);
+    collect_text_verbatim_recursive(chapter, node_id, &mut result, 0);
     strip_ebook_chars(&result)
 }
 
-fn collect_text_verbatim_recursive(chapter: &Chapter, node_id: NodeId, result: &mut String) {
+fn collect_text_verbatim_recursive(
+    chapter: &Chapter,
+    node_id: NodeId,
+    result: &mut String,
+    depth: usize,
+) {
+    // KFX-imported IR bypasses the transform's depth cap, so this walk needs
+    // its own guard against hostile deeply-nested trees (matches every other
+    // recursive walker in the crate).
+    if depth > crate::util::MAX_TREE_DEPTH {
+        return;
+    }
     let Some(node) = chapter.node(node_id) else {
         return;
     };
@@ -372,7 +384,7 @@ fn collect_text_verbatim_recursive(chapter: &Chapter, node_id: NodeId, result: &
     }
 
     for child_id in chapter.children(node_id) {
-        collect_text_verbatim_recursive(chapter, child_id, result);
+        collect_text_verbatim_recursive(chapter, child_id, result, depth + 1);
     }
 }
 

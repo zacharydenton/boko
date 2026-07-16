@@ -84,7 +84,11 @@ fn descendant_book() -> EpubBuilder {
 // HTML5 DOCTYPE / `<meta charset>` and internal-link href rewriting. The cascade
 // output (matched declarations) is unchanged — only the surrounding document
 // markup differs.
-const FP_EPICTETUS: &str = "92888004a84273c70366220364f8007dd6619760";
+// Updated again for the inter-inline whitespace fix: newline-separated
+// whitespace between two inline siblings (poetry `<span>…</span>\n<br/>`,
+// colophon text before links) is now preserved as a single space instead of
+// being dropped, which previously glued words together ("toEpictetus").
+const FP_EPICTETUS: &str = "0d8b98b70173bfaa610327ea3e4246a6cff26750";
 const FP_CLASS: &str = "8e084650371da2cab255c51438fd8bdb401ebc42";
 const FP_DESCENDANT: &str = "e6c0a96d4233a78a589342f442811d84bd15c23f";
 

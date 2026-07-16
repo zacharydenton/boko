@@ -174,12 +174,12 @@ pub(crate) fn parse_border_style_shorthand_values(
 ) -> Option<(BorderStyle, BorderStyle, BorderStyle, BorderStyle)> {
     let mut values = Vec::with_capacity(4);
 
-    // Parse up to 4 border-style values
+    // Parse up to 4 border-style values. try_parse keeps a failed probe from
+    // consuming the `!` of a trailing `!important` (see box_model.rs).
     while values.len() < 4 {
-        if let Some(style) = parse_border_style_value(input) {
-            values.push(style);
-        } else {
-            break;
+        match input.try_parse(|i| parse_border_style_value(i).ok_or(())) {
+            Ok(style) => values.push(style),
+            Err(()) => break,
         }
     }
 
@@ -193,12 +193,12 @@ pub(crate) fn parse_color_shorthand_values(
 ) -> Option<(Color, Color, Color, Color)> {
     let mut values = Vec::with_capacity(4);
 
-    // Parse up to 4 color values
+    // Parse up to 4 color values. try_parse keeps a failed probe from
+    // consuming the `!` of a trailing `!important` (see box_model.rs).
     while values.len() < 4 {
-        if let Some(color) = parse_color(input) {
-            values.push(color);
-        } else {
-            break;
+        match input.try_parse(|i| parse_color(i).ok_or(())) {
+            Ok(color) => values.push(color),
+            Err(()) => break,
         }
     }
 

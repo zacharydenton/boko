@@ -46,7 +46,7 @@ pub use types::{ComputedStyle, StyleId};
 pub use declaration::Declaration;
 
 // Re-export stylesheet types from parse module
-pub use parse::{CssRule, Origin, Specificity, Stylesheet, TextDecorationValue};
+pub use parse::{CssRule, InlineStyle, Origin, Specificity, Stylesheet, TextDecorationValue};
 
 // Re-export cascade function
 pub use cascade::{CascadeIndex, CascadeScratch, compute_styles, compute_styles_indexed};

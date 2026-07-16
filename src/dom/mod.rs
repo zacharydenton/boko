@@ -323,6 +323,124 @@ mod tests {
         assert!(handle.join().unwrap() > 0);
     }
 
+    /// Concatenate every text node in document order.
+    fn full_text(chapter: &Chapter) -> String {
+        let mut out = String::new();
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Text && !node.text.is_empty() {
+                out.push_str(chapter.text(node.text));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn pre_preserves_whitespace_only_text_nodes() {
+        // The whitespace-only node between the spans carries all of the line
+        // structure — the standard shape of syntax-highlighted code. It used
+        // to be dropped by the whitespace heuristics before the white-space
+        // check ran.
+        let html =
+            "<html><body><pre><span>fn a()</span>\n    <span>fn b()</span></pre></body></html>";
+        let chapter = compile_html(html, &[]);
+        assert_eq!(full_text(&chapter), "fn a()\n    fn b()");
+    }
+
+    #[test]
+    fn whitespace_between_inline_siblings_in_div_is_kept() {
+        // Browsers render both of these as "A B"; the space/newline between
+        // the <i> elements is a word separator, not indentation.
+        let chapter = compile_html(
+            "<html><body><div><i>A</i> <i>B</i></div></body></html>",
+            &[],
+        );
+        assert_eq!(full_text(&chapter), "A B");
+
+        let chapter = compile_html(
+            "<html><body><div><i>A</i>\n<i>B</i></div></body></html>",
+            &[],
+        );
+        assert_eq!(full_text(&chapter), "A B");
+    }
+
+    #[test]
+    fn indentation_between_blocks_is_still_dropped() {
+        let html = "<html><body><div>\n  <p>One</p>\n  <p>Two</p>\n</div></body></html>";
+        let chapter = compile_html(html, &[]);
+        assert_eq!(full_text(&chapter), "OneTwo");
+    }
+
+    #[test]
+    fn inline_style_attribute_applies() {
+        let chapter = compile_html(
+            r#"<html><body><p style="font-weight: bold">x</p></body></html>"#,
+            &[],
+        );
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Paragraph {
+                let style = chapter.styles.get(node.style).unwrap();
+                assert_eq!(style.font_weight, crate::style::FontWeight::BOLD);
+                return;
+            }
+        }
+        panic!("paragraph not found");
+    }
+
+    #[test]
+    fn inline_style_beats_selector_specificity_but_not_important() {
+        let css = "p.x { color: #00ff00; } p.y { color: #0000ff !important; }";
+        let author = Stylesheet::parse(css);
+
+        // Inline normal beats any selector specificity...
+        let chapter = compile_html(
+            r#"<html><body><p class="x" style="color: #ff0000">x</p></body></html>"#,
+            &[(author.clone(), Origin::Author)],
+        );
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Paragraph {
+                let style = chapter.styles.get(node.style).unwrap();
+                assert_eq!(style.color, Some(crate::style::Color::rgb(255, 0, 0)));
+            }
+        }
+
+        // ...but loses to a stylesheet !important.
+        let chapter = compile_html(
+            r#"<html><body><p class="y" style="color: #ff0000">x</p></body></html>"#,
+            &[(author, Origin::Author)],
+        );
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Paragraph {
+                let style = chapter.styles.get(node.style).unwrap();
+                assert_eq!(style.color, Some(crate::style::Color::rgb(0, 0, 255)));
+            }
+        }
+    }
+
+    #[test]
+    fn html_element_styles_inherit_into_body() {
+        let author = Stylesheet::parse("html { color: #123456; }");
+        let chapter = compile_html(
+            "<html><body><p>t</p></body></html>",
+            &[(author, Origin::Author)],
+        );
+        for id in chapter.iter_dfs() {
+            let node = chapter.node(id).unwrap();
+            if node.role == Role::Paragraph {
+                let style = chapter.styles.get(node.style).unwrap();
+                assert_eq!(
+                    style.color,
+                    Some(crate::style::Color::rgb(0x12, 0x34, 0x56))
+                );
+                return;
+            }
+        }
+        panic!("paragraph not found");
+    }
+
     #[test]
     fn test_compile_simple_html() {
         let html = "<html><body><p>Test paragraph</p></body></html>";

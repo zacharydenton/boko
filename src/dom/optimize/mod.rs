@@ -24,6 +24,8 @@ mod table;
 mod vacuum;
 mod wrap;
 
+pub(crate) use predicates::is_inline_role;
+
 use crate::model::Chapter;
 
 /// Run all optimization passes on a chapter.

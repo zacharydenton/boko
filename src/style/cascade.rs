@@ -271,6 +271,7 @@ pub fn compute_styles(
         style_pool,
         &mut CascadeScratch::default(),
         None,
+        None,
     )
 }
 
@@ -283,6 +284,11 @@ pub fn compute_styles(
 /// without walking the ancestor chain. Passing a filter that is missing an
 /// ancestor would silently drop matching rules; pass `None` when no
 /// correctly-maintained filter is available.
+///
+/// `inline_style`, when provided, holds the element's parsed `style`
+/// attribute. Its normal declarations apply after every selector-matched
+/// normal declaration (inline beats any specificity), and its `!important`
+/// declarations apply last of all, per the CSS cascade.
 pub fn compute_styles_indexed(
     elem: ElementRef<'_>,
     index: &CascadeIndex<'_>,
@@ -290,6 +296,7 @@ pub fn compute_styles_indexed(
     _style_pool: &mut StylePool,
     scratch: &mut CascadeScratch,
     bloom: Option<&BloomFilter>,
+    inline_style: Option<&crate::style::InlineStyle>,
 ) -> ComputedStyle {
     let CascadeScratch {
         caches,
@@ -376,8 +383,19 @@ pub fn compute_styles_indexed(
         ComputedStyle::default()
     };
 
-    // Apply matched declarations in cascade order
+    // Apply matched declarations in cascade order. `matched` is sorted with
+    // all normal declarations before all `!important` ones, so the inline
+    // style's normal declarations are injected at that boundary: inline
+    // normal beats every selector-matched normal declaration but loses to
+    // stylesheet `!important`; inline `!important` beats everything.
+    let mut inline_normal_pending = inline_style.is_some_and(|i| !i.declarations.is_empty());
     for m in matched.iter() {
+        if m.important && inline_normal_pending {
+            for decl in &inline_style.expect("checked above").declarations {
+                apply_declaration(&mut style, decl);
+            }
+            inline_normal_pending = false;
+        }
         let (stylesheet, _) = index.stylesheets[m.sheet as usize];
         let rule = &stylesheet.rules[m.rule as usize];
         let decl = if m.important {
@@ -386,6 +404,16 @@ pub fn compute_styles_indexed(
             &rule.declarations[m.decl as usize]
         };
         apply_declaration(&mut style, decl);
+    }
+    if let Some(inline) = inline_style {
+        if inline_normal_pending {
+            for decl in &inline.declarations {
+                apply_declaration(&mut style, decl);
+            }
+        }
+        for decl in &inline.important_declarations {
+            apply_declaration(&mut style, decl);
+        }
     }
 
     style
@@ -599,5 +627,31 @@ mod tests {
             p_color(".never, p { color: red } p { color: blue }"),
             Some(Color::rgb(0, 0, 255))
         );
+    }
+
+    #[test]
+    fn box_shorthand_keeps_important() {
+        // `parse_length` used to eat the `!` while probing for a 2nd..4th
+        // value, silently demoting 1-3 value shorthands to normal priority.
+        for css in [
+            "p { margin: 5px !important }",
+            "p { margin: 5px 6px !important }",
+            "p { padding: 1px 2px 3px !important }",
+            "p { border-width: 1px !important }",
+            "p { border-style: solid !important }",
+            "p { border-color: #123 !important }",
+        ] {
+            let sheet = Stylesheet::parse(css);
+            let rule = &sheet.rules[0];
+            assert!(
+                rule.declarations.is_empty(),
+                "{css}: normal declarations should be empty, got {:?}",
+                rule.declarations
+            );
+            assert!(
+                !rule.important_declarations.is_empty(),
+                "{css}: expected important declarations"
+            );
+        }
     }
 }

@@ -96,6 +96,26 @@ impl<'a> TransformContext<'a> {
             }
         }
 
+        // Compute html's style first so properties set on the `html` selector
+        // (e.g. `html { color: … }`) inherit into body like in a browser.
+        // No bloom filter here: it is seeded for body's ancestors, not html's.
+        let html_style = self
+            .dom
+            .find_by_tag("html")
+            .filter(|&html_id| html_id != body)
+            .map(|html_id| {
+                let inline = self.inline_style_of(html_id);
+                compute_styles_indexed(
+                    ElementRef::new(self.dom, html_id),
+                    &self.cascade_index,
+                    None,
+                    &mut self.chapter.styles,
+                    &mut self.cascade_scratch,
+                    None,
+                    inline.as_ref(),
+                )
+            });
+
         // Compute body's style so its properties (like hyphens: auto) are inherited
         let mut body_style = {
             let elem_ref = ElementRef::new(self.dom, body);
@@ -104,13 +124,15 @@ impl<'a> TransformContext<'a> {
             } else {
                 None
             };
+            let inline = self.inline_style_of(body);
             compute_styles_indexed(
                 elem_ref,
                 &self.cascade_index,
-                None,
+                html_style.as_ref(),
                 &mut self.chapter.styles,
                 &mut self.cascade_scratch,
                 bloom,
+                inline.as_ref(),
             )
         };
 
@@ -150,6 +172,40 @@ impl<'a> TransformContext<'a> {
         }
     }
 
+    /// Parse the `style` attribute of a DOM element, if present and non-empty.
+    fn inline_style_of(&self, dom_id: ArenaNodeId) -> Option<crate::style::InlineStyle> {
+        let node = self.dom.get(dom_id)?;
+        let ArenaNodeData::Element { attrs, .. } = &node.data else {
+            return None;
+        };
+        attrs
+            .iter()
+            .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
+            .map(|a| crate::style::InlineStyle::parse(&a.value))
+            .filter(|i| !i.is_empty())
+    }
+
+    /// Whether the DOM node's previous and next siblings are both
+    /// inline-level (non-blank text, or an element with an inline role).
+    /// Distinguishes a word separator between inline siblings from
+    /// inter-block indentation.
+    fn flanked_by_inline(&self, dom_id: ArenaNodeId) -> bool {
+        let Some(node) = self.dom.get(dom_id) else {
+            return false;
+        };
+        self.is_inline_level(node.prev_sibling) && self.is_inline_level(node.next_sibling)
+    }
+
+    fn is_inline_level(&self, id: ArenaNodeId) -> bool {
+        match self.dom.get(id).map(|n| &n.data) {
+            Some(ArenaNodeData::Text(t)) => !t.trim().is_empty(),
+            Some(ArenaNodeData::Element { name, .. }) => {
+                crate::dom::optimize::is_inline_role(element_to_role(&name.local))
+            }
+            _ => false,
+        }
+    }
+
     /// Process a single DOM node.
     fn process_node(
         &mut self,
@@ -170,12 +226,27 @@ impl<'a> TransformContext<'a> {
 
         match &node.data {
             ArenaNodeData::Text(text) => {
+                // In pre-like contexts every byte is content, including
+                // whitespace-only nodes: `<pre><span>a</span>\n  <span>b</span>`
+                // relies on that text node for its line structure, so this
+                // check must run before any whitespace-dropping heuristics.
+                let preserve_whitespace = parent_style
+                    .map(|s| {
+                        matches!(
+                            s.white_space,
+                            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+                        )
+                    })
+                    .unwrap_or(false);
+
                 // Handle whitespace-only text nodes
-                if text.trim().is_empty() {
+                if text.trim().is_empty() && !preserve_whitespace {
+                    // No parent means we're at root level - skip whitespace
+                    if parent_style.is_none() {
+                        return;
+                    }
+
                     // Whitespace between inline elements should be preserved as a single space.
-                    // We preserve whitespace unless:
-                    // 1. We're at the root level (no parent style)
-                    // 2. The whitespace contains newlines and we're in a block context
                     //
                     // This handles cases like: <cite><abbr>A</abbr> <abbr>B</abbr></cite>
                     // where the space between abbrs must be preserved even though cite is block.
@@ -184,14 +255,12 @@ impl<'a> TransformContext<'a> {
                         .map(|s| s.display != Display::Inline)
                         .unwrap_or(true);
 
-                    // Skip pure-whitespace with newlines in block contexts (inter-element whitespace)
-                    // But preserve spaces without newlines (intra-line whitespace between inline elements)
-                    if has_newlines && is_block_parent {
-                        return;
-                    }
-
-                    // No parent means we're at root level - skip whitespace
-                    if parent_style.is_none() {
+                    // Whitespace containing newlines inside a block parent is
+                    // usually inter-element indentation noise — but between
+                    // two inline-level siblings it is a real word separator:
+                    // browsers render `<div><i>A</i>\n<i>B</i></div>` as
+                    // "A B". Drop it only when it touches a block boundary.
+                    if has_newlines && is_block_parent && !self.flanked_by_inline(dom_id) {
                         return;
                     }
 
@@ -202,16 +271,6 @@ impl<'a> TransformContext<'a> {
                     self.chapter.append_child(ir_parent, ir_id);
                     return;
                 }
-
-                // Check if whitespace should be preserved (pre, pre-wrap, pre-line)
-                let preserve_whitespace = parent_style
-                    .map(|s| {
-                        matches!(
-                            s.white_space,
-                            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
-                        )
-                    })
-                    .unwrap_or(false);
 
                 // Normalize whitespace unless we're in a pre-like context.
                 // Both paths append straight into the chapter's text buffer,
@@ -237,6 +296,13 @@ impl<'a> TransformContext<'a> {
                 } else {
                     None
                 };
+                // Inline style="" declarations join the cascade above every
+                // selector-matched normal declaration.
+                let inline = attrs
+                    .iter()
+                    .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
+                    .map(|a| crate::style::InlineStyle::parse(&a.value))
+                    .filter(|i| !i.is_empty());
                 let mut computed = compute_styles_indexed(
                     elem_ref,
                     &self.cascade_index,
@@ -244,6 +310,7 @@ impl<'a> TransformContext<'a> {
                     &mut self.chapter.styles,
                     &mut self.cascade_scratch,
                     bloom,
+                    inline.as_ref(),
                 );
 
                 // Merge lang attribute into style (for KFX language property)

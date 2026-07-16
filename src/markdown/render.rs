@@ -257,7 +257,10 @@ impl<'a> RenderContext<'a> {
 
             Role::Heading(level) => {
                 self.start_block();
-                for _ in 0..level {
+                // Clamp defensively: CommonMark only knows ATX levels 1..=6.
+                // Level 0 would emit a bare paragraph and 7+ a literal
+                // `#######` run, silently demoting the heading.
+                for _ in 0..level.clamp(1, 6) {
                     self.output.push('#');
                 }
                 self.output.push(' ');

@@ -13,12 +13,14 @@ pub(crate) fn parse_box_shorthand_values(
 ) -> Option<(Length, Length, Length, Length)> {
     let mut values = Vec::with_capacity(4);
 
-    // Parse up to 4 length values
+    // Parse up to 4 length values. The probe must be wrapped in try_parse:
+    // a bare parse_length consumes one token even on failure, which would
+    // eat the `!` of a trailing `!important` and silently demote the
+    // declaration to normal priority (e.g. `margin: 5px !important`).
     while values.len() < 4 {
-        if let Some(len) = parse_length(input) {
-            values.push(len);
-        } else {
-            break;
+        match input.try_parse(|i| parse_length(i).ok_or(())) {
+            Ok(len) => values.push(len),
+            Err(()) => break,
         }
     }
 
