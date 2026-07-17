@@ -216,16 +216,28 @@ impl Default for ResourceRegistry {
     }
 }
 
-/// Text accumulator for content entities.
+/// Maximum bytes of text per $145 content fragment.
 ///
-/// Tracks text content during export and provides offset information
-/// for position maps.
+/// Amazon's tooling rolls to a new content fragment once the accumulated
+/// UTF-8 size reaches this bound (the element that crosses it may overshoot),
+/// and its format checks treat larger fragments as errors.
+pub const MAX_CONTENT_CHUNK_BYTES: usize = 8192;
+
+/// Book-global text accumulator for content entities ($145).
+///
+/// Text is packed into `content_1..content_N` chunks of at most
+/// [`MAX_CONTENT_CHUNK_BYTES`] (measured in UTF-8 bytes), spanning chapter
+/// boundaries, matching Amazon-produced KFX.
 #[derive(Default)]
 pub struct TextAccumulator {
-    /// Accumulated text segments
+    /// Finished chunks: (chunk_number, segments).
+    finished: Vec<(usize, Vec<String>)>,
+    /// Segments of the chunk currently being filled.
     segments: Vec<String>,
-    /// Total accumulated length
-    total_len: usize,
+    /// UTF-8 byte size of the current chunk.
+    current_bytes: usize,
+    /// Number of the current chunk (0 = none started yet).
+    current_chunk: usize,
 }
 
 impl TextAccumulator {
@@ -234,33 +246,35 @@ impl TextAccumulator {
         Self::default()
     }
 
-    /// Push text and return the segment index.
-    pub fn push(&mut self, text: &str) -> usize {
+    /// Push text, returning `(chunk_number, index_within_chunk)`.
+    ///
+    /// Mirrors the reference chunker: a new chunk starts when the current one
+    /// has already reached the size bound *before* this push, so a single
+    /// oversized segment lands whole rather than being split.
+    pub fn push(&mut self, text: &str) -> (usize, usize) {
+        if self.current_chunk == 0 {
+            self.current_chunk = 1;
+        } else if self.current_bytes >= MAX_CONTENT_CHUNK_BYTES {
+            self.finished
+                .push((self.current_chunk, std::mem::take(&mut self.segments)));
+            self.current_chunk += 1;
+            self.current_bytes = 0;
+        }
         let index = self.segments.len();
-        self.total_len += text.len();
+        self.current_bytes += text.len();
         self.segments.push(text.to_string());
-        index
+        (self.current_chunk, index)
     }
 
-    /// Get the total accumulated length.
-    pub fn len(&self) -> usize {
-        self.total_len
-    }
-
-    /// Check if the accumulator is empty.
-    pub fn is_empty(&self) -> bool {
-        self.total_len == 0
-    }
-
-    /// Get all accumulated text segments.
-    pub fn segments(&self) -> &[String] {
-        &self.segments
-    }
-
-    /// Clear the accumulator and return the segments.
-    pub fn drain(&mut self) -> Vec<String> {
-        self.total_len = 0;
-        std::mem::take(&mut self.segments)
+    /// Take all chunks (finished plus the one in progress), resetting.
+    pub fn drain_chunks(&mut self) -> Vec<(usize, Vec<String>)> {
+        let mut chunks = std::mem::take(&mut self.finished);
+        if !self.segments.is_empty() {
+            chunks.push((self.current_chunk, std::mem::take(&mut self.segments)));
+        }
+        self.current_bytes = 0;
+        self.current_chunk = 0;
+        chunks
     }
 }
 
@@ -609,9 +623,12 @@ pub struct ExportContext {
     /// Captures strings "falling out" of token conversion for the Assembler.
     text_accumulator: TextAccumulator,
 
-    /// Current content entity name (symbol ID).
-    /// Set by the Assembler before calling tokens_to_ion.
+    /// Symbol ID of the content chunk currently being filled.
+    /// Maintained by `append_text` as chunks roll over.
     pub current_content_name: u64,
+
+    /// Number of the content chunk `current_content_name` refers to.
+    current_content_chunk: usize,
 
     /// Position map: (ChapterId, NodeId) → Position.
     /// Populated during Pass 1 survey for landmark resolution.
@@ -730,6 +747,7 @@ impl ExportContext {
             spine_section_chapters: Vec::new(),
             text_accumulator: TextAccumulator::new(),
             current_content_name: 0,
+            current_content_chunk: 0,
             position_map: FxHashMap::default(),
             chapter_fragments: FxHashMap::default(),
             current_chapter: None,
@@ -772,11 +790,11 @@ impl ExportContext {
     }
 
     /// Prepare context for processing a new chapter.
-    pub fn begin_chapter(&mut self, content_name: &str) -> u64 {
-        self.text_accumulator = TextAccumulator::new();
+    ///
+    /// The text accumulator is deliberately NOT reset: content chunks are
+    /// book-global and span chapter boundaries.
+    pub fn begin_chapter(&mut self) {
         self.ir_style_memo.clear();
-        self.current_content_name = self.symbols.get_or_intern(content_name);
-        self.current_content_name
     }
 
     /// Begin Pass 2 export for a chapter.
@@ -796,21 +814,27 @@ impl ExportContext {
         self.symbols.get_or_intern(s)
     }
 
-    /// Track text and return (segment_index, offset).
-    pub fn append_text(&mut self, text: &str) -> (usize, usize) {
-        let offset = self.text_accumulator.len();
-        let index = self.text_accumulator.push(text);
-        (index, offset)
+    /// Append text to the current content chunk.
+    ///
+    /// Returns `(content_name_symbol, index_within_chunk)` — the pair a
+    /// storyline content_ref needs. Rolls to a new `content_{N}` chunk when
+    /// the current one has reached [`MAX_CONTENT_CHUNK_BYTES`].
+    pub fn append_text(&mut self, text: &str) -> (u64, usize) {
+        let (chunk, index) = self.text_accumulator.push(text);
+        if chunk != self.current_content_chunk {
+            self.current_content_chunk = chunk;
+            self.current_content_name = self.symbols.get_or_intern(&format!("content_{chunk}"));
+        }
+        (self.current_content_name, index)
     }
 
-    /// Get the text accumulator.
-    pub fn text_accumulator(&self) -> &TextAccumulator {
-        &self.text_accumulator
-    }
-
-    /// Drain the text accumulator.
-    pub fn drain_text(&mut self) -> Vec<String> {
-        self.text_accumulator.drain()
+    /// Take all content chunks as (fragment_name, segments) pairs.
+    pub fn take_content_chunks(&mut self) -> Vec<(String, Vec<String>)> {
+        self.text_accumulator
+            .drain_chunks()
+            .into_iter()
+            .map(|(chunk, segments)| (format!("content_{chunk}"), segments))
+            .collect()
     }
 
     /// Generate a new unique fragment ID.

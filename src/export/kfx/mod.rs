@@ -434,7 +434,6 @@ fn build_spine_entities(
 ) -> (Vec<KfxFragment>, Vec<KfxFragment>, Vec<KfxFragment>) {
     let mut section_fragments = Vec::new();
     let mut storyline_fragments = Vec::new();
-    let mut content_fragments = Vec::new();
 
     // Generate standalone cover section if needed (c0)
     // Note: cover_fragment_id was assigned in Pass 1 for landmark resolution
@@ -461,13 +460,10 @@ fn build_spine_entities(
             // Set up chapter-start anchor before generating content
             ctx.begin_chapter_export(*chapter_id);
 
-            let (section, storyline, content) =
+            let (section, storyline) =
                 build_chapter_entities_grouped(&chapter, *chapter_id, section_name, ctx);
             section_fragments.push(section);
             storyline_fragments.push(storyline);
-            if let Some(c) = content {
-                content_fragments.push(c);
-            }
 
             // Record which image resources this section depends on, so the
             // container_entity_map can declare the dependency graph that
@@ -483,6 +479,9 @@ fn build_spine_entities(
             }
         }
     }
+
+    // Text accumulated across all chapters; emit the global content chunks.
+    let content_fragments = build_content_fragments(ctx);
 
     (section_fragments, storyline_fragments, content_fragments)
 }

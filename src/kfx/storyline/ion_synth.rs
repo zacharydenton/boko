@@ -454,9 +454,9 @@ impl IonBuilder {
             // These interfere with image display when mixed with image children
             let has_real_text = self.accumulated_text.chars().any(|c| c != '\u{200B}');
             if has_real_text {
-                let (content_idx, _offset) = ctx.append_text(&self.accumulated_text);
+                let (content_name, content_idx) = ctx.append_text(&self.accumulated_text);
                 let content_ref = IonValue::Struct(vec![
-                    (sym!(Name), IonValue::Symbol(ctx.current_content_name)),
+                    (sym!(Name), IonValue::Symbol(content_name)),
                     (sym!(Index), IonValue::Int(content_idx as i64)),
                 ]);
                 self.fields.push((sym!(Content), content_ref));

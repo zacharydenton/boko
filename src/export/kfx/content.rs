@@ -2,13 +2,16 @@ use super::*;
 
 /// Build chapter entities returning them separately for grouped emission.
 ///
-/// Returns (section, storyline, Option<content>) so they can be grouped by type.
+/// Returns (section, storyline). Text content accumulates in the book-global
+/// content chunks (`ExportContext::append_text`); the resulting `$145`
+/// fragments are emitted once after all chapters via
+/// [`build_content_fragments`].
 pub(super) fn build_chapter_entities_grouped(
     chapter: &Chapter,
     chapter_id: ChapterId,
     section_name: &str,
     ctx: &mut ExportContext,
-) -> (KfxFragment, KfxFragment, Option<KfxFragment>) {
+) -> (KfxFragment, KfxFragment) {
     use crate::kfx::storyline::{ir_to_tokens, tokens_to_ion};
 
     // Check if this is a cover chapter (image-only)
@@ -17,17 +20,14 @@ pub(super) fn build_chapter_entities_grouped(
     let is_cover = ctx.cover_fragment_id.is_none() && is_image_only_chapter(chapter);
 
     // =========================================================================
-    // 1. SETUP: Naming for this chapter's entity triad
+    // 1. SETUP: Naming for this chapter's entity pair
     // =========================================================================
     let story_name = format!("story_{}", section_name);
-    let content_name = format!("content_{}", section_name);
 
     let section_name_symbol = ctx.symbols.get_or_intern(section_name);
     let story_name_symbol = ctx.symbols.get_or_intern(&story_name);
-    let content_name_symbol = ctx.symbols.get_or_intern(&content_name);
 
-    // Tell tokens_to_ion what content name to use for references
-    ctx.begin_chapter(&content_name);
+    ctx.begin_chapter();
 
     // Get the section fragment ID assigned during Pass 1
     let section_id = ctx
@@ -35,47 +35,22 @@ pub(super) fn build_chapter_entities_grouped(
         .unwrap_or_else(|| ctx.next_fragment_id());
 
     // =========================================================================
-    // 2. GENERATE: Schema-driven token generation + text/structure split
+    // 2. GENERATE: Schema-driven token generation
     // =========================================================================
-    let (storyline_content_list, content_strings) = if is_cover {
+    let storyline_content_list = if is_cover {
         // For cover chapters, generate flat storyline with direct image
-        let content_list = build_cover_storyline(chapter, ctx);
-        let text = ctx.drain_text();
-        (content_list, text)
+        build_cover_storyline(chapter, ctx)
     } else {
         // Normal chapter: full token-based generation
         let tokens = ir_to_tokens(chapter, ctx);
-        let content_list = tokens_to_ion(&tokens, ctx);
-        let text = ctx.drain_text();
-        (content_list, text)
+        tokens_to_ion(&tokens, ctx)
     };
 
     // =========================================================================
-    // 3. ASSEMBLE: Package into three KFX Entities
+    // 3. ASSEMBLE: Package into two KFX Entities
     // =========================================================================
 
-    // Entity A: CONTENT ($145) - Holds the raw text strings
-    let content_fragment = if !content_strings.is_empty() {
-        let content_ion = IonValue::Struct(vec![
-            (
-                KfxSymbol::Name as u64,
-                IonValue::Symbol(content_name_symbol),
-            ),
-            (
-                KfxSymbol::ContentList as u64,
-                IonValue::List(content_strings.into_iter().map(IonValue::String).collect()),
-            ),
-        ]);
-        Some(KfxFragment::new(
-            KfxSymbol::Content,
-            &content_name,
-            content_ion,
-        ))
-    } else {
-        None
-    };
-
-    // Entity B: STORYLINE ($259) - Holds the structure, references Content by name
+    // STORYLINE ($259) - Holds the structure, references Content by name
     let storyline_ion = IonValue::Struct(vec![
         (
             KfxSymbol::StoryName as u64,
@@ -136,7 +111,28 @@ pub(super) fn build_chapter_entities_grouped(
     ]);
     let section_fragment = KfxFragment::new(KfxSymbol::Section, section_name, section_ion);
 
-    (section_fragment, storyline_fragment, content_fragment)
+    (section_fragment, storyline_fragment)
+}
+
+/// Build the book-global `$145` content fragments from the accumulated chunks.
+///
+/// Called once after every chapter's storyline has been generated; each chunk
+/// is at most [`crate::kfx::context::MAX_CONTENT_CHUNK_BYTES`] of UTF-8 text.
+pub(super) fn build_content_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment> {
+    ctx.take_content_chunks()
+        .into_iter()
+        .map(|(name, segments)| {
+            let name_symbol = ctx.symbols.get_or_intern(&name);
+            let content_ion = IonValue::Struct(vec![
+                (KfxSymbol::Name as u64, IonValue::Symbol(name_symbol)),
+                (
+                    KfxSymbol::ContentList as u64,
+                    IonValue::List(segments.into_iter().map(IonValue::String).collect()),
+                ),
+            ]);
+            KfxFragment::new(KfxSymbol::Content, &name, content_ion)
+        })
+        .collect()
 }
 
 /// Build a simplified storyline for cover chapters.
@@ -318,15 +314,13 @@ mod entity_structure_tests {
 
         for (chapter_id, section_name) in &spine_info {
             if let Ok(chapter) = book.load_chapter(*chapter_id) {
-                let (section, storyline, content) =
+                let (section, storyline) =
                     build_chapter_entities_grouped(&chapter, *chapter_id, section_name, &mut ctx);
                 section_fragments.push(section);
                 storyline_fragments.push(storyline);
-                if let Some(c) = content {
-                    content_fragments.push(c);
-                }
             }
         }
+        content_fragments.extend(build_content_fragments(&mut ctx));
 
         fragments.extend(section_fragments);
         fragments.extend(storyline_fragments);
@@ -411,8 +405,9 @@ mod entity_structure_tests {
 
         // Build entities
         let chapter = book.load_chapter(chapter_id).unwrap();
-        let (section, storyline, content) =
+        let (section, storyline) =
             build_chapter_entities_grouped(&chapter, chapter_id, section_name, &mut ctx);
+        let content_fragments = build_content_fragments(&mut ctx);
 
         // Verify types
         assert_eq!(section.ftype, KfxSymbol::Section as u64);
@@ -442,8 +437,9 @@ mod entity_structure_tests {
             assert!(has_content_list, "storyline should have content_list");
         }
 
-        // Content is optional but if present should have name and content_list
-        if let Some(content_frag) = content {
+        // Content chunks are optional (image-only chapters produce none), but
+        // any that exist must carry a name and content_list.
+        for content_frag in &content_fragments {
             assert_eq!(content_frag.ftype, KfxSymbol::Content as u64);
             if let FragmentData::Ion(IonValue::Struct(fields)) = &content_frag.data {
                 let has_name = fields.iter().any(|(id, _)| *id == KfxSymbol::Name as u64);
@@ -500,7 +496,7 @@ mod section_type_tests {
 
         // Build the titlepage section (c1)
         let first_chapter = book.load_chapter(first_chapter_id).unwrap();
-        let (section, _, _) =
+        let (section, _) =
             build_chapter_entities_grouped(&first_chapter, first_chapter_id, "c1", &mut ctx);
 
         // Extract the page_template type from the section
