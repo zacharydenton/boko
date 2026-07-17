@@ -3,8 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Convert between EPUB and Kindle formats instantly in your browser. No upload, no server, 100% private.">
-    <title>boko - Ebook Converter</title>
+    <meta name="description" content="Convert EPUB to KFX, AZW3, and MOBI in your browser — no Kindle Previewer, no upload, no account. The only native KFX converter; your books never leave your device.">
+    <title>boko — Convert EPUB to KFX in your browser (no Kindle Previewer)</title>
+    <link rel="canonical" href="https://zacharydenton.github.io/boko/">
+    <meta property="og:title" content="boko — Convert EPUB to KFX in your browser">
+    <meta property="og:description" content="Free, private ebook converter for EPUB, KFX, AZW3, and MOBI. Runs entirely client-side — no Kindle Previewer, no upload.">
+    <meta property="og:url" content="https://zacharydenton.github.io/boko/">
+    <meta property="og:type" content="website">
     <link rel="modulepreload" href="pkg/boko.js">
     <link rel="preload" href="pkg/boko_bg.wasm" as="fetch" crossorigin>
     <style>
@@ -15,7 +20,7 @@
     <div class="container">
         <header>
             <h1>boko</h1>
-            <p class="subtitle">Convert ebooks in your browser</p>
+            <p class="subtitle">Convert EPUB, KFX, AZW3 &amp; MOBI in your browser — private, no Kindle Previewer</p>
         </header>
 
         <main>
@@ -76,7 +81,10 @@
         </main>
 
         <footer>
-            <p>Powered by <a href="https://github.com/zacharydenton/boko">boko</a> &middot; All conversions happen locally in your browser</p>
+            <p>boko is the only KFX converter that doesn't run Amazon's Kindle Previewer.
+            It converts EPUB to KFX (Kindle's modern format, with hyphenation, kerning,
+            and ligatures), AZW3, MOBI, and back — entirely on your device. Nothing is
+            uploaded. Also available as a <a href="https://github.com/zacharydenton/boko">native CLI and Rust library</a>.</p>
         </footer>
     </div>
 

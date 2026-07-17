@@ -2,13 +2,13 @@
 name = "boko"
 version = "0.4.0"
 edition = "2024"
-description = "Fast ebook conversion library for EPUB and Kindle formats"
+description = "Fast native ebook converter for EPUB, KFX, AZW3, and MOBI — the only KFX writer that needs no Kindle Previewer"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/zacharydenton/boko"
 homepage = "https://github.com/zacharydenton/boko"
 documentation = "https://docs.rs/boko"
 readme = "README.md"
-keywords = ["ebook", "epub", "mobi", "azw3", "kindle"]
+keywords = ["ebook", "epub", "kfx", "azw3", "kindle"]
 categories = ["parsing", "encoding"]
 # Test fixtures (binary ebooks) and the fuzz harness are only needed to develop
 # boko, not to build it — keep them out of the published crate.
