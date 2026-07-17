@@ -83,12 +83,18 @@ pub(super) fn build_book_metadata_fragment(
     } else {
         None
     };
+    let content_id = if !meta.identifier.is_empty() {
+        Some(generate_content_id(&meta.identifier))
+    } else {
+        None
+    };
 
     let meta_ctx = MetadataContext {
         version: Some(env!("CARGO_PKG_VERSION")),
         cover_resource_name,
         asset_id: Some(container_id),
         book_id,
+        content_id,
     };
 
     // Build each category using the schema

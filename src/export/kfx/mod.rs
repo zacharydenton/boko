@@ -32,6 +32,7 @@ use crate::kfx::fragment::KfxFragment;
 use crate::kfx::ion::IonValue;
 use crate::kfx::metadata::{
     MetadataCategory, MetadataContext, build_category_entries, generate_book_id,
+    generate_content_id,
 };
 use crate::kfx::serialization::{
     SerializedEntity, create_entity_data, generate_container_id, serialize_annotated_ion,

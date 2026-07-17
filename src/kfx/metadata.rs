@@ -63,6 +63,8 @@ pub enum MetadataField {
     AssetId,
     /// Book ID - from context (derived from identifier), not Metadata.
     BookId,
+    /// Sideload content ID/ASIN - from context, not Metadata.
+    ContentId,
     /// dcterms:modified timestamp
     ModifiedDate,
     /// First contributor with role="trl" (translator)
@@ -120,7 +122,10 @@ impl MetadataField {
             MetadataField::AuthorSort => meta.author_sort.as_deref(),
             MetadataField::SeriesName => meta.collection.as_ref().map(|c| c.name.as_str()),
             // These are context-driven or need special handling
-            MetadataField::AssetId | MetadataField::BookId | MetadataField::SeriesPosition => None,
+            MetadataField::AssetId
+            | MetadataField::BookId
+            | MetadataField::ContentId
+            | MetadataField::SeriesPosition => None,
         }
     }
 }
@@ -177,6 +182,23 @@ pub fn metadata_schema() -> Vec<MetadataRule> {
             category: MetadataCategory::KindleTitle,
             source: MetadataSource::Dynamic(MetadataField::BookId),
         },
+        // Identifiers Kindle keys sideloaded-book library thumbnails on.
+        // The device does not render cover tiles from the book itself; transfer
+        // software (e.g. Calibre's Kindle driver) writes a sidecar
+        // `system/thumbnails/thumbnail_{content_id}_{cde_content_type}_portrait.jpg`,
+        // looked up via these fields — without them no cover can ever display.
+        // Like the KFX Output plugin, ASIN and content_id share one value.
+        MetadataRule {
+            key: "ASIN",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::ContentId),
+        },
+        MetadataRule {
+            key: "content_id",
+            category: MetadataCategory::KindleTitle,
+            source: MetadataSource::Dynamic(MetadataField::ContentId),
+        },
+        // EBOK (not PDOC) so sideloads shelve as Books rather than Documents.
         MetadataRule {
             key: "cde_content_type",
             category: MetadataCategory::KindleTitle,
@@ -251,6 +273,9 @@ pub struct MetadataContext<'a> {
     /// Book ID (stable per publication, derived from identifier).
     /// Format: 23-character URL-safe Base64.
     pub book_id: Option<String>,
+    /// Stable personal-document ID used for both ASIN and content_id.
+    /// Format: 32 uppercase hexadecimal characters.
+    pub content_id: Option<String>,
 }
 
 /// Generate a book ID from a publication identifier.
@@ -277,6 +302,18 @@ pub fn generate_book_id(identifier: &str) -> String {
 
     // URL-safe Base64 encode (no padding), 17 bytes → 23 chars
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+}
+
+/// Generate the stable 32-character identifier Kindle uses to associate a
+/// sideloaded personal document with its library thumbnail.
+pub fn generate_content_id(identifier: &str) -> String {
+    let digest = sha1_smol::Sha1::from(identifier.as_bytes())
+        .digest()
+        .bytes();
+    digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect()
 }
 
 /// Build metadata entries for a category from the schema.
@@ -323,6 +360,7 @@ pub fn build_category_entries(
                         // Book ID from context (derived from identifier)
                         ctx.book_id.clone()
                     }
+                    MetadataField::ContentId => ctx.content_id.clone(),
                     MetadataField::SeriesPosition => {
                         // Series position from collection
                         meta.collection.as_ref().and_then(|c| c.position).map(|p| {
@@ -542,14 +580,17 @@ mod tests {
     }
 
     #[test]
-    fn test_cde_content_type_is_ebok() {
+    fn test_sideload_metadata_is_ebok_with_matching_asin_and_content_id() {
         let meta = Metadata {
             title: "Test".to_string(),
             language: "en".to_string(),
             ..Default::default()
         };
 
-        let ctx = MetadataContext::default();
+        let ctx = MetadataContext {
+            content_id: Some("0123456789ABCDEF0123456789ABCDEF".to_string()),
+            ..Default::default()
+        };
         let entries = build_category_entries(MetadataCategory::KindleTitle, &meta, &ctx);
 
         assert!(
@@ -557,6 +598,27 @@ mod tests {
                 .iter()
                 .any(|(k, v)| *k == "cde_content_type" && v == "EBOK")
         );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "ASIN" && v == "0123456789ABCDEF0123456789ABCDEF")
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(k, v)| *k == "content_id" && v == "0123456789ABCDEF0123456789ABCDEF")
+        );
+    }
+
+    #[test]
+    fn test_generate_content_id_is_stable_uppercase_hex() {
+        let id = super::generate_content_id("urn:uuid:test-id");
+        assert_eq!(id.len(), 32);
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c))
+        );
+        assert_eq!(id, super::generate_content_id("urn:uuid:test-id"));
     }
 
     #[test]
