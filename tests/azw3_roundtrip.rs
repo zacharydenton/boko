@@ -28,6 +28,34 @@ fn count_toc(entries: &[TocEntry]) -> usize {
     entries.iter().map(|e| 1 + count_toc(&e.children)).sum()
 }
 
+/// The EXTH `length` field must equal the actual block length
+/// (magic + length + count + records + pad). It was overstated by 4 bytes
+/// because `content` already includes the record count.
+#[test]
+fn exth_length_field_matches_actual_block() {
+    let bytes = export_epub_to_azw3_bytes("tests/fixtures/epictetus.epub");
+    let pos = bytes
+        .windows(4)
+        .position(|w| w == b"EXTH")
+        .expect("EXTH block present");
+    let hdr_len = u32::from_be_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+    let count = u32::from_be_bytes(bytes[pos + 8..pos + 12].try_into().unwrap()) as usize;
+    let mut p = pos + 12;
+    for _ in 0..count {
+        let rlen = u32::from_be_bytes(bytes[p + 4..p + 8].try_into().unwrap()) as usize;
+        p += rlen;
+    }
+    // Content padding to a 4-byte boundary (content starts at pos + 8).
+    while (p - (pos + 8)) % 4 != 0 {
+        p += 1;
+    }
+    assert_eq!(
+        hdr_len,
+        p - pos,
+        "EXTH length field must equal the actual block length"
+    );
+}
+
 fn max_depth(entries: &[TocEntry], current: usize) -> usize {
     entries
         .iter()

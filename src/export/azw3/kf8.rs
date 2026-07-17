@@ -15,8 +15,14 @@ pub(super) struct Kf8Builder {
     chunker_result: Option<ChunkerResult>,
     /// Maps resource href to 1-indexed resource record number
     resource_map: HashMap<String, usize>,
-    /// CSS flows (flow 0 is text, flows 1+ are CSS)
+    /// Source CSS flows (flow 0 is text, flows 1+ are CSS), before rewriting.
     css_flows: Vec<String>,
+    /// Byte length of each rewritten CSS flow, in the exact bytes that land in
+    /// the text records. Kept separately from the lossy-decoded `css_flows`
+    /// strings because FDST flow boundaries must be measured in real bytes —
+    /// `from_utf8_lossy` inflates invalid bytes to 3-byte U+FFFD and would
+    /// desync the boundary from the record contents.
+    css_flow_lengths: Vec<usize>,
     /// Total flows length (text + CSS)
     flows_length: usize,
     /// Ordered list of image hrefs
@@ -49,6 +55,7 @@ impl Kf8Builder {
             chunker_result: None,
             resource_map: HashMap::new(),
             css_flows: Vec::new(),
+            css_flow_lengths: Vec::new(),
             flows_length: 0,
             image_hrefs: Vec::new(),
             font_hrefs: Vec::new(),
@@ -233,6 +240,15 @@ impl Kf8Builder {
                 .extend(all_flows.chunks(RECORD_SIZE).map(compress_record));
         }
 
+        // The PDB record count is a u16, so the whole book is capped at 65535
+        // records (~256 MB of text at 4 KB each). Fail cleanly at the format
+        // ceiling instead of truncating the count and emitting a corrupt file.
+        if self.records.len() > u16::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "book exceeds the 65535-record PDB limit",
+            ));
+        }
         self.last_text_record = (self.records.len() - 1) as u16;
         // Insert a zero-padding record after text so the next (non-text)
         // record starts at a 4-byte boundary in the rawml stream. Calibre
@@ -251,10 +267,9 @@ impl Kf8Builder {
         }
         self.chunker_result = Some(chunker_result);
 
-        self.css_flows = rewritten_css
-            .into_iter()
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .collect();
+        // Record the real (rewritten) byte length of each CSS flow for FDST;
+        // these bytes were already appended to `all_flows` above verbatim.
+        self.css_flow_lengths = rewritten_css.iter().map(Vec::len).collect();
 
         Ok(())
     }
@@ -507,7 +522,7 @@ impl Kf8Builder {
     }
 
     pub(super) fn build_fdst_record(&mut self) -> io::Result<()> {
-        let num_flows = 1 + self.css_flows.len();
+        let num_flows = 1 + self.css_flow_lengths.len();
 
         let mut fdst = Vec::new();
         fdst.extend_from_slice(b"FDST");
@@ -520,9 +535,9 @@ impl Kf8Builder {
 
         // CSS flows
         let mut offset = self.text_length;
-        for css in &self.css_flows {
+        for &css_len in &self.css_flow_lengths {
             let start = offset;
-            let end = offset + css.len();
+            let end = offset + css_len;
             fdst.extend_from_slice(&(start as u32).to_be_bytes());
             fdst.extend_from_slice(&(end as u32).to_be_bytes());
             offset = end;
@@ -639,7 +654,7 @@ impl Kf8Builder {
         // FDST
         let fdst_record = (self.records.len() - 4) as u32;
         record0.extend_from_slice(&fdst_record.to_be_bytes());
-        let fdst_count = 1 + self.css_flows.len() as u32;
+        let fdst_count = 1 + self.css_flow_lengths.len() as u32;
         record0.extend_from_slice(&fdst_count.to_be_bytes());
 
         // FCIS
@@ -839,7 +854,14 @@ impl Kf8Builder {
             content.push(0);
         }
 
-        let header_len = 12 + content.len() as u32;
+        // The EXTH `length` field is the whole block: "EXTH"(4) + this
+        // length field(4) + content — and `content` already includes the
+        // 4-byte record count. So it is `8 + content.len()`, NOT
+        // `12 + content.len()` (that double-counts the count and overstates
+        // the field by 4, sending a spec-strict consumer 4 bytes into the
+        // title region). Calibre's `len(records) + 12` matches because its
+        // `records` excludes the count.
+        let header_len = 8 + content.len() as u32;
         exth.extend_from_slice(&header_len.to_be_bytes());
         exth.extend_from_slice(&content);
 
@@ -847,6 +869,16 @@ impl Kf8Builder {
     }
 
     pub(super) fn write<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        // The PDB record count is a u16 (written below); guard the *total*
+        // (text + images + indices) so a large book fails cleanly instead of
+        // truncating the count and pointer table into a corrupt file.
+        if self.records.len() > u16::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "book exceeds the 65535-record PDB limit",
+            ));
+        }
+
         // Calculate offsets
         let mut offsets = Vec::new();
         let pdb_header_size = 78 + 8 * self.records.len() + 2;
