@@ -84,6 +84,19 @@ dependencies.
 Yes — KFX import is supported, so you can convert your existing (DRM-free)
 .kfx books to EPUB, AZW3, Markdown, or plain text.
 
+### Why doesn't my sideloaded book show its cover in the Kindle library?
+
+The Kindle never renders library covers from a sideloaded book itself — it
+looks up a sidecar image on the device, keyed by the book's metadata. Generate
+it (here with [libvips](https://www.libvips.org/)) and copy it alongside the
+book:
+
+    id=$(boko kfx-dump -f metadata book.kfx | awk '/content_id/ {print $2}')
+    vipsthumbnail cover.jpg -s 330x500 -o thumbnail_${id}_EBOK_portrait.jpg
+
+where `cover.jpg` is the book's cover image. The book goes in `documents/`,
+the thumbnail in `system/thumbnails/`.
+
 ## Architecture
 
 Format → semantic IR → format. Imports compile to an intermediate representation: nodes, computed styles, semantic roles, metadata, TOC. Exporters render IR back out.
