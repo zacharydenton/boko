@@ -112,6 +112,95 @@ fn encoded_href_epub() -> Vec<u8> {
     ])
 }
 
+/// An EPUB whose OPF lives in `OEBPS/` but references its nav, NCX, spine, and
+/// cover via `../` paths that resolve to the archive root — as Calibre emits
+/// for its generated inline TOC (`../toc.xhtml`). The importer must collapse the
+/// `..` segments, not look up the literal `OEBPS/../toc.xhtml` and fail.
+fn parent_relative_epub() -> Vec<u8> {
+    let opf = r#"<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">urn:uuid:parent-relative-test</dc:identifier>
+    <dc:title>Parent Relative</dc:title>
+    <dc:language>en</dc:language>
+    <meta name="cover" content="cover"/>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="../toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="nav" href="../nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="cover" href="../images/cover.png" media-type="image/png" properties="cover-image"/>
+    <item id="ch1" href="../text/ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="ch1"/>
+  </spine>
+</package>
+"#;
+    let ncx = r#"<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head/>
+  <docTitle><text>Parent Relative</text></docTitle>
+  <navMap>
+    <navPoint id="np1" playOrder="1">
+      <navLabel><text>Chapter One</text></navLabel>
+      <content src="../text/ch1.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>
+"#;
+    let nav = r#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Navigation</title></head>
+<body>
+<nav epub:type="landmarks"><ol>
+<li><a epub:type="bodymatter" href="../text/ch1.xhtml">Start</a></li>
+</ol></nav>
+</body>
+</html>
+"#;
+    build_epub(&[
+        ("OEBPS/content.opf", opf.as_bytes().to_vec()),
+        ("toc.ncx", ncx.as_bytes().to_vec()),
+        ("nav.xhtml", nav.as_bytes().to_vec()),
+        (
+            "text/ch1.xhtml",
+            xhtml("Chapter One", "<p>PARENT-RELATIVE prose.</p>").into_bytes(),
+        ),
+        ("images/cover.png", vec![0x89, 0x50, 0x4E, 0x47]),
+    ])
+}
+
+#[test]
+fn parent_relative_opf_hrefs_resolve_to_normalized_zip_names() {
+    // Regression: an OPF in a subdirectory referencing `../toc.xhtml` &c. failed
+    // to open with `Error::NotFound: OEBPS/../toc.xhtml`, because the importer
+    // concatenated `opf_base + href` without collapsing `..` path segments.
+    let book = Book::from_bytes(&parent_relative_epub(), Format::Epub)
+        .expect("EPUB with `../` OPF-relative hrefs must import");
+
+    // Spine href `../text/ch1.xhtml` from `OEBPS/` normalizes to root.
+    assert_eq!(book.spine().len(), 1);
+    let id = book.spine()[0].id;
+    assert_eq!(book.source_id(id), Some("text/ch1.xhtml"));
+    let text = String::from_utf8(book.load_raw(id).unwrap()).unwrap();
+    assert!(text.contains("PARENT-RELATIVE"));
+
+    // NCX, landmark, and cover hrefs all collapse `..` the same way.
+    let toc = book.toc();
+    assert_eq!(toc.len(), 1);
+    assert_eq!(toc[0].href, "text/ch1.xhtml");
+
+    let landmarks = book.landmarks();
+    assert_eq!(landmarks.len(), 1);
+    assert_eq!(landmarks[0].href, "text/ch1.xhtml");
+
+    assert_eq!(
+        book.metadata().cover_image.as_deref(),
+        Some("images/cover.png"),
+    );
+    assert!(book.load_asset("images/cover.png").is_ok());
+}
+
 #[test]
 fn percent_encoded_manifest_href_resolves_to_literal_zip_name() {
     // Regression: this open failed with Error::NotFound because the encoded

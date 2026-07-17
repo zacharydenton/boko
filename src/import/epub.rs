@@ -223,7 +223,7 @@ impl EpubImporter {
 
         for spine_id in &opf.spine_ids {
             if let Some((href, _media_type)) = opf.manifest.get(spine_id) {
-                let full_path = format!("{}{}", opf_base, crate::util::percent_decode_href(href));
+                let full_path = crate::import::resolve_relative_path(&opf_path, href);
                 let size_estimate = zip_index
                     .get(&full_path)
                     .map(|loc| loc.compressed_size as usize)
@@ -244,7 +244,7 @@ impl EpubImporter {
         // Load the EPUB 3 nav document once, if declared: it serves both the
         // TOC fallback (step 5) and landmarks (step 6).
         let nav_str: Option<String> = opf.nav_href.as_ref().and_then(|nav_href| {
-            let nav_path = format!("{}{}", opf_base, crate::util::percent_decode_href(nav_href));
+            let nav_path = crate::import::resolve_relative_path(&opf_path, nav_href);
             read_entry(&source, &zip_index, &nav_path)
                 .ok()
                 .map(|nav_bytes| {
@@ -258,7 +258,7 @@ impl EpubImporter {
         // nav document canonical and the NCX optional, so books without a
         // usable NCX fall back to `<nav epub:type="toc">`.
         let mut toc = if let Some(ncx_href) = &opf.ncx_href {
-            let ncx_path = format!("{}{}", opf_base, crate::util::percent_decode_href(ncx_href));
+            let ncx_path = crate::import::resolve_relative_path(&opf_path, ncx_href);
             if let Ok(ncx_bytes) = read_entry(&source, &zip_index, &ncx_path) {
                 let hint_encoding = crate::util::extract_xml_encoding(&ncx_bytes);
                 let ncx_str = crate::util::decode_text(&ncx_bytes, hint_encoding);
@@ -288,11 +288,7 @@ impl EpubImporter {
             // Prepend base path to hrefs (nav uses relative, URL-encoded paths)
             for landmark in &mut parsed {
                 if !landmark.href.starts_with('#') && !landmark.href.is_empty() {
-                    landmark.href = format!(
-                        "{}{}",
-                        opf_base,
-                        crate::util::percent_decode_href(&landmark.href)
-                    );
+                    landmark.href = crate::import::resolve_relative_path(&opf_path, &landmark.href);
                 }
             }
             parsed
@@ -316,11 +312,7 @@ impl EpubImporter {
         if let Some(ref href) = metadata.cover_image
             && !href.is_empty()
         {
-            metadata.cover_image = Some(format!(
-                "{}{}",
-                opf_base,
-                crate::util::percent_decode_href(href)
-            ));
+            metadata.cover_image = Some(crate::import::resolve_relative_path(&opf_path, href));
         }
 
         Ok(Self {
@@ -402,7 +394,7 @@ fn prepend_base_to_toc(entries: &[TocEntry], base: &str) -> Vec<TocEntry> {
             } else if entry.href.starts_with('#') {
                 crate::util::percent_decode_href(&entry.href).into_owned()
             } else {
-                format!("{}{}", base, crate::util::percent_decode_href(&entry.href))
+                crate::import::resolve_relative_path(base, &entry.href)
             };
             TocEntry {
                 title: entry.title.clone(),

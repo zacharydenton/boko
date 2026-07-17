@@ -353,7 +353,7 @@ fn normalize_separators(path: String) -> String {
 ///
 /// Both inputs are archive entry names separated by forward slashes; the
 /// result is normalized to forward slashes as well.
-fn resolve_relative_path(base: &str, relative: &str) -> String {
+pub(crate) fn resolve_relative_path(base: &str, relative: &str) -> String {
     // Handle absolute paths and URLs
     if relative.starts_with('/') || relative.contains("://") {
         return normalize_separators(relative.to_string());
