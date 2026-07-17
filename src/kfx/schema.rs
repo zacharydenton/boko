@@ -839,11 +839,11 @@ impl KfxSchema {
         role: Role,
         get_semantic: F,
         export_ctx: &crate::kfx::transforms::ExportContext,
-    ) -> Vec<(u64, String)>
+    ) -> crate::kfx::tokens::KfxAttrs
     where
         F: Fn(SemanticTarget) -> Option<String>,
     {
-        let mut attrs = Vec::new();
+        let mut attrs = crate::kfx::tokens::KfxAttrs::new();
 
         // Apply element attribute rules if role has a KFX type mapping
         if let Some(kfx_type_id) = self.kfx_symbol_for_role(role) {

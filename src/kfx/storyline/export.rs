@@ -355,7 +355,7 @@ pub(super) fn emit_flattened_segments(
             }
 
             // Build KFX attributes
-            let mut kfx_attrs = Vec::new();
+            let mut kfx_attrs = crate::kfx::tokens::KfxAttrs::new();
 
             // Add link_to if present
             if let Some(ref href) = segment.state.link_to {

@@ -166,7 +166,7 @@ pub(super) fn tokenize_content_item(
     // Carry the integer table-span / list-start fields through kfx_attrs so
     // the token→IR builder can restore them (they have no SemanticTarget and
     // are the inverse of the export-side hand-emitted attrs).
-    let mut kfx_attrs = Vec::new();
+    let mut kfx_attrs = crate::kfx::tokens::KfxAttrs::new();
     for sym in [
         KfxSymbol::TableColumnSpan,
         KfxSymbol::TableRowSpan,
@@ -307,7 +307,7 @@ pub(super) fn parse_style_events(events: &[IonValue], ctx: &TokenizeContext) -> 
                 offset,
                 length,
                 style_symbol,
-                kfx_attrs: Vec::new(),
+                kfx_attrs: crate::kfx::tokens::KfxAttrs::new(),
             })
         })
         .collect()

@@ -168,6 +168,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1_smol",
+ "smallvec",
  "tempfile",
  "thiserror 2.0.18",
  "wasm-bindgen",

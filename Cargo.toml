@@ -41,6 +41,10 @@ bstr = { version = "1.11", default-features = false, features = ["alloc"] }
 # arena ids, symbol tables) whose keys are not attacker-chosen for collision.
 rustc-hash = "2.1"
 
+# Inline storage for small hot collections (KFX token attrs/spans, Ion
+# annotations) so the common case avoids a heap allocation.
+smallvec = "1.15"
+
 # Derive Display/Error/From for the typed error enum (compile-time only).
 thiserror = "2"
 

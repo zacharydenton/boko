@@ -14,7 +14,13 @@
 
 use crate::kfx::schema::SemanticTarget;
 use crate::model::{NodeId, Role};
+use smallvec::SmallVec;
 use std::collections::HashMap;
+
+/// Pre-transformed KFX element/span attributes: `(field_id, value_string)`.
+/// Most elements carry 0–2 of these (href, src, alt, a table span, …), so an
+/// inline-2 SmallVec keeps the common case off the heap.
+pub type KfxAttrs = SmallVec<[(u64, String); 2]>;
 
 /// A token in the KFX content stream.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +54,7 @@ pub struct ElementStart {
     pub style_events: Vec<SpanStart>,
     /// Pre-transformed KFX attributes (field_id, value_string).
     /// Populated during export by schema.export_attributes().
-    pub kfx_attrs: Vec<(u64, String)>,
+    pub kfx_attrs: KfxAttrs,
     /// KFX style symbol ID for this element.
     /// Populated during export after registering the node's style.
     pub style_symbol: Option<u64>,
@@ -75,7 +81,7 @@ impl ElementStart {
             semantics: HashMap::new(),
             content_ref: None,
             style_events: Vec::new(),
-            kfx_attrs: Vec::new(),
+            kfx_attrs: KfxAttrs::new(),
             style_symbol: None,
             style_name: None,
             needs_container_wrapper: false,
@@ -125,7 +131,7 @@ pub struct SpanStart {
     pub style_symbol: Option<u64>,
     /// Pre-transformed KFX attributes (field_id, value_string).
     /// Populated during export by schema.export_attributes().
-    pub kfx_attrs: Vec<(u64, String)>,
+    pub kfx_attrs: KfxAttrs,
 }
 
 impl SpanStart {
@@ -138,7 +144,7 @@ impl SpanStart {
             offset,
             length,
             style_symbol: None,
-            kfx_attrs: Vec::new(),
+            kfx_attrs: KfxAttrs::new(),
         }
     }
 
@@ -188,7 +194,7 @@ impl TokenStream {
             semantics,
             content_ref,
             style_events,
-            kfx_attrs: Vec::new(),
+            kfx_attrs: KfxAttrs::new(),
             style_symbol: None,
             style_name: None,
             needs_container_wrapper: false,
@@ -212,7 +218,7 @@ impl TokenStream {
             offset: 0,
             length: 0,
             style_symbol: None,
-            kfx_attrs: Vec::new(),
+            kfx_attrs: KfxAttrs::new(),
         }));
     }
 
