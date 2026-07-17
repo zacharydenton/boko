@@ -153,6 +153,7 @@ pub(super) fn walk_node_for_export(
         {
             kfx_attrs.push((sym!(TableRowSpan), rows.to_string()));
         }
+        elem.is_header_cell = chapter.semantics.is_header_cell(node_id);
     }
     if node.role == Role::OrderedList
         && let Some(start) = chapter.semantics.list_start(node_id)

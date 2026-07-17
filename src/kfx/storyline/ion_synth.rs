@@ -197,10 +197,17 @@ fn start_element_fields(
     }
 
     // Add semantic type annotation if the strategy specifies one
-    // (e.g., BlockQuote → yj.semantics.type: block_quote)
-    if let Some(strategy) = schema().export_strategy(elem.role)
-        && let Some(semantic_type) = strategy.semantic_type()
-    {
+    // (e.g., BlockQuote → yj.semantics.type: block_quote). A header cell
+    // overrides the strategy's "table_cell" with "table_header_cell" so the
+    // th/td distinction survives the round trip.
+    let semantic_type = if elem.is_header_cell {
+        Some("table_header_cell")
+    } else {
+        schema()
+            .export_strategy(elem.role)
+            .and_then(|s| s.semantic_type())
+    };
+    if let Some(semantic_type) = semantic_type {
         // Both field name and value are local symbols
         let field_id = ctx.symbols.get_or_intern("yj.semantics.type");
         let value_id = ctx.symbols.get_or_intern(semantic_type);

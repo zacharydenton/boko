@@ -35,6 +35,7 @@ fn test_build_ir_with_image() {
         style_symbol: None,
         style_name: None,
         needs_container_wrapper: false,
+        is_header_cell: false,
     }));
     stream.end_element();
 
@@ -65,6 +66,7 @@ fn test_build_ir_with_text_content() {
         style_symbol: None,
         style_name: None,
         needs_container_wrapper: false,
+        is_header_cell: false,
     }));
     stream.end_element();
 
@@ -100,6 +102,7 @@ fn test_build_ir_with_heading() {
         style_symbol: None,
         style_name: None,
         needs_container_wrapper: false,
+        is_header_cell: false,
     }));
     stream.end_element();
 
@@ -138,6 +141,7 @@ fn test_build_ir_with_link_span() {
         style_symbol: None,
         style_name: None,
         needs_container_wrapper: false,
+        is_header_cell: false,
     }));
     stream.end_element();
 
@@ -773,6 +777,7 @@ fn test_nested_spans_link_containing_inline() {
         style_symbol: None,
         style_name: None,
         needs_container_wrapper: false,
+        is_header_cell: false,
     }));
     stream.end_element();
 

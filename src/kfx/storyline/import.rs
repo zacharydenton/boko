@@ -96,10 +96,15 @@ pub(super) fn tokenize_content_item(
 
     // Check for semantic type annotation (yj.semantics.type) which uses local symbols.
     // The schema's StructureWithSemanticType strategies define what values map to what roles.
-    if let Some(semantic_type) = get_semantic_type_annotation(fields, ctx.doc_symbols)
-        && let Some(mapped_role) = schema().role_for_semantic_type(&semantic_type)
-    {
-        role = mapped_role;
+    // "table_header_cell" isn't a strategy — it's a TableCell plus a header flag.
+    let mut is_header_cell = false;
+    if let Some(semantic_type) = get_semantic_type_annotation(fields, ctx.doc_symbols) {
+        if semantic_type == "table_header_cell" {
+            role = Role::TableCell;
+            is_header_cell = true;
+        } else if let Some(mapped_role) = schema().role_for_semantic_type(&semantic_type) {
+            role = mapped_role;
+        }
     }
 
     // Check for layout_hints to detect Figure and Caption elements (schema-driven).
@@ -184,6 +189,7 @@ pub(super) fn tokenize_content_item(
         style_symbol: None,             // Symbol ID (for export)
         style_name,                     // Style name (for import lookup)
         needs_container_wrapper: false, // Only used during export
+        is_header_cell,
     }));
 
     // Recurse into children
@@ -390,6 +396,11 @@ where
 
                 // Apply ALL semantic attributes from the generic map
                 apply_semantics_to_node(&mut chapter, node_id, &elem.semantics);
+
+                // Restore the header-cell flag.
+                if elem.is_header_cell {
+                    chapter.semantics.set_header_cell(node_id, true);
+                }
 
                 // Restore integer table-span / list-start attributes.
                 for (field_id, value) in &elem.kfx_attrs {

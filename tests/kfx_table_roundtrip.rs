@@ -18,7 +18,7 @@ fn kfx_preserves_table_spans_and_ol_start() {
             "text/ch1.xhtml",
             "Spans",
             "<h1>Grid</h1>\
-             <table><tbody>\
+             <table><thead><tr><th>Head</th></tr></thead><tbody>\
              <tr><td colspan=\"2\">wide</td><td rowspan=\"3\">tall</td></tr>\
              <tr><td>a</td><td>b</td></tr>\
              </tbody></table>\
@@ -32,8 +32,8 @@ fn kfx_preserves_table_spans_and_ol_start() {
     let kfx = common::export_to_bytes(&mut src, Format::Kfx);
     let out = boko::Book::from_bytes(&kfx, Format::Kfx).expect("import kfx");
 
-    // Table cell spans survive.
-    let (mut saw_colspan, mut saw_rowspan) = (false, false);
+    // Table cell spans and the th/td distinction survive.
+    let (mut saw_colspan, mut saw_rowspan, mut saw_header) = (false, false, false);
     let cell_ids: Vec<_> = {
         let ids: Vec<_> = out.spine().iter().map(|e| e.id).collect();
         let mut v = Vec::new();
@@ -47,6 +47,9 @@ fn kfx_preserves_table_spans_and_ol_start() {
                     if ch.semantics.row_span(nid) == Some(3) {
                         saw_rowspan = true;
                     }
+                    if ch.semantics.is_header_cell(nid) {
+                        saw_header = true;
+                    }
                     v.push(nid);
                 }
             }
@@ -56,6 +59,10 @@ fn kfx_preserves_table_spans_and_ol_start() {
     assert!(!cell_ids.is_empty(), "KFX round-trip lost the table cells");
     assert!(saw_colspan, "colspan=2 did not survive the KFX round trip");
     assert!(saw_rowspan, "rowspan=3 did not survive the KFX round trip");
+    assert!(
+        saw_header,
+        "th header cell did not survive the KFX round trip"
+    );
 
     // Ordered-list start survives.
     let mut saw_start = false;

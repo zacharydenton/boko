@@ -59,6 +59,10 @@ pub struct ElementStart {
     /// KFX requires block elements with borders to be `type: container` with
     /// nested `type: text` for content. Set during export by checking IR style.
     pub needs_container_wrapper: bool,
+    /// Whether this table cell is a header cell (`<th>`). Emitted as the
+    /// `table_header_cell` semantic-type marker so the header/data distinction
+    /// survives KFX export.
+    pub is_header_cell: bool,
 }
 
 impl ElementStart {
@@ -75,6 +79,7 @@ impl ElementStart {
             style_symbol: None,
             style_name: None,
             needs_container_wrapper: false,
+            is_header_cell: false,
         }
     }
 
@@ -187,6 +192,7 @@ impl TokenStream {
             style_symbol: None,
             style_name: None,
             needs_container_wrapper: false,
+            is_header_cell: false,
         }));
     }
 
