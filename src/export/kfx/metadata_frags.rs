@@ -10,6 +10,11 @@ pub(super) fn build_style_fragments(ctx: &mut ExportContext) -> Vec<KfxFragment>
 
     style_pairs
         .into_iter()
+        .filter(|(name, _)| {
+            // The default style is registered unconditionally; only ship it
+            // when something actually referenced it.
+            name != "s0" || ctx.default_style_used
+        })
         .map(|(name, ion)| KfxFragment::new(KfxSymbol::Style, &name, ion))
         .collect()
 }

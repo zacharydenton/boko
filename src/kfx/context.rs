@@ -695,6 +695,10 @@ pub struct ExportContext {
     /// `yj_table_viewer` content features). Set during storyline export.
     pub has_tables: bool,
 
+    /// Something referenced the default style (s0); when nothing does, the
+    /// fragment is not emitted (an unreferenced style is a conformance error).
+    pub default_style_used: bool,
+
     /// Chapters that need chapter-start anchors.
     chapters_needing_anchor: HashSet<ChapterId>,
 
@@ -780,6 +784,7 @@ impl ExportContext {
             has_hdv_image: false,
             jpg_rst_marker_present: false,
             has_tables: false,
+            default_style_used: false,
             chapters_needing_anchor: HashSet::new(),
             pending_chapter_anchor: None,
             first_content_ids: HashMap::new(),

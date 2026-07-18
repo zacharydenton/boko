@@ -443,3 +443,65 @@ fn kfx_carries_approximate_page_list() {
     // Offsets are non-negative and eids are positive.
     assert!(pages.iter().all(|(_, e, o)| *e > 0 && *o >= 0));
 }
+
+/// The default style (s0) is only emitted when something references it —
+/// plain books without container wrappers or unstyled spans previously
+/// shipped an unreachable s0 fragment.
+#[test]
+fn unused_default_style_is_not_emitted() {
+    use boko::kfx::container::{
+        parse_container_header, parse_container_info, parse_index_table, skip_enty_header,
+    };
+    use boko::kfx::ion::IonParser;
+    use boko::kfx::symbols::KfxSymbol;
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Plain Book")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<h1>Title</h1><p>Just plain paragraphs.</p><p>Nothing bordered.</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut src = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut src, Format::Kfx);
+
+    let header = parse_container_header(&kfx[..18]).unwrap();
+    let info = parse_container_info(
+        &kfx[header.container_info_offset
+            ..header.container_info_offset + header.container_info_length],
+    )
+    .unwrap();
+    let doc_symbols = match info.doc_symbols {
+        Some((off, len)) if len > 0 => {
+            boko::kfx::container::extract_doc_symbols(&kfx[off..off + len])
+        }
+        _ => Vec::new(),
+    };
+    let base = boko::kfx::symbols::KFX_SYMBOL_TABLE.len() as u32;
+    let (io_, il) = info.index.unwrap();
+    let mut style_names = Vec::new();
+    for loc in parse_index_table(&kfx[io_..io_ + il], header.header_len) {
+        if loc.type_id != KfxSymbol::Style as u32 {
+            continue;
+        }
+        // Suppress the unused-variable path: keep payload parse to ensure entity is valid.
+        let payload = skip_enty_header(&kfx[loc.offset..loc.offset + loc.length]);
+        IonParser::new(payload).parse().expect("style ion parses");
+        let name = if loc.id >= base {
+            doc_symbols
+                .get((loc.id - base) as usize)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            format!("${}", loc.id)
+        };
+        style_names.push(name);
+    }
+    assert!(
+        !style_names.iter().any(|s| s == "s0"),
+        "unreferenced default style s0 must not be emitted: {style_names:?}"
+    );
+}

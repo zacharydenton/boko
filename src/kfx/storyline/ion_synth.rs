@@ -46,6 +46,7 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                     // Inner element uses default style (minimal, no borders)
                     // This matches KPR behavior where inner text has separate style
+                    ctx.default_style_used = true;
                     inner_fields.push((sym!(Style), IonValue::Symbol(ctx.default_style_symbol)));
 
                     // Type: text - inner element holds the actual content
@@ -182,6 +183,9 @@ fn start_element_fields(
 
     // Style reference - use per-element style if available, else default
     // Required for text rendering on Kindle
+    if elem.style_symbol.is_none() {
+        ctx.default_style_used = true;
+    }
     let style_sym = elem.style_symbol.unwrap_or(ctx.default_style_symbol);
     fields.push((sym!(Style), IonValue::Symbol(style_sym)));
 
@@ -414,6 +418,7 @@ impl IonBuilder {
             event_fields.push((sym!(Style), IonValue::Symbol(style_sym)));
         } else {
             // Use default style if no specific style
+            ctx.default_style_used = true;
             event_fields.push((sym!(Style), IonValue::Symbol(ctx.default_style_symbol)));
         }
 
