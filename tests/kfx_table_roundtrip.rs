@@ -571,10 +571,11 @@ fn broken_internal_links_do_not_dangle() {
             if let Ok(v) = IonParser::new(payload).parse() {
                 walk(&v, &mut referenced);
             }
-        } else if loc.type_id == KfxSymbol::Anchor as u32 && loc.id as u64 >= base {
-            if let Some(name) = doc_symbols.get((loc.id as u64 - base) as usize) {
-                anchor_fids.insert(name.clone());
-            }
+        } else if loc.type_id == KfxSymbol::Anchor as u32
+            && loc.id as u64 >= base
+            && let Some(name) = doc_symbols.get((loc.id as u64 - base) as usize)
+        {
+            anchor_fids.insert(name.clone());
         }
     }
 

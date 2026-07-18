@@ -580,6 +580,9 @@ impl AnchorRegistry {
         symbols
             .into_iter()
             .filter(|s| !self.resolved_symbols.contains(*s))
+            // External links resolve through their own $266 form (yj.external
+            // URI); they are not "unresolved" and must not get a fallback.
+            .filter(|s| !self.external_anchors.iter().any(|e| e.symbol == **s))
             .cloned()
             .collect()
     }
