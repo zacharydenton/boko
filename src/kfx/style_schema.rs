@@ -62,13 +62,56 @@ pub enum ValueTransform {
     /// Example: "10px" → { value: 10, unit: px }, "1.5em" → { value: 1.5, unit: em }
     PreserveUnit,
 
-    /// Like [`ValueTransform::PreserveUnit`], but percentage values become
-    /// `em` (value/100): "100%" → { value: 1, unit: em }. For font-size,
-    /// percent and em are equivalent under CSS inheritance, and reference
-    /// KFX (Kindle Previewer) only ever emits em/rem font sizes — a percent
-    /// font-size breaks font-size inheritance in KFX consumers, which prune
-    /// inherited percentage values.
-    PreserveUnitPercentAsEm,
+    /// Font size must always be *relative* so the device font-size setting
+    /// scales it — reference KFX never emits absolute font sizes. Percent
+    /// folds to `em` (value/100; percent and em are equivalent under CSS
+    /// inheritance, and KFX consumers prune inherited percentage values,
+    /// which breaks font-size resolution for descendants). Absolute px/pt
+    /// fold to `rem` at the CSS reference (16px/12pt per rem).
+    FontSizeRelative,
+
+    /// Line height in KFX `lh` units (multiples of the 1.2em base line box),
+    /// matching reference output: `lh` values track the device line-spacing
+    /// setting. All CSS forms (unitless number, em, %, px, pt) convert; the
+    /// result is floored at 0.99lh like Kindle Previewer, which never lets
+    /// authored leading drop below the readable baseline.
+    LineHeightLh,
+
+    /// Vertical spacing (margin/padding top+bottom) in `lh` units so block
+    /// spacing scales with the device line-spacing setting, as in reference
+    /// output. Percentages resolve against Kindle Previewer's 512px layout
+    /// viewport (the model reference output uses for percent spacing).
+    VerticalSpacingLh,
+
+    /// Horizontal spacing keeps the author's relative units (em/%); absolute
+    /// px/pt fold to `em` (16px/12pt per em) so indents and side margins
+    /// scale with the font size instead of freezing at a device-pixel size.
+    HorizontalSpacingEm,
+
+    /// Hairline dimensions (border widths/radii, letter/word spacing):
+    /// absolute px folds to pt at the CSS ratio (0.75pt/px); relative units
+    /// pass through. Reference KFX emits pt for these.
+    AbsolutePt,
+}
+
+/// The base KFX line box: 1lh = 1.2em, the reference line-height.
+const LH_PER_EM: f64 = 1.0 / 1.2;
+/// Kindle Previewer's layout viewport width, used to resolve percentage
+/// spacing to absolute units (5% → 25.6px at 512px).
+const KP_LAYOUT_VIEWPORT_PX: f64 = 512.0;
+/// CSS reference pixels per em/rem.
+const PX_PER_EM: f64 = 16.0;
+
+/// Resolve a parsed CSS length to an em-equivalent for lh-unit conversion.
+/// Returns `None` for units that cannot be resolved (keeps caller honest).
+fn css_length_as_em(num: f64, unit: &str) -> Option<f64> {
+    match unit {
+        "em" | "rem" => Some(num),
+        "%" => Some(num / 100.0),
+        "px" => Some(num / PX_PER_EM),
+        "pt" => Some(num / 12.0),
+        _ => None,
+    }
 }
 
 /// KFX value representation for transforms.
@@ -380,11 +423,7 @@ impl StyleSchema {
             ir_key: "font-size",
             ir_field: Some(IrField::FontSize),
             kfx_symbol: KfxSymbol::FontSize,
-            // PreserveUnit (not Dimensioned{Rem}: that relabels the number
-            // with its unit symbol without converting, turning "24px" into
-            // 24rem, ~38x too large on device) — with percent folded to em,
-            // which reference KFX requires for font-size.
-            transform: ValueTransform::PreserveUnitPercentAsEm,
+            transform: ValueTransform::FontSizeRelative,
         });
 
         // font-variant: small-caps -> glyph_transform: small_caps
@@ -421,14 +460,14 @@ impl StyleSchema {
             ir_key: "text-indent",
             ir_field: Some(IrField::TextIndent),
             kfx_symbol: KfxSymbol::TextIndent,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::HorizontalSpacingEm,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "line-height",
             ir_field: Some(IrField::LineHeight),
             kfx_symbol: KfxSymbol::LineHeight,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::LineHeightLh,
         });
 
         // text-decoration: underline -> underline: solid (symbol, not bool)
@@ -479,28 +518,28 @@ impl StyleSchema {
             ir_key: "margin-top",
             ir_field: Some(IrField::MarginTop),
             kfx_symbol: KfxSymbol::MarginTop,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::VerticalSpacingLh,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-bottom",
             ir_field: Some(IrField::MarginBottom),
             kfx_symbol: KfxSymbol::MarginBottom,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::VerticalSpacingLh,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-left",
             ir_field: Some(IrField::MarginLeft),
             kfx_symbol: KfxSymbol::MarginLeft,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::HorizontalSpacingEm,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-right",
             ir_field: Some(IrField::MarginRight),
             kfx_symbol: KfxSymbol::MarginRight,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::HorizontalSpacingEm,
         });
 
         // ====================================================================
@@ -511,28 +550,28 @@ impl StyleSchema {
             ir_key: "padding-top",
             ir_field: Some(IrField::PaddingTop),
             kfx_symbol: KfxSymbol::PaddingTop,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::VerticalSpacingLh,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-bottom",
             ir_field: Some(IrField::PaddingBottom),
             kfx_symbol: KfxSymbol::PaddingBottom,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::VerticalSpacingLh,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-left",
             ir_field: Some(IrField::PaddingLeft),
             kfx_symbol: KfxSymbol::PaddingLeft,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::HorizontalSpacingEm,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-right",
             ir_field: Some(IrField::PaddingRight),
             kfx_symbol: KfxSymbol::PaddingRight,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::HorizontalSpacingEm,
         });
 
         // ====================================================================
@@ -599,14 +638,14 @@ impl StyleSchema {
             ir_key: "letter-spacing",
             ir_field: Some(IrField::LetterSpacing),
             kfx_symbol: KfxSymbol::Letterspacing,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::AbsolutePt,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "word-spacing",
             ir_field: Some(IrField::WordSpacing),
             kfx_symbol: KfxSymbol::Wordspacing,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::AbsolutePt,
         });
 
         schema.register(StylePropertyRule {
@@ -858,8 +897,8 @@ impl StyleSchema {
             transform: border_style_transform,
         });
 
-        // Border widths - preserve original units (px, em, etc.)
-        let border_width_transform = ValueTransform::PreserveUnit;
+        // Border widths: px folds to pt (reference KFX emits pt hairlines).
+        let border_width_transform = ValueTransform::AbsolutePt;
 
         schema.register(StylePropertyRule {
             ir_key: "border-top-width",
@@ -921,7 +960,7 @@ impl StyleSchema {
         });
 
         // Border radius - preserve original units
-        let border_radius_transform = ValueTransform::PreserveUnit;
+        let border_radius_transform = ValueTransform::AbsolutePt;
 
         schema.register(StylePropertyRule {
             ir_key: "border-top-left-radius",
@@ -1139,7 +1178,7 @@ impl StyleSchema {
             ir_key: "border-spacing",
             ir_field: Some(IrField::BorderSpacing),
             kfx_symbol: KfxSymbol::BorderSpacingVertical,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::AbsolutePt,
         });
 
         // border-spacing → border_spacing_horizontal (same value to both)
@@ -1147,7 +1186,7 @@ impl StyleSchema {
             ir_key: "border-spacing",
             ir_field: None, // Don't extract twice from IR
             kfx_symbol: KfxSymbol::BorderSpacingHorizontal,
-            transform: ValueTransform::PreserveUnit,
+            transform: ValueTransform::AbsolutePt,
         });
 
         schema
@@ -1227,25 +1266,69 @@ impl ValueTransform {
                 })
             }
 
-            ValueTransform::PreserveUnitPercentAsEm => {
+            ValueTransform::FontSizeRelative => {
                 let (num, css_unit) = parse_css_length(raw)?;
-                if css_unit == "%" {
-                    return Some(KfxValue::Dimensioned {
-                        value: num / 100.0,
-                        unit: KfxSymbol::Em,
-                    });
-                }
-                let kfx_unit = match css_unit.as_str() {
-                    "px" => KfxSymbol::Px,
-                    "em" => KfxSymbol::Em,
-                    "rem" => KfxSymbol::Rem,
-                    "pt" => KfxSymbol::Pt,
-                    _ => KfxSymbol::Px, // Default fallback
+                let (value, unit) = match css_unit.as_str() {
+                    "%" => (num / 100.0, KfxSymbol::Em),
+                    "em" => (num, KfxSymbol::Em),
+                    "rem" => (num, KfxSymbol::Rem),
+                    "pt" => (num / 12.0, KfxSymbol::Rem),
+                    // px and bare numbers: CSS reference pixels.
+                    _ => (num / PX_PER_EM, KfxSymbol::Rem),
+                };
+                Some(KfxValue::Dimensioned { value, unit })
+            }
+
+            ValueTransform::LineHeightLh => {
+                let (num, css_unit) = parse_css_length(raw)?;
+                let em = css_length_as_em(num, css_unit.as_str())?;
+                // Reference output maps any authored leading at or below the
+                // base line box to 0.99lh — never below the readable floor,
+                // and never exactly 1.0 (that value means "normal").
+                let lh = em * LH_PER_EM;
+                Some(KfxValue::Dimensioned {
+                    value: if lh <= 1.0 { 0.99 } else { lh },
+                    unit: KfxSymbol::Lh,
+                })
+            }
+
+            ValueTransform::VerticalSpacingLh => {
+                let (num, css_unit) = parse_css_length(raw)?;
+                let em = if css_unit == "%" {
+                    num / 100.0 * KP_LAYOUT_VIEWPORT_PX / PX_PER_EM
+                } else {
+                    css_length_as_em(num, css_unit.as_str())?
                 };
                 Some(KfxValue::Dimensioned {
-                    value: num,
-                    unit: kfx_unit,
+                    value: em * LH_PER_EM,
+                    unit: KfxSymbol::Lh,
                 })
+            }
+
+            ValueTransform::HorizontalSpacingEm => {
+                let (num, css_unit) = parse_css_length(raw)?;
+                let (value, unit) = match css_unit.as_str() {
+                    "%" => (num, KfxSymbol::Percent),
+                    "em" => (num, KfxSymbol::Em),
+                    "rem" => (num, KfxSymbol::Rem),
+                    "pt" => (num / 12.0, KfxSymbol::Em),
+                    // px and bare numbers: CSS reference pixels.
+                    _ => (num / PX_PER_EM, KfxSymbol::Em),
+                };
+                Some(KfxValue::Dimensioned { value, unit })
+            }
+
+            ValueTransform::AbsolutePt => {
+                let (num, css_unit) = parse_css_length(raw)?;
+                let (value, unit) = match css_unit.as_str() {
+                    "%" => (num, KfxSymbol::Percent),
+                    "em" => (num, KfxSymbol::Em),
+                    "rem" => (num, KfxSymbol::Rem),
+                    "pt" => (num, KfxSymbol::Pt),
+                    // px and bare numbers: CSS 1px = 0.75pt.
+                    _ => (num * 0.75, KfxSymbol::Pt),
+                };
+                Some(KfxValue::Dimensioned { value, unit })
             }
         }
     }
@@ -1677,7 +1760,11 @@ impl ValueTransform {
 
             ValueTransform::Dimensioned { .. }
             | ValueTransform::PreserveUnit
-            | ValueTransform::PreserveUnitPercentAsEm => {
+            | ValueTransform::FontSizeRelative
+            | ValueTransform::LineHeightLh
+            | ValueTransform::VerticalSpacingLh
+            | ValueTransform::HorizontalSpacingEm
+            | ValueTransform::AbsolutePt => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers), Float, or Decimal (Amazon uses all three)
                 let fields = value.as_struct()?;
@@ -1693,6 +1780,12 @@ impl ValueTransform {
                         }
                     })?;
                 let unit_sym = get_field_by_symbol(fields, KfxSymbol::Unit)?.as_symbol()? as u32;
+
+                // `lh` (reference line boxes) has no CSS spelling; convert
+                // back to em at the 1.2em base line box.
+                if unit_sym == KfxSymbol::Lh as u32 {
+                    return Some(format!("{}em", num / LH_PER_EM));
+                }
 
                 // Convert unit symbol back to CSS unit string
                 let unit_str = match unit_sym {
@@ -3166,17 +3259,16 @@ mod tests {
         let rules: Vec<_> = schema.get("border-spacing").collect();
         assert_eq!(rules.len(), 2);
 
-        // Both rules should use PreserveUnit transform
         let symbols: Vec<_> = rules.iter().map(|r| r.kfx_symbol).collect();
         assert!(symbols.contains(&KfxSymbol::BorderSpacingVertical));
         assert!(symbols.contains(&KfxSymbol::BorderSpacingHorizontal));
 
-        // Both should transform "10px" to dimensioned value
+        // Both transform "10px" to a pt hairline (1px = 0.75pt).
         for rule in rules {
             let result = rule.transform.apply("10px");
             assert!(matches!(
                 result,
-                Some(KfxValue::Dimensioned { value, unit }) if value == 10.0 && unit == KfxSymbol::Px
+                Some(KfxValue::Dimensioned { value, unit }) if value == 7.5 && unit == KfxSymbol::Pt
             ));
         }
     }
@@ -3246,9 +3338,9 @@ mod tests {
     #[test]
     fn test_preserve_unit_transform() {
         let schema = StyleSchema::standard();
-        let rule = schema.get("border-spacing").next().unwrap();
+        // width keeps the author's units verbatim (PreserveUnit).
+        let rule = schema.get("width").next().unwrap();
 
-        // Test various units are preserved
         assert!(matches!(
             rule.transform.apply("10px"),
             Some(KfxValue::Dimensioned { value, unit }) if value == 10.0 && unit == KfxSymbol::Px
@@ -3260,6 +3352,84 @@ mod tests {
         assert!(matches!(
             rule.transform.apply("50%"),
             Some(KfxValue::Dimensioned { value, unit }) if value == 50.0 && unit == KfxSymbol::Percent
+        ));
+    }
+
+    #[test]
+    fn unit_model_matches_reference_output() {
+        let schema = StyleSchema::standard();
+        let apply = |key: &str, raw: &str| schema.get(key).next().unwrap().transform.apply(raw);
+
+        // Font sizes are always relative: px/pt fold to rem, % to em.
+        assert!(matches!(
+            apply("font-size", "10px"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 0.625).abs() < 1e-9 && unit == KfxSymbol::Rem
+        ));
+        assert!(matches!(
+            apply("font-size", "80%"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 0.8).abs() < 1e-9 && unit == KfxSymbol::Em
+        ));
+
+        // Line height converts to lh (1lh = 1.2em) with the 0.99 floor.
+        assert!(matches!(
+            apply("line-height", "1.5em"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 1.25).abs() < 1e-9 && unit == KfxSymbol::Lh
+        ));
+        assert!(matches!(
+            apply("line-height", "1em"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if value == 0.99 && unit == KfxSymbol::Lh
+        ));
+        // px/pt line heights convert instead of being dropped (18pt = 24px = 1.5em).
+        assert!(matches!(
+            apply("line-height", "24px"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 1.25).abs() < 1e-9 && unit == KfxSymbol::Lh
+        ));
+
+        // Vertical spacing scales with the line-spacing setting (em -> lh).
+        assert!(matches!(
+            apply("margin-top", "1em"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 1.0 / 1.2).abs() < 1e-9 && unit == KfxSymbol::Lh
+        ));
+        // Percent vertical spacing resolves against KP's 512px viewport.
+        assert!(matches!(
+            apply("margin-top", "5%"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 4.0 / 3.0).abs() < 1e-6 && unit == KfxSymbol::Lh
+        ));
+
+        // Horizontal spacing keeps relative units; px folds to em.
+        assert!(matches!(
+            apply("margin-left", "40px"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 2.5).abs() < 1e-9 && unit == KfxSymbol::Em
+        ));
+        assert!(matches!(
+            apply("text-indent", "5%"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if value == 5.0 && unit == KfxSymbol::Percent
+        ));
+        assert!(matches!(
+            apply("text-indent", "-1em"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if value == -1.0 && unit == KfxSymbol::Em
+        ));
+
+        // Hairlines: px folds to pt at the CSS ratio.
+        assert!(matches!(
+            apply("border-top-width", "4px"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if value == 3.0 && unit == KfxSymbol::Pt
+        ));
+        assert!(matches!(
+            apply("letter-spacing", "0.1em"),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 0.1).abs() < 1e-9 && unit == KfxSymbol::Em
         ));
     }
 

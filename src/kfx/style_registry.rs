@@ -464,19 +464,21 @@ mod tests {
     }
 
     #[test]
-    fn test_font_size_preserves_css_unit() {
+    fn test_font_size_is_always_relative() {
         use crate::kfx::style_schema::StyleSchema;
 
-        // 24px must stay 24px — the old Dimensioned{Rem} transform relabeled
-        // it as 24rem (~38x too large on device).
+        // Absolute font sizes freeze under the device font-size setting;
+        // reference KFX never emits them. 24px folds to rem at 16px/rem
+        // (converted, not relabeled — the old Dimensioned{Rem} transform
+        // turned 24px into 24rem, ~38x too large on device).
         let mut ir = crate::style::ComputedStyle::default();
         ir.font_size = crate::style::Length::Px(24.0);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
         builder.ingest_ir_style(&ir);
         match builder.build().get(KfxSymbol::FontSize) {
             Some(KfxValue::Dimensioned { value, unit }) => {
-                assert_eq!(*value, 24.0);
-                assert_eq!(*unit, KfxSymbol::Px);
+                assert_eq!(*value, 1.5);
+                assert_eq!(*unit, KfxSymbol::Rem);
             }
             other => panic!("expected dimensioned font-size, got {other:?}"),
         }
