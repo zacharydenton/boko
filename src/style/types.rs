@@ -20,7 +20,13 @@ impl StyleId {
 /// Enum-typed and `Length` fields use their `Default` (usually the CSS
 /// initial value; `Length::Auto` for lengths); `Option` fields are `None`
 /// when the property was never set, letting exporters skip emitting them.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+///
+/// Margins are the exception to the `Length::Auto`-as-unset convention:
+/// their CSS initial value is `0`, so [`Default`] gives them `Px(0)` and
+/// `Length::Auto` means the author explicitly wrote `margin: auto`
+/// (horizontal centering). Conflating the two centered every block whose
+/// margins were simply never set.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ComputedStyle {
     // Font properties
     /// `font-family`; `None` means inherit the reader default.
@@ -53,13 +59,13 @@ pub struct ComputedStyle {
     // Box model
     /// `display` box mode (block, inline, none, list-item, ...).
     pub display: Display,
-    /// `margin-top`; `Length::Auto` means unset.
+    /// `margin-top`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_top: Length,
-    /// `margin-bottom`; `Length::Auto` means unset.
+    /// `margin-bottom`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_bottom: Length,
-    /// `margin-left`; `Length::Auto` means unset.
+    /// `margin-left`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_left: Length,
-    /// `margin-right`; `Length::Auto` means unset.
+    /// `margin-right`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_right: Length,
     /// `padding-top`; `Length::Auto` means unset.
     pub padding_top: Length,
@@ -195,6 +201,83 @@ pub struct ComputedStyle {
     pub border_collapse: BorderCollapse,
     /// `border-spacing` between table cells; `Length::Auto` means unset.
     pub border_spacing: Length,
+}
+
+impl Default for ComputedStyle {
+    fn default() -> Self {
+        Self {
+            // CSS initial margin is 0; `Length::Auto` is reserved for an
+            // explicit `margin: auto` (see the struct docs).
+            margin_top: Length::Px(0.0),
+            margin_bottom: Length::Px(0.0),
+            margin_left: Length::Px(0.0),
+            margin_right: Length::Px(0.0),
+            font_family: Default::default(),
+            font_size: Default::default(),
+            font_weight: Default::default(),
+            font_style: Default::default(),
+            color: Default::default(),
+            background_color: Default::default(),
+            text_align: Default::default(),
+            text_indent: Default::default(),
+            line_height: Default::default(),
+            text_decoration_underline: Default::default(),
+            text_decoration_line_through: Default::default(),
+            display: Default::default(),
+            padding_top: Default::default(),
+            padding_bottom: Default::default(),
+            padding_left: Default::default(),
+            padding_right: Default::default(),
+            vertical_align: Default::default(),
+            list_style_type: Default::default(),
+            font_variant: Default::default(),
+            letter_spacing: Default::default(),
+            word_spacing: Default::default(),
+            text_transform: Default::default(),
+            hyphens: Default::default(),
+            white_space: Default::default(),
+            underline_style: Default::default(),
+            overline: Default::default(),
+            underline_color: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            max_width: Default::default(),
+            min_height: Default::default(),
+            float: Default::default(),
+            break_before: Default::default(),
+            break_after: Default::default(),
+            break_inside: Default::default(),
+            border_style_top: Default::default(),
+            border_style_right: Default::default(),
+            border_style_bottom: Default::default(),
+            border_style_left: Default::default(),
+            border_width_top: Default::default(),
+            border_width_right: Default::default(),
+            border_width_bottom: Default::default(),
+            border_width_left: Default::default(),
+            border_color_top: Default::default(),
+            border_color_right: Default::default(),
+            border_color_bottom: Default::default(),
+            border_color_left: Default::default(),
+            border_radius_top_left: Default::default(),
+            border_radius_top_right: Default::default(),
+            border_radius_bottom_left: Default::default(),
+            border_radius_bottom_right: Default::default(),
+            list_style_position: Default::default(),
+            language: Default::default(),
+            visibility: Default::default(),
+            box_sizing: Default::default(),
+            max_height: Default::default(),
+            min_width: Default::default(),
+            clear: Default::default(),
+            orphans: Default::default(),
+            widows: Default::default(),
+            word_break: Default::default(),
+            overflow_wrap: Default::default(),
+            border_collapse: Default::default(),
+            border_spacing: Default::default(),
+        }
+    }
 }
 
 impl ComputedStyle {

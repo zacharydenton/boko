@@ -317,6 +317,40 @@ fn box_align_rides_block_styles_not_style_events() {
     }
 }
 
+/// `box_align: center` must require an author's explicit `margin: auto`.
+/// Margins that were never set are the CSS initial `0`, not `auto` — gold
+/// masters never center a `width: 50%` block with unset margins (it sits
+/// left), and defaulted UA paragraph margins must not center every block.
+#[test]
+fn unset_margins_never_produce_box_align() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("No Centering Book")
+        .css(".half { width: 50%; }")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>Default-margin paragraph.</p>\
+             <p class=\"half\">Half-width block that must stay left.</p>\
+             <blockquote><p>Quoted text.</p></blockquote>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        assert!(
+            get_field(fields, KfxSymbol::BoxAlign).is_none(),
+            "no block in this book sets margin:auto, yet a style carries box_align"
+        );
+    }
+}
+
 /// An empty chapter must still produce a (possibly empty) content_list —
 /// a null content_list is rejected by KFX consumers ("unknown content_list
 /// data type: NoneType").

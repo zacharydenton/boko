@@ -1523,22 +1523,12 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
         // Language is not a CSS property (to_css emits it via the HTML lang
         // attribute instead).
         IrField::Language => ir_style.language.clone(),
-        // BoxAlign: horizontal centering from `margin: <v> auto`.
-        //
-        // `Length::Auto` is also the DEFAULT (unset) margin, so
-        // left==auto && right==auto alone can't distinguish real centering
-        // from margins that were simply never set — and blindly centering the
-        // latter wrongly centers every width-constrained box (e.g.
-        // `width:200px` with no margins). Require positive evidence: the
-        // dominant centering idiom `margin: 0 auto` / `margin: 1em auto` sets
-        // top/bottom to a concrete value, whereas fully-unset margins leave
-        // all four `Auto`. So only center when a vertical margin is explicit.
+        // BoxAlign: horizontal centering from `margin: <v> auto`. Unset
+        // margins compute to `Px(0)`, so `Length::Auto` here is always the
+        // author's explicit `auto` — the CSS centering idiom.
         IrField::BoxAlign => {
             let auto = ir_style::Length::Auto;
-            let horizontally_auto = ir_style.margin_left == auto && ir_style.margin_right == auto;
-            let vertical_is_explicit =
-                ir_style.margin_top != auto || ir_style.margin_bottom != auto;
-            if horizontally_auto && vertical_is_explicit {
+            if ir_style.margin_left == auto && ir_style.margin_right == auto {
                 Some("center".to_string())
             } else {
                 None
