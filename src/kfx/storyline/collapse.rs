@@ -141,7 +141,9 @@ impl<'a> Collapser<'a> {
         }
     }
 
-    /// Inline flow with visible content breaks margin adjacency.
+    /// Inline flow with visible content breaks margin adjacency. Empty
+    /// inline anchors (`<a id="..."/>` between paragraphs) render nothing
+    /// and must not break it.
     fn is_blocking_inline(&self, id: NodeId) -> bool {
         let Some(node) = self.chapter.node(id) else {
             return false;
@@ -149,7 +151,7 @@ impl<'a> Collapser<'a> {
         match node.role {
             Role::Text => !self.chapter.text(node.text).trim().is_empty(),
             Role::Break => true,
-            Role::Link | Role::Inline => true,
+            Role::Link | Role::Inline => self.has_visible_content(id),
             _ => false,
         }
     }

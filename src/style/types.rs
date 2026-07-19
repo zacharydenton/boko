@@ -77,6 +77,10 @@ pub struct ComputedStyle {
     pub text_indent: Length,
     /// `line-height`; unitless values are stored as em, `Auto` means unset.
     pub line_height: Length,
+    /// Export-time line-height scale (leading normalization); 1.0 outside
+    /// KFX export. Kept on the style so emission can clamp the authored
+    /// leading before scaling, the way reference output does.
+    pub line_scale: AbsFontSize,
     /// Whether `text-decoration` includes an underline line.
     pub text_decoration_underline: bool,
     /// Whether `text-decoration` includes a line-through (strikethrough) line.
@@ -248,6 +252,7 @@ impl Default for ComputedStyle {
             text_align: Default::default(),
             text_indent: Default::default(),
             line_height: Default::default(),
+            line_scale: Default::default(),
             text_decoration_underline: Default::default(),
             text_decoration_line_through: Default::default(),
             display: Default::default(),

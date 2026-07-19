@@ -770,6 +770,17 @@ pub struct ExportContext {
     /// 19% smaller than every other book on the device.
     pub font_scale: f32,
 
+    /// Text bytes per line-height (em of the element's font, exact f32
+    /// bits), accumulated during the survey pass.
+    line_height_weights: FxHashMap<u32, u64>,
+
+    /// Global line-height scale so the dominant leading renders at 1lh —
+    /// the user's line-spacing setting. Reference KFX normalizes authored
+    /// body leading the same way (a book forcing line-height: 1.6 must not
+    /// override the reader's chosen spacing); authored leading elsewhere
+    /// keeps its ratio to the body.
+    pub line_scale: f32,
+
     /// Chapters that need chapter-start anchors.
     chapters_needing_anchor: HashSet<ChapterId>,
 
@@ -860,6 +871,8 @@ impl ExportContext {
             default_style_used: false,
             font_size_weights: FxHashMap::default(),
             font_scale: 1.0,
+            line_height_weights: FxHashMap::default(),
+            line_scale: 1.0,
             chapters_needing_anchor: HashSet::new(),
             pending_chapter_anchor: None,
             first_content_ids: HashMap::new(),
@@ -960,9 +973,14 @@ impl ExportContext {
         id
     }
 
-    /// Record text weight for one absolute font size (survey pass).
-    pub fn record_font_size_weight(&mut self, abs: f32, bytes: usize) {
+    /// Record text weight for one absolute font size and line-height
+    /// (em of the element's font), from the survey pass.
+    pub fn record_text_metrics(&mut self, abs: f32, line_em: f32, bytes: usize) {
         *self.font_size_weights.entry(abs.to_bits()).or_insert(0) += bytes as u64;
+        *self
+            .line_height_weights
+            .entry(line_em.to_bits())
+            .or_insert(0) += bytes as u64;
     }
 
     /// Resolve the global font scale from the surveyed weights: the
@@ -976,14 +994,24 @@ impl ExportContext {
         if dominant > 0.0 && (dominant - 1.0).abs() > 0.02 {
             self.font_scale = (1.0 / dominant).clamp(0.5, 2.0);
         }
+        if let Some((&key, _)) = self.line_height_weights.iter().max_by_key(|&(_, &w)| w) {
+            let dominant = f32::from_bits(key);
+            if dominant > 0.0 && (dominant - 1.2).abs() > 0.024 {
+                self.line_scale = (1.2 / dominant).clamp(0.5, 2.0);
+            }
+        }
     }
 
-    /// A copy of `style` with the global font scale applied to its absolute
-    /// font size. Emission derives every font-relative conversion from
-    /// `font_size_abs`, so scaling it here normalizes the whole style.
+    /// A copy of `style` with the global font and line-height scales
+    /// applied. Emission derives every font-relative conversion from
+    /// `font_size_abs`, so scaling it here normalizes the whole style;
+    /// authored line-heights scale toward the 1.2em base (unset leading is
+    /// already the base).
     fn scaled_style(&self, style: &crate::style::ComputedStyle) -> crate::style::ComputedStyle {
+        use crate::style::Length;
         let mut scaled = style.clone();
         scaled.font_size_abs = crate::style::AbsFontSize(style.font_size_abs.0 * self.font_scale);
+        scaled.line_scale = crate::style::AbsFontSize(self.line_scale);
         scaled
     }
 
@@ -998,7 +1026,7 @@ impl ExportContext {
     ) -> crate::kfx::style_registry::ComputedStyle {
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-        if self.font_scale != 1.0 {
+        if self.font_scale != 1.0 || self.line_scale != 1.0 {
             let scaled_parent = if parent_is_default {
                 parent.clone()
             } else {

@@ -365,7 +365,9 @@ impl StyleSchema {
                 // Numeric values (100-900 scale per CSS spec)
                 ("100".into(), KfxValue::Symbol(KfxSymbol::Thin)),
                 ("200".into(), KfxValue::Symbol(KfxSymbol::UltraLight)),
-                ("300".into(), KfxValue::Symbol(KfxSymbol::Light)),
+                // Reference output maps 300 to ultra_light (gold-master
+                // verified); Light is reserved for the `lighter` keyword.
+                ("300".into(), KfxValue::Symbol(KfxSymbol::UltraLight)),
                 ("400".into(), KfxValue::Symbol(KfxSymbol::Normal)),
                 ("500".into(), KfxValue::Symbol(KfxSymbol::Medium)),
                 ("600".into(), KfxValue::Symbol(KfxSymbol::SemiBold)),
@@ -1460,13 +1462,17 @@ pub(crate) fn margin_abs_em_to_lh(s: &ir_style::ComputedStyle, abs_em: f64) -> f
 
 /// The element's line-height as emitted (in lh units): `normal` is 1lh;
 /// authored leading converts at the 1.2em base line box and maps to 0.99lh
-/// when at or below the base, exactly like reference output.
+/// when at or below the base, exactly like reference output. The floor
+/// applies to the *authored* value; the book's leading normalization
+/// (`line_scale`) then scales the result, matching reference output which
+/// lets normalized leading drop below the floor.
 fn emitted_line_height_lh(s: &ir_style::ComputedStyle) -> f64 {
     match raw_line_height_em(s) {
         None => 1.0,
         Some(em) => {
             let lh = em / 1.2;
-            if lh <= 1.0 { 0.99 } else { lh }
+            let lh = if lh <= 1.0 { 0.99 } else { lh };
+            lh * s.line_scale.0 as f64
         }
     }
 }
@@ -2765,9 +2771,11 @@ mod tests {
             rule.transform.apply("200"),
             Some(KfxValue::Symbol(KfxSymbol::UltraLight))
         ));
+        // 300 maps to ultra_light like reference output; Light is the
+        // `lighter` keyword.
         assert!(matches!(
             rule.transform.apply("300"),
-            Some(KfxValue::Symbol(KfxSymbol::Light))
+            Some(KfxValue::Symbol(KfxSymbol::UltraLight))
         ));
         assert!(matches!(
             rule.transform.apply("400"),

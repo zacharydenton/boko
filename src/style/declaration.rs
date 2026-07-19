@@ -331,7 +331,9 @@ impl Declaration {
             "letter-spacing" => parse_spacing(input).map(Self::LetterSpacing),
             "word-spacing" => parse_spacing(input).map(Self::WordSpacing),
             "text-transform" => parse_text_transform(input).map(Self::TextTransform),
-            "hyphens" => parse_hyphens(input).map(Self::Hyphens),
+            // Vendor-prefixed hyphenation aliases are common in EPUB CSS.
+            "hyphens" | "-epub-hyphens" | "-webkit-hyphens" | "-moz-hyphens"
+            | "adobe-hyphenate" => parse_hyphens(input).map(Self::Hyphens),
             "white-space" => parse_white_space(input).map(Self::WhiteSpace),
             "vertical-align" => parse_vertical_align(input).map(Self::VerticalAlign),
 
