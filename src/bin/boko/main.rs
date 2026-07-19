@@ -45,8 +45,9 @@ enum Command {
         #[arg(short = 't', long = "to", value_enum, ignore_case = true)]
         to_format: Option<FormatArg>,
 
-        /// Optimize the output for size (re-encode oversized images,
-        /// keeping originals whenever re-encoding doesn't shrink them)
+        /// Optimize the output for size: downscale images beyond Kindle
+        /// Paperwhite resolution and re-encode oversized ones as JPEG,
+        /// keeping originals whenever that doesn't shrink them
         #[arg(short = 'O', long)]
         optimize: bool,
 

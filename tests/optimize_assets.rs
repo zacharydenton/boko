@@ -161,6 +161,69 @@ fn optimize_recompresses_large_jpeg_in_place() {
 }
 
 #[test]
+fn optimize_downscales_images_beyond_paperwhite_resolution() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    // 3000x2000: far beyond the 1236x1648 Paperwhite panel.
+    let big = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(3000, 2000, |x, y| {
+        let (fx, fy) = (x as f32 / 3000.0, y as f32 / 2000.0);
+        image::Rgb([
+            (128.0 + 127.0 * (fx * 6.3).sin() * (fy * 4.1).cos()) as u8,
+            (128.0 + 127.0 * (fx * 2.2 + fy * 3.8).sin()) as u8,
+            (fx * 255.0) as u8,
+        ])
+    }));
+    let mut buf = Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 95)
+        .encode(
+            big.as_bytes(),
+            big.width(),
+            big.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .expect("encode jpeg");
+    let jpeg = buf.into_inner();
+
+    let epub = EpubBuilder::new("Huge Image Book")
+        .image("images/plate.jpg", jpeg.clone())
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>x</p><img src=\"../images/plate.jpg\" alt=\"plate\"/>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let report = book.optimize();
+    assert_eq!(report.assets_changed(), 1);
+
+    let path = book
+        .list_assets()
+        .iter()
+        .find(|p| p.ends_with("plate.jpg"))
+        .expect("jpeg listed")
+        .clone();
+    let data = book.load_asset(&path).expect("load");
+    assert!(data.len() < jpeg.len());
+    let img = image::load_from_memory(&data).expect("decode optimized");
+    assert_eq!(
+        img.width().max(img.height()),
+        1648,
+        "long edge must be capped at the Paperwhite panel ({}x{})",
+        img.width(),
+        img.height()
+    );
+    // Aspect ratio preserved (3:2): 2000 * 1648/3000 ≈ 1098.
+    assert_eq!(img.width(), 1648);
+    assert!(
+        (1098..=1099).contains(&img.height()),
+        "height {} lost the 3:2 aspect",
+        img.height()
+    );
+}
+
+#[test]
 fn optimize_keeps_small_flat_and_css_referenced_images() {
     use common::{Doc, EpubBuilder, Nav};
 

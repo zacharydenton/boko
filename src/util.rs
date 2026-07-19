@@ -556,6 +556,8 @@ pub fn extract_xml_encoding(bytes: &[u8]) -> Option<&str> {
 
 /// Re-encode a raster image (PNG or JPEG) as JPEG at the given quality
 /// (1-100), for shrinking oversized images. Alpha is flattened onto white.
+/// When `max_dimension` is set, images whose long edge exceeds it are
+/// downscaled (Lanczos3) to fit; images at or below it are never resized.
 ///
 /// Returns `None` when the input fails to decode; callers keep the original
 /// bytes. Callers are also expected to keep the original when the result is
@@ -563,8 +565,18 @@ pub fn extract_xml_encoding(bytes: &[u8]) -> Option<&str> {
 /// flat-color images, and an already well-compressed JPEG gains nothing, so
 /// a size check, not a format rule, decides.
 #[cfg(feature = "optimize-images")]
-pub fn reencode_image_as_jpeg(data: &[u8], quality: u8) -> Option<Vec<u8>> {
-    let img = image::load_from_memory(data).ok()?;
+pub fn reencode_image_as_jpeg(
+    data: &[u8],
+    quality: u8,
+    max_dimension: Option<u32>,
+) -> Option<Vec<u8>> {
+    let mut img = image::load_from_memory(data).ok()?;
+
+    if let Some(max) = max_dimension
+        && img.width().max(img.height()) > max
+    {
+        img = img.resize(max, max, image::imageops::FilterType::Lanczos3);
+    }
 
     // Flatten transparency onto white: JPEG has no alpha, and Kindle pages
     // are white; compositing beats dropping the channel outright.

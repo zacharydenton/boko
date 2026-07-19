@@ -80,6 +80,9 @@ fn default_passes() -> Vec<Box<dyn OptimizePass>> {
     passes.push(Box::new(passes::Images {
         quality: 85,
         min_size: 10 * 1024,
+        // 11th-gen Kindle Paperwhite panel: 1236x1648. Anything larger is
+        // downscaled to the panel's long edge before re-encoding.
+        max_dimension: 1648,
     }));
     passes
 }
@@ -344,9 +347,10 @@ impl crate::Book {
     /// rewritten transparently, so the saving applies to every output
     /// format.
     ///
-    /// Current passes: `images` (re-encode oversized raster images as JPEG,
-    /// keeping the original whenever the re-encode isn't meaningfully
-    /// smaller; requires the `optimize-images` feature).
+    /// Current passes: `images` (downscale raster images to an
+    /// 11th-gen-Paperwhite-sized long edge of 1648px and re-encode as JPEG,
+    /// keeping the original whenever the result isn't meaningfully smaller;
+    /// requires the `optimize-images` feature).
     pub fn optimize(&mut self) -> OptimizeReport {
         let mut report = OptimizeReport::default();
         let mut backend = self.replace_backend(Box::new(EmptyBackend(Metadata::default())));
@@ -365,14 +369,18 @@ mod passes {
     /// Shrink oversized raster images by re-encoding them as JPEG.
     ///
     /// Every PNG or JPEG at least `min_size` bytes is re-encoded at
-    /// `quality`; the result is kept only when meaningfully smaller, so line
-    /// art and flat-color PNGs (which JPEG regularly loses to) and already
+    /// `quality`, downscaling first when the long edge exceeds
+    /// `max_dimension` (device panels can't show the extra pixels anyway);
+    /// the result is kept only when meaningfully smaller, so line art and
+    /// flat-color PNGs (which JPEG regularly loses to) and already
     /// well-compressed JPEGs pass through untouched. Small images aren't
     /// worth the quality loss and are skipped outright.
     #[cfg(feature = "optimize-images")]
     pub(super) struct Images {
         pub quality: u8,
         pub min_size: usize,
+        /// Long-edge cap in pixels; larger images are downscaled to fit.
+        pub max_dimension: u32,
     }
 
     /// A re-encode must save at least this fraction of the original size to
@@ -402,7 +410,9 @@ mod passes {
                 if !matches!(format, MediaFormat::Png | MediaFormat::Jpeg) {
                     continue;
                 }
-                let Some(jpeg) = reencode_image_as_jpeg(&data, self.quality) else {
+                let Some(jpeg) =
+                    reencode_image_as_jpeg(&data, self.quality, Some(self.max_dimension))
+                else {
                     continue;
                 };
                 if (jpeg.len() as f64) > (data.len() as f64) * (1.0 - MIN_SAVING) {
