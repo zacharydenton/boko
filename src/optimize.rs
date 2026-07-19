@@ -3,7 +3,7 @@
 //! [`Book::optimize`](crate::Book::optimize) shrinks a book before export by
 //! running a sequence of optimization passes, so the saving applies to every
 //! output format. Each pass examines the book through its [`Importer`] view
-//! and proposes [`AssetEdit`]s; a generic overlay importer applies them —
+//! and proposes `AssetEdit`s; a generic overlay importer applies them —
 //! serving replaced bytes under (possibly renamed) asset paths and rewriting
 //! references (chapter `src` attributes, the cover path) on the way out.
 //! Exporters need no knowledge of any of it, and passes compose by wrapping
@@ -20,7 +20,7 @@ use crate::model::{AnchorTarget, Chapter, FontFace, Landmark, Metadata, TocEntry
 /// What one optimization pass changed.
 #[derive(Debug, Clone)]
 pub struct PassReport {
-    /// Pass name (e.g. `"png-to-jpeg"`).
+    /// Pass name (e.g. `"images"`).
     pub pass: &'static str,
     /// Assets the pass replaced.
     pub assets_changed: usize,
@@ -226,7 +226,9 @@ impl Importer for OptimizedImporter {
     }
 
     fn load_chapter(&self, id: ChapterId) -> crate::Result<Chapter> {
-        self.inner.load_chapter(id).map(|ch| self.rewrite_chapter(ch))
+        self.inner
+            .load_chapter(id)
+            .map(|ch| self.rewrite_chapter(ch))
     }
 
     fn load_chapters(&self, ids: &[ChapterId]) -> Vec<crate::Result<Chapter>> {
@@ -416,7 +418,10 @@ mod passes {
                         continue;
                     }
                     Some(
-                        match path.strip_suffix(".png").or_else(|| path.strip_suffix(".PNG")) {
+                        match path
+                            .strip_suffix(".png")
+                            .or_else(|| path.strip_suffix(".PNG"))
+                        {
                             Some(stem) => format!("{stem}.jpg"),
                             None => format!("{path}.jpg"),
                         },

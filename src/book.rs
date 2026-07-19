@@ -85,7 +85,10 @@ impl Book {
     /// and may not reflect the new one's view (e.g. rewritten asset paths
     /// after [`optimize`](Self::optimize)).
     pub(crate) fn replace_backend(&mut self, backend: Box<dyn Importer>) -> Box<dyn Importer> {
-        self.ir_cache.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.ir_cache
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         std::mem::replace(&mut self.backend, backend)
     }
 

@@ -39,7 +39,12 @@ fn high_quality_jpeg() -> Vec<u8> {
     let mut buf = Cursor::new(Vec::new());
     let img = photographic_image();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 100)
-        .encode(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgb8)
+        .encode(
+            img.as_raw(),
+            img.width(),
+            img.height(),
+            image::ExtendedColorType::Rgb8,
+        )
         .expect("encode jpeg");
     buf.into_inner()
 }
@@ -49,7 +54,10 @@ fn optimize_transcodes_large_png_and_rewrites_references() {
     use common::{Doc, EpubBuilder, Nav};
 
     let png = photographic_png();
-    assert!(png.len() > 10 * 1024, "fixture must exceed the pass minimum");
+    assert!(
+        png.len() > 10 * 1024,
+        "fixture must exceed the pass minimum"
+    );
 
     let epub = EpubBuilder::new("Optimize Book")
         .image("images/photo.png", png.clone())
@@ -121,7 +129,10 @@ fn optimize_recompresses_large_jpeg_in_place() {
     use common::{Doc, EpubBuilder, Nav};
 
     let jpeg = high_quality_jpeg();
-    assert!(jpeg.len() > 10 * 1024, "fixture must exceed the pass minimum");
+    assert!(
+        jpeg.len() > 10 * 1024,
+        "fixture must exceed the pass minimum"
+    );
 
     let epub = EpubBuilder::new("JPEG Book")
         .image("images/photo.jpg", jpeg.clone())
@@ -177,6 +188,9 @@ fn optimize_keeps_small_flat_and_css_referenced_images() {
     let assets = book.list_assets().to_vec();
     assert!(assets.iter().any(|p| p.ends_with("wallpaper.png")));
     assert!(assets.iter().any(|p| p.ends_with("icon.png")));
-    let wallpaper = assets.iter().find(|p| p.ends_with("wallpaper.png")).unwrap();
+    let wallpaper = assets
+        .iter()
+        .find(|p| p.ends_with("wallpaper.png"))
+        .unwrap();
     assert_eq!(book.load_asset(wallpaper).expect("load"), big_png);
 }
