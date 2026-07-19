@@ -1,6 +1,6 @@
 [package]
 name = "boko"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.91"
 description = "Fast native ebook converter for EPUB, KFX, AZW3, and MOBI — the only KFX writer that needs no Kindle Previewer"
