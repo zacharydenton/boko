@@ -760,6 +760,16 @@ pub struct ExportContext {
     /// fragment is not emitted (an unreferenced style is a conformance error).
     pub default_style_used: bool,
 
+    /// Text bytes per absolute font size (keyed by the exact f32 bits),
+    /// accumulated during the survey pass to find the dominant body size.
+    font_size_weights: FxHashMap<u32, u64>,
+
+    /// Global font scale so the dominant body size renders at 1rem — the
+    /// user's chosen device font size. Reference KFX normalizes the same
+    /// way: a book whose stylesheet sets body text to 13px must not render
+    /// 19% smaller than every other book on the device.
+    pub font_scale: f32,
+
     /// Chapters that need chapter-start anchors.
     chapters_needing_anchor: HashSet<ChapterId>,
 
@@ -848,6 +858,8 @@ impl ExportContext {
             jpg_rst_marker_present: false,
             has_tables: false,
             default_style_used: false,
+            font_size_weights: FxHashMap::default(),
+            font_scale: 1.0,
             chapters_needing_anchor: HashSet::new(),
             pending_chapter_anchor: None,
             first_content_ids: HashMap::new(),
@@ -948,6 +960,57 @@ impl ExportContext {
         id
     }
 
+    /// Record text weight for one absolute font size (survey pass).
+    pub fn record_font_size_weight(&mut self, abs: f32, bytes: usize) {
+        *self.font_size_weights.entry(abs.to_bits()).or_insert(0) += bytes as u64;
+    }
+
+    /// Resolve the global font scale from the surveyed weights: the
+    /// text-dominant absolute size maps to 1rem. No-op when the dominant
+    /// size is already within 2% of 1rem; clamped to a sane range.
+    pub fn resolve_font_scale(&mut self) {
+        let Some((&key, _)) = self.font_size_weights.iter().max_by_key(|&(_, &w)| w) else {
+            return;
+        };
+        let dominant = f32::from_bits(key);
+        if dominant > 0.0 && (dominant - 1.0).abs() > 0.02 {
+            self.font_scale = (1.0 / dominant).clamp(0.5, 2.0);
+        }
+    }
+
+    /// A copy of `style` with the global font scale applied to its absolute
+    /// font size. Emission derives every font-relative conversion from
+    /// `font_size_abs`, so scaling it here normalizes the whole style.
+    fn scaled_style(&self, style: &crate::style::ComputedStyle) -> crate::style::ComputedStyle {
+        let mut scaled = style.clone();
+        scaled.font_size_abs = crate::style::AbsFontSize(style.font_size_abs.0 * self.font_scale);
+        scaled
+    }
+
+    /// Build the KFX property set for a style under the book's font scale.
+    /// `parent_is_default` marks the root inheritance context, which is the
+    /// renderer environment — 1rem absolutely, never rescaled.
+    fn build_kfx_style(
+        &mut self,
+        ir_style: &crate::style::ComputedStyle,
+        parent: &crate::style::ComputedStyle,
+        parent_is_default: bool,
+    ) -> crate::kfx::style_registry::ComputedStyle {
+        let schema = crate::kfx::style_schema::StyleSchema::standard();
+        let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
+        if self.font_scale != 1.0 {
+            let scaled_parent = if parent_is_default {
+                parent.clone()
+            } else {
+                self.scaled_style(parent)
+            };
+            builder.ingest_ir_style_with_parent(&self.scaled_style(ir_style), &scaled_parent);
+        } else {
+            builder.ingest_ir_style_with_parent(ir_style, parent);
+        }
+        builder.build()
+    }
+
     /// Register an IR style and return its KFX style symbol. `parent` is the
     /// parent element's computed style — the inheritance baseline for
     /// CSS-inherited properties (see `extract_ir_field`).
@@ -956,10 +1019,7 @@ impl ExportContext {
         ir_style: &crate::style::ComputedStyle,
         parent: &crate::style::ComputedStyle,
     ) -> u64 {
-        let schema = crate::kfx::style_schema::StyleSchema::standard();
-        let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-        builder.ingest_ir_style_with_parent(ir_style, parent);
-        let kfx_style = builder.build();
+        let kfx_style = self.build_kfx_style(ir_style, parent, false);
         if kfx_style.is_empty() {
             self.default_style_used = true;
             return self.default_style_symbol;
@@ -987,7 +1047,13 @@ impl ExportContext {
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
             let default = crate::style::ComputedStyle::default();
             let parent = style_pool.get(parent_id).unwrap_or(&default);
-            self.register_ir_style(ir_style, parent)
+            let kfx_style = self.build_kfx_style(ir_style, parent, parent_id == StyleId::DEFAULT);
+            if kfx_style.is_empty() {
+                self.default_style_used = true;
+                self.default_style_symbol
+            } else {
+                self.style_registry.register(kfx_style, &mut self.symbols)
+            }
         } else {
             self.default_style_symbol
         };
@@ -1027,13 +1093,13 @@ impl ExportContext {
         let parent = style_pool.get(parent_id).unwrap_or(&default);
         let ir_style_ref = ir_style.unwrap_or(&default);
 
-        let schema = crate::kfx::style_schema::StyleSchema::standard();
-        let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-        builder.ingest_ir_style_with_parent(ir_style_ref, parent);
-        let mut kfx_style = builder.build();
+        let mut kfx_style =
+            self.build_kfx_style(ir_style_ref, parent, parent_id == StyleId::DEFAULT);
 
         use crate::kfx::style_schema::KfxValue;
         use crate::kfx::symbols::KfxSymbol;
+        // Margin overrides are in unscaled absolute em; the unscaled style
+        // converts them to the element's own em (the scale cancels).
         let mut apply = |symbol: KfxSymbol, abs_em: Option<f32>| {
             if let Some(v) = abs_em {
                 if v == 0.0 {
@@ -1096,10 +1162,9 @@ impl ExportContext {
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
             let default = crate::style::ComputedStyle::default();
             let parent = style_pool.get(parent_id).unwrap_or(&default);
-            let schema = crate::kfx::style_schema::StyleSchema::standard();
-            let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-            builder.ingest_ir_style_with_parent(ir_style, parent);
-            let mut kfx_style = builder.build();
+            let ir_style = ir_style.clone();
+            let mut kfx_style =
+                self.build_kfx_style(&ir_style, parent, parent_id == StyleId::DEFAULT);
             kfx_style.remove(crate::kfx::symbols::KfxSymbol::BoxAlign);
             if kfx_style.is_empty() {
                 self.default_style_used = true;

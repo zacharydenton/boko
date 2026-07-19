@@ -19,23 +19,40 @@ pub(super) fn survey_chapter(
     let _fragment_id = ctx.begin_chapter_survey(chapter_id, source_path);
 
     // Walk the IR tree
-    survey_node(chapter, chapter.root(), ctx);
+    survey_node(chapter, chapter.root(), 1.0, ctx);
 
     // End surveying
     ctx.end_chapter_survey();
 }
 
-/// Recursively survey a node and its children.
-pub(super) fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportContext) {
+/// Recursively survey a node and its children. `inherited_abs` is the
+/// nearest styled ancestor's absolute font size — text leaves often carry
+/// the default StyleId while their size lives on the paragraph node.
+pub(super) fn survey_node(
+    chapter: &Chapter,
+    node_id: NodeId,
+    inherited_abs: f32,
+    ctx: &mut ExportContext,
+) {
     let node = match chapter.node(node_id) {
         Some(n) => n,
         None => return,
     };
 
+    let abs = if node.style == crate::style::StyleId::DEFAULT {
+        inherited_abs
+    } else {
+        chapter
+            .styles
+            .get(node.style)
+            .map(|s| s.font_size_abs.0)
+            .unwrap_or(inherited_abs)
+    };
+
     // Skip root node processing but walk children
     if node.role == Role::Root {
         for child in chapter.children(node_id) {
-            survey_node(chapter, child, ctx);
+            survey_node(chapter, child, abs, ctx);
         }
         return;
     }
@@ -58,12 +75,14 @@ pub(super) fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportCo
     if !node.text.is_empty() {
         let text = chapter.text(node.text);
         ctx.advance_text_offset(text.len());
+        // Weight this text's font size for body-size normalization.
+        ctx.record_font_size_weight(abs, text.len());
         // We don't need to intern plain text content
     }
 
     // Recurse into children
     for child in chapter.children(node_id) {
-        survey_node(chapter, child, ctx);
+        survey_node(chapter, child, abs, ctx);
     }
 }
 

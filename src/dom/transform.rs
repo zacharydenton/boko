@@ -32,6 +32,67 @@ pub(crate) fn user_agent_stylesheet_arc() -> std::sync::Arc<Stylesheet> {
     UA_STYLESHEET.clone()
 }
 
+/// Synthesize CSS declarations from legacy presentational attributes
+/// (`align=`, `valign=`), which many older EPUB/MOBI-derived books rely on.
+/// Per CSS these are presentational hints: they apply before author rules
+/// (any matching selector overrides them) but beat inherited values.
+fn presentational_hints(
+    element: &html5ever::LocalName,
+    attrs: &[crate::dom::arena::Attribute],
+) -> Option<crate::style::InlineStyle> {
+    let name = element.as_ref();
+    let aligned = matches!(
+        name,
+        "p" | "div"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "td"
+            | "th"
+            | "tr"
+            | "table"
+            | "caption"
+            | "tbody"
+            | "thead"
+            | "tfoot"
+            | "center"
+    );
+    let cellish = matches!(name, "td" | "th" | "tr" | "tbody" | "thead" | "tfoot");
+    if !aligned && !cellish {
+        return None;
+    }
+    let mut css = String::new();
+    for attr in attrs {
+        match attr.name.local.as_ref() {
+            "align" if aligned => {
+                let v = attr.value.trim().to_ascii_lowercase();
+                if matches!(v.as_str(), "left" | "right" | "center" | "justify") {
+                    css.push_str("text-align: ");
+                    css.push_str(&v);
+                    css.push(';');
+                }
+            }
+            "valign" if cellish => {
+                let v = attr.value.trim().to_ascii_lowercase();
+                if matches!(v.as_str(), "top" | "middle" | "bottom" | "baseline") {
+                    css.push_str("vertical-align: ");
+                    css.push_str(&v);
+                    css.push(';');
+                }
+            }
+            _ => {}
+        }
+    }
+    if css.is_empty() {
+        return None;
+    }
+    let parsed = crate::style::InlineStyle::parse(&css);
+    (!parsed.is_empty()).then_some(parsed)
+}
+
 /// Context for the transform operation.
 struct TransformContext<'a> {
     dom: &'a ArenaDom,
@@ -113,6 +174,7 @@ impl<'a> TransformContext<'a> {
                     &mut self.cascade_scratch,
                     None,
                     inline.as_ref(),
+                    None,
                 )
             });
 
@@ -133,6 +195,7 @@ impl<'a> TransformContext<'a> {
                 &mut self.cascade_scratch,
                 bloom,
                 inline.as_ref(),
+                None,
             )
         };
 
@@ -303,6 +366,7 @@ impl<'a> TransformContext<'a> {
                     .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
                     .map(|a| crate::style::InlineStyle::parse(&a.value))
                     .filter(|i| !i.is_empty());
+                let hints = presentational_hints(&name.local, attrs.as_slice());
                 let mut computed = compute_styles_indexed(
                     elem_ref,
                     &self.cascade_index,
@@ -311,6 +375,7 @@ impl<'a> TransformContext<'a> {
                     &mut self.cascade_scratch,
                     bloom,
                     inline.as_ref(),
+                    hints.as_ref(),
                 );
 
                 // Merge lang attribute into style (for KFX language property)

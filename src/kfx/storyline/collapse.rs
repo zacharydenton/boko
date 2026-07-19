@@ -154,8 +154,9 @@ impl<'a> Collapser<'a> {
         }
     }
 
-    /// An empty plain block: no text, no children — its top and bottom
-    /// margins self-collapse into the surrounding set.
+    /// An empty plain block: no visible content at all — a bare block or an
+    /// anchor carrier like `<p><a id="..."/></p>`. Its margins vanish
+    /// (reference output drops such blocks entirely).
     fn is_empty_block(&self, id: NodeId) -> bool {
         let Some(node) = self.chapter.node(id) else {
             return false;
@@ -163,8 +164,26 @@ impl<'a> Collapser<'a> {
         matches!(
             node.role,
             Role::Paragraph | Role::Container | Role::Heading(_) | Role::BlockQuote
-        ) && self.chapter.text(node.text).is_empty()
-            && self.chapter.children(id).next().is_none()
+        ) && !self.has_visible_content(id)
+    }
+
+    /// Whether the subtree renders anything: non-empty text, a break, or
+    /// replaced/structural content. Empty inline anchors don't count.
+    fn has_visible_content(&self, id: NodeId) -> bool {
+        let Some(node) = self.chapter.node(id) else {
+            return false;
+        };
+        match node.role {
+            Role::Break | Role::Image | Role::Rule | Role::Table => return true,
+            Role::Text => return !self.chapter.text(node.text).trim().is_empty(),
+            _ => {}
+        }
+        if !self.chapter.text(node.text).trim().is_empty() {
+            return true;
+        }
+        self.chapter
+            .children(id)
+            .any(|c| self.has_visible_content(c))
     }
 
     /// Whether collapsing may reach from this node into its first/last
@@ -343,8 +362,11 @@ impl<'a> Collapser<'a> {
                     continue;
                 }
                 if self.is_empty_block(child) {
-                    pending.push((child, Side::Top));
-                    pending.push((child, Side::Bottom));
+                    // Reference output drops empty (anchor-only) blocks
+                    // entirely: their margins vanish rather than joining
+                    // the adjoining set.
+                    self.zero(child, Side::Top);
+                    self.zero(child, Side::Bottom);
                     continue;
                 }
 

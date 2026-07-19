@@ -1134,7 +1134,7 @@ impl StyleSchema {
         // border-collapse → table_border_collapse (boolean: true=collapse, false=separate)
         schema.register(StylePropertyRule {
             ir_key: "border-collapse",
-            ir_field: Some(IrField::BorderCollapse),
+            ir_field: None, // import-only
             kfx_symbol: KfxSymbol::TableBorderCollapse,
             transform: ValueTransform::Map(vec![
                 ("separate".into(), KfxValue::Bool(false)),
@@ -1145,7 +1145,7 @@ impl StyleSchema {
         // border-spacing → border_spacing_vertical
         schema.register(StylePropertyRule {
             ir_key: "border-spacing",
-            ir_field: Some(IrField::BorderSpacing),
+            ir_field: None, // import-only: reference KFX never emits border-spacing
             kfx_symbol: KfxSymbol::BorderSpacingVertical,
             transform: ValueTransform::AbsolutePt,
         });

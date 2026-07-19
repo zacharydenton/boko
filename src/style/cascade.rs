@@ -272,6 +272,7 @@ pub fn compute_styles(
         &mut CascadeScratch::default(),
         None,
         None,
+        None,
     )
 }
 
@@ -289,6 +290,11 @@ pub fn compute_styles(
 /// attribute. Its normal declarations apply after every selector-matched
 /// normal declaration (inline beats any specificity), and its `!important`
 /// declarations apply last of all, per the CSS cascade.
+///
+/// `presentational`, when provided, holds declarations synthesized from
+/// legacy presentational attributes (`align=`, `valign=`, ...). Per CSS,
+/// presentational hints apply before every author rule — any matching
+/// selector overrides them — but they beat inherited values.
 pub fn compute_styles_indexed(
     elem: ElementRef<'_>,
     index: &CascadeIndex<'_>,
@@ -297,6 +303,7 @@ pub fn compute_styles_indexed(
     scratch: &mut CascadeScratch,
     bloom: Option<&BloomFilter>,
     inline_style: Option<&crate::style::InlineStyle>,
+    presentational: Option<&crate::style::InlineStyle>,
 ) -> ComputedStyle {
     let CascadeScratch {
         caches,
@@ -399,6 +406,11 @@ pub fn compute_styles_indexed(
         font_size_declared |= matches!(decl, Declaration::FontSize(_));
         apply_declaration(style, decl);
     };
+    if let Some(hints) = presentational {
+        for decl in &hints.declarations {
+            apply(&mut style, decl);
+        }
+    }
     let mut inline_normal_pending = inline_style.is_some_and(|i| !i.declarations.is_empty());
     for m in matched.iter() {
         if m.important && inline_normal_pending {

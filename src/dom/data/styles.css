@@ -369,6 +369,10 @@ tr {
 
 td, th {
   display: table-cell;
+  /* Reference KFX cell hygiene: body text-indent must not leak into
+     cells, and cell content must not overflow the table width. */
+  text-indent: 0;
+  max-width: 100%;
 }
 
 pre, xmp, plaintext, listing {
