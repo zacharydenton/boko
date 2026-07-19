@@ -116,9 +116,19 @@ pub(super) fn walk_node_for_export(
     // structure (a bordered table degraded to nested containers). Kindle
     // Previewer keeps table element types and renders their borders from
     // styles directly.
+    //
+    // Images are exempt too: the wrapper assumes text content — its inner
+    // element is `type: text` — so a bordered image was swallowed entirely,
+    // leaving resource_name/alt_text stranded on a childless container.
+    // Border styling stays on the image element itself.
     let is_table_structural = matches!(
         node.role,
-        Role::Table | Role::TableRow | Role::TableCell | Role::TableHead | Role::TableBody
+        Role::Table
+            | Role::TableRow
+            | Role::TableCell
+            | Role::TableHead
+            | Role::TableBody
+            | Role::Image
     );
     elem.needs_container_wrapper = !is_table_structural
         && chapter

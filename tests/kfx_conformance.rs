@@ -349,6 +349,65 @@ fn empty_chapter_storyline_has_list_content_list() {
     }
 }
 
+/// A bordered image must still be emitted as an image element. The border
+/// container-wrapper assumes text content (its inner element is
+/// `type: text`), so wrapping an image swallowed it entirely — a childless
+/// container carrying resource_name with no image node.
+#[test]
+fn bordered_image_keeps_image_element() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Bordered Image Book")
+        .css("img { border: 2px solid black; }")
+        .image("images/shot.png", common::tiny_png())
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>before</p><img src=\"../images/shot.png\" alt=\"shot\"/><p>after</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    // Some node with type: image and a resource_name must exist, and no
+    // container may carry a resource_name.
+    let mut image_nodes = 0;
+    let mut containers_with_resource = 0;
+    fn walk(v: &IonValue, images: &mut u32, bad_containers: &mut u32) {
+        match v {
+            IonValue::Struct(fields) => {
+                let node_type = get_field(fields, KfxSymbol::Type).and_then(|v| v.as_symbol());
+                let has_resource = get_field(fields, KfxSymbol::ResourceName).is_some();
+                if node_type == Some(KfxSymbol::Image as u64) && has_resource {
+                    *images += 1;
+                }
+                if node_type == Some(KfxSymbol::Container as u64) && has_resource {
+                    *bad_containers += 1;
+                }
+                for (_, val) in fields {
+                    walk(val, images, bad_containers);
+                }
+            }
+            IonValue::List(items) => items.iter().for_each(|i| walk(i, images, bad_containers)),
+            IonValue::Annotated(_, inner) => walk(inner, images, bad_containers),
+            _ => {}
+        }
+    }
+    for storyline in parse_entities(&kfx, KfxSymbol::Storyline as u32) {
+        walk(&storyline, &mut image_nodes, &mut containers_with_resource);
+    }
+    assert!(
+        image_nodes > 0,
+        "bordered image must survive as an image element"
+    );
+    assert_eq!(
+        containers_with_resource, 0,
+        "no container may carry a stranded resource_name"
+    );
+}
+
 /// `visibility` must encode as an Ion boolean (true = visible, false =
 /// hidden), matching reference KFX; readers flag symbol values as
 /// unexpected style data.
