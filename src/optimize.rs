@@ -78,11 +78,14 @@ fn default_passes() -> Vec<Box<dyn OptimizePass>> {
     let mut passes: Vec<Box<dyn OptimizePass>> = Vec::new();
     #[cfg(feature = "optimize-images")]
     passes.push(Box::new(passes::Images {
-        quality: 85,
+        quality: 80,
         min_size: 10 * 1024,
-        // 11th-gen Kindle Paperwhite panel: 1236x1648. Anything larger is
-        // downscaled to the panel's long edge before re-encoding.
-        max_dimension: 1648,
+        // 11th-gen Kindle Paperwhite panel: 1236x1648. Reflowable images
+        // render at content width (1236) in portrait reading, so that's the
+        // long-edge cap; larger images are downscaled before re-encoding.
+        // Measured across a library sample, q80 at this cap roughly halves
+        // image-heavy books while staying pixel-exact at reading size.
+        max_dimension: 1236,
     }));
     passes
 }
@@ -347,10 +350,10 @@ impl crate::Book {
     /// rewritten transparently, so the saving applies to every output
     /// format.
     ///
-    /// Current passes: `images` (downscale raster images to an
-    /// 11th-gen-Paperwhite-sized long edge of 1648px and re-encode as JPEG,
-    /// keeping the original whenever the result isn't meaningfully smaller;
-    /// requires the `optimize-images` feature).
+    /// Current passes: `images` (downscale raster images to the 11th-gen
+    /// Kindle Paperwhite content width of 1236px and re-encode as JPEG
+    /// quality 80, keeping the original whenever the result isn't
+    /// meaningfully smaller; requires the `optimize-images` feature).
     pub fn optimize(&mut self) -> OptimizeReport {
         let mut report = OptimizeReport::default();
         let mut backend = self.replace_backend(Box::new(EmptyBackend(Metadata::default())));

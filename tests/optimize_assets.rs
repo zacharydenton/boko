@@ -209,15 +209,15 @@ fn optimize_downscales_images_beyond_paperwhite_resolution() {
     let img = image::load_from_memory(&data).expect("decode optimized");
     assert_eq!(
         img.width().max(img.height()),
-        1648,
-        "long edge must be capped at the Paperwhite panel ({}x{})",
+        1236,
+        "long edge must be capped at the Paperwhite content width ({}x{})",
         img.width(),
         img.height()
     );
-    // Aspect ratio preserved (3:2): 2000 * 1648/3000 ≈ 1098.
-    assert_eq!(img.width(), 1648);
+    // Aspect ratio preserved (3:2): 2000 * 1236/3000 = 824.
+    assert_eq!(img.width(), 1236);
     assert!(
-        (1098..=1099).contains(&img.height()),
+        (823..=824).contains(&img.height()),
         "height {} lost the 3:2 aspect",
         img.height()
     );
