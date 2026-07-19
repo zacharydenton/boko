@@ -274,12 +274,27 @@ pub fn for_each_changed_property(style: &ComputedStyle, f: &mut dyn FnMut(&str, 
 /// constant names, so an unknown name is a bug (drift between the KFX schema
 /// and the table) that must not be silently ignored.
 pub fn changed_property_value(style: &ComputedStyle, name: &str) -> Option<String> {
+    changed_property_value_from(style, &DEFAULT_STYLE, name)
+}
+
+/// Like [`changed_property_value`], but against an arbitrary baseline style
+/// instead of the default. The KFX exporter passes the parent's computed
+/// style for CSS-inherited properties: KFX styles inherit through nested
+/// containers at render time, so a value equal to the parent's needs no
+/// re-emission, while a value that *differs* must be emitted even when it
+/// equals the CSS initial value (an explicit reset like `font-style: normal`
+/// inside an italic ancestor).
+pub fn changed_property_value_from(
+    style: &ComputedStyle,
+    baseline: &ComputedStyle,
+    name: &str,
+) -> Option<String> {
     let idx = *PROPERTY_INDEX
         .get(name)
         .unwrap_or_else(|| panic!("unknown CSS property name: {name}"));
     let prop = &PROPERTIES[idx];
     let mut value = String::new();
-    (prop.emit)(style, &DEFAULT_STYLE, &mut value).then_some(value)
+    (prop.emit)(style, baseline, &mut value).then_some(value)
 }
 
 impl ToCss for ComputedStyle {

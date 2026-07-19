@@ -31,7 +31,14 @@ pub fn ir_to_tokens(chapter: &Chapter, ctx: &mut ExportContext) -> TokenStream {
     // one ExportContext is reused across chapters.
     ctx.reset_style_memo();
 
-    walk_node_for_export(chapter, chapter.root(), sch, ctx, &mut stream);
+    walk_node_for_export(
+        chapter,
+        chapter.root(),
+        crate::style::StyleId::DEFAULT,
+        sch,
+        ctx,
+        &mut stream,
+    );
     stream
 }
 
@@ -43,6 +50,7 @@ pub fn ir_to_tokens(chapter: &Chapter, ctx: &mut ExportContext) -> TokenStream {
 pub(super) fn walk_node_for_export(
     chapter: &Chapter,
     node_id: NodeId,
+    parent_style: crate::style::StyleId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
@@ -55,7 +63,7 @@ pub(super) fn walk_node_for_export(
     // Root node: just walk children
     if node.role == Role::Root {
         for child in chapter.children(node_id) {
-            walk_node_for_export(chapter, child, sch, ctx, stream);
+            walk_node_for_export(chapter, child, parent_style, sch, ctx, stream);
         }
         return;
     }
@@ -82,7 +90,7 @@ pub(super) fn walk_node_for_export(
     // Definition lists: group dt+dd pairs into wrapper elements
     // HTML has dt/dd as flat siblings, but KFX needs them grouped for float to work
     if node.role == Role::DefinitionList {
-        emit_definition_list(chapter, node_id, sch, ctx, stream);
+        emit_definition_list(chapter, node_id, parent_style, sch, ctx, stream);
         return;
     }
 
@@ -90,7 +98,7 @@ pub(super) fn walk_node_for_export(
     // This produces non-overlapping style_events where each text segment
     // carries the accumulated state from all ancestors.
     if node.role == Role::Link || node.role == Role::Inline {
-        emit_inline_content_flat(chapter, node_id, sch, ctx, stream);
+        emit_inline_content_flat(chapter, node_id, parent_style, sch, ctx, stream);
         return;
     }
 
@@ -105,7 +113,7 @@ pub(super) fn walk_node_for_export(
 
     // Register the node's style and get a KFX style symbol
     // This converts IR ComputedStyle → KFX style and deduplicates
-    let style_symbol = ctx.register_style_id(node.style, &chapter.styles);
+    let style_symbol = ctx.register_style_id(node.style, parent_style, &chapter.styles);
     elem.style_symbol = Some(style_symbol);
 
     // Check if this element needs container wrapping for borders to render
@@ -243,7 +251,7 @@ pub(super) fn walk_node_for_export(
             }
         }
         for child in children {
-            walk_node_for_export(chapter, child, sch, ctx, stream);
+            walk_node_for_export(chapter, child, node.style, sch, ctx, stream);
         }
     } else {
         // Mixed content: wrap each contiguous inline-flow run in a text
@@ -276,7 +284,7 @@ pub(super) fn walk_node_for_export(
             } else {
                 close_run(stream, &mut run_open);
             }
-            walk_node_for_export(chapter, child, sch, ctx, stream);
+            walk_node_for_export(chapter, child, node.style, sch, ctx, stream);
         }
         close_run(stream, &mut run_open);
     }
@@ -410,6 +418,7 @@ pub(super) fn flatten_inline_content(
 pub(super) fn emit_flattened_segments(
     segments: Vec<FlatSegment>,
     chapter: &Chapter,
+    parent_style: crate::style::StyleId,
     _sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
@@ -432,7 +441,8 @@ pub(super) fn emit_flattened_segments(
             // Set style (innermost). Inline runs use the inline projection:
             // block-only properties (box_align) never ride style_events.
             if let Some(style_id) = segment.state.style {
-                let style_symbol = ctx.register_inline_style_id(style_id, &chapter.styles);
+                let style_symbol =
+                    ctx.register_inline_style_id(style_id, parent_style, &chapter.styles);
                 span.style_symbol = Some(style_symbol);
             }
 
@@ -485,6 +495,7 @@ pub(super) fn emit_flattened_segments(
 pub(super) fn emit_definition_list(
     chapter: &Chapter,
     node_id: NodeId,
+    parent_style: crate::style::StyleId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
@@ -496,7 +507,7 @@ pub(super) fn emit_definition_list(
 
     // Emit the outer dl container (becomes Paragraph like KPR)
     let mut dl_elem = ElementStart::new(Role::Paragraph);
-    let dl_style = ctx.register_style_id(node.style, &chapter.styles);
+    let dl_style = ctx.register_style_id(node.style, parent_style, &chapter.styles);
     dl_elem.style_symbol = Some(dl_style);
 
     stream.push(KfxToken::StartElement(dl_elem));
@@ -534,7 +545,7 @@ pub(super) fn emit_definition_list(
             // Use a neutral style (from dd or default)
             let mut wrapper_elem = ElementStart::new(Role::Paragraph);
             let wrapper_style = if let Some((_, dd_style_id)) = dd_info {
-                ctx.register_style_id(dd_style_id, &chapter.styles)
+                ctx.register_style_id(dd_style_id, node.style, &chapter.styles)
             } else {
                 ctx.default_style_symbol
             };
@@ -546,7 +557,7 @@ pub(super) fn emit_definition_list(
 
             // Emit the dt as a Container (with float:left style)
             // Use DefinitionTerm role since it maps to KfxSymbol::Container
-            let dt_style = ctx.register_style_id(child.style, &chapter.styles);
+            let dt_style = ctx.register_style_id(child.style, node.style, &chapter.styles);
             let mut dt_elem = ElementStart::new(Role::DefinitionTerm);
             dt_elem.style_symbol = Some(dt_style);
             stream.push(KfxToken::StartElement(dt_elem));
@@ -557,7 +568,7 @@ pub(super) fn emit_definition_list(
             stream.push(KfxToken::StartElement(dt_inner));
 
             for dt_child in chapter.children(child_id) {
-                walk_node_for_export(chapter, dt_child, sch, ctx, stream);
+                walk_node_for_export(chapter, dt_child, child.style, sch, ctx, stream);
             }
 
             stream.push(KfxToken::EndElement); // end dt inner Paragraph
@@ -567,7 +578,7 @@ pub(super) fn emit_definition_list(
             // element child, so any inline flow among the dd's children must
             // be run-wrapped or the wrapper becomes a hybrid element
             // (ref + children) — the shape the reference model forbids.
-            if let Some((dd_id, _)) = dd_info {
+            if let Some((dd_id, dd_style_id)) = dd_info {
                 let is_inline_flow = |role: Role| {
                     matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
                 };
@@ -585,7 +596,7 @@ pub(super) fn emit_definition_list(
                         stream.push(KfxToken::EndElement);
                         run_open = false;
                     }
-                    walk_node_for_export(chapter, dd_child, sch, ctx, stream);
+                    walk_node_for_export(chapter, dd_child, dd_style_id, sch, ctx, stream);
                 }
                 if run_open {
                     stream.push(KfxToken::EndElement);
@@ -598,7 +609,7 @@ pub(super) fn emit_definition_list(
             stream.push(KfxToken::EndElement);
         } else {
             // Non-dt child (orphan dd or other), emit normally
-            walk_node_for_export(chapter, child_id, sch, ctx, stream);
+            walk_node_for_export(chapter, child_id, node.style, sch, ctx, stream);
         }
 
         i += 1;
@@ -614,6 +625,7 @@ pub(super) fn emit_definition_list(
 pub(super) fn emit_inline_content_flat(
     chapter: &Chapter,
     node_id: NodeId,
+    parent_style: crate::style::StyleId,
     sch: &crate::kfx::schema::KfxSchema,
     ctx: &mut ExportContext,
     stream: &mut TokenStream,
@@ -623,5 +635,5 @@ pub(super) fn emit_inline_content_flat(
     flatten_inline_content(chapter, node_id, InlineState::default(), &mut segments);
 
     // Convert segments to tokens
-    emit_flattened_segments(segments, chapter, sch, ctx, stream);
+    emit_flattened_segments(segments, chapter, parent_style, sch, ctx, stream);
 }

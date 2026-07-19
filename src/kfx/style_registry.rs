@@ -331,11 +331,24 @@ impl<'a> StyleBuilder<'a> {
     /// 2. Add extraction case to `extract_ir_field()`
     /// 3. Add schema rule with `ir_field: Some(IrField::NewField)`
     pub fn ingest_ir_style(&mut self, ir_style: &ir_style::ComputedStyle) -> &mut Self {
+        static DEFAULT: std::sync::OnceLock<ir_style::ComputedStyle> = std::sync::OnceLock::new();
+        self.ingest_ir_style_with_parent(ir_style, DEFAULT.get_or_init(Default::default))
+    }
+
+    /// Like [`Self::ingest_ir_style`], with the parent element's computed
+    /// style as the inheritance baseline: CSS-inherited properties are
+    /// emitted only where they differ from the parent (KFX renderers inherit
+    /// heritable properties through nested containers).
+    pub fn ingest_ir_style_with_parent(
+        &mut self,
+        ir_style: &ir_style::ComputedStyle,
+        parent: &ir_style::ComputedStyle,
+    ) -> &mut Self {
         // Iterate over all schema rules that have IR field mappings
         for rule in self.schema.ir_mapped_rules() {
             if let Some(ir_field) = rule.ir_field {
                 // Extract CSS string from IR struct (returns None for default values)
-                if let Some(css_value) = extract_ir_field(ir_style, ir_field) {
+                if let Some(css_value) = extract_ir_field(ir_style, parent, ir_field) {
                     // Apply schema transform to convert CSS → KFX
                     self.apply_single(rule.ir_key, &css_value);
                 }
@@ -468,11 +481,13 @@ mod tests {
         use crate::kfx::style_schema::StyleSchema;
 
         // Absolute font sizes freeze under the device font-size setting;
-        // reference KFX never emits them. 24px folds to rem at 16px/rem
-        // (converted, not relabeled — the old Dimensioned{Rem} transform
-        // turned 24px into 24rem, ~38x too large on device).
+        // reference KFX never emits them. The exporter reads the resolved
+        // absolute size (cascade-computed) and emits rem — converted, not
+        // relabeled (the old Dimensioned{Rem} transform turned 24px into
+        // 24rem, ~38x too large on device).
         let mut ir = crate::style::ComputedStyle::default();
         ir.font_size = crate::style::Length::Px(24.0);
+        ir.font_size_abs = crate::style::AbsFontSize(1.5);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
         builder.ingest_ir_style(&ir);
         match builder.build().get(KfxSymbol::FontSize) {
@@ -485,10 +500,11 @@ mod tests {
 
         let mut ir = crate::style::ComputedStyle::default();
         ir.font_size = crate::style::Length::Em(0.833);
+        ir.font_size_abs = crate::style::AbsFontSize(0.833);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
         builder.ingest_ir_style(&ir);
         match builder.build().get(KfxSymbol::FontSize) {
-            Some(KfxValue::Dimensioned { unit, .. }) => assert_eq!(*unit, KfxSymbol::Em),
+            Some(KfxValue::Dimensioned { unit, .. }) => assert_eq!(*unit, KfxSymbol::Rem),
             other => panic!("expected dimensioned font-size, got {other:?}"),
         }
     }

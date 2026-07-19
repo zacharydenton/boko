@@ -9,6 +9,27 @@ pub struct StyleId(
     pub u32,
 );
 
+/// An absolute font size as a multiple of the root (user default) size —
+/// the fully-resolved product of every relative `font-size` on the ancestor
+/// chain. `1.0` is the root size. Wrapped so `ComputedStyle` keeps derived
+/// `Eq`/`Hash` (bitwise, like `Length`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AbsFontSize(pub f32);
+
+impl Default for AbsFontSize {
+    fn default() -> Self {
+        AbsFontSize(1.0)
+    }
+}
+
+impl Eq for AbsFontSize {}
+
+impl std::hash::Hash for AbsFontSize {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 impl StyleId {
     /// The default style (always 0).
     pub const DEFAULT: StyleId = StyleId(0);
@@ -33,6 +54,11 @@ pub struct ComputedStyle {
     pub font_family: Option<String>,
     /// `font-size`; `Length::Auto` means unset (reader default size).
     pub font_size: Length,
+    /// Fully-resolved absolute font size (root-relative multiple), computed
+    /// by the cascade from the ancestor chain. Exporters that need the
+    /// rendered size (KFX emits absolute `rem`) read this instead of
+    /// interpreting the parent-relative `font_size`.
+    pub font_size_abs: AbsFontSize,
     /// `font-weight` as a numeric weight (default 0 means unset; 400 normal, 700 bold).
     pub font_weight: FontWeight,
     /// `font-style` (normal, italic, oblique).
@@ -214,6 +240,7 @@ impl Default for ComputedStyle {
             margin_right: Length::Px(0.0),
             font_family: Default::default(),
             font_size: Default::default(),
+            font_size_abs: Default::default(),
             font_weight: Default::default(),
             font_style: Default::default(),
             color: Default::default(),

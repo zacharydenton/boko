@@ -97,7 +97,11 @@ fn descendant_book() -> EpubBuilder {
 // `Length::Auto` reserved for explicit `margin: auto`: authored auto margins
 // (Standard Ebooks centering idiom) now survive into the normalized CSS,
 // while explicit `margin: 0` folds into the initial value and is omitted.
-const FP_EPICTETUS: &str = "7fc9220664c47c8913f8321d59464306afff74cf";
+// Updated again when `ComputedStyle` gained the cascade-resolved absolute
+// font size (`font_size_abs`): styles used under different ancestor font
+// scales intern separately now, so the synthesized `.cNN` classes partition
+// differently — the emitted declarations are unchanged.
+const FP_EPICTETUS: &str = "3a0d32eb32fabb726c2fb4a35114622ce92375b2";
 const FP_CLASS: &str = "0011593d1051d42ce417aa0bd9d63012fdaf42b7";
 const FP_DESCENDANT: &str = "76e77d1c07d7156e03e6549241d920c6d935aae2";
 

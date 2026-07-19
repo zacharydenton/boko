@@ -698,15 +698,17 @@ pub struct ExportContext {
     /// Style registry for deduplicating and tracking KFX styles.
     pub style_registry: StyleRegistry,
 
-    /// Memo for `register_style_id`: chapter-local StyleId → KFX style symbol.
-    /// StyleIds are only meaningful within one chapter's StylePool, so this
-    /// is cleared by `begin_chapter`.
-    ir_style_memo: FxHashMap<StyleId, u64>,
+    /// Memo for `register_style_id`: chapter-local (StyleId, parent StyleId)
+    /// → KFX style symbol. Keyed by the pair because inherited properties
+    /// are emitted as a diff against the parent's style. StyleIds are only
+    /// meaningful within one chapter's StylePool, so this is cleared by
+    /// `begin_chapter`.
+    ir_style_memo: FxHashMap<(StyleId, StyleId), u64>,
 
     /// Memo for `register_inline_style_id` (same lifecycle as
     /// `ir_style_memo`, separate because the inline projection of a style
     /// registers under a different symbol than its block form).
-    ir_inline_style_memo: FxHashMap<StyleId, u64>,
+    ir_inline_style_memo: FxHashMap<(StyleId, StyleId), u64>,
 
     /// Anchor registry for link target resolution.
     pub anchor_registry: AnchorRegistry,
@@ -930,35 +932,50 @@ impl ExportContext {
         id
     }
 
-    /// Register an IR style and return its KFX style symbol.
-    pub fn register_ir_style(&mut self, ir_style: &crate::style::ComputedStyle) -> u64 {
+    /// Register an IR style and return its KFX style symbol. `parent` is the
+    /// parent element's computed style — the inheritance baseline for
+    /// CSS-inherited properties (see `extract_ir_field`).
+    pub fn register_ir_style(
+        &mut self,
+        ir_style: &crate::style::ComputedStyle,
+        parent: &crate::style::ComputedStyle,
+    ) -> u64 {
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-        builder.ingest_ir_style(ir_style);
+        builder.ingest_ir_style_with_parent(ir_style, parent);
         let kfx_style = builder.build();
+        if kfx_style.is_empty() {
+            self.default_style_used = true;
+            return self.default_style_symbol;
+        }
         self.style_registry.register(kfx_style, &mut self.symbols)
     }
 
-    /// Register an IR style by StyleId.
+    /// Register an IR style by StyleId. `parent_id` is the style of the
+    /// nearest styled ancestor — emission depends on the (style, parent)
+    /// pair, so the memo is keyed by both.
     pub fn register_style_id(
         &mut self,
         style_id: StyleId,
+        parent_id: StyleId,
         style_pool: &crate::style::StylePool,
     ) -> u64 {
-        if style_id == StyleId::DEFAULT {
+        if style_id == StyleId::DEFAULT && parent_id == StyleId::DEFAULT {
             return self.default_style_symbol;
         }
 
-        if let Some(&symbol) = self.ir_style_memo.get(&style_id) {
+        if let Some(&symbol) = self.ir_style_memo.get(&(style_id, parent_id)) {
             return symbol;
         }
 
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
-            self.register_ir_style(ir_style)
+            let default = crate::style::ComputedStyle::default();
+            let parent = style_pool.get(parent_id).unwrap_or(&default);
+            self.register_ir_style(ir_style, parent)
         } else {
             self.default_style_symbol
         };
-        self.ir_style_memo.insert(style_id, symbol);
+        self.ir_style_memo.insert((style_id, parent_id), symbol);
         symbol
     }
 
@@ -972,20 +989,23 @@ impl ExportContext {
     pub fn register_inline_style_id(
         &mut self,
         style_id: StyleId,
+        parent_id: StyleId,
         style_pool: &crate::style::StylePool,
     ) -> u64 {
-        if style_id == StyleId::DEFAULT {
+        if style_id == StyleId::DEFAULT && parent_id == StyleId::DEFAULT {
             return self.default_style_symbol;
         }
 
-        if let Some(&symbol) = self.ir_inline_style_memo.get(&style_id) {
+        if let Some(&symbol) = self.ir_inline_style_memo.get(&(style_id, parent_id)) {
             return symbol;
         }
 
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
+            let default = crate::style::ComputedStyle::default();
+            let parent = style_pool.get(parent_id).unwrap_or(&default);
             let schema = crate::kfx::style_schema::StyleSchema::standard();
             let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-            builder.ingest_ir_style(ir_style);
+            builder.ingest_ir_style_with_parent(ir_style, parent);
             let mut kfx_style = builder.build();
             kfx_style.remove(crate::kfx::symbols::KfxSymbol::BoxAlign);
             if kfx_style.is_empty() {
@@ -997,7 +1017,8 @@ impl ExportContext {
         } else {
             self.default_style_symbol
         };
-        self.ir_inline_style_memo.insert(style_id, symbol);
+        self.ir_inline_style_memo
+            .insert((style_id, parent_id), symbol);
         symbol
     }
 

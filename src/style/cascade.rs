@@ -388,11 +388,22 @@ pub fn compute_styles_indexed(
     // style's normal declarations are injected at that boundary: inline
     // normal beats every selector-matched normal declaration but loses to
     // stylesheet `!important`; inline `!important` beats everything.
+    //
+    // `font_size_declared` tracks whether any declaration set font-size:
+    // the inherited `font_size` value is parent-relative (`Em(1.2)` copied
+    // verbatim), so resolving the absolute size must multiply only when this
+    // element actually declared one — an inherited value keeps the parent's
+    // absolute size.
+    let mut font_size_declared = false;
+    let mut apply = |style: &mut ComputedStyle, decl: &Declaration| {
+        font_size_declared |= matches!(decl, Declaration::FontSize(_));
+        apply_declaration(style, decl);
+    };
     let mut inline_normal_pending = inline_style.is_some_and(|i| !i.declarations.is_empty());
     for m in matched.iter() {
         if m.important && inline_normal_pending {
             for decl in &inline_style.expect("checked above").declarations {
-                apply_declaration(&mut style, decl);
+                apply(&mut style, decl);
             }
             inline_normal_pending = false;
         }
@@ -403,20 +414,39 @@ pub fn compute_styles_indexed(
         } else {
             &rule.declarations[m.decl as usize]
         };
-        apply_declaration(&mut style, decl);
+        apply(&mut style, decl);
     }
     if let Some(inline) = inline_style {
         if inline_normal_pending {
             for decl in &inline.declarations {
-                apply_declaration(&mut style, decl);
+                apply(&mut style, decl);
             }
         }
         for decl in &inline.important_declarations {
-            apply_declaration(&mut style, decl);
+            apply(&mut style, decl);
         }
     }
 
+    let parent_abs = parent_style.map(|p| p.font_size_abs.0).unwrap_or(1.0);
+    style.font_size_abs = super::AbsFontSize(if font_size_declared {
+        resolve_font_size_abs(style.font_size, parent_abs)
+    } else {
+        parent_abs
+    });
+
     style
+}
+
+/// Resolve a declared font-size to an absolute root-relative multiple.
+fn resolve_font_size_abs(size: crate::style::Length, parent_abs: f32) -> f32 {
+    use crate::style::Length;
+    match size {
+        Length::Auto => parent_abs,
+        Length::Em(x) => parent_abs * x,
+        Length::Percent(p) => parent_abs * p / 100.0,
+        Length::Px(x) => x / 16.0,
+        Length::Rem(x) => x,
+    }
 }
 
 /// Return the specificity of the highest-specificity selector in `rule` that

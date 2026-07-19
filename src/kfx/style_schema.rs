@@ -62,32 +62,6 @@ pub enum ValueTransform {
     /// Example: "10px" → { value: 10, unit: px }, "1.5em" → { value: 1.5, unit: em }
     PreserveUnit,
 
-    /// Font size must always be *relative* so the device font-size setting
-    /// scales it — reference KFX never emits absolute font sizes. Percent
-    /// folds to `em` (value/100; percent and em are equivalent under CSS
-    /// inheritance, and KFX consumers prune inherited percentage values,
-    /// which breaks font-size resolution for descendants). Absolute px/pt
-    /// fold to `rem` at the CSS reference (16px/12pt per rem).
-    FontSizeRelative,
-
-    /// Line height in KFX `lh` units (multiples of the 1.2em base line box),
-    /// matching reference output: `lh` values track the device line-spacing
-    /// setting. All CSS forms (unitless number, em, %, px, pt) convert; the
-    /// result is floored at 0.99lh like Kindle Previewer, which never lets
-    /// authored leading drop below the readable baseline.
-    LineHeightLh,
-
-    /// Vertical spacing (margin/padding top+bottom) in `lh` units so block
-    /// spacing scales with the device line-spacing setting, as in reference
-    /// output. Percentages resolve against Kindle Previewer's 512px layout
-    /// viewport (the model reference output uses for percent spacing).
-    VerticalSpacingLh,
-
-    /// Horizontal spacing keeps the author's relative units (em/%); absolute
-    /// px/pt fold to `em` (16px/12pt per em) so indents and side margins
-    /// scale with the font size instead of freezing at a device-pixel size.
-    HorizontalSpacingEm,
-
     /// Hairline dimensions (border widths/radii, letter/word spacing):
     /// absolute px folds to pt at the CSS ratio (0.75pt/px); relative units
     /// pass through. Reference KFX emits pt for these.
@@ -423,7 +397,7 @@ impl StyleSchema {
             ir_key: "font-size",
             ir_field: Some(IrField::FontSize),
             kfx_symbol: KfxSymbol::FontSize,
-            transform: ValueTransform::FontSizeRelative,
+            transform: ValueTransform::PreserveUnit,
         });
 
         // font-variant: small-caps -> glyph_transform: small_caps
@@ -460,14 +434,14 @@ impl StyleSchema {
             ir_key: "text-indent",
             ir_field: Some(IrField::TextIndent),
             kfx_symbol: KfxSymbol::TextIndent,
-            transform: ValueTransform::HorizontalSpacingEm,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "line-height",
             ir_field: Some(IrField::LineHeight),
             kfx_symbol: KfxSymbol::LineHeight,
-            transform: ValueTransform::LineHeightLh,
+            transform: ValueTransform::PreserveUnit,
         });
 
         // text-decoration: underline -> underline: solid (symbol, not bool)
@@ -518,28 +492,28 @@ impl StyleSchema {
             ir_key: "margin-top",
             ir_field: Some(IrField::MarginTop),
             kfx_symbol: KfxSymbol::MarginTop,
-            transform: ValueTransform::VerticalSpacingLh,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-bottom",
             ir_field: Some(IrField::MarginBottom),
             kfx_symbol: KfxSymbol::MarginBottom,
-            transform: ValueTransform::VerticalSpacingLh,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-left",
             ir_field: Some(IrField::MarginLeft),
             kfx_symbol: KfxSymbol::MarginLeft,
-            transform: ValueTransform::HorizontalSpacingEm,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "margin-right",
             ir_field: Some(IrField::MarginRight),
             kfx_symbol: KfxSymbol::MarginRight,
-            transform: ValueTransform::HorizontalSpacingEm,
+            transform: ValueTransform::PreserveUnit,
         });
 
         // ====================================================================
@@ -550,28 +524,28 @@ impl StyleSchema {
             ir_key: "padding-top",
             ir_field: Some(IrField::PaddingTop),
             kfx_symbol: KfxSymbol::PaddingTop,
-            transform: ValueTransform::VerticalSpacingLh,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-bottom",
             ir_field: Some(IrField::PaddingBottom),
             kfx_symbol: KfxSymbol::PaddingBottom,
-            transform: ValueTransform::VerticalSpacingLh,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-left",
             ir_field: Some(IrField::PaddingLeft),
             kfx_symbol: KfxSymbol::PaddingLeft,
-            transform: ValueTransform::HorizontalSpacingEm,
+            transform: ValueTransform::PreserveUnit,
         });
 
         schema.register(StylePropertyRule {
             ir_key: "padding-right",
             ir_field: Some(IrField::PaddingRight),
             kfx_symbol: KfxSymbol::PaddingRight,
-            transform: ValueTransform::HorizontalSpacingEm,
+            transform: ValueTransform::PreserveUnit,
         });
 
         // ====================================================================
@@ -1258,64 +1232,14 @@ impl ValueTransform {
                     "rem" => KfxSymbol::Rem,
                     "%" => KfxSymbol::Percent,
                     "pt" => KfxSymbol::Pt,
+                    // Device-unit strings pre-converted by extract_ir_field.
+                    "lh" => KfxSymbol::Lh,
                     _ => KfxSymbol::Px, // Default fallback
                 };
                 Some(KfxValue::Dimensioned {
                     value: num,
                     unit: kfx_unit,
                 })
-            }
-
-            ValueTransform::FontSizeRelative => {
-                let (num, css_unit) = parse_css_length(raw)?;
-                let (value, unit) = match css_unit.as_str() {
-                    "%" => (num / 100.0, KfxSymbol::Em),
-                    "em" => (num, KfxSymbol::Em),
-                    "rem" => (num, KfxSymbol::Rem),
-                    "pt" => (num / 12.0, KfxSymbol::Rem),
-                    // px and bare numbers: CSS reference pixels.
-                    _ => (num / PX_PER_EM, KfxSymbol::Rem),
-                };
-                Some(KfxValue::Dimensioned { value, unit })
-            }
-
-            ValueTransform::LineHeightLh => {
-                let (num, css_unit) = parse_css_length(raw)?;
-                let em = css_length_as_em(num, css_unit.as_str())?;
-                // Reference output maps any authored leading at or below the
-                // base line box to 0.99lh — never below the readable floor,
-                // and never exactly 1.0 (that value means "normal").
-                let lh = em * LH_PER_EM;
-                Some(KfxValue::Dimensioned {
-                    value: if lh <= 1.0 { 0.99 } else { lh },
-                    unit: KfxSymbol::Lh,
-                })
-            }
-
-            ValueTransform::VerticalSpacingLh => {
-                let (num, css_unit) = parse_css_length(raw)?;
-                let em = if css_unit == "%" {
-                    num / 100.0 * KP_LAYOUT_VIEWPORT_PX / PX_PER_EM
-                } else {
-                    css_length_as_em(num, css_unit.as_str())?
-                };
-                Some(KfxValue::Dimensioned {
-                    value: em * LH_PER_EM,
-                    unit: KfxSymbol::Lh,
-                })
-            }
-
-            ValueTransform::HorizontalSpacingEm => {
-                let (num, css_unit) = parse_css_length(raw)?;
-                let (value, unit) = match css_unit.as_str() {
-                    "%" => (num, KfxSymbol::Percent),
-                    "em" => (num, KfxSymbol::Em),
-                    "rem" => (num, KfxSymbol::Rem),
-                    "pt" => (num / 12.0, KfxSymbol::Em),
-                    // px and bare numbers: CSS reference pixels.
-                    _ => (num / PX_PER_EM, KfxSymbol::Em),
-                };
-                Some(KfxValue::Dimensioned { value, unit })
             }
 
             ValueTransform::AbsolutePt => {
@@ -1525,22 +1449,117 @@ fn parse_color_component(s: &str) -> Option<u8> {
 // IR Field Extraction (Bidirectional Schema Bridge)
 // ============================================================================
 
+/// Format a dimension with unit, rounding away float noise.
+fn fmt_dim(v: f64, unit: &str) -> String {
+    let rounded = (v * 1e6).round() / 1e6;
+    format!("{}{}", rounded, unit)
+}
+
+/// The element's line-height as emitted (in lh units): `normal` is 1lh;
+/// authored leading converts at the 1.2em base line box and maps to 0.99lh
+/// when at or below the base, exactly like reference output.
+fn emitted_line_height_lh(s: &ir_style::ComputedStyle) -> f64 {
+    match raw_line_height_em(s) {
+        None => 1.0,
+        Some(em) => {
+            let lh = em / 1.2;
+            if lh <= 1.0 { 0.99 } else { lh }
+        }
+    }
+}
+
+/// The element's authored line-height resolved to em of its own font;
+/// `None` means `normal`.
+fn raw_line_height_em(s: &ir_style::ComputedStyle) -> Option<f64> {
+    let abs = s.font_size_abs.0 as f64;
+    match s.line_height {
+        ir_style::Length::Auto => None,
+        ir_style::Length::Em(x) => Some(x as f64),
+        ir_style::Length::Percent(p) => Some(p as f64 / 100.0),
+        ir_style::Length::Px(x) => Some(x as f64 / 16.0 / abs),
+        ir_style::Length::Rem(x) => Some(x as f64 / abs),
+    }
+}
+
+/// Vertical spacing (margin/padding top+bottom) in lh units of the
+/// element's own line box, so block spacing scales with both the font and
+/// the device line-spacing setting — reference output divides by the
+/// element's *actual* line-height, not the 1.2em base. Percent resolves
+/// against Kindle Previewer's 512px layout viewport.
+fn vertical_spacing_lh(len: ir_style::Length, s: &ir_style::ComputedStyle) -> Option<String> {
+    let abs = s.font_size_abs.0 as f64;
+    let em = match len {
+        ir_style::Length::Auto => return None,
+        ir_style::Length::Em(x) => x as f64,
+        ir_style::Length::Rem(x) => x as f64 / abs,
+        ir_style::Length::Px(x) => x as f64 / 16.0 / abs,
+        ir_style::Length::Percent(p) => p as f64 / 100.0 * 512.0 / 16.0 / abs,
+    };
+    if em == 0.0 {
+        return None;
+    }
+    let line_em = emitted_line_height_lh(s) * 1.2;
+    Some(fmt_dim(em / line_em, "lh"))
+}
+
+/// Horizontal spacing keeps the author's relative units (em/%); absolute
+/// px/pt fold to em of the element's own font so side spacing scales with
+/// the font size instead of freezing at a device-pixel size.
+fn horizontal_spacing(len: ir_style::Length, s: &ir_style::ComputedStyle) -> Option<String> {
+    let abs = s.font_size_abs.0 as f64;
+    match len {
+        ir_style::Length::Auto => None,
+        ir_style::Length::Percent(p) if p != 0.0 => Some(fmt_dim(p as f64, "%")),
+        ir_style::Length::Em(x) if x != 0.0 => Some(fmt_dim(x as f64, "em")),
+        ir_style::Length::Rem(x) if x != 0.0 => Some(fmt_dim(x as f64 / abs, "em")),
+        ir_style::Length::Px(x) if x != 0.0 => Some(fmt_dim(x as f64 / 16.0 / abs, "em")),
+        _ => None,
+    }
+}
+
+/// Inherited spacing property with an explicit-reset path: `normal`
+/// (`Length::Auto`) under a spaced ancestor emits `0em`; otherwise defer to
+/// the parent-baseline table lookup.
+fn spacing_reset(
+    value: ir_style::Length,
+    parent_value: ir_style::Length,
+    fallback: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    if value == parent_value {
+        None
+    } else if value == ir_style::Length::Auto {
+        Some("0em".to_string())
+    } else {
+        fallback()
+    }
+}
+
 /// Extract a CSS string from an IR ComputedStyle field.
 ///
 /// This is the centralized extraction logic for the bidirectional schema.
 /// The schema declares WHICH fields to extract (via `IrField` enum), and
-/// this function provides the HOW.
+/// this function provides the HOW. Most fields delegate to the canonical
+/// property table in `crate::style::to_css`; fields with KFX-specific
+/// semantics (device units, parent-inheritance baselines) are handled
+/// explicitly.
 ///
-/// Most fields delegate to the canonical property table in
-/// `crate::style::to_css` (via [`ir_style::changed_property_value`]), which
-/// is the single source of truth for default-comparison and CSS
-/// serialization — a new `ComputedStyle` field normally needs only one entry
-/// there. Fields with KFX-specific semantics that intentionally differ from
-/// `ComputedStyle::to_css` are handled explicitly at the top of the match.
+/// Returns `None` if the field has nothing to emit.
 ///
-/// Returns `None` if the field has its default value (nothing to emit).
-pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> Option<String> {
+/// `parent` is the computed style of the element's parent (the default style
+/// at the root). KFX styles inherit through nested containers at render time
+/// (verified on reference output: containers carry heritable properties and
+/// their children omit them), so CSS-inherited properties are emitted only
+/// when they differ from the parent — which both drops redundant
+/// re-statements *and* emits explicit resets (`font-style: normal` inside an
+/// italic ancestor) that comparing against the global default would prune.
+pub fn extract_ir_field(
+    ir_style: &ir_style::ComputedStyle,
+    parent: &ir_style::ComputedStyle,
+    field: IrField,
+) -> Option<String> {
     let shared = |name: &str| ir_style::changed_property_value(ir_style, name);
+    // Inherited properties: baseline is the parent's computed style.
+    let inherited = |name: &str| ir_style::changed_property_value_from(ir_style, parent, name);
 
     match field {
         // ------------------------------------------------------------------
@@ -1601,11 +1620,24 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
             }
         }
         // KNOWN DISCREPANCY: KFX uses the raw family string; to_css quotes
-        // names that need quoting for CSS syntax.
-        IrField::FontFamily => ir_style.font_family.clone(),
+        // names that need quoting for CSS syntax. Inherited: skip when the
+        // parent already carries the same family.
+        IrField::FontFamily => {
+            if ir_style.font_family == parent.font_family {
+                None
+            } else {
+                ir_style.font_family.clone()
+            }
+        }
         // Language is not a CSS property (to_css emits it via the HTML lang
-        // attribute instead).
-        IrField::Language => ir_style.language.clone(),
+        // attribute instead). Inherited.
+        IrField::Language => {
+            if ir_style.language == parent.language {
+                None
+            } else {
+                ir_style.language.clone()
+            }
+        }
         // BoxAlign: horizontal centering from `margin: <v> auto`. Unset
         // margins compute to `Px(0)`, so `Length::Auto` here is always the
         // author's explicit `auto` — the CSS centering idiom.
@@ -1631,30 +1663,84 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
             }
         }
         // ------------------------------------------------------------------
-        // Shared extractions: canonical table in style/to_css.rs.
+        // Device-unit extractions: font size and spacing emit their final
+        // KFX units here (rem / lh / em), because the conversions need the
+        // whole style — the element's absolute font size and its actual
+        // line-height — not just one property's value.
         // ------------------------------------------------------------------
-        IrField::FontWeight => shared("font-weight"),
-        IrField::FontStyle => shared("font-style"),
-        IrField::FontSize => shared("font-size"),
-        IrField::FontVariant => shared("font-variant"),
-        IrField::TextAlign => shared("text-align"),
-        IrField::TextIndent => shared("text-indent"),
-        IrField::LineHeight => shared("line-height"),
-        IrField::MarginTop => shared("margin-top"),
-        IrField::MarginBottom => shared("margin-bottom"),
-        IrField::MarginLeft => shared("margin-left"),
-        IrField::MarginRight => shared("margin-right"),
-        IrField::PaddingTop => shared("padding-top"),
-        IrField::PaddingBottom => shared("padding-bottom"),
-        IrField::PaddingLeft => shared("padding-left"),
-        IrField::PaddingRight => shared("padding-right"),
-        IrField::Color => shared("color"),
+        // Font size: always the absolute size in rem, like reference output,
+        // so the device font-size setting scales it and nested containers
+        // never re-multiply relative em values. Omitted when it matches the
+        // parent (renderer inheritance covers it).
+        IrField::FontSize => {
+            let abs = ir_style.font_size_abs.0 as f64;
+            let parent_abs = parent.font_size_abs.0 as f64;
+            if (abs - parent_abs).abs() < 1e-4 {
+                None
+            } else {
+                Some(fmt_dim(abs, "rem"))
+            }
+        }
+        // Line height in lh units (multiples of the 1.2em base line box),
+        // floored at 0.99 like reference output — never below the readable
+        // baseline, and never exactly 1.0, which means "normal". Inherited:
+        // emitted only when it differs from the parent; an explicit
+        // `line-height: normal` reset emits 1lh.
+        IrField::LineHeight => {
+            if ir_style.line_height == parent.line_height {
+                None
+            } else {
+                Some(fmt_dim(emitted_line_height_lh(ir_style), "lh"))
+            }
+        }
+        IrField::MarginTop => vertical_spacing_lh(ir_style.margin_top, ir_style),
+        IrField::MarginBottom => vertical_spacing_lh(ir_style.margin_bottom, ir_style),
+        IrField::MarginLeft => horizontal_spacing(ir_style.margin_left, ir_style),
+        IrField::MarginRight => horizontal_spacing(ir_style.margin_right, ir_style),
+        IrField::PaddingTop => vertical_spacing_lh(ir_style.padding_top, ir_style),
+        IrField::PaddingBottom => vertical_spacing_lh(ir_style.padding_bottom, ir_style),
+        IrField::PaddingLeft => horizontal_spacing(ir_style.padding_left, ir_style),
+        IrField::PaddingRight => horizontal_spacing(ir_style.padding_right, ir_style),
+        // Text indent is inherited: emit when it differs from the parent,
+        // including an explicit reset to zero.
+        IrField::TextIndent => {
+            if ir_style.text_indent == parent.text_indent {
+                None
+            } else {
+                horizontal_spacing(ir_style.text_indent, ir_style)
+                    .or_else(|| Some("0em".to_string()))
+            }
+        }
+        // Letter/word spacing are inherited; `normal` inside a spaced
+        // ancestor must emit an explicit 0 (reference output does the same).
+        IrField::LetterSpacing => {
+            spacing_reset(ir_style.letter_spacing, parent.letter_spacing, || {
+                inherited("letter-spacing")
+            })
+        }
+        IrField::WordSpacing => spacing_reset(ir_style.word_spacing, parent.word_spacing, || {
+            inherited("word-spacing")
+        }),
+        // ------------------------------------------------------------------
+        // Shared extractions: canonical table in style/to_css.rs.
+        // CSS-inherited properties diff against the parent, the rest
+        // against the default style.
+        // ------------------------------------------------------------------
+        IrField::FontWeight => inherited("font-weight"),
+        IrField::FontStyle => inherited("font-style"),
+        IrField::FontVariant => inherited("font-variant"),
+        IrField::TextAlign => inherited("text-align"),
+        IrField::Color => {
+            if ir_style.color == parent.color {
+                None
+            } else {
+                shared("color")
+            }
+        }
         IrField::BackgroundColor => shared("background-color"),
         IrField::VerticalAlign => shared("vertical-align"),
-        IrField::LetterSpacing => shared("letter-spacing"),
-        IrField::WordSpacing => shared("word-spacing"),
-        IrField::TextTransform => shared("text-transform"),
-        IrField::Hyphens => shared("hyphens"),
+        IrField::TextTransform => inherited("text-transform"),
+        IrField::Hyphens => inherited("hyphens"),
         IrField::WhiteSpace => shared("white-space"),
         IrField::UnderlineColor => shared("text-decoration-color"),
         IrField::Width => shared("width"),
@@ -1683,7 +1769,7 @@ pub fn extract_ir_field(ir_style: &ir_style::ComputedStyle, field: IrField) -> O
         IrField::BorderRadiusTopRight => shared("border-top-right-radius"),
         IrField::BorderRadiusBottomLeft => shared("border-bottom-left-radius"),
         IrField::BorderRadiusBottomRight => shared("border-bottom-right-radius"),
-        IrField::Visibility => shared("visibility"),
+        IrField::Visibility => inherited("visibility"),
         IrField::Clear => shared("clear"),
         IrField::Orphans => shared("orphans"),
         IrField::Widows => shared("widows"),
@@ -1760,10 +1846,6 @@ impl ValueTransform {
 
             ValueTransform::Dimensioned { .. }
             | ValueTransform::PreserveUnit
-            | ValueTransform::FontSizeRelative
-            | ValueTransform::LineHeightLh
-            | ValueTransform::VerticalSpacingLh
-            | ValueTransform::HorizontalSpacingEm
             | ValueTransform::AbsolutePt => {
                 // Parse {value: N, unit: sym} struct
                 // Value may be Int (whole numbers), Float, or Decimal (Amazon uses all three)
@@ -2406,12 +2488,15 @@ mod tests {
         use crate::style::{ComputedStyle, FontWeight};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::FontWeight), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::FontWeight),
+            None
+        );
 
         let mut bold = ComputedStyle::default();
         bold.font_weight = FontWeight::BOLD;
         assert_eq!(
-            extract_ir_field(&bold, IrField::FontWeight),
+            extract_ir_field(&bold, &Default::default(), IrField::FontWeight),
             Some("bold".to_string())
         );
     }
@@ -2421,12 +2506,15 @@ mod tests {
         use crate::style::{ComputedStyle, FontStyle};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::FontStyle), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::FontStyle),
+            None
+        );
 
         let mut italic = ComputedStyle::default();
         italic.font_style = FontStyle::Italic;
         assert_eq!(
-            extract_ir_field(&italic, IrField::FontStyle),
+            extract_ir_field(&italic, &Default::default(), IrField::FontStyle),
             Some("italic".to_string())
         );
     }
@@ -2436,12 +2524,15 @@ mod tests {
         use crate::style::{Color, ComputedStyle};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::Color), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::Color),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.color = Some(Color::rgb(255, 0, 0));
         assert_eq!(
-            extract_ir_field(&styled, IrField::Color),
+            extract_ir_field(&styled, &Default::default(), IrField::Color),
             Some("#ff0000".to_string())
         );
     }
@@ -2451,13 +2542,18 @@ mod tests {
         use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::MarginTop), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::MarginTop),
+            None
+        );
 
+        // Vertical margins emit in lh units of the element's line box
+        // (1.5em at the default 1.2em line-height = 1.25lh).
         let mut styled = ComputedStyle::default();
         styled.margin_top = Length::Em(1.5);
         assert_eq!(
-            extract_ir_field(&styled, IrField::MarginTop),
-            Some("1.5em".to_string())
+            extract_ir_field(&styled, &Default::default(), IrField::MarginTop),
+            Some("1.25lh".to_string())
         );
     }
 
@@ -2538,7 +2634,7 @@ mod tests {
 
         let default = ir_style::ComputedStyle::default();
         for &field in ALL_FIELDS {
-            let extracted = extract_ir_field(&default, field);
+            let extracted = extract_ir_field(&default, &Default::default(), field);
             // A fully-default style extracts nothing — including BoxAlign,
             // which no longer centers on unset (all-auto) margins.
             assert_eq!(extracted, None, "{field:?} non-None on default style");
@@ -3044,12 +3140,15 @@ mod tests {
         use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::LetterSpacing), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::LetterSpacing),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.letter_spacing = Length::Em(0.1);
         assert_eq!(
-            extract_ir_field(&styled, IrField::LetterSpacing),
+            extract_ir_field(&styled, &Default::default(), IrField::LetterSpacing),
             Some("0.1em".to_string())
         );
     }
@@ -3059,12 +3158,15 @@ mod tests {
         use crate::style::{ComputedStyle, TextTransform};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::TextTransform), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::TextTransform),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.text_transform = TextTransform::Uppercase;
         assert_eq!(
-            extract_ir_field(&styled, IrField::TextTransform),
+            extract_ir_field(&styled, &Default::default(), IrField::TextTransform),
             Some("uppercase".to_string())
         );
     }
@@ -3074,12 +3176,15 @@ mod tests {
         use crate::style::{BreakValue, ComputedStyle};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::BreakBefore), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::BreakBefore),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.break_before = BreakValue::Always;
         assert_eq!(
-            extract_ir_field(&styled, IrField::BreakBefore),
+            extract_ir_field(&styled, &Default::default(), IrField::BreakBefore),
             Some("always".to_string())
         );
     }
@@ -3089,12 +3194,15 @@ mod tests {
         use crate::style::{BorderStyle, ComputedStyle};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::BorderStyleTop), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::BorderStyleTop),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.border_style_top = BorderStyle::Solid;
         assert_eq!(
-            extract_ir_field(&styled, IrField::BorderStyleTop),
+            extract_ir_field(&styled, &Default::default(), IrField::BorderStyleTop),
             Some("solid".to_string())
         );
     }
@@ -3170,7 +3278,7 @@ mod tests {
         let mut style = ComputedStyle::default();
         style.width = Length::Percent(75.0);
 
-        let result = extract_ir_field(&style, IrField::SizingBounds);
+        let result = extract_ir_field(&style, &Default::default(), IrField::SizingBounds);
         assert_eq!(result, Some("content-box".to_string()));
     }
 
@@ -3183,7 +3291,7 @@ mod tests {
         style.box_sizing = BoxSizing::BorderBox;
         style.width = Length::Percent(100.0);
 
-        let result = extract_ir_field(&style, IrField::SizingBounds);
+        let result = extract_ir_field(&style, &Default::default(), IrField::SizingBounds);
         assert_eq!(result, Some("border-box".to_string()));
     }
 
@@ -3194,7 +3302,7 @@ mod tests {
         // No width/height = no sizing_bounds
         let style = ComputedStyle::default();
 
-        let result = extract_ir_field(&style, IrField::SizingBounds);
+        let result = extract_ir_field(&style, &Default::default(), IrField::SizingBounds);
         assert_eq!(result, None);
     }
 
@@ -3209,7 +3317,7 @@ mod tests {
         style.margin_left = Length::Auto;
         style.margin_right = Length::Auto;
 
-        let result = extract_ir_field(&style, IrField::BoxAlign);
+        let result = extract_ir_field(&style, &Default::default(), IrField::BoxAlign);
         assert_eq!(result, Some("center".to_string()));
     }
 
@@ -3221,13 +3329,19 @@ mod tests {
         // must NOT center — it renders left-aligned in CSS.
         let mut style = ComputedStyle::default();
         style.width = Length::Px(200.0);
-        assert_eq!(extract_ir_field(&style, IrField::BoxAlign), None);
+        assert_eq!(
+            extract_ir_field(&style, &Default::default(), IrField::BoxAlign),
+            None
+        );
 
         // Only margin-left: auto is not enough either.
         let mut style = ComputedStyle::default();
         style.margin_left = Length::Auto;
         style.margin_right = Length::Px(0.0);
-        assert_eq!(extract_ir_field(&style, IrField::BoxAlign), None);
+        assert_eq!(
+            extract_ir_field(&style, &Default::default(), IrField::BoxAlign),
+            None
+        );
     }
 
     // ========================================================================
@@ -3310,12 +3424,15 @@ mod tests {
         use crate::style::{BorderCollapse, ComputedStyle};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::BorderCollapse), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::BorderCollapse),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.border_collapse = BorderCollapse::Collapse;
         assert_eq!(
-            extract_ir_field(&styled, IrField::BorderCollapse),
+            extract_ir_field(&styled, &Default::default(), IrField::BorderCollapse),
             Some("collapse".to_string())
         );
     }
@@ -3325,12 +3442,15 @@ mod tests {
         use crate::style::{ComputedStyle, Length};
 
         let default = ComputedStyle::default();
-        assert_eq!(extract_ir_field(&default, IrField::BorderSpacing), None);
+        assert_eq!(
+            extract_ir_field(&default, &Default::default(), IrField::BorderSpacing),
+            None
+        );
 
         let mut styled = ComputedStyle::default();
         styled.border_spacing = Length::Px(5.0);
         assert_eq!(
-            extract_ir_field(&styled, IrField::BorderSpacing),
+            extract_ir_field(&styled, &Default::default(), IrField::BorderSpacing),
             Some("5px".to_string())
         );
     }
@@ -3357,70 +3477,104 @@ mod tests {
 
     #[test]
     fn unit_model_matches_reference_output() {
-        let schema = StyleSchema::standard();
-        let apply = |key: &str, raw: &str| schema.get(key).next().unwrap().transform.apply(raw);
+        use crate::style::{AbsFontSize, ComputedStyle, Length};
 
-        // Font sizes are always relative: px/pt fold to rem, % to em.
+        // Extraction emits the final device unit; the schema transform is a
+        // pass-through parse. Run both stages like ingest_ir_style does.
+        let schema = StyleSchema::standard();
+        let run = |style: &ComputedStyle, key: &str, field: IrField| {
+            extract_ir_field(style, &Default::default(), field)
+                .and_then(|css| schema.get(key).next().unwrap().transform.apply(&css))
+        };
+
+        // Font sizes emit the cascade-resolved absolute size in rem so the
+        // device font-size setting scales them; never absolute px.
+        let mut s = ComputedStyle::default();
+        s.font_size = Length::Px(10.0);
+        s.font_size_abs = AbsFontSize(0.625);
         assert!(matches!(
-            apply("font-size", "10px"),
+            run(&s, "font-size", IrField::FontSize),
             Some(KfxValue::Dimensioned { value, unit })
                 if (value - 0.625).abs() < 1e-9 && unit == KfxSymbol::Rem
         ));
-        assert!(matches!(
-            apply("font-size", "80%"),
-            Some(KfxValue::Dimensioned { value, unit })
-                if (value - 0.8).abs() < 1e-9 && unit == KfxSymbol::Em
-        ));
 
-        // Line height converts to lh (1lh = 1.2em) with the 0.99 floor.
+        // Line height converts to lh (1lh = 1.2em); authored leading at or
+        // below the base maps to 0.99lh like reference output.
+        let mut s = ComputedStyle::default();
+        s.line_height = Length::Em(1.5);
         assert!(matches!(
-            apply("line-height", "1.5em"),
+            run(&s, "line-height", IrField::LineHeight),
             Some(KfxValue::Dimensioned { value, unit })
                 if (value - 1.25).abs() < 1e-9 && unit == KfxSymbol::Lh
         ));
+        let mut s = ComputedStyle::default();
+        s.line_height = Length::Em(1.0);
         assert!(matches!(
-            apply("line-height", "1em"),
+            run(&s, "line-height", IrField::LineHeight),
             Some(KfxValue::Dimensioned { value, unit })
                 if value == 0.99 && unit == KfxSymbol::Lh
         ));
-        // px/pt line heights convert instead of being dropped (18pt = 24px = 1.5em).
+        // px/pt line heights convert instead of being dropped (24px = 1.5em).
+        let mut s = ComputedStyle::default();
+        s.line_height = Length::Px(24.0);
         assert!(matches!(
-            apply("line-height", "24px"),
+            run(&s, "line-height", IrField::LineHeight),
             Some(KfxValue::Dimensioned { value, unit })
                 if (value - 1.25).abs() < 1e-9 && unit == KfxSymbol::Lh
         ));
 
-        // Vertical spacing scales with the line-spacing setting (em -> lh).
+        // Vertical spacing: lh units of the element's own line box —
+        // reference output divides by the actual line-height, not the base.
+        let mut s = ComputedStyle::default();
+        s.margin_top = Length::Em(1.0);
         assert!(matches!(
-            apply("margin-top", "1em"),
+            run(&s, "margin-top", IrField::MarginTop),
             Some(KfxValue::Dimensioned { value, unit })
-                if (value - 1.0 / 1.2).abs() < 1e-9 && unit == KfxSymbol::Lh
+                if (value - 1.0 / 1.2).abs() < 1e-4 && unit == KfxSymbol::Lh
+        ));
+        let mut s = ComputedStyle::default();
+        s.margin_top = Length::Em(1.0);
+        s.line_height = Length::Em(2.0);
+        assert!(matches!(
+            run(&s, "margin-top", IrField::MarginTop),
+            Some(KfxValue::Dimensioned { value, unit })
+                if (value - 0.5).abs() < 1e-4 && unit == KfxSymbol::Lh
         ));
         // Percent vertical spacing resolves against KP's 512px viewport.
+        let mut s = ComputedStyle::default();
+        s.margin_top = Length::Percent(5.0);
         assert!(matches!(
-            apply("margin-top", "5%"),
+            run(&s, "margin-top", IrField::MarginTop),
             Some(KfxValue::Dimensioned { value, unit })
-                if (value - 4.0 / 3.0).abs() < 1e-6 && unit == KfxSymbol::Lh
+                if (value - 4.0 / 3.0).abs() < 1e-5 && unit == KfxSymbol::Lh
         ));
 
-        // Horizontal spacing keeps relative units; px folds to em.
+        // Horizontal spacing keeps relative units; px folds to em of the
+        // element's own font.
+        let mut s = ComputedStyle::default();
+        s.margin_left = Length::Px(40.0);
         assert!(matches!(
-            apply("margin-left", "40px"),
+            run(&s, "margin-left", IrField::MarginLeft),
             Some(KfxValue::Dimensioned { value, unit })
                 if (value - 2.5).abs() < 1e-9 && unit == KfxSymbol::Em
         ));
+        let mut s = ComputedStyle::default();
+        s.text_indent = Length::Percent(5.0);
         assert!(matches!(
-            apply("text-indent", "5%"),
+            run(&s, "text-indent", IrField::TextIndent),
             Some(KfxValue::Dimensioned { value, unit })
                 if value == 5.0 && unit == KfxSymbol::Percent
         ));
+        let mut s = ComputedStyle::default();
+        s.text_indent = Length::Em(-1.0);
         assert!(matches!(
-            apply("text-indent", "-1em"),
+            run(&s, "text-indent", IrField::TextIndent),
             Some(KfxValue::Dimensioned { value, unit })
                 if value == -1.0 && unit == KfxSymbol::Em
         ));
 
-        // Hairlines: px folds to pt at the CSS ratio.
+        // Hairlines: px folds to pt at the CSS ratio (transform-level).
+        let apply = |key: &str, raw: &str| schema.get(key).next().unwrap().transform.apply(raw);
         assert!(matches!(
             apply("border-top-width", "4px"),
             Some(KfxValue::Dimensioned { value, unit })
@@ -3431,6 +3585,58 @@ mod tests {
             Some(KfxValue::Dimensioned { value, unit })
                 if (value - 0.1).abs() < 1e-9 && unit == KfxSymbol::Em
         ));
+    }
+
+    #[test]
+    fn inherited_properties_diff_against_parent() {
+        use crate::style::{AbsFontSize, ComputedStyle, FontStyle, Length, TextTransform};
+
+        // Equal to parent: nothing to emit (renderer inherits).
+        let mut parent = ComputedStyle::default();
+        parent.font_style = FontStyle::Italic;
+        let child = parent.clone();
+        assert_eq!(extract_ir_field(&child, &parent, IrField::FontStyle), None);
+
+        // Reset against an italic ancestor emits the explicit initial value.
+        let mut reset = parent.clone();
+        reset.font_style = FontStyle::Normal;
+        assert_eq!(
+            extract_ir_field(&reset, &parent, IrField::FontStyle),
+            Some("normal".to_string())
+        );
+
+        // text-transform: none inside an uppercase ancestor.
+        let mut parent = ComputedStyle::default();
+        parent.text_transform = TextTransform::Uppercase;
+        let mut reset = parent.clone();
+        reset.text_transform = TextTransform::None;
+        assert_eq!(
+            extract_ir_field(&reset, &parent, IrField::TextTransform),
+            Some("none".to_string())
+        );
+
+        // letter-spacing: normal inside a spaced ancestor emits explicit 0.
+        let mut parent = ComputedStyle::default();
+        parent.letter_spacing = Length::Px(2.0);
+        let mut reset = parent.clone();
+        reset.letter_spacing = Length::Auto;
+        assert_eq!(
+            extract_ir_field(&reset, &parent, IrField::LetterSpacing),
+            Some("0em".to_string())
+        );
+
+        // Font size equal to the parent's absolute size: omitted; a reset
+        // back to the root size inside a larger ancestor emits 1rem.
+        let mut parent = ComputedStyle::default();
+        parent.font_size_abs = AbsFontSize(1.44);
+        let child = parent.clone();
+        assert_eq!(extract_ir_field(&child, &parent, IrField::FontSize), None);
+        let mut reset = parent.clone();
+        reset.font_size_abs = AbsFontSize(1.0);
+        assert_eq!(
+            extract_ir_field(&reset, &parent, IrField::FontSize),
+            Some("1rem".to_string())
+        );
     }
 
     #[test]

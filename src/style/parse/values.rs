@@ -295,6 +295,18 @@ pub(crate) fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
     }
 }
 
+/// Parse letter-/word-spacing: a length, or the `normal` reset keyword
+/// (mapped to `Length::Auto`, the unset value — both mean no extra spacing).
+pub(crate) fn parse_spacing(input: &mut Parser<'_, '_>) -> Option<Length> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(Length::Auto);
+    }
+    parse_length(input)
+}
+
 pub(crate) fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
     if let Ok(Token::Number {
         int_value: Some(v), ..
