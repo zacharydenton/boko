@@ -101,7 +101,10 @@ fn descendant_book() -> EpubBuilder {
 // font size (`font_size_abs`): styles used under different ancestor font
 // scales intern separately now, so the synthesized `.cNN` classes partition
 // differently — the emitted declarations are unchanged.
-const FP_EPICTETUS: &str = "3a0d32eb32fabb726c2fb4a35114622ce92375b2";
+// Updated again when anonymous mixed-content wrappers started interning an
+// inherit-only style (CSS anonymous-box semantics) instead of the default
+// StyleId — the pool gains entries, so class numbering shifts.
+const FP_EPICTETUS: &str = "2f62e95c8fba1a676cf91f2921768e0ddcd4ebfc";
 const FP_CLASS: &str = "0011593d1051d42ce417aa0bd9d63012fdaf42b7";
 // Updated when the UA stylesheet's blockquote/figure/dd margins moved from
 // the browser-literal 40px to 2.5em (same length at the default font size,

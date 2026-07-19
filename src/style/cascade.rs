@@ -43,10 +43,11 @@ struct MatchedDecl {
 ///
 /// Non-inherited properties (width, height, margin, padding, display, etc.)
 /// are NOT copied from the parent.
-fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
+pub(crate) fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
     ComputedStyle {
         // Font properties (inherited)
         font_size: parent.font_size,
+        font_size_abs: parent.font_size_abs,
         font_weight: parent.font_weight,
         font_style: parent.font_style,
         font_variant: parent.font_variant,
