@@ -683,6 +683,11 @@ pub struct ExportContext {
     /// is cleared by `begin_chapter`.
     ir_style_memo: FxHashMap<StyleId, u64>,
 
+    /// Memo for `register_inline_style_id` (same lifecycle as
+    /// `ir_style_memo`, separate because the inline projection of a style
+    /// registers under a different symbol than its block form).
+    ir_inline_style_memo: FxHashMap<StyleId, u64>,
+
     /// Anchor registry for link target resolution.
     pub anchor_registry: AnchorRegistry,
 
@@ -795,6 +800,7 @@ impl ExportContext {
             default_style_symbol,
             style_registry: StyleRegistry::new(default_style_symbol),
             ir_style_memo: FxHashMap::default(),
+            ir_inline_style_memo: FxHashMap::default(),
             anchor_registry: AnchorRegistry::new(),
             landmark_fragments: HashMap::new(),
             nav_container_symbols: NavContainerSymbols::default(),
@@ -829,6 +835,7 @@ impl ExportContext {
     /// chapter (and thus pool) changes, before registering its styles.
     pub fn reset_style_memo(&mut self) {
         self.ir_style_memo.clear();
+        self.ir_inline_style_memo.clear();
     }
 
     /// Prepare context for processing a new chapter.
@@ -932,6 +939,45 @@ impl ExportContext {
             self.default_style_symbol
         };
         self.ir_style_memo.insert(style_id, symbol);
+        symbol
+    }
+
+    /// Register an IR style for an inline run (style_event), projecting away
+    /// block-only properties.
+    ///
+    /// `box_align` centers a *block* within its container; readers only
+    /// consume it on block elements, and a style carrying it from an inline
+    /// run survives into the output as unexpected data. Reference KFX never
+    /// puts block alignment on style_events.
+    pub fn register_inline_style_id(
+        &mut self,
+        style_id: StyleId,
+        style_pool: &crate::style::StylePool,
+    ) -> u64 {
+        if style_id == StyleId::DEFAULT {
+            return self.default_style_symbol;
+        }
+
+        if let Some(&symbol) = self.ir_inline_style_memo.get(&style_id) {
+            return symbol;
+        }
+
+        let symbol = if let Some(ir_style) = style_pool.get(style_id) {
+            let schema = crate::kfx::style_schema::StyleSchema::standard();
+            let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
+            builder.ingest_ir_style(ir_style);
+            let mut kfx_style = builder.build();
+            kfx_style.remove(crate::kfx::symbols::KfxSymbol::BoxAlign);
+            if kfx_style.is_empty() {
+                self.default_style_used = true;
+                self.default_style_symbol
+            } else {
+                self.style_registry.register(kfx_style, &mut self.symbols)
+            }
+        } else {
+            self.default_style_symbol
+        };
+        self.ir_inline_style_memo.insert(style_id, symbol);
         symbol
     }
 

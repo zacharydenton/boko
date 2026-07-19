@@ -55,6 +55,12 @@ impl ComputedStyle {
             .map(|(_, v)| v)
     }
 
+    /// Remove a property, returning its value if it was present.
+    pub fn remove(&mut self, symbol: KfxSymbol) -> Option<KfxValue> {
+        let idx = self.properties.iter().position(|(s, _)| *s == symbol)?;
+        Some(self.properties.remove(idx).1)
+    }
+
     /// Check if the style is empty.
     pub fn is_empty(&self) -> bool {
         self.properties.is_empty()

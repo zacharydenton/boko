@@ -419,9 +419,10 @@ pub(super) fn emit_flattened_segments(
                 0,
             );
 
-            // Set style (innermost)
+            // Set style (innermost). Inline runs use the inline projection:
+            // block-only properties (box_align) never ride style_events.
             if let Some(style_id) = segment.state.style {
-                let style_symbol = ctx.register_style_id(style_id, &chapter.styles);
+                let style_symbol = ctx.register_inline_style_id(style_id, &chapter.styles);
                 span.style_symbol = Some(style_symbol);
             }
 

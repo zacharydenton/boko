@@ -225,6 +225,98 @@ fn font_size_is_never_percent() {
     );
 }
 
+/// `box_align` centers a block within its container. Reference KFX carries
+/// it on block element styles (verified against calibre/KP gold masters) but
+/// never on style_events — readers only consume it on blocks, and it
+/// survives into the output as unexpected data otherwise.
+#[test]
+fn box_align_rides_block_styles_not_style_events() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Centering Book")
+        .css(".c { margin: 0 auto; width: 60%; } .m { margin-top: 1em; }")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<div class=\"c\"><p>centered block</p></div>\
+             <p>before <span class=\"m\">margined inline span</span> after</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+    let symbols = doc_symbols(&kfx);
+
+    // Styles referenced from style_events vs. from element style fields.
+    let mut event_styles = std::collections::BTreeSet::new();
+    let mut block_styles = std::collections::BTreeSet::new();
+    fn walk(
+        v: &IonValue,
+        in_events: bool,
+        event_styles: &mut std::collections::BTreeSet<u64>,
+        block_styles: &mut std::collections::BTreeSet<u64>,
+    ) {
+        match v {
+            IonValue::Struct(fields) => {
+                for (k, val) in fields {
+                    if *k == KfxSymbol::Style as u64
+                        && let IonValue::Symbol(s) = val
+                    {
+                        if in_events {
+                            event_styles.insert(*s);
+                        } else {
+                            block_styles.insert(*s);
+                        }
+                    }
+                    let entering_events = *k == KfxSymbol::StyleEvents as u64;
+                    walk(
+                        val,
+                        in_events || entering_events,
+                        event_styles,
+                        block_styles,
+                    );
+                }
+            }
+            IonValue::List(items) => {
+                for item in items {
+                    walk(item, in_events, event_styles, block_styles);
+                }
+            }
+            IonValue::Annotated(_, inner) => walk(inner, in_events, event_styles, block_styles),
+            _ => {}
+        }
+    }
+    for storyline in parse_entities(&kfx, KfxSymbol::Storyline as u32) {
+        walk(&storyline, false, &mut event_styles, &mut block_styles);
+    }
+
+    // Which style names carry box_align?
+    let mut box_align_styles = std::collections::BTreeSet::new();
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        if get_field(fields, KfxSymbol::BoxAlign).is_some()
+            && let Some(name) = get_field(fields, KfxSymbol::StyleName).and_then(|v| v.as_symbol())
+        {
+            box_align_styles.insert(resolve_symbol(&symbols, name));
+        }
+    }
+    assert!(
+        !box_align_styles.is_empty(),
+        "the centered div must keep box_align on its block style"
+    );
+
+    for style_sym in &event_styles {
+        let name = resolve_symbol(&symbols, *style_sym);
+        assert!(
+            !box_align_styles.contains(&name),
+            "style_event references box_align style {name}"
+        );
+    }
+}
+
 /// An empty chapter must still produce a (possibly empty) content_list —
 /// a null content_list is rejected by KFX consumers ("unknown content_list
 /// data type: NoneType").
