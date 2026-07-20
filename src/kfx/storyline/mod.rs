@@ -45,12 +45,14 @@ pub fn build_storyline_ion(chapter: &Chapter, ctx: &mut ExportContext) -> IonVal
     tokens_to_ion(&tokens, ctx)
 }
 
+mod collapse;
 mod export;
 mod import;
 mod ion_synth;
 #[cfg(test)]
 mod tests;
 
+pub use collapse::{MarginAdjust, MarginAdjustMap, compute_margin_collapse};
 pub use export::ir_to_tokens;
 pub use import::{build_ir_from_tokens, parse_storyline_to_ir, tokenize_storyline};
 pub use ion_synth::tokens_to_ion;

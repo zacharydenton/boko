@@ -88,6 +88,11 @@ fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
 
     let (standalone_cover_path, spine_info) = survey_book(book, &mut ctx)?;
 
+    // Body-size normalization: the text-dominant font size renders at 1rem
+    // (the user's device font-size setting), like reference output. Must be
+    // resolved before Pass 2 registers any styles.
+    ctx.resolve_font_scale();
+
     // After Pass 1: ctx.symbols is COMPLETE, ctx.position_map has all EIDs
     // Note: TOC anchor entity IDs are computed AFTER Pass 2 chapter processing
     // since anchors are created during content generation.

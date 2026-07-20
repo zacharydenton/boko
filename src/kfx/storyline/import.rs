@@ -4,6 +4,9 @@ use super::*;
 pub(super) struct TokenizeContext<'a> {
     doc_symbols: &'a [String],
     anchors: Option<&'a HashMap<String, String>>,
+    /// Raw style structs by style name, for style-level layout_hints
+    /// (reference KFX carries treat_as_title/figure/caption in styles).
+    styles: Option<&'a HashMap<String, Vec<(u64, IonValue)>>>,
 }
 
 /// Tokenize a KFX storyline into a token stream.
@@ -17,7 +20,7 @@ pub fn tokenize_storyline(
     storyline: &IonValue,
     doc_symbols: &[String],
     anchors: Option<&HashMap<String, String>>,
-    _styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
+    styles: Option<&HashMap<String, Vec<(u64, IonValue)>>>,
 ) -> TokenStream {
     let mut stream = TokenStream::new();
 
@@ -34,6 +37,7 @@ pub fn tokenize_storyline(
     let ctx = TokenizeContext {
         doc_symbols,
         anchors,
+        styles,
     };
     tokenize_content_list(content_list, &ctx, &mut stream);
     stream
@@ -107,19 +111,35 @@ pub(super) fn tokenize_content_item(
         }
     }
 
-    // Check for layout_hints to detect Figure and Caption elements (schema-driven).
-    if let Some(layout_hints) = get_field(fields, sym!(LayoutHints))
-        && let Some(hints_list) = layout_hints.as_list()
-    {
+    // Check for layout_hints to detect Figure and Caption elements
+    // (schema-driven). Reference KFX carries the hints in the element's
+    // *style* struct; older boko output put them on the content node —
+    // consult both, node first.
+    let style_hints = ctx.styles.and_then(|styles| {
+        let style_sym = get_field(fields, sym!(Style))?.as_symbol()?;
+        let name = resolve_symbol(style_sym, ctx.doc_symbols)?.to_string();
+        let style = styles.get(&name)?;
+        get_field(style, sym!(LayoutHints)).cloned()
+    });
+    let node_hints = get_field(fields, sym!(LayoutHints)).cloned();
+    for hints in [node_hints, style_hints].into_iter().flatten() {
+        let Some(hints_list) = hints.as_list() else {
+            continue;
+        };
+        let mut mapped = None;
         for hint in hints_list {
             // `as u32` would alias an untrusted id above u32::MAX to a valid
             // hint; skip out-of-range ids instead.
             if let Some(hint_id) = hint.as_symbol().and_then(|s| u32::try_from(s).ok())
                 && let Some(mapped_role) = schema().role_for_layout_hint(hint_id)
             {
-                role = mapped_role;
+                mapped = Some(mapped_role);
                 break;
             }
+        }
+        if let Some(m) = mapped {
+            role = m;
+            break;
         }
     }
 

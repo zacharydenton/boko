@@ -9,6 +9,27 @@ pub struct StyleId(
     pub u32,
 );
 
+/// An absolute font size as a multiple of the root (user default) size —
+/// the fully-resolved product of every relative `font-size` on the ancestor
+/// chain. `1.0` is the root size. Wrapped so `ComputedStyle` keeps derived
+/// `Eq`/`Hash` (bitwise, like `Length`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AbsFontSize(pub f32);
+
+impl Default for AbsFontSize {
+    fn default() -> Self {
+        AbsFontSize(1.0)
+    }
+}
+
+impl Eq for AbsFontSize {}
+
+impl std::hash::Hash for AbsFontSize {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 impl StyleId {
     /// The default style (always 0).
     pub const DEFAULT: StyleId = StyleId(0);
@@ -20,13 +41,24 @@ impl StyleId {
 /// Enum-typed and `Length` fields use their `Default` (usually the CSS
 /// initial value; `Length::Auto` for lengths); `Option` fields are `None`
 /// when the property was never set, letting exporters skip emitting them.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+///
+/// Margins are the exception to the `Length::Auto`-as-unset convention:
+/// their CSS initial value is `0`, so [`Default`] gives them `Px(0)` and
+/// `Length::Auto` means the author explicitly wrote `margin: auto`
+/// (horizontal centering). Conflating the two centered every block whose
+/// margins were simply never set.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ComputedStyle {
     // Font properties
     /// `font-family`; `None` means inherit the reader default.
     pub font_family: Option<String>,
     /// `font-size`; `Length::Auto` means unset (reader default size).
     pub font_size: Length,
+    /// Fully-resolved absolute font size (root-relative multiple), computed
+    /// by the cascade from the ancestor chain. Exporters that need the
+    /// rendered size (KFX emits absolute `rem`) read this instead of
+    /// interpreting the parent-relative `font_size`.
+    pub font_size_abs: AbsFontSize,
     /// `font-weight` as a numeric weight (default 0 means unset; 400 normal, 700 bold).
     pub font_weight: FontWeight,
     /// `font-style` (normal, italic, oblique).
@@ -45,6 +77,10 @@ pub struct ComputedStyle {
     pub text_indent: Length,
     /// `line-height`; unitless values are stored as em, `Auto` means unset.
     pub line_height: Length,
+    /// Export-time line-height scale (leading normalization); 1.0 outside
+    /// KFX export. Kept on the style so emission can clamp the authored
+    /// leading before scaling, the way reference output does.
+    pub line_scale: AbsFontSize,
     /// Whether `text-decoration` includes an underline line.
     pub text_decoration_underline: bool,
     /// Whether `text-decoration` includes a line-through (strikethrough) line.
@@ -53,13 +89,13 @@ pub struct ComputedStyle {
     // Box model
     /// `display` box mode (block, inline, none, list-item, ...).
     pub display: Display,
-    /// `margin-top`; `Length::Auto` means unset.
+    /// `margin-top`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_top: Length,
-    /// `margin-bottom`; `Length::Auto` means unset.
+    /// `margin-bottom`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_bottom: Length,
-    /// `margin-left`; `Length::Auto` means unset.
+    /// `margin-left`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_left: Length,
-    /// `margin-right`; `Length::Auto` means unset.
+    /// `margin-right`; initial value `Px(0)`, `Length::Auto` means explicit `auto`.
     pub margin_right: Length,
     /// `padding-top`; `Length::Auto` means unset.
     pub padding_top: Length,
@@ -195,6 +231,94 @@ pub struct ComputedStyle {
     pub border_collapse: BorderCollapse,
     /// `border-spacing` between table cells; `Length::Auto` means unset.
     pub border_spacing: Length,
+
+    /// Dropcap span line height in text lines (0 = not a dropcap). Set by
+    /// the dropcap-detection pass on the paragraph; drives the KFX
+    /// `dropcap_lines`/`dropcap_chars` properties.
+    pub dropcap_lines: u8,
+    /// Number of leading characters rendered as the dropcap (0 = none).
+    pub dropcap_chars: u8,
+}
+
+impl Default for ComputedStyle {
+    fn default() -> Self {
+        Self {
+            // CSS initial margin is 0; `Length::Auto` is reserved for an
+            // explicit `margin: auto` (see the struct docs).
+            margin_top: Length::Px(0.0),
+            margin_bottom: Length::Px(0.0),
+            margin_left: Length::Px(0.0),
+            margin_right: Length::Px(0.0),
+            font_family: Default::default(),
+            font_size: Default::default(),
+            font_size_abs: Default::default(),
+            font_weight: Default::default(),
+            font_style: Default::default(),
+            color: Default::default(),
+            background_color: Default::default(),
+            text_align: Default::default(),
+            text_indent: Default::default(),
+            line_height: Default::default(),
+            line_scale: Default::default(),
+            text_decoration_underline: Default::default(),
+            text_decoration_line_through: Default::default(),
+            display: Default::default(),
+            padding_top: Default::default(),
+            padding_bottom: Default::default(),
+            padding_left: Default::default(),
+            padding_right: Default::default(),
+            vertical_align: Default::default(),
+            list_style_type: Default::default(),
+            font_variant: Default::default(),
+            letter_spacing: Default::default(),
+            word_spacing: Default::default(),
+            text_transform: Default::default(),
+            hyphens: Default::default(),
+            white_space: Default::default(),
+            underline_style: Default::default(),
+            overline: Default::default(),
+            underline_color: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            max_width: Default::default(),
+            min_height: Default::default(),
+            float: Default::default(),
+            break_before: Default::default(),
+            break_after: Default::default(),
+            break_inside: Default::default(),
+            border_style_top: Default::default(),
+            border_style_right: Default::default(),
+            border_style_bottom: Default::default(),
+            border_style_left: Default::default(),
+            border_width_top: Default::default(),
+            border_width_right: Default::default(),
+            border_width_bottom: Default::default(),
+            border_width_left: Default::default(),
+            border_color_top: Default::default(),
+            border_color_right: Default::default(),
+            border_color_bottom: Default::default(),
+            border_color_left: Default::default(),
+            border_radius_top_left: Default::default(),
+            border_radius_top_right: Default::default(),
+            border_radius_bottom_left: Default::default(),
+            border_radius_bottom_right: Default::default(),
+            list_style_position: Default::default(),
+            language: Default::default(),
+            visibility: Default::default(),
+            box_sizing: Default::default(),
+            max_height: Default::default(),
+            min_width: Default::default(),
+            clear: Default::default(),
+            orphans: Default::default(),
+            widows: Default::default(),
+            word_break: Default::default(),
+            overflow_wrap: Default::default(),
+            border_collapse: Default::default(),
+            border_spacing: Default::default(),
+            dropcap_lines: 0,
+            dropcap_chars: 0,
+        }
+    }
 }
 
 impl ComputedStyle {

@@ -19,23 +19,51 @@ pub(super) fn survey_chapter(
     let _fragment_id = ctx.begin_chapter_survey(chapter_id, source_path);
 
     // Walk the IR tree
-    survey_node(chapter, chapter.root(), ctx);
+    survey_node(chapter, chapter.root(), (1.0, 1.2), ctx);
 
     // End surveying
     ctx.end_chapter_survey();
 }
 
-/// Recursively survey a node and its children.
-pub(super) fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportContext) {
+/// Recursively survey a node and its children. `inherited` is the nearest
+/// styled ancestor's (absolute font size, line-height in em of its font) —
+/// text leaves often carry the default StyleId while their metrics live on
+/// the paragraph node.
+pub(super) fn survey_node(
+    chapter: &Chapter,
+    node_id: NodeId,
+    inherited: (f32, f32),
+    ctx: &mut ExportContext,
+) {
     let node = match chapter.node(node_id) {
         Some(n) => n,
         None => return,
     };
 
+    let metrics = if node.style == crate::style::StyleId::DEFAULT {
+        inherited
+    } else {
+        chapter
+            .styles
+            .get(node.style)
+            .map(|s| {
+                let abs = s.font_size_abs.0;
+                let line_em = match s.line_height {
+                    crate::style::Length::Auto => 1.2,
+                    crate::style::Length::Em(x) => x,
+                    crate::style::Length::Percent(p) => p / 100.0,
+                    crate::style::Length::Px(x) => x / 16.0 / abs.max(1e-6),
+                    crate::style::Length::Rem(x) => x / abs.max(1e-6),
+                };
+                (abs, line_em)
+            })
+            .unwrap_or(inherited)
+    };
+
     // Skip root node processing but walk children
     if node.role == Role::Root {
         for child in chapter.children(node_id) {
-            survey_node(chapter, child, ctx);
+            survey_node(chapter, child, metrics, ctx);
         }
         return;
     }
@@ -58,12 +86,14 @@ pub(super) fn survey_node(chapter: &Chapter, node_id: NodeId, ctx: &mut ExportCo
     if !node.text.is_empty() {
         let text = chapter.text(node.text);
         ctx.advance_text_offset(text.len());
+        // Weight this text's metrics for body-size/leading normalization.
+        ctx.record_text_metrics(metrics.0, metrics.1, text.len());
         // We don't need to intern plain text content
     }
 
     // Recurse into children
     for child in chapter.children(node_id) {
-        survey_node(chapter, child, ctx);
+        survey_node(chapter, child, metrics, ctx);
     }
 }
 

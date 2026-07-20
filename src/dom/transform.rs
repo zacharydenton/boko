@@ -32,6 +32,143 @@ pub(crate) fn user_agent_stylesheet_arc() -> std::sync::Arc<Stylesheet> {
     UA_STYLESHEET.clone()
 }
 
+/// Synthesize CSS declarations from legacy presentational attributes
+/// (`align=`, `valign=`), which many older EPUB/MOBI-derived books rely on.
+/// Per CSS these are presentational hints: they apply before author rules
+/// (any matching selector overrides them) but beat inherited values.
+fn presentational_hints(
+    element: &html5ever::LocalName,
+    attrs: &[crate::dom::arena::Attribute],
+) -> Option<crate::style::InlineStyle> {
+    let name = element.as_ref();
+    let aligned = matches!(
+        name,
+        "p" | "div"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "td"
+            | "th"
+            | "tr"
+            | "table"
+            | "caption"
+            | "tbody"
+            | "thead"
+            | "tfoot"
+            | "center"
+    );
+    let cellish = matches!(name, "td" | "th" | "tr" | "tbody" | "thead" | "tfoot");
+    let font = name == "font";
+    // MOBI-7 spacing convention: height= is vertical space before the
+    // block, width= is the first-line indent.
+    let mobi_spaced = matches!(name, "p" | "div" | "blockquote");
+    if !aligned && !cellish && !font && !mobi_spaced {
+        return None;
+    }
+    let clean_len = |v: &str| {
+        !v.is_empty()
+            && v.len() <= 12
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '%' || c == '-')
+    };
+    let mut css = String::new();
+    for attr in attrs {
+        match attr.name.local.as_ref() {
+            "align" if aligned => {
+                let v = attr.value.trim().to_ascii_lowercase();
+                if matches!(v.as_str(), "left" | "right" | "center" | "justify") {
+                    css.push_str("text-align: ");
+                    css.push_str(&v);
+                    css.push(';');
+                }
+            }
+            "valign" if cellish => {
+                let v = attr.value.trim().to_ascii_lowercase();
+                if matches!(v.as_str(), "top" | "middle" | "bottom" | "baseline") {
+                    css.push_str("vertical-align: ");
+                    css.push_str(&v);
+                    css.push(';');
+                }
+            }
+            // Legacy <font> element — the styling mechanism of old MOBI
+            // books (syntax-highlight colors, sized code and headings).
+            "size" if font => {
+                let v = attr.value.trim();
+                // Absolute 1-7 or relative +N/-N from the base size 3,
+                // mapped onto the browser scale.
+                let base: i32 = if let Some(rest) = v.strip_prefix('+') {
+                    3 + rest.parse::<i32>().unwrap_or(0)
+                } else if let Some(rest) = v.strip_prefix('-') {
+                    3 - rest.parse::<i32>().unwrap_or(0)
+                } else {
+                    v.parse().unwrap_or(3)
+                };
+                let em = match base.clamp(1, 7) {
+                    1 => "0.625",
+                    2 => "0.8125",
+                    3 => "1",
+                    4 => "1.125",
+                    5 => "1.5",
+                    6 => "2",
+                    _ => "3",
+                };
+                css.push_str("font-size: ");
+                css.push_str(em);
+                css.push_str("em;");
+            }
+            "color" if font => {
+                let v = attr.value.trim();
+                if !v.is_empty() {
+                    css.push_str("color: ");
+                    css.push_str(v);
+                    css.push(';');
+                }
+            }
+            "face" if font => {
+                let v = attr.value.trim();
+                if !v.is_empty() && v.chars().all(|c| !c.is_control() && c != ';') {
+                    css.push_str("font-family: ");
+                    css.push_str(v);
+                    css.push(';');
+                }
+            }
+            // MOBI-7 convention: a height=/width= attribute marks a
+            // legacy-spaced block — ALL of its vertical spacing comes from
+            // the attribute (paragraphs carry no implicit margins in that
+            // model), so both margins are pinned: top to the attribute
+            // value, bottom to zero.
+            "height" if mobi_spaced => {
+                let v = attr.value.trim();
+                if clean_len(v) {
+                    css.push_str("margin-top: ");
+                    css.push_str(v);
+                    css.push_str(";margin-bottom: 0;");
+                }
+            }
+            "width" if mobi_spaced => {
+                let v = attr.value.trim();
+                if clean_len(v) {
+                    css.push_str("text-indent: ");
+                    css.push_str(v);
+                    css.push_str(";margin-bottom: 0;");
+                    if !attrs.iter().any(|a| a.name.local.as_ref() == "height") {
+                        css.push_str("margin-top: 0;");
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if css.is_empty() {
+        return None;
+    }
+    let parsed = crate::style::InlineStyle::parse(&css);
+    (!parsed.is_empty()).then_some(parsed)
+}
+
 /// Context for the transform operation.
 struct TransformContext<'a> {
     dom: &'a ArenaDom,
@@ -113,6 +250,7 @@ impl<'a> TransformContext<'a> {
                     &mut self.cascade_scratch,
                     None,
                     inline.as_ref(),
+                    None,
                 )
             });
 
@@ -133,6 +271,7 @@ impl<'a> TransformContext<'a> {
                 &mut self.cascade_scratch,
                 bloom,
                 inline.as_ref(),
+                None,
             )
         };
 
@@ -303,6 +442,7 @@ impl<'a> TransformContext<'a> {
                     .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
                     .map(|a| crate::style::InlineStyle::parse(&a.value))
                     .filter(|i| !i.is_empty());
+                let hints = presentational_hints(&name.local, attrs.as_slice());
                 let mut computed = compute_styles_indexed(
                     elem_ref,
                     &self.cascade_index,
@@ -311,6 +451,7 @@ impl<'a> TransformContext<'a> {
                     &mut self.cascade_scratch,
                     bloom,
                     inline.as_ref(),
+                    hints.as_ref(),
                 );
 
                 // Merge lang attribute into style (for KFX language property)

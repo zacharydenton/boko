@@ -179,3 +179,59 @@ fn azw3_roundtrip_resource_records_are_recognisable() {
         "expected at least one JPEG/PNG/GIF asset; got {assets:?}"
     );
 }
+
+/// KF8 stylesheets live in FDST flows referenced as `kindle:flow:N` links.
+/// The importer must serve them through `load_asset`/`load_stylesheet` —
+/// they were previously unreachable, silently dropping every KF8 book's CSS.
+#[test]
+fn azw3_roundtrip_preserves_stylesheet_styles() {
+    let src_path = "tests/fixtures/epictetus.epub";
+    let bytes = export_epub_to_azw3_bytes(src_path);
+    let book = Book::from_bytes(&bytes, Format::Azw3).expect("reopen azw3");
+
+    // The style flows are listed as assets and load as CSS text.
+    let css_assets: Vec<&String> = book
+        .list_assets()
+        .iter()
+        .filter(|a| a.starts_with("styles/"))
+        .collect();
+    assert!(
+        !css_assets.is_empty(),
+        "KF8 style flows must appear in list_assets"
+    );
+    let css = book.load_asset(css_assets[0]).expect("load style flow");
+    let css_text = String::from_utf8_lossy(&css);
+    assert!(
+        css_text.contains('{'),
+        "style flow must contain CSS rules, got: {}",
+        &css_text[..css_text.len().min(80)]
+    );
+
+    // Authored styles reach computed chapter styles: epictetus sets
+    // small-caps/italic/centered classes; at least one non-default computed
+    // style must carry an authored (non-UA) property such as small-caps.
+    let spine = book.spine().to_vec();
+    let mut found_small_caps = false;
+    for entry in &spine {
+        let Ok(chapter) = book.load_chapter_cached(entry.id) else {
+            continue;
+        };
+        for node_id in chapter.iter_dfs() {
+            if let Some(node) = chapter.node(node_id)
+                && let Some(style) = chapter.styles.get(node.style)
+                && style.font_variant == boko::style::FontVariant::SmallCaps
+            {
+                found_small_caps = true;
+                break;
+            }
+        }
+        if found_small_caps {
+            break;
+        }
+    }
+    assert!(
+        found_small_caps,
+        "authored small-caps styling must survive the AZW3 roundtrip \
+         (KF8 flow CSS regression)"
+    );
+}

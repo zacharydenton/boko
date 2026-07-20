@@ -157,6 +157,28 @@ impl Importer for Azw3Importer {
     }
 
     fn load_asset(&self, path: &str) -> crate::Result<Vec<u8>> {
+        // KF8 stylesheets live in FDST flows (flow 0 is the HTML; the
+        // `kindle:flow:N` links are rewritten to styles/style{N-1:04}.css by
+        // the markup transform). Serve them from the flow table — without
+        // this every KF8 book's CSS silently vanished.
+        if let Some(rest) = path.strip_prefix("styles/style") {
+            let css_idx: usize = rest
+                .split('.')
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| crate::Error::NotFound {
+                    what: format!("asset {}", path),
+                })?;
+            let flow_idx = css_idx + 1;
+            let (start, end) = self.kf8.flow_table.get(flow_idx).copied().ok_or_else(|| {
+                crate::Error::NotFound {
+                    what: format!("asset {}", path),
+                }
+            })?;
+            let text = self.cached_text()?;
+            return Ok(flow_slice(&text, start, end).to_vec());
+        }
+
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
         // Images and fonts share the same record-index space, so the prefix
         // selects naming but the underlying lookup is the same.
@@ -620,6 +642,12 @@ impl Azw3Importer {
     /// Discover asset paths by scanning image and font records.
     fn discover_assets(&self) -> Vec<String> {
         let mut assets = Vec::new();
+
+        // KF8 stylesheet flows (flow 0 is the HTML) — listed so exporters
+        // that copy assets ship the CSS the chapters link to.
+        for css_idx in 0..self.kf8.flow_table.len().saturating_sub(1) {
+            assets.push(format!("styles/style{:04}.css", css_idx));
+        }
 
         if self.mobi.first_image_index == NULL_INDEX {
             return assets;

@@ -22,7 +22,8 @@ use super::parse::keywords::{
     parse_word_break,
 };
 use super::parse::values::{
-    parse_background_shorthand, parse_color, parse_integer, parse_length, parse_text_decoration,
+    parse_background_shorthand, parse_color, parse_integer, parse_length, parse_spacing,
+    parse_text_decoration,
 };
 use super::properties::*;
 
@@ -325,10 +326,14 @@ impl Declaration {
             "text-align" => parse_text_align(input).map(Self::TextAlign),
             "text-indent" => parse_length(input).map(Self::TextIndent),
             "line-height" => parse_line_height(input).map(Self::LineHeight),
-            "letter-spacing" => parse_length(input).map(Self::LetterSpacing),
-            "word-spacing" => parse_length(input).map(Self::WordSpacing),
+            // `normal` is the spacing reset keyword (parse_length only knows
+            // `auto`); both mean "no extra spacing" (`Length::Auto`).
+            "letter-spacing" => parse_spacing(input).map(Self::LetterSpacing),
+            "word-spacing" => parse_spacing(input).map(Self::WordSpacing),
             "text-transform" => parse_text_transform(input).map(Self::TextTransform),
-            "hyphens" => parse_hyphens(input).map(Self::Hyphens),
+            // Vendor-prefixed hyphenation aliases are common in EPUB CSS.
+            "hyphens" | "-epub-hyphens" | "-webkit-hyphens" | "-moz-hyphens"
+            | "adobe-hyphenate" => parse_hyphens(input).map(Self::Hyphens),
             "white-space" => parse_white_space(input).map(Self::WhiteSpace),
             "vertical-align" => parse_vertical_align(input).map(Self::VerticalAlign),
 

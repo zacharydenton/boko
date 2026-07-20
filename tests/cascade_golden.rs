@@ -93,9 +93,23 @@ fn descendant_book() -> EpubBuilder {
 // (928 epub:type markers survive the epictetus round trip). The matched
 // cascade declarations are unchanged — only the emitted markup gained
 // attributes.
-const FP_EPICTETUS: &str = "75fa8416a3fa70d69b9411979190ad3e32b56791";
+// Updated again when the computed margin initial value became `0` with
+// `Length::Auto` reserved for explicit `margin: auto`: authored auto margins
+// (Standard Ebooks centering idiom) now survive into the normalized CSS,
+// while explicit `margin: 0` folds into the initial value and is omitted.
+// Updated again when `ComputedStyle` gained the cascade-resolved absolute
+// font size (`font_size_abs`): styles used under different ancestor font
+// scales intern separately now, so the synthesized `.cNN` classes partition
+// differently — the emitted declarations are unchanged.
+// Updated again when anonymous mixed-content wrappers started interning an
+// inherit-only style (CSS anonymous-box semantics) instead of the default
+// StyleId — the pool gains entries, so class numbering shifts.
+const FP_EPICTETUS: &str = "2f62e95c8fba1a676cf91f2921768e0ddcd4ebfc";
 const FP_CLASS: &str = "0011593d1051d42ce417aa0bd9d63012fdaf42b7";
-const FP_DESCENDANT: &str = "76e77d1c07d7156e03e6549241d920c6d935aae2";
+// Updated when the UA stylesheet's blockquote/figure/dd margins moved from
+// the browser-literal 40px to 2.5em (same length at the default font size,
+// but it scales with the font instead of freezing at a device-pixel size).
+const FP_DESCENDANT: &str = "1794dcb313c9799f0c5c9fff01c8ffedfd886c68";
 
 #[test]
 fn cascade_output_is_stable_epictetus() {

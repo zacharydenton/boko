@@ -256,48 +256,9 @@ fn start_element_fields(
         fields.push((sym!(ListStyle), IonValue::Symbol(sym!(Numeric))));
     }
 
-    // Add layout_hints based on element role and semantics
-    // This affects Kindle's rendering behavior for headings, figures, and captions
-    let layout_hint = match elem.role {
-        // Headings (h1-h6) → treat_as_title
-        Role::Heading(_) => Some(KfxSymbol::TreatAsTitle),
-        // <figure> → figure
-        Role::Figure => Some(KfxSymbol::Figure),
-        // <figcaption>/<caption> → caption
-        Role::Caption => Some(KfxSymbol::Caption),
-        _ => {
-            // Check epub:type for additional semantic hints
-            if let Some(epub_type) = elem.get_semantic(SemanticTarget::EpubType) {
-                // Check each epub:type value (space-separated)
-                let has_title_type = epub_type.split_whitespace().any(|t| {
-                    matches!(
-                        t,
-                        "title" | "fulltitle" | "subtitle" | "covertitle" | "halftitle"
-                    )
-                });
-                let has_caption_type = epub_type
-                    .split_whitespace()
-                    .any(|t| matches!(t, "caption" | "figcaption"));
-
-                if has_title_type {
-                    Some(KfxSymbol::TreatAsTitle)
-                } else if has_caption_type {
-                    Some(KfxSymbol::Caption)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-    };
-
-    if let Some(hint) = layout_hint {
-        fields.push((
-            sym!(LayoutHints),
-            IonValue::List(vec![IonValue::Symbol(hint as u64)]),
-        ));
-    }
+    // (layout_hints ride the element's *style*, not the content node —
+    // reference KFX puts treat_as_title/figure/caption in style structs;
+    // see layout_hint_for in export.rs.)
 
     // Add yj.classification for footnote/endnote popup support
     // This marks the element so Kindle can show its content in a popup

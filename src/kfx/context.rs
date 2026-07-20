@@ -698,15 +698,32 @@ pub struct ExportContext {
     /// Style registry for deduplicating and tracking KFX styles.
     pub style_registry: StyleRegistry,
 
-    /// Memo for `register_style_id`: chapter-local StyleId → KFX style symbol.
-    /// StyleIds are only meaningful within one chapter's StylePool, so this
-    /// is cleared by `begin_chapter`.
-    ir_style_memo: FxHashMap<StyleId, u64>,
+    /// Memo for `register_style_id`: chapter-local (StyleId, parent StyleId)
+    /// → KFX style symbol. Keyed by the pair because inherited properties
+    /// are emitted as a diff against the parent's style. StyleIds are only
+    /// meaningful within one chapter's StylePool, so this is cleared by
+    /// `begin_chapter`.
+    ir_style_memo: FxHashMap<(StyleId, StyleId), u64>,
 
     /// Memo for `register_inline_style_id` (same lifecycle as
     /// `ir_style_memo`, separate because the inline projection of a style
     /// registers under a different symbol than its block form).
-    ir_inline_style_memo: FxHashMap<StyleId, u64>,
+    ir_inline_style_memo: FxHashMap<(StyleId, StyleId), u64>,
+
+    /// Memo for `register_style_id_adjusted` (same lifecycle): the key adds
+    /// the margin-collapse override bits to the (style, parent) pair.
+    #[allow(clippy::type_complexity)]
+    ir_adjusted_style_memo: FxHashMap<
+        (
+            StyleId,
+            StyleId,
+            Option<u32>,
+            Option<u32>,
+            Option<crate::kfx::symbols::KfxSymbol>,
+            Option<u32>,
+        ),
+        u64,
+    >,
 
     /// Anchor registry for link target resolution.
     pub anchor_registry: AnchorRegistry,
@@ -743,6 +760,33 @@ pub struct ExportContext {
     /// Something referenced the default style (s0); when nothing does, the
     /// fragment is not emitted (an unreferenced style is a conformance error).
     pub default_style_used: bool,
+
+    /// Set while emitting a dropcap paragraph's inline content: the first
+    /// styled run (the floated dropcap span) has its float and large font
+    /// projected away, because the native KFX dropcap on the paragraph
+    /// replaces them. Consumed by the first inline run.
+    pub dropcap_suppress: bool,
+
+    /// Text bytes per absolute font size (keyed by the exact f32 bits),
+    /// accumulated during the survey pass to find the dominant body size.
+    font_size_weights: FxHashMap<u32, u64>,
+
+    /// Global font scale so the dominant body size renders at 1rem — the
+    /// user's chosen device font size. Reference KFX normalizes the same
+    /// way: a book whose stylesheet sets body text to 13px must not render
+    /// 19% smaller than every other book on the device.
+    pub font_scale: f32,
+
+    /// Text bytes per line-height (em of the element's font, exact f32
+    /// bits), accumulated during the survey pass.
+    line_height_weights: FxHashMap<u32, u64>,
+
+    /// Global line-height scale so the dominant leading renders at 1lh —
+    /// the user's line-spacing setting. Reference KFX normalizes authored
+    /// body leading the same way (a book forcing line-height: 1.6 must not
+    /// override the reader's chosen spacing); authored leading elsewhere
+    /// keeps its ratio to the body.
+    pub line_scale: f32,
 
     /// Chapters that need chapter-start anchors.
     chapters_needing_anchor: HashSet<ChapterId>,
@@ -821,6 +865,7 @@ impl ExportContext {
             style_registry: StyleRegistry::new(default_style_symbol),
             ir_style_memo: FxHashMap::default(),
             ir_inline_style_memo: FxHashMap::default(),
+            ir_adjusted_style_memo: FxHashMap::default(),
             anchor_registry: AnchorRegistry::new(),
             landmark_fragments: HashMap::new(),
             nav_container_symbols: NavContainerSymbols::default(),
@@ -831,6 +876,11 @@ impl ExportContext {
             jpg_rst_marker_present: false,
             has_tables: false,
             default_style_used: false,
+            dropcap_suppress: false,
+            font_size_weights: FxHashMap::default(),
+            font_scale: 1.0,
+            line_height_weights: FxHashMap::default(),
+            line_scale: 1.0,
             chapters_needing_anchor: HashSet::new(),
             pending_chapter_anchor: None,
             first_content_ids: HashMap::new(),
@@ -856,6 +906,7 @@ impl ExportContext {
     pub fn reset_style_memo(&mut self) {
         self.ir_style_memo.clear();
         self.ir_inline_style_memo.clear();
+        self.ir_adjusted_style_memo.clear();
     }
 
     /// Prepare context for processing a new chapter.
@@ -930,35 +981,220 @@ impl ExportContext {
         id
     }
 
-    /// Register an IR style and return its KFX style symbol.
-    pub fn register_ir_style(&mut self, ir_style: &crate::style::ComputedStyle) -> u64 {
+    /// Record text weight for one absolute font size and line-height
+    /// (em of the element's font), from the survey pass.
+    pub fn record_text_metrics(&mut self, abs: f32, line_em: f32, bytes: usize) {
+        *self.font_size_weights.entry(abs.to_bits()).or_insert(0) += bytes as u64;
+        *self
+            .line_height_weights
+            .entry(line_em.to_bits())
+            .or_insert(0) += bytes as u64;
+    }
+
+    /// Resolve the global font scale from the surveyed weights: the
+    /// text-dominant absolute size maps to 1rem. No-op when the dominant
+    /// size is already within 2% of 1rem; clamped to a sane range.
+    pub fn resolve_font_scale(&mut self) {
+        let Some((&key, _)) = self.font_size_weights.iter().max_by_key(|&(_, &w)| w) else {
+            return;
+        };
+        let dominant = f32::from_bits(key);
+        if dominant > 0.0 && (dominant - 1.0).abs() > 0.02 {
+            self.font_scale = (1.0 / dominant).clamp(0.5, 2.0);
+        }
+        if let Some((&key, _)) = self.line_height_weights.iter().max_by_key(|&(_, &w)| w) {
+            let dominant = f32::from_bits(key);
+            if dominant > 0.0 && (dominant - 1.2).abs() > 0.024 {
+                self.line_scale = (1.2 / dominant).clamp(0.5, 2.0);
+            }
+        }
+    }
+
+    /// A copy of `style` with the global font and line-height scales
+    /// applied. Emission derives every font-relative conversion from
+    /// `font_size_abs`, so scaling it here normalizes the whole style;
+    /// authored line-heights scale toward the 1.2em base (unset leading is
+    /// already the base).
+    fn scaled_style(&self, style: &crate::style::ComputedStyle) -> crate::style::ComputedStyle {
+        let mut scaled = style.clone();
+        scaled.font_size_abs = crate::style::AbsFontSize(style.font_size_abs.0 * self.font_scale);
+        scaled.line_scale = crate::style::AbsFontSize(self.line_scale);
+        scaled
+    }
+
+    /// Build the KFX property set for a style under the book's font scale.
+    /// `parent_is_default` marks the root inheritance context, which is the
+    /// renderer environment — 1rem absolutely, never rescaled.
+    fn build_kfx_style(
+        &mut self,
+        ir_style: &crate::style::ComputedStyle,
+        parent: &crate::style::ComputedStyle,
+        parent_is_default: bool,
+    ) -> crate::kfx::style_registry::ComputedStyle {
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-        builder.ingest_ir_style(ir_style);
-        let kfx_style = builder.build();
+        if self.font_scale != 1.0 || self.line_scale != 1.0 {
+            let scaled_parent = if parent_is_default {
+                parent.clone()
+            } else {
+                self.scaled_style(parent)
+            };
+            builder.ingest_ir_style_with_parent(&self.scaled_style(ir_style), &scaled_parent);
+        } else {
+            builder.ingest_ir_style_with_parent(ir_style, parent);
+        }
+        let mut kfx_style = builder.build();
+        // Block backgrounds paint the box, not the text run: reference
+        // output uses fill_color on block styles (text_background_color is
+        // for inline style_events; see register_inline_style_id).
+        use crate::kfx::symbols::KfxSymbol;
+        if let Some(value) = kfx_style.remove(KfxSymbol::TextBackgroundColor) {
+            kfx_style.set(KfxSymbol::FillColor, value);
+        }
+        kfx_style
+    }
+
+    /// Register an IR style and return its KFX style symbol. `parent` is the
+    /// parent element's computed style — the inheritance baseline for
+    /// CSS-inherited properties (see `extract_ir_field`).
+    pub fn register_ir_style(
+        &mut self,
+        ir_style: &crate::style::ComputedStyle,
+        parent: &crate::style::ComputedStyle,
+    ) -> u64 {
+        let kfx_style = self.build_kfx_style(ir_style, parent, false);
+        if kfx_style.is_empty() {
+            self.default_style_used = true;
+            return self.default_style_symbol;
+        }
         self.style_registry.register(kfx_style, &mut self.symbols)
     }
 
-    /// Register an IR style by StyleId.
+    /// Register an IR style by StyleId. `parent_id` is the style of the
+    /// nearest styled ancestor — emission depends on the (style, parent)
+    /// pair, so the memo is keyed by both.
     pub fn register_style_id(
         &mut self,
         style_id: StyleId,
+        parent_id: StyleId,
         style_pool: &crate::style::StylePool,
     ) -> u64 {
-        if style_id == StyleId::DEFAULT {
+        if style_id == StyleId::DEFAULT && parent_id == StyleId::DEFAULT {
             return self.default_style_symbol;
         }
 
-        if let Some(&symbol) = self.ir_style_memo.get(&style_id) {
+        if let Some(&symbol) = self.ir_style_memo.get(&(style_id, parent_id)) {
             return symbol;
         }
 
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
-            self.register_ir_style(ir_style)
+            let default = crate::style::ComputedStyle::default();
+            let parent = style_pool.get(parent_id).unwrap_or(&default);
+            let kfx_style = self.build_kfx_style(ir_style, parent, parent_id == StyleId::DEFAULT);
+            if kfx_style.is_empty() {
+                self.default_style_used = true;
+                self.default_style_symbol
+            } else {
+                self.style_registry.register(kfx_style, &mut self.symbols)
+            }
         } else {
             self.default_style_symbol
         };
-        self.ir_style_memo.insert(style_id, symbol);
+        self.ir_style_memo.insert((style_id, parent_id), symbol);
+        symbol
+    }
+
+    /// Register an IR style with margin-collapse overrides applied: the
+    /// built KFX style's margin-top/bottom are replaced with the collapsed
+    /// values (in lh of the element's line box) or removed when collapsed
+    /// to zero. Memoized by (style, parent, override bits) — collapsed
+    /// sequences repeat, so identical adjusted styles dedup.
+    pub fn register_style_id_adjusted(
+        &mut self,
+        style_id: StyleId,
+        parent_id: StyleId,
+        style_pool: &crate::style::StylePool,
+        adjust: crate::kfx::storyline::MarginAdjust,
+        layout_hint: Option<crate::kfx::symbols::KfxSymbol>,
+        link_color: Option<u32>,
+    ) -> u64 {
+        if adjust.is_identity() && layout_hint.is_none() && link_color.is_none() {
+            return self.register_style_id(style_id, parent_id, style_pool);
+        }
+        let key = (
+            style_id,
+            parent_id,
+            adjust.top_abs_em.map(f32::to_bits),
+            adjust.bottom_abs_em.map(f32::to_bits),
+            layout_hint,
+            link_color,
+        );
+        if let Some(&symbol) = self.ir_adjusted_style_memo.get(&key) {
+            return symbol;
+        }
+
+        let default = crate::style::ComputedStyle::default();
+        let ir_style = style_pool.get(style_id);
+        let parent = style_pool.get(parent_id).unwrap_or(&default);
+        let ir_style_ref = ir_style.unwrap_or(&default);
+
+        let mut kfx_style =
+            self.build_kfx_style(ir_style_ref, parent, parent_id == StyleId::DEFAULT);
+
+        use crate::kfx::style_schema::KfxValue;
+        use crate::kfx::symbols::KfxSymbol;
+        // Margin overrides are in unscaled absolute em; the unscaled style
+        // converts them to the element's own em (the scale cancels).
+        let mut apply = |symbol: KfxSymbol, abs_em: Option<f32>| {
+            if let Some(v) = abs_em {
+                if v == 0.0 {
+                    kfx_style.remove(symbol);
+                } else {
+                    let lh = crate::kfx::style_schema::margin_abs_em_to_lh(ir_style_ref, v as f64);
+                    // Round like extract_ir_field's dimension formatting.
+                    let lh = (lh * 1e6).round() / 1e6;
+                    kfx_style.set(
+                        symbol,
+                        KfxValue::Dimensioned {
+                            value: lh,
+                            unit: KfxSymbol::Lh,
+                        },
+                    );
+                }
+            }
+        };
+        apply(KfxSymbol::MarginTop, adjust.top_abs_em);
+        apply(KfxSymbol::MarginBottom, adjust.bottom_abs_em);
+
+        if let Some(hint) = layout_hint {
+            kfx_style.set(
+                KfxSymbol::LayoutHints,
+                KfxValue::SymbolList(vec![hint as u64]),
+            );
+        }
+
+        // Blocks containing colored links carry the link color as
+        // link_unvisited_style/link_visited_style, like reference output —
+        // event styles alone don't restyle the link text on device.
+        if let Some(argb) = link_color {
+            for symbol in [KfxSymbol::LinkUnvisitedStyle, KfxSymbol::LinkVisitedStyle] {
+                kfx_style.set(
+                    symbol,
+                    KfxValue::StructField {
+                        field: KfxSymbol::TextColor,
+                        value: argb as i64,
+                    },
+                );
+            }
+        }
+
+        let symbol = if kfx_style.is_empty() {
+            self.default_style_used = true;
+            self.default_style_symbol
+        } else {
+            self.style_registry.register(kfx_style, &mut self.symbols)
+        };
+        self.ir_adjusted_style_memo.insert(key, symbol);
         symbol
     }
 
@@ -972,22 +1208,46 @@ impl ExportContext {
     pub fn register_inline_style_id(
         &mut self,
         style_id: StyleId,
+        parent_id: StyleId,
         style_pool: &crate::style::StylePool,
     ) -> u64 {
-        if style_id == StyleId::DEFAULT {
+        self.register_inline_style_id_inner(style_id, parent_id, style_pool, false)
+    }
+
+    /// As [`Self::register_inline_style_id`], but when `suppress_dropcap` is
+    /// set the run's float and large font are projected away (a dropcap
+    /// paragraph's leading span — the native dropcap replaces them). Not
+    /// memoized, so the same span emits normally elsewhere.
+    pub fn register_inline_style_id_inner(
+        &mut self,
+        style_id: StyleId,
+        parent_id: StyleId,
+        style_pool: &crate::style::StylePool,
+        suppress_dropcap: bool,
+    ) -> u64 {
+        if style_id == StyleId::DEFAULT && parent_id == StyleId::DEFAULT {
             return self.default_style_symbol;
         }
 
-        if let Some(&symbol) = self.ir_inline_style_memo.get(&style_id) {
+        if !suppress_dropcap
+            && let Some(&symbol) = self.ir_inline_style_memo.get(&(style_id, parent_id))
+        {
             return symbol;
         }
 
         let symbol = if let Some(ir_style) = style_pool.get(style_id) {
-            let schema = crate::kfx::style_schema::StyleSchema::standard();
-            let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
-            builder.ingest_ir_style(ir_style);
-            let mut kfx_style = builder.build();
+            let default = crate::style::ComputedStyle::default();
+            let parent = style_pool.get(parent_id).unwrap_or(&default);
+            let ir_style = ir_style.clone();
+            let mut kfx_style =
+                self.build_kfx_style(&ir_style, parent, parent_id == StyleId::DEFAULT);
             kfx_style.remove(crate::kfx::symbols::KfxSymbol::BoxAlign);
+            if suppress_dropcap {
+                use crate::kfx::symbols::KfxSymbol;
+                kfx_style.remove(KfxSymbol::Float);
+                kfx_style.remove(KfxSymbol::FontSize);
+                kfx_style.remove(KfxSymbol::LineHeight);
+            }
             if kfx_style.is_empty() {
                 self.default_style_used = true;
                 self.default_style_symbol
@@ -997,7 +1257,10 @@ impl ExportContext {
         } else {
             self.default_style_symbol
         };
-        self.ir_inline_style_memo.insert(style_id, symbol);
+        if !suppress_dropcap {
+            self.ir_inline_style_memo
+                .insert((style_id, parent_id), symbol);
+        }
         symbol
     }
 

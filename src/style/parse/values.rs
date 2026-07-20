@@ -13,6 +13,8 @@ pub struct TextDecorationValue {
     pub underline: bool,
     /// Whether the `line-through` (strikethrough) line is present.
     pub line_through: bool,
+    /// Whether the `overline` line is present.
+    pub overline: bool,
 }
 
 pub(crate) fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
@@ -295,6 +297,18 @@ pub(crate) fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
     }
 }
 
+/// Parse letter-/word-spacing: a length, or the `normal` reset keyword
+/// (mapped to `Length::Auto`, the unset value — both mean no extra spacing).
+pub(crate) fn parse_spacing(input: &mut Parser<'_, '_>) -> Option<Length> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(Length::Auto);
+    }
+    parse_length(input)
+}
+
 pub(crate) fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
     if let Ok(Token::Number {
         int_value: Some(v), ..
@@ -313,6 +327,7 @@ pub(crate) fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDe
         match token.as_ref() {
             "underline" => result.underline = true,
             "line-through" => result.line_through = true,
+            "overline" => result.overline = true,
             "none" => {}
             _ => continue,
         }

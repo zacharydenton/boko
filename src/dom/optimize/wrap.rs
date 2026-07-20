@@ -114,8 +114,25 @@ fn wrap_run(
     start_idx: usize,
     end_idx: usize,
 ) {
-    // Create wrapper Container
-    let wrapper_id = chapter.alloc_node(Node::new(Role::Container));
+    // Create wrapper Container. Like a CSS anonymous box it inherits the
+    // parent's *heritable* properties with initial box properties: with the
+    // default StyleId the KFX exporter's parent-diff emission would read it
+    // as an explicit reset to root defaults (font size, alignment, indent)
+    // for everything inside; with the parent's full style its margins and
+    // borders would render twice.
+    let wrapper_style = chapter
+        .node(parent_id)
+        .map(|n| n.style)
+        .and_then(|sid| chapter.styles.get(sid).cloned())
+        .map(|parent| {
+            chapter
+                .styles
+                .intern(crate::style::inherit_from_parent(&parent))
+        })
+        .unwrap_or_default();
+    let mut wrapper_node = Node::new(Role::Container);
+    wrapper_node.style = wrapper_style;
+    let wrapper_id = chapter.alloc_node(wrapper_node);
 
     // Set wrapper's parent
     if let Some(wrapper) = chapter.node_mut(wrapper_id) {

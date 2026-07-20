@@ -34,8 +34,8 @@ pub fn element_to_role(local_name: &LocalName) -> Role {
 
         // Inline elements with styling (rendered via ComputedStyle)
         "span" | "em" | "i" | "cite" | "var" | "dfn" | "strong" | "b" | "code" | "kbd" | "samp"
-        | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small" | "mark"
-        | "abbr" | "time" | "q" => Role::Inline,
+        | "font" | "tt" | "sup" | "sub" | "u" | "ins" | "s" | "strike" | "del" | "small"
+        | "mark" | "abbr" | "time" | "q" => Role::Inline,
 
         // Headings with level
         "h1" => Role::Heading(1),

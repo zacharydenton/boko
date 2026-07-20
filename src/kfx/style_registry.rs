@@ -145,6 +145,10 @@ fn hash_kfx_value<H: Hasher>(value: &KfxValue, hasher: &mut H) {
             (*field as u64).hash(hasher);
             value.hash(hasher);
         }
+        KfxValue::SymbolList(syms) => {
+            10u8.hash(hasher);
+            syms.hash(hasher);
+        }
         KfxValue::StructFields(fields) => {
             for (field, value) in fields {
                 (*field as u64).hash(hasher);
@@ -331,11 +335,24 @@ impl<'a> StyleBuilder<'a> {
     /// 2. Add extraction case to `extract_ir_field()`
     /// 3. Add schema rule with `ir_field: Some(IrField::NewField)`
     pub fn ingest_ir_style(&mut self, ir_style: &ir_style::ComputedStyle) -> &mut Self {
+        static DEFAULT: std::sync::OnceLock<ir_style::ComputedStyle> = std::sync::OnceLock::new();
+        self.ingest_ir_style_with_parent(ir_style, DEFAULT.get_or_init(Default::default))
+    }
+
+    /// Like [`Self::ingest_ir_style`], with the parent element's computed
+    /// style as the inheritance baseline: CSS-inherited properties are
+    /// emitted only where they differ from the parent (KFX renderers inherit
+    /// heritable properties through nested containers).
+    pub fn ingest_ir_style_with_parent(
+        &mut self,
+        ir_style: &ir_style::ComputedStyle,
+        parent: &ir_style::ComputedStyle,
+    ) -> &mut Self {
         // Iterate over all schema rules that have IR field mappings
         for rule in self.schema.ir_mapped_rules() {
             if let Some(ir_field) = rule.ir_field {
                 // Extract CSS string from IR struct (returns None for default values)
-                if let Some(css_value) = extract_ir_field(ir_style, ir_field) {
+                if let Some(css_value) = extract_ir_field(ir_style, parent, ir_field) {
                     // Apply schema transform to convert CSS → KFX
                     self.apply_single(rule.ir_key, &css_value);
                 }
@@ -347,7 +364,53 @@ impl<'a> StyleBuilder<'a> {
 
     /// Build the final computed style.
     pub fn build(self) -> ComputedStyle {
-        self.style
+        let mut style = self.style;
+        // Reference KFX folds four equal border sides into the uniform
+        // shorthand symbol (border_style/border_weight/border_color)
+        // instead of four longhands.
+        for (sides, uniform) in [
+            (
+                [
+                    KfxSymbol::BorderStyleTop,
+                    KfxSymbol::BorderStyleLeft,
+                    KfxSymbol::BorderStyleBottom,
+                    KfxSymbol::BorderStyleRight,
+                ],
+                KfxSymbol::BorderStyle,
+            ),
+            (
+                [
+                    KfxSymbol::BorderWeightTop,
+                    KfxSymbol::BorderWeightLeft,
+                    KfxSymbol::BorderWeightBottom,
+                    KfxSymbol::BorderWeightRight,
+                ],
+                KfxSymbol::BorderWeight,
+            ),
+            (
+                [
+                    KfxSymbol::BorderColorTop,
+                    KfxSymbol::BorderColorLeft,
+                    KfxSymbol::BorderColorBottom,
+                    KfxSymbol::BorderColorRight,
+                ],
+                KfxSymbol::BorderColor,
+            ),
+        ] {
+            let values: Vec<Option<&KfxValue>> = sides.iter().map(|&s| style.get(s)).collect();
+            if let [Some(a), Some(b), Some(c), Some(d)] = values[..]
+                && a == b
+                && b == c
+                && c == d
+            {
+                let value = a.clone();
+                for &side in &sides {
+                    style.remove(side);
+                }
+                style.set(uniform, value);
+            }
+        }
+        style
     }
 }
 
@@ -464,29 +527,34 @@ mod tests {
     }
 
     #[test]
-    fn test_font_size_preserves_css_unit() {
+    fn test_font_size_is_always_relative() {
         use crate::kfx::style_schema::StyleSchema;
 
-        // 24px must stay 24px — the old Dimensioned{Rem} transform relabeled
-        // it as 24rem (~38x too large on device).
+        // Absolute font sizes freeze under the device font-size setting;
+        // reference KFX never emits them. The exporter reads the resolved
+        // absolute size (cascade-computed) and emits rem — converted, not
+        // relabeled (the old Dimensioned{Rem} transform turned 24px into
+        // 24rem, ~38x too large on device).
         let mut ir = crate::style::ComputedStyle::default();
         ir.font_size = crate::style::Length::Px(24.0);
+        ir.font_size_abs = crate::style::AbsFontSize(1.5);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
         builder.ingest_ir_style(&ir);
         match builder.build().get(KfxSymbol::FontSize) {
             Some(KfxValue::Dimensioned { value, unit }) => {
-                assert_eq!(*value, 24.0);
-                assert_eq!(*unit, KfxSymbol::Px);
+                assert_eq!(*value, 1.5);
+                assert_eq!(*unit, KfxSymbol::Rem);
             }
             other => panic!("expected dimensioned font-size, got {other:?}"),
         }
 
         let mut ir = crate::style::ComputedStyle::default();
         ir.font_size = crate::style::Length::Em(0.833);
+        ir.font_size_abs = crate::style::AbsFontSize(0.833);
         let mut builder = StyleBuilder::new(StyleSchema::standard());
         builder.ingest_ir_style(&ir);
         match builder.build().get(KfxSymbol::FontSize) {
-            Some(KfxValue::Dimensioned { unit, .. }) => assert_eq!(*unit, KfxSymbol::Em),
+            Some(KfxValue::Dimensioned { unit, .. }) => assert_eq!(*unit, KfxSymbol::Rem),
             other => panic!("expected dimensioned font-size, got {other:?}"),
         }
     }

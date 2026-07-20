@@ -406,13 +406,20 @@ fn test_layout_hints_for_heading() {
         }
     }
 
-    let hints = find_layout_hints(&ion);
-    assert!(hints.is_some(), "Heading should have layout_hints");
-    let hints = hints.unwrap();
+    // Reference KFX carries layout hints in the element's *style*, not on
+    // the content node.
     assert!(
-        hints.contains(&(KfxSymbol::TreatAsTitle as u64)),
-        "Heading layout_hints should contain treat_as_title"
+        find_layout_hints(&ion).is_none(),
+        "layout_hints must not ride content nodes"
     );
+    let hinted = ctx.style_registry.styles().any(|(_, style)| {
+        matches!(
+            style.get(KfxSymbol::LayoutHints),
+            Some(crate::kfx::style_schema::KfxValue::SymbolList(hints))
+                if hints.contains(&(KfxSymbol::TreatAsTitle as u64))
+        )
+    });
+    assert!(hinted, "a registered style must carry treat_as_title");
 }
 
 #[test]
@@ -467,13 +474,20 @@ fn test_layout_hints_for_figure() {
         }
     }
 
-    let hints = find_layout_hints(&ion);
-    assert!(hints.is_some(), "Figure should have layout_hints");
-    let hints = hints.unwrap();
+    // Reference KFX carries layout hints in the element's *style*, not on
+    // the content node.
     assert!(
-        hints.contains(&(KfxSymbol::Figure as u64)),
-        "Figure layout_hints should contain figure"
+        find_layout_hints(&ion).is_none(),
+        "layout_hints must not ride content nodes"
     );
+    let hinted = ctx.style_registry.styles().any(|(_, style)| {
+        matches!(
+            style.get(KfxSymbol::LayoutHints),
+            Some(crate::kfx::style_schema::KfxValue::SymbolList(hints))
+                if hints.contains(&(KfxSymbol::Figure as u64))
+        )
+    });
+    assert!(hinted, "a registered style must carry the figure hint");
 }
 
 #[test]

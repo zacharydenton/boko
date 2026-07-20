@@ -225,6 +225,64 @@ fn font_size_is_never_percent() {
     );
 }
 
+/// A floated large-font span at a paragraph's start (the CSS dropcap idiom)
+/// is rendered as a native KFX dropcap: `dropcap_lines`/`dropcap_chars` on
+/// the paragraph style, matching Kindle Previewer, instead of a floated box
+/// that reflows badly on device.
+#[test]
+fn css_dropcap_becomes_native_kfx_dropcap() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Dropcap Book")
+        .css(".dropcap { float: left; font-size: 3.4em; line-height: 3em; }")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p><span class=\"dropcap\">T</span>he kid looked at Tobin \
+             but the expriest sat without expression.</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    let mut lines = None;
+    let mut chars = None;
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        if let Some(v) = get_field(fields, KfxSymbol::DropcapLines).and_then(|v| v.as_int()) {
+            lines = Some(v);
+        }
+        if let Some(v) = get_field(fields, KfxSymbol::DropcapChars).and_then(|v| v.as_int()) {
+            chars = Some(v);
+        }
+    }
+    assert_eq!(
+        chars,
+        Some(1),
+        "dropcap_chars must count the leading letter"
+    );
+    assert_eq!(
+        lines,
+        Some(3),
+        "dropcap_lines must span the floated letter's height (3.4em ≈ 3 lines)"
+    );
+
+    // No float property survives on any style — the dropcap replaces it.
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        assert!(
+            get_field(fields, KfxSymbol::Float).is_none(),
+            "the dropcap span's float must be dropped"
+        );
+    }
+}
+
 /// `box_align` centers a block within its container. Reference KFX carries
 /// it on block element styles (verified against calibre/KP gold masters) but
 /// never on style_events — readers only consume it on blocks, and it
@@ -313,6 +371,121 @@ fn box_align_rides_block_styles_not_style_events() {
         assert!(
             !box_align_styles.contains(&name),
             "style_event references box_align style {name}"
+        );
+    }
+}
+
+/// Adjoining vertical margins must be collapsed statically, like Kindle
+/// Previewer output: the Kindle renderer does not collapse margins, so an
+/// uncollapsed `margin: 1em 0` paragraph sequence renders double gaps.
+/// The collapsed value (max of the adjoining margins, resolved absolutely)
+/// rides the following block's margin-top; only the section's last block
+/// keeps a margin-bottom.
+#[test]
+fn adjoining_margins_collapse_statically() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Collapse Book")
+        .css(".big { margin-bottom: 3em; } .after { margin-top: 2em; }")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>First paragraph with default margins.</p>\
+             <p>Second paragraph with default margins.</p>\
+             <p class=\"big\">Three-em bottom margin here.</p>\
+             <p class=\"after\">Two-em top margin loses to the three.</p>\
+             <p>Last paragraph keeps its bottom margin.</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    // Collect every (margin-top, margin-bottom) pair from emitted styles,
+    // in lh units.
+    let dim = |fields: &[(u64, IonValue)], sym: KfxSymbol| -> Option<f64> {
+        let IonValue::Struct(d) = get_field(fields, sym)? else {
+            return None;
+        };
+        let value = get_field(d, KfxSymbol::Value)?;
+        let unit = get_field(d, KfxSymbol::Unit)?.as_symbol()?;
+        assert_eq!(
+            unit,
+            KfxSymbol::Lh as u64,
+            "vertical margins must be in lh units"
+        );
+        value
+            .as_float()
+            .or_else(|| value.as_int().map(|i| i as f64))
+            .or_else(|| match value {
+                IonValue::Decimal(s) => s.parse().ok(),
+                _ => None,
+            })
+    };
+
+    let mut margin_bottoms = 0;
+    let mut saw_collapsed_3em = false;
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        if dim(fields, KfxSymbol::MarginBottom).is_some() {
+            margin_bottoms += 1;
+        }
+        if let Some(mt) = dim(fields, KfxSymbol::MarginTop) {
+            // max(3em, 2em) = 3em = 2.5lh — the collapsed gap on the
+            // following block.
+            if (mt - 2.5).abs() < 1e-3 {
+                saw_collapsed_3em = true;
+            }
+            assert!(
+                (mt - 2.0 / 1.2).abs() > 1e-3,
+                "an uncollapsed 2em margin-top survived (2em should lose to \
+                 the preceding 3em margin-bottom)"
+            );
+        }
+    }
+    assert!(
+        saw_collapsed_3em,
+        "the collapsed 3em gap must ride the following block's margin-top"
+    );
+    assert_eq!(
+        margin_bottoms, 1,
+        "only the section's last block keeps a margin-bottom"
+    );
+}
+
+/// `box_align: center` must require an author's explicit `margin: auto`.
+/// Margins that were never set are the CSS initial `0`, not `auto` — gold
+/// masters never center a `width: 50%` block with unset margins (it sits
+/// left), and defaulted UA paragraph margins must not center every block.
+#[test]
+fn unset_margins_never_produce_box_align() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("No Centering Book")
+        .css(".half { width: 50%; }")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>Default-margin paragraph.</p>\
+             <p class=\"half\">Half-width block that must stay left.</p>\
+             <blockquote><p>Quoted text.</p></blockquote>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    for style in parse_entities(&kfx, KfxSymbol::Style as u32) {
+        let IonValue::Struct(fields) = &style else {
+            continue;
+        };
+        assert!(
+            get_field(fields, KfxSymbol::BoxAlign).is_none(),
+            "no block in this book sets margin:auto, yet a style carries box_align"
         );
     }
 }
