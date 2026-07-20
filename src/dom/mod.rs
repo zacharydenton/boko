@@ -25,7 +25,7 @@ mod role_map;
 mod transform;
 mod tree_sink;
 
-pub use arena::{ArenaDom, ArenaNodeData};
+pub use arena::{ArenaDom, ArenaNodeData, ArenaNodeId};
 
 // Re-export style types for convenience
 pub use crate::style::{Origin, Stylesheet};

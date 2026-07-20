@@ -480,6 +480,12 @@ where
             KfxToken::StartSpan(_) | KfxToken::EndSpan => {
                 // Style events are handled via ElementStart.style_events
             }
+
+            KfxToken::Math(_) => {
+                // Export-only: the import tokenizer never synthesizes math
+                // tokens (KFX math import — reading the `mathml` annotation
+                // back into a Math IR node — is a deferred spoke).
+            }
         }
     }
 

@@ -172,6 +172,32 @@ pub(super) fn walk_node_for_export(
         return;
     }
 
+    // Math: emit a classified `container` carrying the source MathML and a
+    // spoken alt_text as annotations, plus a readable linearization as its
+    // content. On firmware with Enhanced-Typesetting math (≈5.18.2+) the
+    // MathML renders live; older readers show the text fallback. KVG glyph
+    // rendering (the on-device vector form) is a deferred spoke.
+    if node.role == Role::Math {
+        if let Some(math) = chapter.math.get(&node_id) {
+            let text = math.to_text();
+            let mathml = crate::math::mathml::to_mathml(math);
+            if !mathml.is_empty() || !text.is_empty() {
+                let alttext = math.alttext.clone().unwrap_or_else(|| text.clone());
+                let style_symbol =
+                    ctx.register_style_id(node.style, parent_style, &chapter.styles);
+                stream.push(KfxToken::Math(Box::new(crate::kfx::tokens::MathToken {
+                    mathml,
+                    alttext,
+                    text,
+                    display: math.display,
+                    style_symbol: Some(style_symbol),
+                    node_id: Some(node_id),
+                })));
+            }
+        }
+        return;
+    }
+
     // Build element start with semantics
     let mut elem = ElementStart::new(node.role);
     elem.node_id = Some(node_id);
@@ -323,8 +349,14 @@ pub(super) fn walk_node_for_export(
     // ref — Kindle Previewer's encoding. The hybrid shape (one ref plus
     // children) mis-accounts reading positions and never occurs in
     // Amazon-produced books.
-    let is_inline_flow =
-        |role: Role| matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline);
+    // Math is NOT inline flow: it now emits its own classified `container`
+    // (with MathML/alt_text annotations), so it must sit as a sibling element
+    // in the parent's content_list — closing any open inline run before it,
+    // exactly like an inline image. KP nests math directly in a `type: text`
+    // content_list; boko's split-run model places it between text-run wrappers.
+    let is_inline_flow = |role: Role| {
+        matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
+    };
     let children: Vec<NodeId> = chapter.children(node_id).collect();
     let has_own_text = !node.text.is_empty() && !chapter.text(node.text).is_empty();
     let has_flow = has_own_text
@@ -491,6 +523,22 @@ pub(super) fn flatten_inline_content(
                 text: "\n".to_string(),
                 state: effective_state,
             });
+        }
+        // MATH inside an inline element (e.g. `<span>… <math/> …</span>`):
+        // a math container cannot be nested mid-style-event, so emit the
+        // equation's readable linearization as an inline text segment rather
+        // than dropping it. (Math at block level gets the full container with
+        // annotations via walk_node_for_export.)
+        Role::Math => {
+            if let Some(m) = chapter.math.get(&node_id) {
+                let text = m.to_text();
+                if !text.is_empty() {
+                    segments.push(FlatSegment {
+                        text,
+                        state: effective_state,
+                    });
+                }
+            }
         }
         // CONTAINERS (Link, Inline, etc.): Recurse with accumulated state
         _ => {
@@ -669,13 +717,39 @@ pub(super) fn emit_definition_list(
             dt_elem.style_symbol = Some(dt_style);
             stream.push(KfxToken::StartElement(dt_elem));
 
-            // Emit dt's children wrapped in a Paragraph (like KPR)
+            // Emit dt's children wrapped in a Paragraph (like KPR). Inline
+            // flow among the dt's children must be run-wrapped or the inner
+            // Paragraph becomes a hybrid (ref + element children) — the shape
+            // the reference model forbids. A dt like `<dt>Move to a point
+            // <math>…</math></dt>` mixes text with a math container, so it
+            // needs the same discipline as the dd path below.
             let mut dt_inner = ElementStart::new(Role::Paragraph);
             dt_inner.style_symbol = Some(dt_style);
             stream.push(KfxToken::StartElement(dt_inner));
 
-            for dt_child in chapter.children(child_id) {
-                walk_node_for_export(chapter, dt_child, child.style, adjust, sch, ctx, stream);
+            {
+                let is_inline_flow = |role: Role| {
+                    matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
+                };
+                let mut run_open = false;
+                for dt_child in chapter.children(child_id) {
+                    let child_is_flow = chapter
+                        .node(dt_child)
+                        .is_some_and(|n| is_inline_flow(n.role));
+                    if child_is_flow && !run_open {
+                        let mut run = ElementStart::new(Role::Text);
+                        run.style_symbol = Some(dt_style);
+                        stream.push(KfxToken::StartElement(run));
+                        run_open = true;
+                    } else if !child_is_flow && run_open {
+                        stream.push(KfxToken::EndElement);
+                        run_open = false;
+                    }
+                    walk_node_for_export(chapter, dt_child, child.style, adjust, sch, ctx, stream);
+                }
+                if run_open {
+                    stream.push(KfxToken::EndElement);
+                }
             }
 
             stream.push(KfxToken::EndElement); // end dt inner Paragraph

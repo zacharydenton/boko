@@ -630,6 +630,42 @@ impl<'a> RenderContext<'a> {
                 self.end_block(role);
             }
 
+            Role::Math => {
+                // Clone the rendered LaTeX out first so the chapter borrow is
+                // dropped before the mutable writes below.
+                let Some((display, body)) = self
+                    .chapter
+                    .math
+                    .get(&id)
+                    .map(|m| (m.display, crate::math::latex::to_latex_body(&m.expr)))
+                else {
+                    return;
+                };
+                if display {
+                    // GitHub renders a `$$…$$` block as display math.
+                    self.start_block();
+                    if !self.at_line_start {
+                        self.write_newline();
+                    }
+                    self.ensure_line_started();
+                    self.output.push_str("$$");
+                    self.write_newline();
+                    for line in body.lines() {
+                        self.ensure_line_started();
+                        self.output.push_str(line);
+                        self.write_newline();
+                    }
+                    self.ensure_line_started();
+                    self.output.push_str("$$");
+                    self.end_block(role);
+                } else {
+                    self.ensure_line_started();
+                    self.output.push('$');
+                    self.output.push_str(&body);
+                    self.output.push('$');
+                }
+            }
+
             Role::Container | Role::Root | Role::TableHead | Role::TableBody => {
                 self.walk_children(id);
             }

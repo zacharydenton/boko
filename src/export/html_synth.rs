@@ -180,6 +180,23 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
     let role = node.role;
     let style_id = node.style;
 
+    // Math re-serializes verbatim to MathML from the side-table (the node
+    // has no IR children). An anchor id on it stays addressable.
+    if role == Role::Math {
+        if let Some(math) = ctx.ir.math.get(&id) {
+            if let Some(anchor) = ctx.ir.semantics.id(id) {
+                ctx.out.push_str("<span id=\"");
+                ctx.out.push_str(&escape_xml(anchor));
+                ctx.out.push_str("\">");
+                ctx.out.push_str(&crate::math::mathml::to_mathml(math));
+                ctx.out.push_str("</span>");
+            } else {
+                ctx.out.push_str(&crate::math::mathml::to_mathml(math));
+            }
+        }
+        return;
+    }
+
     // Handle leaf text nodes (Text role with text content, no children)
     if role == Role::Text && !node.text.is_empty() && node.first_child.is_none() {
         let text = ctx.ir.text(node.text);
@@ -432,6 +449,10 @@ fn role_to_tag(role: Role) -> (&'static str, bool, bool) {
         // Inline elements
         Role::Inline => ("span", false, false),
         Role::Link => ("a", false, false),
+
+        // Math is re-serialized verbatim in walk_node; this arm exists only
+        // for exhaustiveness. Inline by default (most math is inline).
+        Role::Math => ("math", false, false),
     }
 }
 

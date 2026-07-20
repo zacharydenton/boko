@@ -225,6 +225,74 @@ fn font_size_is_never_percent() {
     );
 }
 
+/// MathML is imported as a first-class math node and, until native KVG
+/// rendering exists, emitted into KFX as its readable-text fallback (the
+/// source `alttext`) — present on the device, not dropped. The old behavior
+/// flattened `<math>` into deeply-nested containers, leaking token text and
+/// producing malformed content chunks.
+#[test]
+fn mathml_survives_into_kfx_as_text() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Math Book")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>Einstein wrote <math xmlns=\"http://www.w3.org/1998/Math/MathML\" \
+             alttext=\"E equals m c squared\"><mi>E</mi><mo>=</mo><mi>m</mi>\
+             <msup><mi>c</mi><mn>2</mn></msup></math> in 1905.</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+
+    let text = String::from_utf8_lossy(&kfx);
+    // The equation is a classified `math` container carrying its source MathML
+    // (rendered live on capable firmware) plus a spoken alt_text and a readable
+    // text fallback — not dropped, not flattened into the prose.
+    assert!(
+        text.contains("E equals m c squared"),
+        "math alt_text/fallback must reach the KFX"
+    );
+    assert!(
+        text.contains("<math") && text.contains("</math>"),
+        "the source MathML must be carried as an annotation"
+    );
+    // The surrounding prose stays intact around it.
+    assert!(text.contains("Einstein wrote"));
+    assert!(text.contains("in 1905."));
+}
+
+/// Math inside an inline element (`<span>…<math/>…</span>`) must not be
+/// dropped. The inline flattener can't nest a math container mid-style-event,
+/// so it emits the equation's readable linearization inline instead of losing
+/// it. (Regression: math inside spans previously vanished entirely.)
+#[test]
+fn math_inside_span_is_not_dropped() {
+    use common::{Doc, EpubBuilder, Nav};
+
+    let epub = EpubBuilder::new("Span Math")
+        .doc(Doc::new(
+            "text/ch1.xhtml",
+            "One",
+            "<p>Let <span>the value <math xmlns=\"http://www.w3.org/1998/Math/MathML\" \
+             alttext=\"z sub three\"><msub><mi>z</mi><mn>3</mn></msub></math> vary</span>.</p>",
+        ))
+        .nav(vec![Nav::new("One", "text/ch1.xhtml")])
+        .build();
+
+    let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
+    let kfx = common::export_to_bytes(&mut book, Format::Kfx);
+    let text = String::from_utf8_lossy(&kfx);
+    assert!(
+        text.contains("z sub three"),
+        "math inside a span must survive (as inline readable text), not be dropped"
+    );
+    assert!(text.contains("the value") && text.contains("vary"));
+}
+
 /// A floated large-font span at a paragraph's start (the CSS dropcap idiom)
 /// is rendered as a native KFX dropcap: `dropcap_lines`/`dropcap_chars` on
 /// the paragraph style, matching Kindle Previewer, instead of a floated box

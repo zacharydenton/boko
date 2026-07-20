@@ -91,6 +91,10 @@ pub enum Role {
     CodeBlock,
     /// Caption for figures or tables (`<figcaption>`, `<caption>`).
     Caption,
+    /// A math expression (`<math>`). The expression tree is stored in the
+    /// chapter's `math` side-table, keyed by this node's id; the node itself
+    /// is a leaf (no IR children).
+    Math,
 }
 
 /// Range into the global text buffer.

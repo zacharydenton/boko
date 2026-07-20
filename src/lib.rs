@@ -45,6 +45,7 @@ pub mod export;
 pub mod import;
 pub(crate) mod io;
 pub(crate) mod markdown;
+pub mod math;
 pub mod model;
 pub mod optimize;
 mod resolved;

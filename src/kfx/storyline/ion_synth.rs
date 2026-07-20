@@ -121,6 +121,15 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                 span_stack.push((current_offset, span.clone()));
             }
+            KfxToken::Math(math) => {
+                // A math equation is a self-contained classified container,
+                // not accumulated flow text. Build it and attach to the
+                // current parent's content_list.
+                let container = build_math_container(math, ctx);
+                if let Some(current) = stack.last_mut() {
+                    current.add_child(container);
+                }
+            }
             KfxToken::EndSpan => {
                 // Pop the span and calculate its length
                 if let Some((start_offset, mut span_info)) = span_stack.pop() {
@@ -151,6 +160,92 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
     } else {
         IonValue::List(vec![])
     }
+}
+
+/// Build a KFX math `container` from a `MathToken`.
+///
+/// Mirrors Kindle Previewer's math encoding minus the KVG glyph layer:
+/// a container classified `math`, carrying the source MathML and a spoken
+/// `alt_text` as annotations (referenced by content-fragment index), with a
+/// readable linearization as its content. On Enhanced-Typesetting-math
+/// firmware the MathML renders live; elsewhere the text shows.
+///
+/// The annotation strings are metadata, not reading positions, so they are
+/// appended to the content fragment but never recorded via
+/// `record_content_length`. Only the readable text child counts as a location.
+fn build_math_container(math: &MathToken, ctx: &mut ExportContext) -> IonValue {
+    let container_id = ctx.fragment_ids.next_id();
+    ctx.record_content_id(container_id);
+
+    let style_sym = math.style_symbol.unwrap_or(ctx.default_style_symbol);
+    if style_sym == ctx.default_style_symbol {
+        ctx.default_style_used = true;
+    }
+
+    // Content-fragment entries for the two annotations.
+    let content_ref = |name: u64, index: usize| {
+        IonValue::Struct(vec![
+            (sym!(Name), IonValue::Symbol(name)),
+            (sym!(Index), IonValue::Int(index as i64)),
+        ])
+    };
+    let mut annotation_list = Vec::new();
+    if !math.alttext.is_empty() {
+        let (alt_name, alt_idx) = ctx.append_text(&math.alttext);
+        annotation_list.push(IonValue::Struct(vec![
+            (sym!(Content), content_ref(alt_name, alt_idx)),
+            (sym!(AnnotationType), IonValue::Symbol(sym!(AltText))),
+        ]));
+    }
+    // The source MathML as a second annotation. kfxlib's KFX→EPUB
+    // back-conversion treats a `mathml` annotation as an overlay on a KVG
+    // `<svg>` and errors when the SVG is absent (KVG glyph rendering is a
+    // deferred spoke) — but that is the calibre plugin's export path, not the
+    // device renderer, which is expected to render the MathML directly on
+    // Enhanced-Typesetting-math firmware. The readable text content remains as
+    // a hedge for readers that render neither. See kfxcheck's epub-trial
+    // "Missing svg for mathml annotation" notes.
+    if !math.mathml.is_empty() {
+        let (mml_name, mml_idx) = ctx.append_text(&math.mathml);
+        annotation_list.push(IonValue::Struct(vec![
+            (sym!(Content), content_ref(mml_name, mml_idx)),
+            (sym!(AnnotationType), IonValue::Symbol(sym!(Mathml))),
+        ]));
+    }
+
+    let mut fields = vec![
+        (sym!(Id), IonValue::Int(container_id as i64)),
+        (sym!(YjClassification), IonValue::Symbol(sym!(Math))),
+    ];
+    // Inline math flows within its line; display math is a block.
+    if !math.display {
+        fields.push((sym!(Render), IonValue::Symbol(sym!(Inline))));
+    }
+    if !annotation_list.is_empty() {
+        fields.push((sym!(Annotations), IonValue::List(annotation_list)));
+    }
+    fields.push((sym!(Layout), IonValue::Symbol(KfxSymbol::Vertical as u64)));
+    fields.push((sym!(PanZoomViewer), IonValue::Symbol(sym!(Enabled))));
+    fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+    fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Container as u64)));
+
+    // Readable fallback content: a text element the reader shows when it does
+    // not render MathML. Its characters ARE reading positions.
+    if !math.text.is_empty() {
+        let inner_id = ctx.fragment_ids.next_id();
+        ctx.record_content_id(inner_id);
+        let (t_name, t_idx) = ctx.append_text(&math.text);
+        ctx.record_content_length(inner_id, math.text.chars().count());
+        let inner = IonValue::Struct(vec![
+            (sym!(Id), IonValue::Int(inner_id as i64)),
+            (sym!(Style), IonValue::Symbol(style_sym)),
+            (sym!(Type), IonValue::Symbol(KfxSymbol::Text as u64)),
+            (sym!(Content), content_ref(t_name, t_idx)),
+        ]);
+        fields.push((sym!(ContentList), IonValue::List(vec![inner])));
+    }
+
+    IonValue::Struct(fields)
 }
 
 /// The `yj.semantics.type` marker value for an element, if its export

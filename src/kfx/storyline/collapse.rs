@@ -176,7 +176,7 @@ impl<'a> Collapser<'a> {
             return false;
         };
         match node.role {
-            Role::Break | Role::Image | Role::Rule | Role::Table => return true,
+            Role::Break | Role::Image | Role::Rule | Role::Table | Role::Math => return true,
             Role::Text => return !self.chapter.text(node.text).trim().is_empty(),
             _ => {}
         }

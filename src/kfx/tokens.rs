@@ -35,6 +35,29 @@ pub enum KfxToken {
     StartSpan(SpanStart),
     /// End of an inline style span
     EndSpan,
+    /// A math equation, emitted as a classified `container` carrying `mathml`
+    /// and `alt_text` annotations. On firmware that supports Enhanced-Typesetting
+    /// math (≈5.18.2+) the MathML renders live; older readers fall back to the
+    /// `text` content in the container. KVG glyph rendering is a deferred spoke.
+    Math(Box<MathToken>),
+}
+
+/// The rendered forms of a math equation needed to build a KFX math container.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MathToken {
+    /// Serialized MathML — the live-render source on capable firmware.
+    pub mathml: String,
+    /// Spoken/linearized alt text — accessibility and non-MathML fallback.
+    pub alttext: String,
+    /// Readable linearization placed in the container's content list; shown
+    /// when the MathML is not rendered.
+    pub text: String,
+    /// Display (block) vs inline math.
+    pub display: bool,
+    /// KFX style symbol for the container (falls back to the default style).
+    pub style_symbol: Option<u64>,
+    /// Original IR node ID (for anchors).
+    pub node_id: Option<NodeId>,
 }
 
 /// Information about an element start.

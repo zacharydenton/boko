@@ -463,6 +463,32 @@ impl<'a> TransformContext<'a> {
                     }
                 }
 
+                // MathML: `<math>` (by namespace or local name) becomes a
+                // single `Role::Math` IR leaf whose expression tree lives in
+                // the chapter's `math` side-table. `element_to_role` only
+                // sees the local name, so the namespace test is done here.
+                // We take over the whole subtree — no generic child recursion.
+                if name.ns.as_ref() == crate::math::mathml::MATHML_NS
+                    || name.local.as_ref() == "math"
+                {
+                    if computed.display == Display::None {
+                        return;
+                    }
+                    let mut ir_node = Node::new(Role::Math);
+                    ir_node.style = self.chapter.styles.intern_ref(&computed);
+                    let ir_id = self.chapter.alloc_node(ir_node);
+                    self.chapter.append_child(ir_parent, ir_id);
+                    // Preserve the element id for anchor/link resolution.
+                    for attr in attrs {
+                        if attr.name.local.as_ref() == "id" {
+                            self.chapter.semantics.set_id(ir_id, &attr.value);
+                        }
+                    }
+                    let expr = crate::math::mathml::from_mathml(self.dom, dom_id);
+                    self.chapter.math.insert(ir_id, expr);
+                    return;
+                }
+
                 // Map to role first (needed for Break check)
                 let role = element_to_role(&name.local);
 

@@ -22,7 +22,7 @@ use crate::kfx::context::ExportContext;
 use crate::kfx::ion::IonValue;
 use crate::kfx::schema::{SemanticTarget, schema};
 use crate::kfx::symbols::KfxSymbol;
-use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, SpanStart, TokenStream};
+use crate::kfx::tokens::{ContentRef, ElementStart, KfxToken, MathToken, SpanStart, TokenStream};
 use crate::kfx::transforms::ImportContext;
 use crate::model::Role;
 use crate::model::{Chapter, Node, NodeId};

@@ -91,6 +91,20 @@ pub(super) fn survey_node(
         // We don't need to intern plain text content
     }
 
+    // Math contributes its readable linearization in Pass 2 (as the math
+    // container's text child, or as an inline segment when nested in a span);
+    // account its length here so text-offset bookkeeping and the body-size
+    // normalization weighting see the same stream Pass 2 emits.
+    if node.role == Role::Math
+        && let Some(math) = chapter.math.get(&node_id)
+    {
+        let len = math.to_text().len();
+        if len > 0 {
+            ctx.advance_text_offset(len);
+            ctx.record_text_metrics(metrics.0, metrics.1, len);
+        }
+    }
+
     // Recurse into children
     for child in chapter.children(node_id) {
         survey_node(chapter, child, metrics, ctx);

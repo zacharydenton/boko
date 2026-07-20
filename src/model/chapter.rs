@@ -8,8 +8,11 @@
 //! - Universal link representation (handles both EPUB IDs and Kindle offsets)
 //! - Global text buffer with range references
 
+use rustc_hash::FxHashMap;
+
 use super::node::{Node, NodeId, Role, TextRange};
 use super::semantic::SemanticMap;
+use crate::math::Math;
 use crate::style::StylePool;
 
 /// A chapter's content in normalized IR form.
@@ -24,6 +27,8 @@ pub struct Chapter {
     pub styles: StylePool,
     /// Sparse semantic attributes (href, src, alt, id).
     pub semantics: SemanticMap,
+    /// Math expressions for `Role::Math` nodes, keyed by node id.
+    pub math: FxHashMap<NodeId, Math>,
     /// Global text buffer (nodes reference ranges into this).
     text: String,
 }
@@ -41,6 +46,7 @@ impl Chapter {
             nodes: vec![Node::new(Role::Root)],
             styles: StylePool::new(),
             semantics: SemanticMap::new(),
+            math: FxHashMap::default(),
             text: String::new(),
         }
     }
