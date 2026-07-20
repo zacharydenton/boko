@@ -172,20 +172,40 @@ pub(super) fn walk_node_for_export(
         return;
     }
 
-    // Math: emit the equation's Unicode linearization as a plain text run —
-    // the only shape proven to render sanely on every firmware. A device test
-    // (2026-07-20) showed the classified-container encoding leaking its
-    // mathml/alt_text annotations as visible content on pre-5.18.2 readers
-    // (raw MathML stacks one token per line, followed by the spoken-math
-    // prose); no renderer displays the mathml annotation without a KVG shape
-    // layer. The container + annotations return with the KVG spoke, where
-    // they are legitimate overlays on the vector render.
+    // Math: with a math font available, emit a KVG-bearing container —
+    // typeset vector shapes plus mathml/alt_text annotations (legitimate as
+    // overlays on the KVG; a device test showed they leak as visible content
+    // WITHOUT a shape layer). Equations with unmodeled content decline to a
+    // text-child container (alt_text annotation only, no mathml). With no
+    // font at all, math stays a plain inline text run.
     if node.role == Role::Math {
         if let Some(math) = chapter.math.get(&node_id) {
             let text = math.to_text();
-            if !text.is_empty() {
-                stream.push(KfxToken::Text(text));
+            if !ctx.math_renders_as_container() {
+                if !text.is_empty() {
+                    stream.push(KfxToken::Text(text));
+                }
+                return;
             }
+            let kvg = ctx.typeset_math(math);
+            let mathml = if kvg.is_some() {
+                crate::math::mathml::to_mathml(math)
+            } else {
+                String::new()
+            };
+            let alttext = math.alttext.clone().unwrap_or_else(|| text.clone());
+            let style_symbol = ctx.register_style_id(node.style, parent_style, &chapter.styles);
+            stream.push(KfxToken::MathKvg(Box::new(
+                crate::kfx::tokens::MathKvgToken {
+                    kvg,
+                    mathml,
+                    alttext,
+                    text,
+                    display: math.display,
+                    style_symbol: Some(style_symbol),
+                    node_id: Some(node_id),
+                },
+            )));
         }
         return;
     }
@@ -341,14 +361,13 @@ pub(super) fn walk_node_for_export(
     // ref — Kindle Previewer's encoding. The hybrid shape (one ref plus
     // children) mis-accounts reading positions and never occurs in
     // Amazon-produced books.
-    // Math counts as inline flow: its Unicode linearization is emitted as a
-    // bare text run, which must stay inside a text-element wrapper (the
-    // mixed-content run-wrapping) rather than float as a direct block child.
+    // Math counts as inline flow only when it renders as a bare text run
+    // (no math font): the run wrapper must enclose it. As a KVG container it
+    // is a sibling element, closing any open run — like an inline image.
+    let math_is_flow = !ctx.math_renders_as_container();
     let is_inline_flow = |role: Role| {
-        matches!(
-            role,
-            Role::Text | Role::Break | Role::Link | Role::Inline | Role::Math
-        )
+        matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
+            || (role == Role::Math && math_is_flow)
     };
     let children: Vec<NodeId> = chapter.children(node_id).collect();
     let has_own_text = !node.text.is_empty() && !chapter.text(node.text).is_empty();
@@ -721,11 +740,10 @@ pub(super) fn emit_definition_list(
             stream.push(KfxToken::StartElement(dt_inner));
 
             {
+                let math_is_flow = !ctx.math_renders_as_container();
                 let is_inline_flow = |role: Role| {
-                    matches!(
-                        role,
-                        Role::Text | Role::Break | Role::Link | Role::Inline | Role::Math
-                    )
+                    matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
+                        || (role == Role::Math && math_is_flow)
                 };
                 let mut run_open = false;
                 for dt_child in chapter.children(child_id) {
@@ -756,11 +774,10 @@ pub(super) fn emit_definition_list(
             // be run-wrapped or the wrapper becomes a hybrid element
             // (ref + children) — the shape the reference model forbids.
             if let Some((dd_id, dd_style_id)) = dd_info {
+                let math_is_flow = !ctx.math_renders_as_container();
                 let is_inline_flow = |role: Role| {
-                    matches!(
-                        role,
-                        Role::Text | Role::Break | Role::Link | Role::Inline | Role::Math
-                    )
+                    matches!(role, Role::Text | Role::Break | Role::Link | Role::Inline)
+                        || (role == Role::Math && math_is_flow)
                 };
                 let mut run_open = false;
                 for dd_child in chapter.children(dd_id) {

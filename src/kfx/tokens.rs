@@ -35,6 +35,48 @@ pub enum KfxToken {
     StartSpan(SpanStart),
     /// End of an inline style span
     EndSpan,
+    /// A math equation exported as a KVG-bearing container (typeset shapes
+    /// plus mathml/alt_text annotations), or a text-child container when
+    /// the equation declined typesetting (`Raw` content).
+    MathKvg(Box<MathKvgToken>),
+    /// A math container imported from KFX: content references to its
+    /// `mathml` and `alt_text` annotation strings. The IR builder resolves
+    /// and parses them into a `Role::Math` node + `Math` AST (import-only;
+    /// export builds math from the IR side-table directly).
+    MathImport(Box<MathImportToken>),
+}
+
+/// Payload for an exported math container.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MathKvgToken {
+    /// Typeset KVG equation; `None` when the equation declined (falls back
+    /// to a text child, no mathml annotation).
+    pub kvg: Option<crate::math::kvg::KvgEquation>,
+    /// Serialized MathML (annotation; only emitted alongside KVG).
+    pub mathml: String,
+    /// Spoken alt text (annotation).
+    pub alttext: String,
+    /// Unicode linearization (text child when kvg is None).
+    pub text: String,
+    /// Display (block) vs inline math.
+    pub display: bool,
+    /// KFX style symbol for the container.
+    pub style_symbol: Option<u64>,
+    /// Original IR node id.
+    pub node_id: Option<NodeId>,
+}
+
+/// Content references carried by an imported KFX math container.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MathImportToken {
+    /// Ref to the serialized `<math>` source ($690 annotation).
+    pub mathml_ref: Option<ContentRef>,
+    /// Ref to the spoken alt text ($584 annotation).
+    pub alttext_ref: Option<ContentRef>,
+    /// KFX element id.
+    pub id: Option<i64>,
+    /// Style name for IR style lookup.
+    pub style_name: Option<String>,
 }
 
 /// Information about an element start.

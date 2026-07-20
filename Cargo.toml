@@ -52,6 +52,11 @@ smallvec = "1.15"
 # Derive Display/Error/From for the typed error enum (compile-time only).
 thiserror = "2"
 
+# Font parsing for the KVG math typesetting spoke: glyph outlines (TrueType
+# and CFF) plus the OpenType MATH table (typesetting constants, stretchy
+# glyph variants/assemblies).
+ttf-parser = "0.25"
+
 # Raster decode + JPEG encode for the image-shrinking optimize pass.
 # Optional: pulled in by the `optimize-images` feature, excluded from wasm.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"], optional = true }

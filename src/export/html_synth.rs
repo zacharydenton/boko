@@ -46,7 +46,17 @@ pub struct SynthesisResult {
 /// A `SynthesisResult` containing the XHTML body and referenced assets.
 pub fn synthesize_html(ir: &Chapter, style_map: &HashMap<StyleId, String>) -> SynthesisResult {
     let resolver = HashMapResolver { map: style_map };
-    synthesize_html_with_resolver(ir, &resolver)
+    synthesize_html_with_resolver(ir, &resolver, MathForm::MathMl)
+}
+
+/// How math nodes serialize, per target format's native capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathForm {
+    /// Re-emit `<math>` MathML — native for EPUB 3.
+    MathMl,
+    /// Emit the Unicode linearization — for KF8/MOBI, whose renderers show
+    /// raw MathML as one stacked token per line.
+    Text,
 }
 
 /// Synthesize an XHTML body like [`synthesize_html`], but resolving class
@@ -57,16 +67,32 @@ pub fn synthesize_html_with_class_list(
     class_list: &[Option<&str>],
 ) -> SynthesisResult {
     let resolver = ClassListResolver { list: class_list };
-    synthesize_html_with_resolver(ir, &resolver)
+    synthesize_html_with_resolver(ir, &resolver, MathForm::MathMl)
 }
 
-fn synthesize_html_with_resolver<R: StyleResolver>(ir: &Chapter, resolver: &R) -> SynthesisResult {
+/// [`synthesize_html_with_class_list`] with an explicit math serialization
+/// form (KF8 targets pass [`MathForm::Text`]).
+pub fn synthesize_html_with_class_list_math(
+    ir: &Chapter,
+    class_list: &[Option<&str>],
+    math_form: MathForm,
+) -> SynthesisResult {
+    let resolver = ClassListResolver { list: class_list };
+    synthesize_html_with_resolver(ir, &resolver, math_form)
+}
+
+fn synthesize_html_with_resolver<R: StyleResolver>(
+    ir: &Chapter,
+    resolver: &R,
+    math_form: MathForm,
+) -> SynthesisResult {
     let mut ctx = SynthesisContext {
         out: String::new(),
         assets: HashSet::new(),
         ir,
         resolver,
         indent_level: 0,
+        math_form,
     };
 
     // Walk children of root (skip the root node itself)
@@ -110,7 +136,24 @@ pub fn synthesize_xhtml_document_with_class_list(
     title: &str,
     stylesheet_href: Option<&str>,
 ) -> SynthesisResult {
-    let body_result = synthesize_html_with_class_list(ir, class_list);
+    synthesize_xhtml_document_with_class_list_math(
+        ir,
+        class_list,
+        title,
+        stylesheet_href,
+        MathForm::MathMl,
+    )
+}
+
+/// [`synthesize_xhtml_document_with_class_list`] with an explicit math form.
+pub fn synthesize_xhtml_document_with_class_list_math(
+    ir: &Chapter,
+    class_list: &[Option<&str>],
+    title: &str,
+    stylesheet_href: Option<&str>,
+    math_form: MathForm,
+) -> SynthesisResult {
+    let body_result = synthesize_html_with_class_list_math(ir, class_list, math_form);
     synthesize_xhtml_from_body(body_result, title, stylesheet_href)
 }
 
@@ -158,6 +201,7 @@ struct SynthesisContext<'a, R: StyleResolver> {
     ir: &'a Chapter,
     resolver: &'a R,
     indent_level: usize,
+    math_form: MathForm,
 }
 
 impl<R: StyleResolver> SynthesisContext<'_, R> {
@@ -180,18 +224,23 @@ fn walk_node<R: StyleResolver>(id: NodeId, ctx: &mut SynthesisContext<'_, R>, de
     let role = node.role;
     let style_id = node.style;
 
-    // Math re-serializes verbatim to MathML from the side-table (the node
-    // has no IR children). An anchor id on it stays addressable.
+    // Math serializes in the target's native form: MathML for EPUB, the
+    // Unicode linearization for KF8/MOBI (whose renderers stack raw MathML
+    // one token per line). An anchor id on it stays addressable.
     if role == Role::Math {
         if let Some(math) = ctx.ir.math.get(&id) {
+            let rendered = match ctx.math_form {
+                MathForm::MathMl => crate::math::mathml::to_mathml(math),
+                MathForm::Text => escape_xml(&math.to_text()),
+            };
             if let Some(anchor) = ctx.ir.semantics.id(id) {
                 ctx.out.push_str("<span id=\"");
                 ctx.out.push_str(&escape_xml(anchor));
                 ctx.out.push_str("\">");
-                ctx.out.push_str(&crate::math::mathml::to_mathml(math));
+                ctx.out.push_str(&rendered);
                 ctx.out.push_str("</span>");
             } else {
-                ctx.out.push_str(&crate::math::mathml::to_mathml(math));
+                ctx.out.push_str(&rendered);
             }
         }
         return;

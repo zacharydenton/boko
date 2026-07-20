@@ -31,7 +31,8 @@ use crate::import::ChapterId;
 use crate::model::{Book, Chapter, NodeId, Role};
 use crate::style::{StyleId, StylePool};
 
-use super::{generate_css, synthesize_xhtml_document_with_class_list};
+use super::html_synth::MathForm;
+use super::{generate_css, synthesize_xhtml_document_with_class_list_math};
 
 /// Collects styles from all chapters into a unified pool.
 ///
@@ -327,6 +328,13 @@ fn rewrite_document_hrefs(
 ///
 /// A `NormalizedContent` containing all normalized data ready for export.
 pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
+    normalize_book_math(book, MathForm::MathMl)
+}
+
+/// [`normalize_book`] with an explicit math serialization form — KF8/MOBI
+/// targets pass [`MathForm::Text`] because their renderers cannot display
+/// MathML.
+pub fn normalize_book_math(book: &Book, math_form: MathForm) -> crate::Result<NormalizedContent> {
     let spine = book.spine();
 
     // =========================================================================
@@ -456,11 +464,12 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
         let title = extract_chapter_title(ir).unwrap_or_else(|| source_path.clone());
 
         // Synthesize XHTML document
-        let result = synthesize_xhtml_document_with_class_list(
+        let result = synthesize_xhtml_document_with_class_list_math(
             ir,
             &remapped_class_list,
             &title,
             Some("style.css"),
+            math_form,
         );
 
         // Rewrite internal links to target the emitted chapter files.

@@ -484,7 +484,26 @@ impl<'a> TransformContext<'a> {
                             self.chapter.semantics.set_id(ir_id, &attr.value);
                         }
                     }
-                    let expr = crate::math::mathml::from_mathml(self.dom, dom_id);
+                    let mut expr = crate::math::mathml::from_mathml(self.dom, dom_id);
+                    // Block context implies display math: a <math> that is
+                    // its parent's only non-whitespace content is a display
+                    // equation even without display="block" (the common
+                    // publisher shape — only ~2% of equations carry the
+                    // attribute in practice).
+                    if !expr.display
+                        && let Some(parent) = self.dom.get(dom_id).map(|n| n.parent)
+                    {
+                        let alone = self.dom.children(parent).all(|c| {
+                            c == dom_id
+                                || self
+                                    .dom
+                                    .text_content(c)
+                                    .is_some_and(|t| t.trim().is_empty())
+                        });
+                        if alone {
+                            expr.display = true;
+                        }
+                    }
                     self.chapter.math.insert(ir_id, expr);
                     return;
                 }

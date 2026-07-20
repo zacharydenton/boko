@@ -8,10 +8,35 @@
 
 use crate::dom::{ArenaDom, ArenaNodeId};
 
-use super::{Math, MathExpr, TokenKind};
+use super::{ColAlign, Math, MathExpr, TokenKind};
 
 /// The MathML namespace URI.
 pub const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
+
+/// Parse a standalone MathML string into a [`Math`]. Convenience for tools
+/// and tests; the conversion pipeline goes through the DOM transform instead.
+pub fn parse_math_str(s: &str) -> Option<Math> {
+    let dom = crate::dom::parse_dom(s);
+    let root = dom.find_by_tag("math")?;
+    Some(from_mathml(&dom, root))
+}
+
+/// Whether any descendant `<mtable>` opts into display style — publishers
+/// mark multi-row display equations with `displaystyle="true"` instead of
+/// `display="block"` on the root.
+fn has_displaystyle_table(dom: &ArenaDom, id: ArenaNodeId) -> bool {
+    for c in dom.children(id) {
+        if dom.element_name(c).map(|n| n.as_ref()) == Some("mtable")
+            && dom.get_attr(c, "displaystyle") == Some("true")
+        {
+            return true;
+        }
+        if has_displaystyle_table(dom, c) {
+            return true;
+        }
+    }
+    false
+}
 
 /// Whether an element (by namespace or local name) is a MathML `<math>` root.
 pub fn is_math_root(dom: &ArenaDom, id: ArenaNodeId) -> bool {
@@ -21,7 +46,8 @@ pub fn is_math_root(dom: &ArenaDom, id: ArenaNodeId) -> bool {
 
 /// Build a [`Math`] from a `<math>` element in the arena DOM.
 pub fn from_mathml(dom: &ArenaDom, math_id: ArenaNodeId) -> Math {
-    let display = matches!(dom.get_attr(math_id, "display"), Some("block"));
+    let display = matches!(dom.get_attr(math_id, "display"), Some("block"))
+        || has_displaystyle_table(dom, math_id);
     let alttext = dom
         .get_attr(math_id, "alttext")
         .filter(|s| !s.trim().is_empty())
@@ -91,19 +117,36 @@ fn build_expr(dom: &ArenaDom, id: ArenaNodeId) -> MathExpr {
                 body: Box::new(build_row(dom, id)),
             }
         }
-        "mtable" => MathExpr::Table(
-            elem_children(dom, id)
-                .into_iter()
-                .filter(|&r| dom.element_name(r).map(|n| n.as_ref()) == Some("mtr"))
-                .map(|r| {
-                    elem_children(dom, r)
-                        .into_iter()
-                        .filter(|&c| dom.element_name(c).map(|n| n.as_ref()) == Some("mtd"))
-                        .map(|c| build_row(dom, c))
-                        .collect()
-                })
-                .collect(),
-        ),
+        "mtable" => {
+            let mut rows: Vec<Vec<MathExpr>> = Vec::new();
+            let mut aligns: Vec<ColAlign> = Vec::new();
+            for r in elem_children(dom, id) {
+                if dom.element_name(r).map(|n| n.as_ref()) != Some("mtr") {
+                    continue;
+                }
+                let mut row = Vec::new();
+                for c in elem_children(dom, r) {
+                    if dom.element_name(c).map(|n| n.as_ref()) != Some("mtd") {
+                        continue;
+                    }
+                    let col = row.len();
+                    if aligns.len() <= col {
+                        aligns.resize(col + 1, ColAlign::Center);
+                    }
+                    // First explicit columnalign in each column wins.
+                    if aligns[col] == ColAlign::Center {
+                        aligns[col] = match dom.get_attr(c, "columnalign") {
+                            Some("left") => ColAlign::Left,
+                            Some("right") => ColAlign::Right,
+                            _ => ColAlign::Center,
+                        };
+                    }
+                    row.push(build_row(dom, c));
+                }
+                rows.push(row);
+            }
+            MathExpr::Table { rows, aligns }
+        }
         "mspace" => MathExpr::Space,
         // `<semantics>` wraps a presentation child plus annotations; take the
         // first presentation child.
@@ -290,12 +333,16 @@ fn write_mathml(expr: &MathExpr, out: &mut String) {
             write_mathml(body, out);
             out.push_str("</mfenced>");
         }
-        MathExpr::Table(rows) => {
+        MathExpr::Table { rows, aligns } => {
             out.push_str("<mtable>");
             for row in rows {
                 out.push_str("<mtr>");
-                for cell in row {
-                    out.push_str("<mtd>");
+                for (col, cell) in row.iter().enumerate() {
+                    match aligns.get(col) {
+                        Some(ColAlign::Left) => out.push_str("<mtd columnalign=\"left\">"),
+                        Some(ColAlign::Right) => out.push_str("<mtd columnalign=\"right\">"),
+                        _ => out.push_str("<mtd>"),
+                    }
                     write_mathml(cell, out);
                     out.push_str("</mtd>");
                 }
@@ -414,7 +461,7 @@ mod tests {
             MathExpr::Fenced { open, close, body } => {
                 assert_eq!(open, "[");
                 assert_eq!(close, "]");
-                assert!(matches!(*body, MathExpr::Table(_)));
+                assert!(matches!(*body, MathExpr::Table { .. }));
             }
             other => panic!("expected Fenced, got {other:?}"),
         }

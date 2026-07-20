@@ -55,6 +55,15 @@ pub(super) fn tokenize_content_list(
     };
 
     for item in items {
+        // Mixed content model (reference books): a content_list may hold
+        // literal strings interleaved with element structs (inline math,
+        // images). Strings are text runs, not elements.
+        if let Some(text) = item.unwrap_annotated().as_string() {
+            if !text.is_empty() {
+                stream.push(KfxToken::Text(text.to_string()));
+            }
+            continue;
+        }
         tokenize_content_item(item, ctx, stream);
     }
 }
@@ -78,6 +87,42 @@ pub(super) fn tokenize_content_item(
         Some(f) => f,
         None => return,
     };
+
+    // Math container: `yj.classification: math` carries the source MathML
+    // and spoken alt text as annotations. Import those into a Role::Math IR
+    // node instead of walking the KVG/text rendering below it (the render is
+    // derived data; the MathML is the content).
+    if get_field(fields, sym!(YjClassification)).and_then(|v| v.as_symbol())
+        == Some(KfxSymbol::Math as u64)
+    {
+        let annotation_ref = |wanted: u64| -> Option<ContentRef> {
+            let anns = get_field(fields, sym!(Annotations))?.as_list()?;
+            for ann in anns {
+                let Some(f) = ann.unwrap_annotated().as_struct() else {
+                    continue;
+                };
+                if get_field(f, sym!(AnnotationType)).and_then(|v| v.as_symbol()) != Some(wanted) {
+                    continue;
+                }
+                let cr = get_field(f, sym!(Content))?.as_struct()?;
+                let name = get_field(cr, sym!(Name))
+                    .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols))?;
+                let index = get_field(cr, sym!(Index))
+                    .and_then(|v| v.as_int())
+                    .and_then(|n| usize::try_from(n).ok())?;
+                return Some(ContentRef { name, index });
+            }
+            None
+        };
+        stream.push(KfxToken::MathImport(Box::new(MathImportToken {
+            mathml_ref: annotation_ref(sym!(Mathml)),
+            alttext_ref: annotation_ref(sym!(AltText)),
+            id: get_field(fields, sym!(Id)).and_then(|v| v.as_int()),
+            style_name: get_field(fields, sym!(Style))
+                .and_then(|v| resolve_symbol_or_string(v, ctx.doc_symbols)),
+        })));
+        return;
+    }
 
     // Get element type symbol ID (u64 from IonValue, converted to u32 for the
     // schema). The symbol is untrusted: `as u32` would alias an id above
@@ -479,6 +524,51 @@ where
 
             KfxToken::StartSpan(_) | KfxToken::EndSpan => {
                 // Style events are handled via ElementStart.style_events
+            }
+
+            KfxToken::MathKvg(_) => {
+                // Export-only token; never produced by the tokenizer.
+            }
+
+            KfxToken::MathImport(mi) => {
+                let parent = *stack.last().unwrap_or(&chapter.root());
+                let mathml = mi
+                    .mathml_ref
+                    .as_ref()
+                    .and_then(|r| content_lookup(&r.name, r.index));
+                let alttext = mi
+                    .alttext_ref
+                    .as_ref()
+                    .and_then(|r| content_lookup(&r.name, r.index))
+                    .filter(|s| !s.trim().is_empty() && s != "no accessible name found.");
+                if let Some(mut math) = mathml
+                    .as_deref()
+                    .and_then(crate::math::mathml::parse_math_str)
+                {
+                    if math.alttext.is_none() {
+                        math.alttext = alttext;
+                    }
+                    let node_id = chapter.alloc_node(Node::new(Role::Math));
+                    chapter.append_child(parent, node_id);
+                    if let Some(style_name) = &mi.style_name
+                        && let Some(styles_map) = styles
+                        && let Some(kfx_props) = styles_map.get(style_name)
+                    {
+                        let style_id = chapter.styles.intern(kfx_style_to_ir(kfx_props));
+                        if let Some(node) = chapter.node_mut(node_id) {
+                            node.style = style_id;
+                        }
+                    }
+                    if let Some(id) = mi.id {
+                        chapter.semantics.set_id(node_id, &id.to_string());
+                    }
+                    chapter.math.insert(node_id, math);
+                } else if let Some(text) = alttext {
+                    // Unparseable/absent MathML: keep the readable text.
+                    let range = chapter.append_text(&text);
+                    let text_node = chapter.alloc_node(Node::text(range));
+                    chapter.append_child(parent, text_node);
+                }
             }
         }
     }

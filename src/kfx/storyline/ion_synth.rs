@@ -121,6 +121,15 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
 
                 span_stack.push((current_offset, span.clone()));
             }
+            KfxToken::MathImport(_) => {
+                // Import-only token; export emits math from the IR directly.
+            }
+            KfxToken::MathKvg(math) => {
+                let container = build_math_kvg_container(math, ctx);
+                if let Some(current) = stack.last_mut() {
+                    current.add_child(container);
+                }
+            }
             KfxToken::EndSpan => {
                 // Pop the span and calculate its length
                 if let Some((start_offset, mut span_info)) = span_stack.pop() {
@@ -150,6 +159,170 @@ pub fn tokens_to_ion(tokens: &TokenStream, ctx: &mut ExportContext) -> IonValue 
         root.build(ctx)
     } else {
         IonValue::List(vec![])
+    }
+}
+
+/// Build a KVG-bearing math container (Kindle Previewer's math encoding):
+///
+/// ```text
+/// container ('yj.classification': math, render: inline, annotations
+///            [alt_text, mathml], pan_zoom_viewer, layout: vertical)
+/// └── container ('yj.classification': mathsegment, layout: vertical)
+///     └── kvg element (viewBox $66/$67, em sizes $56/$57, shape_list $250
+///                      referencing the book path_bundle "p0")
+/// ```
+///
+/// Declined equations (no `kvg`) get a text child + alt_text annotation
+/// only — the mathml annotation must never ship without a shape layer (it
+/// renders as visible garbage on old firmware).
+fn build_math_kvg_container(math: &MathKvgToken, ctx: &mut ExportContext) -> IonValue {
+    let container_id = ctx.fragment_ids.next_id();
+    ctx.record_content_id(container_id);
+    let style_sym = math.style_symbol.unwrap_or(ctx.default_style_symbol);
+    if style_sym == ctx.default_style_symbol {
+        ctx.default_style_used = true;
+    }
+
+    let content_ref = |name: u64, index: usize| {
+        IonValue::Struct(vec![
+            (sym!(Name), IonValue::Symbol(name)),
+            (sym!(Index), IonValue::Int(index as i64)),
+        ])
+    };
+    let mut annotations = Vec::new();
+    if !math.alttext.is_empty() {
+        let (n, i) = ctx.append_text(&math.alttext);
+        annotations.push(IonValue::Struct(vec![
+            (sym!(Content), content_ref(n, i)),
+            (sym!(AnnotationType), IonValue::Symbol(sym!(AltText))),
+        ]));
+    }
+    if let Some(kvg) = &math.kvg {
+        if !math.mathml.is_empty() {
+            let (n, i) = ctx.append_text(&math.mathml);
+            annotations.push(IonValue::Struct(vec![
+                (sym!(Content), content_ref(n, i)),
+                (sym!(AnnotationType), IonValue::Symbol(sym!(Mathml))),
+            ]));
+        }
+
+        // Innermost: the kvg element with its shape list.
+        let bundle_name = ctx.symbols.get_or_intern("p0");
+        let shapes: Vec<IonValue> = kvg
+            .shapes
+            .iter()
+            .map(|sh| {
+                IonValue::Struct(vec![
+                    (
+                        sym!(Path),
+                        IonValue::Struct(vec![
+                            (sym!(Name), IonValue::Symbol(bundle_name)),
+                            (sym!(Index), IonValue::Int(sh.path_index as i64)),
+                        ]),
+                    ),
+                    (
+                        sym!(Transform),
+                        IonValue::List(
+                            sh.transform
+                                .iter()
+                                .map(|&v| IonValue::Float(v as f64))
+                                .collect(),
+                        ),
+                    ),
+                    (sym!(StrokeWidth), IonValue::Float(0.0)),
+                    (sym!(Type), IonValue::Symbol(KfxSymbol::Shape as u64)),
+                ])
+            })
+            .collect();
+        let em_dim = |v: f32| {
+            IonValue::Struct(vec![
+                (sym!(Value), IonValue::Float(v as f64)),
+                (sym!(Unit), IonValue::Symbol(sym!(Em))),
+            ])
+        };
+        let kvg_id = ctx.fragment_ids.next_id();
+        ctx.record_content_id(kvg_id);
+        let kvg_elem = IonValue::Struct(vec![
+            (sym!(Id), IonValue::Int(kvg_id as i64)),
+            (
+                sym!(MaxWidth),
+                IonValue::Struct(vec![
+                    (sym!(Value), IonValue::Float(100.0)),
+                    (sym!(Unit), IonValue::Symbol(sym!(Percent))),
+                ]),
+            ),
+            (sym!(FixedWidth), IonValue::Int(kvg.fixed_width as i64)),
+            (sym!(FixedHeight), IonValue::Int(kvg.fixed_height as i64)),
+            (sym!(Width), em_dim(kvg.width_em)),
+            (sym!(Height), em_dim(kvg.height_em)),
+            (sym!(ShapeList), IonValue::List(shapes)),
+            (sym!(Style), IonValue::Symbol(ctx.default_style_symbol)),
+            (
+                sym!(KvgContentType),
+                IonValue::Symbol(KfxSymbol::Text as u64),
+            ),
+            (sym!(Type), IonValue::Symbol(KfxSymbol::Kvg as u64)),
+        ]);
+        ctx.default_style_used = true;
+
+        let seg_id = ctx.fragment_ids.next_id();
+        ctx.record_content_id(seg_id);
+        let segment = IonValue::Struct(vec![
+            (sym!(Id), IonValue::Int(seg_id as i64)),
+            (sym!(Layout), IonValue::Symbol(KfxSymbol::Vertical as u64)),
+            (sym!(Type), IonValue::Symbol(KfxSymbol::Container as u64)),
+            (
+                sym!(YjClassification),
+                IonValue::Symbol(KfxSymbol::Mathsegment as u64),
+            ),
+            (sym!(ContentList), IonValue::List(vec![kvg_elem])),
+        ]);
+
+        let mut fields = vec![
+            (sym!(Id), IonValue::Int(container_id as i64)),
+            (sym!(YjClassification), IonValue::Symbol(sym!(Math))),
+        ];
+        if !math.display {
+            fields.push((sym!(Render), IonValue::Symbol(sym!(Inline))));
+        }
+        if !annotations.is_empty() {
+            fields.push((sym!(Annotations), IonValue::List(annotations)));
+        }
+        fields.push((sym!(Layout), IonValue::Symbol(KfxSymbol::Vertical as u64)));
+        fields.push((sym!(PanZoomViewer), IonValue::Symbol(sym!(Enabled))));
+        fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+        fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Container as u64)));
+        fields.push((sym!(ContentList), IonValue::List(vec![segment])));
+        IonValue::Struct(fields)
+    } else {
+        // Declined: readable text child, alt_text annotation only.
+        let mut fields = vec![
+            (sym!(Id), IonValue::Int(container_id as i64)),
+            (sym!(YjClassification), IonValue::Symbol(sym!(Math))),
+        ];
+        if !math.display {
+            fields.push((sym!(Render), IonValue::Symbol(sym!(Inline))));
+        }
+        if !annotations.is_empty() {
+            fields.push((sym!(Annotations), IonValue::List(annotations)));
+        }
+        fields.push((sym!(Layout), IonValue::Symbol(KfxSymbol::Vertical as u64)));
+        fields.push((sym!(Style), IonValue::Symbol(style_sym)));
+        fields.push((sym!(Type), IonValue::Symbol(KfxSymbol::Container as u64)));
+        if !math.text.is_empty() {
+            let inner_id = ctx.fragment_ids.next_id();
+            ctx.record_content_id(inner_id);
+            let (n, i) = ctx.append_text(&math.text);
+            ctx.record_content_length(inner_id, math.text.chars().count());
+            let inner = IonValue::Struct(vec![
+                (sym!(Id), IonValue::Int(inner_id as i64)),
+                (sym!(Style), IonValue::Symbol(style_sym)),
+                (sym!(Type), IonValue::Symbol(KfxSymbol::Text as u64)),
+                (sym!(Content), content_ref(n, i)),
+            ]);
+            fields.push((sym!(ContentList), IonValue::List(vec![inner])));
+        }
+        IonValue::Struct(fields)
     }
 }
 

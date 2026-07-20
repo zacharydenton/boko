@@ -175,10 +175,13 @@ impl BookContext {
 
     /// Collect normalized content from the book through IR pipeline.
     fn from_normalized(book: &Book) -> crate::Result<Self> {
-        use super::normalize::normalize_book;
+        use super::html_synth::MathForm;
+        use super::normalize::normalize_book_math;
 
         book.resolve_toc();
-        let normalized = normalize_book(book)?;
+        // KF8 renderers cannot display MathML (it stacks one token per
+        // line); serialize math as its Unicode linearization instead.
+        let normalized = normalize_book_math(book, MathForm::Text)?;
 
         // Collect metadata and TOC. The TOC (and landmarks below) must be
         // rewritten onto the emitted `chapter_{i}.xhtml` names: the chunker's
