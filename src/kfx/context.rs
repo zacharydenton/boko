@@ -803,6 +803,12 @@ pub struct ExportContext {
     /// Text length for each content fragment ID.
     pub content_id_lengths: HashMap<u64, usize>,
 
+    /// Lazily loaded math font for KVG typesetting (None until first use;
+    /// inner None = no font on this system → math falls back to text runs).
+    math_font: Option<Option<crate::math::kvg::MathFont>>,
+    /// Book-level shared KVG glyph outline bundle ($692 fragment "p0").
+    pub math_bundle: crate::math::kvg::PathBundle,
+
     /// Per-section image resource dependencies.
     /// Maps section_name → set of resource short names (e.g., "e6") referenced by that section.
     /// Used to build the container_entity_map dependency graph so Kindle can locate images.
@@ -886,6 +892,8 @@ impl ExportContext {
             first_content_ids: HashMap::new(),
             content_ids_by_chapter: HashMap::new(),
             content_id_lengths: HashMap::new(),
+            math_font: None,
+            math_bundle: crate::math::kvg::PathBundle::new(),
             section_resource_deps: BTreeMap::new(),
         }
     }
@@ -946,6 +954,29 @@ impl ExportContext {
             self.current_content_name = self.symbols.get_or_intern(&format!("content_{chunk}"));
         }
         (self.current_content_name, index)
+    }
+
+    /// Whether math renders as a KVG-bearing container (a math font is
+    /// available) or falls back to inline text runs.
+    pub fn math_renders_as_container(&mut self) -> bool {
+        self.math_font
+            .get_or_insert_with(crate::math::kvg::MathFont::load_system)
+            .is_some()
+    }
+
+    /// Typeset a math expression into KVG shapes, deduplicating outlines
+    /// into the book bundle. `None` when no font is available or the
+    /// expression contains unmodeled content.
+    pub fn typeset_math(
+        &mut self,
+        math: &crate::math::Math,
+    ) -> Option<crate::math::kvg::KvgEquation> {
+        let font = self
+            .math_font
+            .get_or_insert_with(crate::math::kvg::MathFont::load_system)
+            .as_ref()?;
+        let layout = crate::math::kvg::typeset(font, &math.expr, math.display)?;
+        Some(crate::math::kvg::emit(font, &layout, &mut self.math_bundle))
     }
 
     /// Take all content chunks as (fragment_name, segments) pairs.

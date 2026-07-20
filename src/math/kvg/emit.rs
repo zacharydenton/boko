@@ -72,7 +72,7 @@ impl PathBundle {
 
 /// One KVG shape: a bundle outline placed by an affine transform
 /// (KFX component order: `[a, c, b, d, e, f]` — b/c swapped vs SVG).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KvgShape {
     /// Index into the [`PathBundle`].
     pub path_index: usize,
@@ -81,7 +81,7 @@ pub struct KvgShape {
 }
 
 /// A complete KVG equation: sized container + shapes referencing the bundle.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KvgEquation {
     /// viewBox width ($66), in outline units.
     pub fixed_width: u32,

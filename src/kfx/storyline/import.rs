@@ -526,6 +526,10 @@ where
                 // Style events are handled via ElementStart.style_events
             }
 
+            KfxToken::MathKvg(_) => {
+                // Export-only token; never produced by the tokenizer.
+            }
+
             KfxToken::MathImport(mi) => {
                 let parent = *stack.last().unwrap_or(&chapter.root());
                 let mathml = mi

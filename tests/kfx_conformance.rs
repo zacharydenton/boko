@@ -249,18 +249,28 @@ fn mathml_survives_into_kfx_as_text() {
     let kfx = common::export_to_bytes(&mut book, Format::Kfx);
 
     let text = String::from_utf8_lossy(&kfx);
-    // The equation renders as its Unicode linearization in a plain text run —
-    // the only shape that renders sanely on every firmware. (A device test
-    // showed mathml/alt_text annotations leak as visible content on pre-5.18.2
-    // readers; they return only with the KVG spoke.)
-    assert!(
-        text.contains("E=mc²"),
-        "math must reach KFX as its Unicode linearization"
-    );
-    assert!(
-        !text.contains("<math"),
-        "raw MathML must not be embedded (it leaks as visible stacked tokens on device)"
-    );
+    if boko::math::kvg::MathFont::load_system().is_some() {
+        // With a math font: the equation ships as a KVG container carrying
+        // the source MathML + alt_text annotations over the vector shapes.
+        assert!(
+            text.contains("<math"),
+            "MathML annotation must ride the KVG container"
+        );
+        assert!(
+            text.contains("E equals m c squared"),
+            "alt_text annotation must be present"
+        );
+    } else {
+        // Fontless machines fall back to the Unicode text run.
+        assert!(
+            text.contains("E=mc²"),
+            "math must reach KFX as its Unicode linearization"
+        );
+        assert!(
+            !text.contains("<math"),
+            "raw MathML must not be embedded without a KVG shape layer"
+        );
+    }
     // The surrounding prose stays intact around it.
     assert!(text.contains("Einstein wrote"));
     assert!(text.contains("in 1905."));
@@ -287,6 +297,8 @@ fn math_inside_span_is_not_dropped() {
     let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import epub");
     let kfx = common::export_to_bytes(&mut book, Format::Kfx);
     let text = String::from_utf8_lossy(&kfx);
+    // Span-nested math always stays inline readable text (a container can't
+    // nest mid-style-event), regardless of font availability.
     assert!(
         text.contains("z₃"),
         "math inside a span must survive (as inline readable text), not be dropped"

@@ -91,11 +91,11 @@ pub(super) fn survey_node(
         // We don't need to intern plain text content
     }
 
-    // Math contributes its readable linearization in Pass 2 (as the math
-    // container's text child, or as an inline segment when nested in a span);
-    // account its length here so text-offset bookkeeping and the body-size
-    // normalization weighting see the same stream Pass 2 emits.
+    // Math contributes its readable linearization in Pass 2 only on the
+    // text-run path (no math font); the KVG container path emits vector
+    // shapes instead. Keep the accounting in step with what Pass 2 emits.
     if node.role == Role::Math
+        && !ctx.math_renders_as_container()
         && let Some(math) = chapter.math.get(&node_id)
     {
         let len = math.to_text().len();

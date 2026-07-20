@@ -23,7 +23,7 @@ use crate::kfx::ion::IonValue;
 use crate::kfx::schema::{SemanticTarget, schema};
 use crate::kfx::symbols::KfxSymbol;
 use crate::kfx::tokens::{
-    ContentRef, ElementStart, KfxToken, MathImportToken, SpanStart, TokenStream,
+    ContentRef, ElementStart, KfxToken, MathImportToken, MathKvgToken, SpanStart, TokenStream,
 };
 use crate::kfx::transforms::ImportContext;
 use crate::model::Role;

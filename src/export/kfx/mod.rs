@@ -199,6 +199,26 @@ fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
     // the copy pushed before chapters was a placeholder for ordering.
     fragments[0] = build_content_features_fragment(&ctx);
 
+    // 2j2. Shared KVG glyph outline bundle (math typesetting), if any
+    // equations were typeset. Must precede the container entity map so the
+    // bundle is enumerated there.
+    if !ctx.math_bundle.is_empty() {
+        let name_sym = ctx.symbols.get_or_intern("p0");
+        let path_list: Vec<IonValue> = ctx
+            .math_bundle
+            .outlines()
+            .iter()
+            .map(|outline| {
+                IonValue::List(outline.iter().map(|&v| IonValue::Float(v as f64)).collect())
+            })
+            .collect();
+        let value = IonValue::Struct(vec![
+            (KfxSymbol::Name as u64, IonValue::Symbol(name_sym)),
+            (KfxSymbol::PathList as u64, IonValue::List(path_list)),
+        ]);
+        fragments.push(KfxFragment::new(KfxSymbol::PathBundle as u64, "p0", value));
+    }
+
     // 2k. Navigation maps for reader functionality
     fragments.push(build_position_map_fragment(&ctx));
     fragments.push(build_position_id_map_fragment(&ctx));
