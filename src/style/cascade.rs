@@ -296,6 +296,10 @@ pub fn compute_styles(
 /// legacy presentational attributes (`align=`, `valign=`, ...). Per CSS,
 /// presentational hints apply before every author rule — any matching
 /// selector overrides them — but they beat inherited values.
+// The parameters are the distinct cascade inputs (element, index, parent,
+// scratch, bloom, inline style, presentational hints); each is load-bearing
+// and grouping them into a struct would only add indirection on the hot path.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_styles_indexed(
     elem: ElementRef<'_>,
     index: &CascadeIndex<'_>,

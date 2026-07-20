@@ -176,7 +176,7 @@ impl Importer for Azw3Importer {
                 }
             })?;
             let text = self.cached_text()?;
-            return Ok(flow_slice(&text, start, end).to_vec());
+            return Ok(flow_slice(text, start, end).to_vec());
         }
 
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
