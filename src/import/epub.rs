@@ -424,7 +424,11 @@ fn collect_identifiers(opf_str: &str) -> Vec<String> {
                 in_identifier = true;
             }
             Ok(Event::Text(t)) if in_identifier => {
-                let text = t.xml_content().unwrap_or_default().trim().to_string();
+                let text = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
                 if !text.is_empty() {
                     identifiers.push(text);
                 }
