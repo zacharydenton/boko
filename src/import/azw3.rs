@@ -5,7 +5,7 @@
 //! - Div elements for content fragments
 //! - NCX index for table of contents
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -65,6 +65,10 @@ pub struct Azw3Importer {
     /// this, every `build_chapter` cache miss re-ran `build_parts` over the
     /// whole book, making a full N-chapter load O(N x book size).
     parts_cache: OnceLock<Vec<(String, Vec<u8>)>>,
+
+    /// `aid` values that links or TOC entries resolve to; these survive
+    /// attribute stripping as `id="aid-{value}"`.
+    linked_aids: OnceLock<HashSet<String>>,
 
     /// Serializes the first text extraction: parallel chapter loads would
     /// otherwise each decompress the whole book before the OnceLock settles.
@@ -306,6 +310,25 @@ impl Azw3Importer {
     }
 }
 
+impl Azw3Importer {
+    /// Every `aid` that a `kindle:pos:fid` link or an NCX entry resolves to.
+    fn collect_linked_aids(&self, html_text: &[u8], file_starts: &[(u32, u32)]) -> HashSet<String> {
+        let mut aids = transform::collect_linked_aids(html_text, &self.kf8.elems, file_starts);
+        for pos in self.toc_positions.values() {
+            if let Some(id) = transform::find_nearest_id_fast(
+                html_text,
+                pos.byte_pos as usize,
+                pos.file_num as usize,
+                file_starts,
+            ) && let Some(aid) = id.strip_prefix("aid-")
+            {
+                aids.insert(aid.to_string());
+            }
+        }
+        aids
+    }
+}
+
 /// Recursively resolve TOC entry hrefs with fragment IDs using position map.
 fn resolve_toc_with_positions(
     entries: &mut [TocEntry],
@@ -517,6 +540,7 @@ impl Azw3Importer {
             },
             text_cache: OnceLock::new(),
             parts_cache: OnceLock::new(),
+            linked_aids: OnceLock::new(),
             text_init: Mutex::new(()),
             chapter_cache: RwLock::new(HashMap::new()),
             assets: Vec::new(),
@@ -635,8 +659,12 @@ impl Azw3Importer {
         let transformed =
             transform::transform_kindle_refs(&content, &self.kf8.elems, html_text, &file_starts);
 
-        // Strip Amazon-specific attributes (aid, data-Amzn*)
-        let mut cleaned = transform::strip_kindle_attributes_fast(&transformed);
+        // Strip Amazon-specific attributes (aid, data-Amzn*), keeping linked
+        // aids as anchors
+        let linked_aids = self
+            .linked_aids
+            .get_or_init(|| self.collect_linked_aids(html_text, &file_starts));
+        let mut cleaned = transform::strip_kindle_attributes_fast(&transformed, linked_aids);
 
         // Fix stray solidi between attributes (`src="x.gif"/ alt=""`, a real
         // AZW3 markup quirk that glues the next attribute into the value
