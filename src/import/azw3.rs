@@ -664,7 +664,11 @@ impl Azw3Importer {
         let linked_aids = self
             .linked_aids
             .get_or_init(|| self.collect_linked_aids(html_text, &file_starts));
-        let mut cleaned = transform::strip_kindle_attributes_fast(&transformed, linked_aids);
+        let cleaned = transform::strip_kindle_attributes_fast(&transformed, linked_aids);
+
+        // Drop links to stylesheets the KF8 writer never embedded (alternate
+        // vertical/horizontal sheets)
+        let mut cleaned = transform::drop_dangling_stylesheet_links(&cleaned, &self.assets);
 
         // Fix stray solidi between attributes (`src="x.gif"/ alt=""`, a real
         // AZW3 markup quirk that glues the next attribute into the value

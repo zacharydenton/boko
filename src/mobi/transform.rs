@@ -603,6 +603,73 @@ fn clean_tag(tag: &[u8], linked_aids: &HashSet<String>) -> Vec<u8> {
     result
 }
 
+/// Drop stylesheet `<link>`s whose local href isn't a served asset.
+///
+/// The KF8 writer only turns primary `rel="stylesheet"` links into
+/// `kindle:flow` references and embeds their CSS; `rel="alternate
+/// stylesheet"` links (e.g. the horizontal variant of a vertical book) keep
+/// their original EPUB path and their CSS isn't in the book at all.
+pub fn drop_dangling_stylesheet_links(html: &[u8], assets: &[String]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(html.len());
+    let mut pos = 0;
+
+    while let Some(rel_start) = memchr::memchr(b'<', &html[pos..]) {
+        let start = pos + rel_start;
+        let Some(rel_end) = memchr::memchr(b'>', &html[start..]) else {
+            break;
+        };
+        let end = start + rel_end + 1;
+        let tag = &html[start..end];
+
+        output.extend_from_slice(&html[pos..start]);
+        if !is_dangling_stylesheet_link(tag, assets) {
+            output.extend_from_slice(tag);
+        }
+        pos = end;
+    }
+
+    output.extend_from_slice(&html[pos..]);
+    output
+}
+
+fn is_dangling_stylesheet_link(tag: &[u8], assets: &[String]) -> bool {
+    if tag.len() < 6 || !tag[..6].eq_ignore_ascii_case(b"<link ") {
+        return false;
+    }
+    let is_stylesheet = attr_value(tag, b"rel").is_some_and(|rel| {
+        rel.to_ascii_lowercase()
+            .split_str(" ")
+            .any(|t| t == b"stylesheet")
+    });
+    let Some(href) = attr_value(tag, b"href") else {
+        return false;
+    };
+    is_stylesheet && !href.contains_str(":") && !assets.iter().any(|a| a.as_bytes() == href)
+}
+
+/// The quoted value of attribute `name` (lowercase) in a tag, matched
+/// case-insensitively.
+fn attr_value<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = memmem::find(&lower[from..], name) {
+        let at = from + found;
+        from = at + 1;
+        let preceded = at > 0 && lower[at - 1].is_ascii_whitespace();
+        let rest = &tag[at + name.len()..];
+        if !preceded || !rest.starts_with(b"=") {
+            continue;
+        }
+        let quote = *rest.get(1)?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        let value = &rest[2..];
+        return Some(&value[..memchr::memchr(quote, value)?]);
+    }
+    None
+}
+
 /// Whether a tag carries its own `id` attribute.
 fn tag_has_id(tag: &[u8]) -> bool {
     [b" id=", b"\tid=", b"\nid="]
@@ -734,6 +801,25 @@ mod tests {
             find_nearest_id_fast(raw, pos, 0, &file_starts).as_deref(),
             Some("idまえがき")
         );
+    }
+
+    #[test]
+    fn test_drop_dangling_stylesheet_links() {
+        let assets = vec!["styles/style0000.css".to_string()];
+        let html =
+            b"<head><link rel=\"stylesheet\" href=\"styles/style0000.css\" type=\"text/css\"/>\n\
+<link rel=\"alternate stylesheet\" href=\"../Styles/TextHori.css\" class=\"horizontal\"/>\n\
+<LINK class=\"horizontal\" REL=\"Alternate Stylesheet\" href='../styles/x_h.css'/>\n\
+<link rel=\"stylesheet\" href=\"https://example.com/a.css\"/>\n\
+<link rel=\"icon\" href=\"missing.png\"/></head>";
+        let out = drop_dangling_stylesheet_links(html, &assets);
+        let out = String::from_utf8_lossy(&out);
+        assert!(out.contains("styles/style0000.css"), "{out}");
+        assert!(!out.contains("TextHori"), "{out}");
+        assert!(!out.contains("x_h.css"), "{out}");
+        // External sheets and non-stylesheet links are not ours to judge
+        assert!(out.contains("https://example.com/a.css"), "{out}");
+        assert!(out.contains("missing.png"), "{out}");
     }
 
     #[test]
