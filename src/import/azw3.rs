@@ -22,6 +22,7 @@ use crate::mobi::{
     is_metadata_record, palmdoc, parse_exth, parse_fdst, strip_trailing_data, transform,
 };
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
+use memchr::memmem;
 
 /// AZW3/KF8 format importer with lazy loading.
 pub struct Azw3Importer {
@@ -176,7 +177,14 @@ impl Importer for Azw3Importer {
                 }
             })?;
             let text = self.cached_text()?;
-            return Ok(flow_slice(text, start, end).to_vec());
+            // The CSS itself may reference embedded resources (`@font-face`
+            // src, background images) as `kindle:embed:XXXX[?mime=...]`;
+            // rewrite those to the discovered asset paths so they resolve.
+            return Ok(rewrite_css_embed_refs(
+                flow_slice(text, start, end),
+                path,
+                &self.assets,
+            ));
         }
 
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
@@ -793,6 +801,68 @@ fn flow_slice(text: &[u8], start: usize, end: usize) -> &[u8] {
     if start <= end { &text[start..end] } else { &[] }
 }
 
+/// Rewrite `kindle:embed:XXXX[?mime=...]` references inside CSS to the
+/// discovered asset path for that embed index.
+///
+/// The KF8 writer stores CSS-referenced resources (`@font-face` src,
+/// background images) as `url(kindle:embed:XXXX)` where XXXX is the base32
+/// resource index + 1 — the same numbering `transform_kindle_refs` handles in
+/// chapter HTML. The discovered assets list already names each record
+/// `images/image_NNNN.ext` or `fonts/font_NNNN.ext`, so the index picks the
+/// right path (and extension) directly; anything unresolvable is left as a
+/// best-guess image path rather than a dangling `kindle:` URL.
+///
+/// CSS urls resolve against the stylesheet, so paths are written relative to
+/// `css_path` (e.g. `../images/image_0000.png` from `styles/style0001.css`).
+fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<u8> {
+    let up = "../".repeat(css_path.matches('/').count());
+    let needle = b"kindle:embed:";
+    let finder = memmem::Finder::new(needle);
+
+    let mut output = Vec::with_capacity(css.len());
+    let mut pos = 0;
+
+    while let Some(rel_start) = finder.find(&css[pos..]) {
+        let start = pos + rel_start;
+        output.extend_from_slice(&css[pos..start]);
+
+        let after = &css[start + needle.len()..];
+        // The reference ends at ) " ' or ? (a ?mime=... suffix).
+        let end_pos = after
+            .iter()
+            .position(|&b| b == b')' || b == b'"' || b == b'\'' || b == b'?')
+            .unwrap_or(after.len());
+        let embed_num = transform::parse_base32(&after[..end_pos]);
+        let embed_idx = embed_num.saturating_sub(1);
+
+        // Skip a ?mime=... suffix if present.
+        let skip = if end_pos < after.len() && after[end_pos] == b'?' {
+            after[end_pos..]
+                .iter()
+                .position(|&b| b == b')' || b == b'"' || b == b'\'')
+                .map(|p| end_pos + p)
+                .unwrap_or(after.len())
+        } else {
+            end_pos
+        };
+
+        let image_prefix = format!("images/image_{embed_idx:04}.");
+        let font_prefix = format!("fonts/font_{embed_idx:04}.");
+        let asset_path = assets
+            .iter()
+            .find(|s| s.starts_with(&image_prefix) || s.starts_with(&font_prefix))
+            .cloned()
+            .unwrap_or_else(|| format!("images/image_{embed_idx:04}.jpg"));
+
+        output.extend_from_slice(up.as_bytes());
+        output.extend_from_slice(asset_path.as_bytes());
+        pos = start + needle.len() + skip;
+    }
+
+    output.extend_from_slice(&css[pos..]);
+    output
+}
+
 /// Build chapter parts by combining skeletons with div content.
 fn build_parts(
     text: &[u8],
@@ -867,4 +937,66 @@ fn toc_node_to_entry(node: TocNode) -> TocEntry {
     entry.play_order = Some(node.ncx_index);
     entry.children = node.children.into_iter().map(toc_node_to_entry).collect();
     entry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_css_embed_refs;
+
+    const CSS: &str = "styles/style0000.css";
+
+    fn assets() -> Vec<String> {
+        vec![
+            "images/image_0000.png".to_string(),
+            "fonts/font_0001.otf".to_string(),
+            "images/image_0002.gif".to_string(),
+        ]
+    }
+
+    #[test]
+    fn rewrites_font_ref_with_mime_suffix() {
+        let css = b"@font-face { src: url(kindle:embed:0002?mime=font/otf); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "@font-face { src: url(../fonts/font_0001.otf); }"
+        );
+    }
+
+    #[test]
+    fn rewrites_bare_image_ref_using_discovered_extension() {
+        let css = b"h1 { background: url(kindle:embed:0001); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "h1 { background: url(../images/image_0000.png); }"
+        );
+    }
+
+    #[test]
+    fn unresolvable_ref_falls_back_to_image_path() {
+        let css = b"p { background: url(kindle:embed:000A); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "p { background: url(../images/image_0009.jpg); }"
+        );
+    }
+
+    #[test]
+    fn css_without_embed_refs_is_unchanged() {
+        let css = b"p { margin: 1em; } /* kindle:flow stays */";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(out, css);
+    }
+
+    #[test]
+    fn quoted_ref_terminates_at_quote() {
+        let css = b"p { background: url('kindle:embed:0003'); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "p { background: url('../images/image_0002.gif'); }"
+        );
+    }
 }

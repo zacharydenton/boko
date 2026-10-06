@@ -10,6 +10,8 @@
 //! Each assertion below corresponds to a specific bug class previously fixed
 //! in the writer; if one regresses it should fail here, not on a Kindle.
 
+mod common;
+
 use std::io::Cursor;
 
 use boko::model::{Format, TocEntry};
@@ -234,4 +236,89 @@ fn azw3_roundtrip_preserves_stylesheet_styles() {
         "authored small-caps styling must survive the AZW3 roundtrip \
          (KF8 flow CSS regression)"
     );
+}
+
+/// CSS-referenced resources must survive the round trip. The writer rewrites
+/// `url(...)` values inside stylesheets to `url(kindle:embed:XXXX)`; on
+/// import those references must come back as discovered asset paths — a
+/// stylesheet that still says `kindle:embed:` references a resource no EPUB
+/// consumer can resolve (broken @font-face fonts and background images).
+#[test]
+fn azw3_roundtrip_resolves_embed_refs_inside_css() {
+    let epub = common::EpubBuilder::new("CSS Embed Refs")
+        .css("h1 { background-image: url(../images/pic.png); }")
+        .image("images/pic.png", common::tiny_png())
+        .doc(common::Doc::new(
+            "text/ch1.xhtml",
+            "Chapter 1",
+            "<h1>Heading</h1><p>Body text for the embed-ref roundtrip.</p>",
+        ))
+        .nav(vec![common::Nav::new("Chapter 1", "text/ch1.xhtml")])
+        .build();
+
+    let book = Book::from_bytes(&epub, Format::Epub).expect("open synthetic epub");
+    let mut buf = Cursor::new(Vec::new());
+    boko::export::Azw3Exporter::new()
+        .export(&book, &mut buf)
+        .expect("azw3 export");
+    let azw3 = buf.into_inner();
+
+    let book = Book::from_bytes(&azw3, Format::Azw3).expect("reopen azw3");
+    let css_asset = book
+        .list_assets()
+        .iter()
+        .find(|a| a.starts_with("styles/") && a.ends_with(".css"))
+        .cloned()
+        .expect("CSS flow asset discovered");
+
+    let css = book.load_asset(&css_asset).expect("load CSS flow");
+    let css_text = String::from_utf8_lossy(&css);
+    assert!(
+        !css_text.contains("kindle:embed:"),
+        "kindle:embed refs must be rewritten to asset paths, got: {css_text}"
+    );
+
+    // Non-vacuous: the writer rewrote url(../images/pic.png) to a
+    // kindle:embed ref (the source path cannot survive), so the only way the
+    // imported CSS references a discovered `images/image_NNNN` asset is the
+    // import-side rewrite doing its job.
+    let referenced = book
+        .list_assets()
+        .iter()
+        .find(|a| css_text.contains(a.as_str()))
+        .cloned()
+        .expect("CSS must reference a discovered asset path");
+
+    // ...and the url resolves to it relative to the stylesheet itself, the
+    // way a reading system resolves it (not relative to the book root).
+    let url = css_text
+        .split("url(")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .expect("url() in CSS")
+        .trim_matches(['"', '\'']);
+    let mut resolved: Vec<&str> = css_asset.split('/').collect();
+    resolved.pop();
+    for part in url.split('/') {
+        match part {
+            ".." => {
+                resolved.pop();
+            }
+            "." => {}
+            p => resolved.push(p),
+        }
+    }
+    assert_eq!(
+        resolved.join("/"),
+        referenced,
+        "url({url}) in {css_asset} must resolve to the asset"
+    );
+    assert!(
+        referenced.starts_with("images/image_"),
+        "expected a discovered image asset, got {referenced}"
+    );
+    let bytes = book
+        .load_asset(&referenced)
+        .expect("referenced asset loads");
+    assert!(!bytes.is_empty(), "referenced asset must have content");
 }
