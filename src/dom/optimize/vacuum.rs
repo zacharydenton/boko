@@ -58,7 +58,7 @@ fn vacuum_siblings(chapter: &mut Chapter, parent_id: NodeId) {
             })
         };
         let flanked_by_inline =
-            prev_opt.is_some_and(&is_inline_flank) && next_opt.is_some_and(&is_inline_flank);
+            prev_opt.is_some_and(is_inline_flank) && next_opt.is_some_and(is_inline_flank);
 
         if !flanked_by_inline && should_vacuum(chapter, current_id) {
             // Unlink this node
