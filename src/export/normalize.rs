@@ -395,6 +395,21 @@ pub fn normalize_book_math(book: &Book, math_form: MathForm) -> crate::Result<No
     let mut per_chapter_remap: Vec<HashMap<String, String>> =
         vec![HashMap::new(); ir_chapters.len()];
     let mut href_remap: HashMap<String, String> = HashMap::new();
+    let target_output = |target: &crate::model::AnchorTarget| match target {
+        crate::model::AnchorTarget::Internal(gid) => {
+            let tidx = *chapter_pos.get(&gid.chapter)?;
+            let frag = ir_chapters[tidx].2.semantics.id(gid.node);
+            Some(match frag {
+                Some(frag) => format!("chapter_{tidx}.xhtml#{frag}"),
+                None => format!("chapter_{tidx}.xhtml"),
+            })
+        }
+        crate::model::AnchorTarget::Chapter(cid) => {
+            let tidx = *chapter_pos.get(cid)?;
+            Some(format!("chapter_{tidx}.xhtml"))
+        }
+        _ => None,
+    };
     if let Ok(resolved) = book.resolve_links() {
         for (idx, (chapter_id, _, chapter)) in ir_chapters.iter().enumerate() {
             for node_id in chapter.iter_dfs() {
@@ -405,27 +420,37 @@ pub fn normalize_book_math(book: &Book, math_form: MathForm) -> crate::Result<No
                     continue;
                 }
                 let target = resolved.get(crate::model::GlobalNodeId::new(*chapter_id, node_id));
-                let output = match target {
-                    Some(crate::model::AnchorTarget::Internal(gid)) => {
-                        let Some(&tidx) = chapter_pos.get(&gid.chapter) else {
-                            continue;
-                        };
-                        let frag = ir_chapters[tidx].2.semantics.id(gid.node);
-                        match frag {
-                            Some(frag) => format!("chapter_{tidx}.xhtml#{frag}"),
-                            None => format!("chapter_{tidx}.xhtml"),
-                        }
-                    }
-                    Some(crate::model::AnchorTarget::Chapter(cid)) => {
-                        let Some(&tidx) = chapter_pos.get(cid) else {
-                            continue;
-                        };
-                        format!("chapter_{tidx}.xhtml")
-                    }
-                    _ => continue,
+                let Some(output) = target.and_then(target_output) else {
+                    continue;
                 };
                 per_chapter_remap[idx].insert(href.to_string(), output.clone());
                 href_remap.entry(href.to_string()).or_insert(output);
+            }
+        }
+
+        // TOC and landmark hrefs never appear in chapter markup, so forms
+        // only they use (KFX `#927:16` position:offset targets) need bridging
+        // from their own resolved targets.
+        fn add_toc_targets(
+            entries: &[crate::model::TocEntry],
+            target_output: &dyn Fn(&crate::model::AnchorTarget) -> Option<String>,
+            href_remap: &mut HashMap<String, String>,
+        ) {
+            for entry in entries {
+                if let Some(output) = entry.target.as_ref().and_then(target_output) {
+                    href_remap.entry(entry.href.clone()).or_insert(output);
+                }
+                add_toc_targets(&entry.children, target_output, href_remap);
+            }
+        }
+        add_toc_targets(book.toc(), &target_output, &mut href_remap);
+        for landmark in book.landmarks() {
+            if let Some(output) = book
+                .resolve_href(ChapterId(0), &landmark.href)
+                .as_ref()
+                .and_then(target_output)
+            {
+                href_remap.entry(landmark.href.clone()).or_insert(output);
             }
         }
     }
@@ -690,5 +715,97 @@ mod tests {
         // Unknown anchor stays a same-document fragment; externals untouched.
         assert_eq!(rw("#missing"), "#missing");
         assert_eq!(rw("https://example.com/a"), "https://example.com/a");
+    }
+
+    /// TOC entries and landmarks whose hrefs only the importer understands
+    /// (KFX `#id:offset` positions) still land on the emitted chapter file.
+    #[test]
+    fn toc_and_landmark_hrefs_use_resolved_targets() {
+        use crate::import::{Importer, SpineEntry};
+        use crate::model::{
+            AnchorTarget, GlobalNodeId, Landmark, LandmarkType, Metadata, TocEntry,
+        };
+        use std::path::Path;
+        use std::sync::RwLock;
+
+        struct PositionImporter {
+            toc: Vec<TocEntry>,
+            landmarks: Vec<Landmark>,
+            spine: Vec<SpineEntry>,
+            ids: RwLock<HashMap<String, GlobalNodeId>>,
+            metadata: Metadata,
+        }
+
+        impl Importer for PositionImporter {
+            fn open(_path: &Path) -> crate::Result<Self> {
+                unreachable!()
+            }
+            fn metadata(&self) -> &Metadata {
+                &self.metadata
+            }
+            fn toc(&self) -> &[TocEntry] {
+                &self.toc
+            }
+            fn landmarks(&self) -> &[Landmark] {
+                &self.landmarks
+            }
+            fn spine(&self) -> &[SpineEntry] {
+                &self.spine
+            }
+            fn source_id(&self, id: ChapterId) -> Option<&str> {
+                ["s0", "s1"].get(id.0 as usize).copied()
+            }
+            fn load_raw(&self, id: ChapterId) -> crate::Result<Vec<u8>> {
+                let body = match id.0 {
+                    0 => "<p>Intro</p>",
+                    _ => "<p id=\"927\">Heading</p><p>Body</p>",
+                };
+                Ok(format!("<html><body>{body}</body></html>").into_bytes())
+            }
+            fn list_assets(&self) -> &[String] {
+                &[]
+            }
+            fn load_asset(&self, _path: &str) -> crate::Result<Vec<u8>> {
+                Err(std::io::Error::other("no assets").into())
+            }
+            fn index_anchors(&self, chapters: &[(ChapterId, Arc<Chapter>)]) {
+                let mut ids = self.ids.write().unwrap();
+                for (chapter_id, chapter) in chapters {
+                    for node in chapter.iter_dfs() {
+                        if let Some(id) = chapter.semantics.id(node) {
+                            ids.insert(id.to_string(), GlobalNodeId::new(*chapter_id, node));
+                        }
+                    }
+                }
+            }
+            fn resolve_href(&self, _from: ChapterId, href: &str) -> Option<AnchorTarget> {
+                // KFX-style `#id:offset`: the offset is within the element
+                let id = href.strip_prefix('#')?.split(':').next()?;
+                let gid = *self.ids.read().unwrap().get(id)?;
+                Some(AnchorTarget::Internal(gid))
+            }
+        }
+
+        let book = Book::from_backend(Box::new(PositionImporter {
+            toc: vec![TocEntry::new("Heading", "#927:16")],
+            landmarks: vec![Landmark {
+                landmark_type: LandmarkType::StartReading,
+                href: "#927:3".to_string(),
+                label: "Start".to_string(),
+            }],
+            spine: (0..2)
+                .map(|i| SpineEntry {
+                    id: ChapterId(i),
+                    size_estimate: 0,
+                })
+                .collect(),
+            ids: RwLock::new(HashMap::new()),
+            metadata: Metadata::default(),
+        }));
+
+        let content = normalize_book(&book).expect("normalize");
+        let toc = content.rewrite_toc(book.toc());
+        assert_eq!(toc[0].href, "chapter_1.xhtml#927");
+        assert_eq!(content.rewrite_link("#927:3"), "chapter_1.xhtml#927");
     }
 }
