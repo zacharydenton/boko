@@ -40,12 +40,20 @@ Requires Rust 1.85+.
     boko convert in.epub out.kfx
     boko convert in.epub out.azw3
     boko convert in.kfx  out.epub
+    boko convert in.mobi out.epub --dont-split-on-page-breaks --flow-size 260
 
     boko info in.epub
     boko info --json in.epub
 
     boko dump in.epub
     boko dump -c 0 in.epub
+
+For EPUB output, `--flow-size N` splits oversized XHTML documents near N KiB
+at element boundaries. The default is 260 KiB, matching Calibre; use
+`--flow-size 0` to disable size splitting. `--dont-split-on-page-breaks` keeps
+a MOBI input's HTML stream together before EPUB size splitting. An indivisible
+element may exceed the requested size. Size splitting uses the normalized EPUB
+export path.
 
 KFX/KDF/Ion internals can be inspected with the `kfx-dump` subcommand:
 

@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 use crate::dom::Stylesheet;
 use crate::import::{ChapterId, Importer, SpineEntry, resolve_path_based_href};
 use crate::io::{ByteSource, FileSource};
-use crate::mobi::split::{split_mobi_html, split_mobi_html_ncx_only};
+use crate::mobi::split::{remove_pagebreak_tags, split_mobi_html, split_mobi_html_ncx_only};
 use crate::mobi::{
     Compression, Encoding, HuffCdicReader, MobiHeader, NULL_INDEX, PdbInfo, TocNode,
     build_toc_from_ncx, decode_font_record, detect_font_type, detect_image_type, filepos,
@@ -187,6 +187,14 @@ impl MobiImporter {
     ///
     /// Text is extracted eagerly to determine chapter boundaries for the spine.
     pub fn from_source(source: Arc<dyn ByteSource>) -> crate::Result<Self> {
+        Self::from_source_with_pagebreaks(source, true)
+    }
+
+    /// Import MOBI content, optionally ignoring source page-break markers.
+    pub fn from_source_with_pagebreaks(
+        source: Arc<dyn ByteSource>,
+        split_on_page_breaks: bool,
+    ) -> crate::Result<Self> {
         let file_len = source.len();
 
         // Read PDB header
@@ -290,8 +298,16 @@ impl MobiImporter {
         // and NCX positions are available, re-transform with NCX anchors and
         // force NCX-based splitting (bypassing the pagebreak check that failed).
         let split = {
-            let initial = split_mobi_html(&transformed, None);
-            if initial.chapters.len() > 1 || ncx_positions.is_empty() {
+            let initial = if split_on_page_breaks {
+                split_mobi_html(&transformed, None)
+            } else {
+                let with_ncx = ensure_utf8(
+                    filepos::transform_mobi_html(&wrapped, &assets, &ncx_positions),
+                    codec,
+                );
+                split_mobi_html_ncx_only(&remove_pagebreak_tags(&with_ncx), &[])
+            };
+            if !split_on_page_breaks || initial.chapters.len() > 1 || ncx_positions.is_empty() {
                 initial
             } else {
                 // Re-transform with NCX anchors at byte positions, force NCX split

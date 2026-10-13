@@ -13,7 +13,7 @@ use crate::export::{Azw3Exporter, EpubExporter, Exporter, KfxExporter, MarkdownE
 use crate::import::{
     Azw3Importer, ChapterId, EpubImporter, Importer, KfxImporter, MobiImporter, SpineEntry,
 };
-use crate::io::MemorySource;
+use crate::io::{FileSource, MemorySource};
 use crate::model::{AnchorTarget, Chapter, Format, Landmark, Metadata, ResolvedLinks, TocEntry};
 use crate::resolved::resolve_book_links;
 
@@ -79,6 +79,15 @@ impl Book {
         Ok(Self::from_backend(backend))
     }
 
+    /// Open a MOBI file without splitting at its source page breaks or NCX positions.
+    pub fn open_mobi_without_page_break_splits(path: impl AsRef<Path>) -> crate::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let source = Arc::new(FileSource::new(file)?);
+        Ok(Self::from_backend(Box::new(
+            MobiImporter::from_source_with_pagebreaks(source, false)?,
+        )))
+    }
+
     /// Swap the importer backend, returning the old one.
     ///
     /// Cached chapters are dropped: they were produced by the old backend
@@ -119,6 +128,14 @@ impl Book {
             }
         };
         Ok(Self::from_backend(backend))
+    }
+
+    /// Read MOBI bytes without splitting at source page breaks or NCX positions.
+    pub fn from_mobi_bytes_without_page_break_splits(data: &[u8]) -> crate::Result<Self> {
+        let source = Arc::new(MemorySource::new(data.to_vec()));
+        Ok(Self::from_backend(Box::new(
+            MobiImporter::from_source_with_pagebreaks(source, false)?,
+        )))
     }
 
     /// Book metadata.

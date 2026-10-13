@@ -89,6 +89,19 @@ pub(crate) fn split_mobi_html(html: &[u8], ncx_positions: Option<&[u32]>) -> Cha
     }
 }
 
+/// Remove MOBI page-break markers without splitting the surrounding HTML.
+pub(crate) fn remove_pagebreak_tags(html: &[u8]) -> Vec<u8> {
+    let positions = find_pagebreaks(html);
+    let mut cleaned = Vec::with_capacity(html.len());
+    let mut last_end = 0;
+    for position in positions {
+        cleaned.extend_from_slice(&html[last_end..position.start]);
+        last_end = position.end;
+    }
+    cleaned.extend_from_slice(&html[last_end..]);
+    cleaned
+}
+
 /// Split MOBI HTML using only NCX positions, bypassing pagebreak detection.
 ///
 /// Used when pagebreak-based splitting fails to produce multiple chapters
