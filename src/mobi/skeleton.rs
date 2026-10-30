@@ -304,6 +304,11 @@ impl Chunker {
 
                 if quote == b'"' {
                     let aid = String::from_utf8_lossy(aid_bytes).to_string();
+                    // Link targets must point at the element's `<`, not at
+                    // the ` aid="` attribute inside the tag (calibre uses
+                    // `match.start()` of `<[^>]+? aid=`). Kindle cannot
+                    // resolve a position in the middle of a start tag.
+                    let offset = memchr::memrchr(b'<', &text[..offset]).unwrap_or(offset);
 
                     // `offset` is in reassembled coordinates. Find the chunk
                     // whose [insert_pos, insert_pos+length) range contains
@@ -645,6 +650,29 @@ mod tests {
 #[cfg(test)]
 mod chunker_tests {
     use super::*;
+
+    #[test]
+    fn aid_offset_points_at_tag_start() {
+        // kindle:pos:fid:off targets must land on the element's `<`, not on
+        // the ` aid="` attribute inside the start tag (calibre uses the
+        // match start of `<[^>]+? aid=`). The device can't resolve a position
+        // in the middle of a tag, so footnote links jumped to the wrong place.
+        let html = b"<html><head></head><body><p>x</p>\
+            <p class=\"note\" id=\"target\">note</p></body></html>"
+            .to_vec();
+        let mut chunker = Chunker::new();
+        let result = chunker.process(&[("a.xhtml".to_string(), html)]);
+        let aid = &result.id_map[&("a.xhtml".to_string(), "target".to_string())];
+        let (seq, off, _) = result.aid_offset_map[aid];
+        let chunk = &result.chunk_table[seq];
+        let skel_len = result.skel_table[0].length;
+        let chunk_bytes = &result.text[skel_len..skel_len + chunk.length];
+        assert!(
+            chunk_bytes[off..].starts_with(b"<p class=\"note\""),
+            "offset {off} lands on {:?}",
+            String::from_utf8_lossy(&chunk_bytes[off..])
+        );
+    }
 
     #[test]
     fn chunker_preserves_all_bytes() {

@@ -55,6 +55,7 @@ pub fn rewrite_html_references_fast(
     book_resources: &HashMap<String, crate::model::Resource>,
     link_counter_start: usize,
 ) -> RewriteResult {
+    let html = &svg_images_to_img(html);
     let mut output = Vec::with_capacity(html.len() + html.len() / 10); // ~10% overhead
     let mut links = Vec::new();
     let mut link_counter = link_counter_start;
@@ -140,6 +141,53 @@ pub fn rewrite_html_references_fast(
         html: output,
         links,
     }
+}
+
+/// Replace `<svg>` wrappers that only hold a single raster `<image>` (the
+/// usual EPUB cover / full-page illustration markup) with a plain `<img>`.
+///
+/// The `<image xlink:href>` is never rewritten to `kindle:embed:` and
+/// `strip_xml_namespaces` drops the `xmlns:xlink` declaration, so the page
+/// ends up as invalid XHTML with a dangling relative path and the Kindle
+/// reader skips it (the cover page disappears). An `<img>` goes through the
+/// normal resource rewriting below.
+fn svg_images_to_img(html: &[u8]) -> Vec<u8> {
+    let open = memmem::Finder::new(b"<svg");
+    let close = memmem::Finder::new(b"</svg>");
+    let mut output = Vec::with_capacity(html.len());
+    let mut pos = 0;
+    while let Some(rel) = open.find(&html[pos..]) {
+        let start = pos + rel;
+        let Some(close_rel) = close.find(&html[start..]) else {
+            break;
+        };
+        let end = start + close_rel + b"</svg>".len();
+        let svg = &html[start..end];
+        let image = memmem::find(svg, b"<image").and_then(|i| {
+            let tag_end = memchr::memchr(b'>', &svg[i..])? + i + 1;
+            let tag = &svg[i..tag_end];
+            extract_attribute_value(tag, b"xlink:href")
+                .or_else(|| extract_attribute_value(tag, b"href"))
+        });
+        // Only the simple case: the svg holds exactly one <image> and nothing
+        // else (tags: <svg>, <image/> or <image></image>, </svg>).
+        let tags = memchr::memchr_iter(b'<', svg).count();
+        let image_close = memmem::find(svg, b"</image>").is_some();
+        let single = memmem::find_iter(svg, b"<image").count() == 1
+            && tags == if image_close { 4 } else { 3 };
+        output.extend_from_slice(&html[pos..start]);
+        match image {
+            Some(src) if single => {
+                output.extend_from_slice(b"<img src=\"");
+                output.extend_from_slice(src);
+                output.extend_from_slice(b"\" alt=\"\"/>");
+            }
+            _ => output.extend_from_slice(svg),
+        }
+        pos = end;
+    }
+    output.extend_from_slice(&html[pos..]);
+    output
 }
 
 /// Process <link> tag, rewriting CSS href to kindle:flow
@@ -497,6 +545,38 @@ pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, us
     }
 
     // Copy remaining content
+    output.extend_from_slice(&css[pos..]);
+    strip_dangling_font_faces(&output)
+}
+
+/// Drop `@font-face` rules that reference no embedded font.
+///
+/// EPUBs often declare `@font-face` with `local(...)` fallbacks and `url()`s
+/// to font files that are not in the package. Those `url()`s cannot become
+/// `kindle:embed:` references, and leaving them dangling makes the Kindle
+/// reader fail ("remove and re-download") when the user changes the font and
+/// the book is re-laid out. `local()` sources are meaningless on Kindle, so a
+/// rule without any resolved embed is removed whole; the `font-family`
+/// declarations that name it simply fall back to the reader's font.
+fn strip_dangling_font_faces(css: &[u8]) -> Vec<u8> {
+    let finder = memmem::Finder::new(b"@font-face");
+    let mut output = Vec::with_capacity(css.len());
+    let mut pos = 0;
+    while let Some(rel) = finder.find(&css[pos..]) {
+        let start = pos + rel;
+        let Some(open) = css[start..].find_byte(b'{') else {
+            break;
+        };
+        let Some(close) = css[start + open..].find_byte(b'}') else {
+            break;
+        };
+        let end = start + open + close + 1;
+        output.extend_from_slice(&css[pos..start]);
+        if memmem::find(&css[start..end], b"kindle:embed:").is_some() {
+            output.extend_from_slice(&css[start..end]);
+        }
+        pos = end;
+    }
     output.extend_from_slice(&css[pos..]);
     output
 }
@@ -949,5 +1029,31 @@ mod tests {
             result.html.ends_with_str(b"/>"),
             "should end with />: {result_str}"
         );
+    }
+
+    #[test]
+    fn test_css_drops_font_face_without_embedded_font() {
+        let mut resource_map = HashMap::new();
+        resource_map.insert("Fonts/real.ttf".to_string(), 3);
+        let css = b"@font-face { font-family: \"gone\"; src: local(\"SimSun\"), url(../Fonts/missing.ttf); }\n\
+            @font-face { font-family: \"real\"; src: url(../Fonts/real.ttf); }\n\
+            p { font-family: gone; }";
+        let out = String::from_utf8(rewrite_css_references_fast(css, &resource_map)).unwrap();
+        assert!(!out.contains("missing.ttf"), "{out}");
+        assert!(!out.contains("\"gone\""), "{out}");
+        assert!(out.contains("url(kindle:embed:0003)"), "{out}");
+        assert!(out.contains("p { font-family: gone; }"), "{out}");
+    }
+
+    #[test]
+    fn test_svg_wrapped_image_becomes_img() {
+        let html = br#"<div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><image width="10" height="10" xlink:href="../Images/cover.jpg"/></svg></div>"#;
+        assert_eq!(
+            svg_images_to_img(html),
+            br#"<div><img src="../Images/cover.jpg" alt=""/></div>"#.to_vec()
+        );
+        // An SVG that draws anything besides the image is left alone.
+        let drawing = br#"<svg><image xlink:href="a.jpg"/><text>t</text></svg>"#;
+        assert_eq!(svg_images_to_img(drawing), drawing.to_vec());
     }
 }

@@ -119,17 +119,39 @@ pub(super) fn flatten_toc(
         result[i].length = len;
     }
 
-    result
-        .into_iter()
-        .map(|e| NcxBuildEntry {
-            pos: e.pos,
-            length: e.length,
-            label: e.label,
-            depth: e.depth,
-            parent: e.parent,
-            first_child: e.children.first().map(|&i| i as i32).unwrap_or(-1),
-            last_child: e.children.last().map(|&i| i as i32).unwrap_or(-1),
-            pos_fid: Some(e.pos_fid),
+    // KindleGen and calibre emit NCX entries level by level (all top-level
+    // entries first, then the children of each in turn), so each parent's
+    // children are contiguous and appear after every shallower entry. The
+    // depth-first order produced above interleaves levels, which the Kindle
+    // reader mis-navigates on books with nested TOCs.
+    let mut order: Vec<usize> = (0..n).filter(|&i| result[i].parent < 0).collect();
+    let mut head = 0;
+    while head < order.len() {
+        let children = result[order[head]].children.clone();
+        order.extend(children);
+        head += 1;
+    }
+    let mut new_index = vec![0i32; n];
+    for (new, &old) in order.iter().enumerate() {
+        new_index[old] = new as i32;
+    }
+    let remap = |i: i32| if i < 0 { -1 } else { new_index[i as usize] };
+
+    let mut slots: Vec<Option<TempEntry>> = result.into_iter().map(Some).collect();
+    order
+        .iter()
+        .map(|&old| {
+            let e = slots[old].take().expect("each entry visited once");
+            NcxBuildEntry {
+                pos: e.pos,
+                length: e.length,
+                label: e.label,
+                depth: e.depth,
+                parent: remap(e.parent),
+                first_child: e.children.first().map(|&i| remap(i as i32)).unwrap_or(-1),
+                last_child: e.children.last().map(|&i| remap(i as i32)).unwrap_or(-1),
+                pos_fid: Some(e.pos_fid),
+            }
         })
         .collect()
 }
@@ -270,6 +292,51 @@ pub(super) fn resolve_filepos_to_offset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn toc(title: &str, children: Vec<TocEntry>) -> TocEntry {
+        TocEntry {
+            title: title.to_string(),
+            href: format!("{title}.xhtml"),
+            children,
+            play_order: None,
+            target: None,
+        }
+    }
+
+    #[test]
+    fn flatten_toc_orders_entries_level_by_level() {
+        // KindleGen/calibre order: all top-level entries first, then each
+        // parent's children contiguously. TBS generation relies on siblings
+        // having consecutive indices; depth-first order breaks paging on
+        // books with parts > chapters.
+        let entries = vec![
+            toc("A", vec![toc("A1", vec![]), toc("A2", vec![])]),
+            toc("B", vec![toc("B1", vec![])]),
+        ];
+        let flat = flatten_toc(
+            &entries,
+            0,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        let labels: Vec<&str> = flat.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["A", "B", "A1", "A2", "B1"]);
+        let links: Vec<(i32, i32, i32)> = flat
+            .iter()
+            .map(|e| (e.parent, e.first_child, e.last_child))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (-1, 2, 3),
+                (-1, 4, 4),
+                (0, -1, -1),
+                (0, -1, -1),
+                (1, -1, -1)
+            ]
+        );
+    }
 
     #[test]
     fn test_resolve_filepos_entry_exact_match() {

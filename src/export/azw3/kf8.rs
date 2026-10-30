@@ -223,21 +223,34 @@ impl Kf8Builder {
         // Split into records and PalmDoc-compress. Records are compressed
         // independently, so this fans out across chunks (the compression is
         // the bulk of AZW3 export time on large books).
-        fn compress_record(chunk: &[u8]) -> Vec<u8> {
-            let mut record = crate::mobi::palmdoc::compress(chunk);
-            record.push(0); // multibyte indicator (0 = no UTF-8 overlap)
+        //
+        // Records are cut every RECORD_SIZE bytes regardless of UTF-8
+        // boundaries. When a cut lands inside a multibyte character, the
+        // bytes that complete it must follow the compressed data as the
+        // multibyte trailing entry (`overlap..., len(overlap)`), exactly as
+        // calibre's `read_text_record` does. Writing a bare 0 there makes the
+        // Kindle reader drop every fragment that spans such a cut — with CJK
+        // text that is most of the book.
+        let flows = &all_flows;
+        let compress_record = |i: usize| -> Vec<u8> {
+            let start = i * RECORD_SIZE;
+            let end = (start + RECORD_SIZE).min(flows.len());
+            let mut record = crate::mobi::palmdoc::compress(&flows[start..end]);
+            let overlap = utf8_overlap(flows, end);
+            record.extend_from_slice(&flows[end..end + overlap]);
+            record.push(overlap as u8);
             record
-        }
+        };
+        let n_records = all_flows.len().div_ceil(RECORD_SIZE);
         #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
         {
             use rayon::prelude::*;
             self.records
-                .par_extend(all_flows.par_chunks(RECORD_SIZE).map(compress_record));
+                .par_extend((0..n_records).into_par_iter().map(compress_record));
         }
         #[cfg(not(all(feature = "parallel", not(target_arch = "wasm32"))))]
         {
-            self.records
-                .extend(all_flows.chunks(RECORD_SIZE).map(compress_record));
+            self.records.extend((0..n_records).map(compress_record));
         }
 
         // The PDB record count is a u16, so the whole book is capped at 65535
@@ -273,7 +286,34 @@ impl Kf8Builder {
 
         Ok(())
     }
+}
 
+/// Number of bytes after `end` needed to complete a UTF-8 character that the
+/// record boundary at `end` cuts in half (0 if the cut is on a boundary).
+fn utf8_overlap(text: &[u8], end: usize) -> usize {
+    if end >= text.len() {
+        return 0;
+    }
+    // Walk back over continuation bytes to the lead byte of the last char.
+    let mut lead = end;
+    while lead > 0 && end - lead < 4 && text[lead - 1] & 0xC0 == 0x80 {
+        lead -= 1;
+    }
+    if lead == 0 {
+        return 0;
+    }
+    let lead_byte = text[lead - 1];
+    let char_len: usize = match lead_byte {
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => return 0,
+    };
+    let have = end - (lead - 1);
+    char_len.saturating_sub(have).min(text.len() - end)
+}
+
+impl Kf8Builder {
     pub(super) fn resolve_link_placeholders(
         &self,
         text: &[u8],
@@ -557,7 +597,9 @@ impl Kf8Builder {
         fcis.extend_from_slice(
             b"FCIS\x00\x00\x00\x14\x00\x00\x00\x10\x00\x00\x00\x02\x00\x00\x00\x00",
         );
-        fcis.extend_from_slice(&(self.text_length as u32).to_be_bytes());
+        // calibre/KindleGen: FCIS and record 0 carry the length of *all*
+        // flows (text + CSS), i.e. everything held in the text records.
+        fcis.extend_from_slice(&(self.flows_length as u32).to_be_bytes());
         fcis.extend_from_slice(b"\x00\x00\x00\x00\x00\x00\x00\x28\x00\x00\x00\x00\x00\x00\x00");
         fcis.extend_from_slice(b"\x28\x00\x00\x00\x08\x00\x01\x00\x01\x00\x00\x00\x00");
         self.records.push(fcis);
@@ -586,7 +628,7 @@ impl Kf8Builder {
         // PalmDOC header (16 bytes)
         record0.extend_from_slice(&2u16.to_be_bytes()); // Compression: PalmDOC
         record0.extend_from_slice(&[0, 0]);
-        record0.extend_from_slice(&(self.text_length as u32).to_be_bytes());
+        record0.extend_from_slice(&(self.flows_length as u32).to_be_bytes());
         record0.extend_from_slice(&self.last_text_record.to_be_bytes());
         record0.extend_from_slice(&(RECORD_SIZE as u16).to_be_bytes());
         record0.extend_from_slice(&0u16.to_be_bytes()); // Encryption
@@ -1013,5 +1055,18 @@ mod tests {
     fn test_sanitize_title() {
         assert_eq!(sanitize_title("Hello World"), "Hello_World");
         assert_eq!(sanitize_title("Test <Book>"), "Test_Book");
+    }
+
+    #[test]
+    fn utf8_overlap_completes_split_characters() {
+        let text = "a中文".as_bytes(); // 'a', then two 3-byte characters
+        assert_eq!(utf8_overlap(text, 1), 0); // cut after 'a'
+        assert_eq!(utf8_overlap(text, 2), 2); // 1 of 3 bytes of 中 before the cut
+        assert_eq!(utf8_overlap(text, 3), 1); // 2 of 3 bytes before the cut
+        assert_eq!(utf8_overlap(text, 4), 0); // 中 complete
+        assert_eq!(utf8_overlap(text, text.len()), 0); // end of text
+        let emoji = "😀".as_bytes(); // 4 bytes
+        assert_eq!(utf8_overlap(emoji, 1), 3);
+        assert_eq!(utf8_overlap(emoji, 3), 1);
     }
 }
