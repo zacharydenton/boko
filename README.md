@@ -30,7 +30,7 @@ client-side.
 
 ## Install
 
-Requires Rust 1.85+.
+Requires Rust 1.91+.
 
     cargo install boko        # CLI
     cargo add boko            # library
@@ -64,6 +64,32 @@ book.export(Format::Kfx, &mut out)?;
 ```
 
 Full API: https://docs.rs/boko
+
+## Python (draft)
+
+The Python distribution is named **boko-ebook** (`boko` on PyPI is an unrelated
+project). It imports as `boko`; do not install both distributions in one environment.
+The first PyPI release is not published yet. Build locally using the
+[Python development instructions](docs/python.md).
+
+```python
+from pathlib import Path
+import boko
+
+source = Path('input.epub').read_bytes()
+info = boko.book_info(source, 'epub')
+print(info['title'], info['authors'])
+Path('output.kfx').write_bytes(boko.convert(source, 'epub', 'kfx'))
+```
+
+Requires regular CPython 3.11+. Inputs: `epub`, `azw3`, `mobi` (`azw`), `kfx`.
+Outputs: `epub`, `azw3`, `kfx`, `markdown` (`md`). Format names are case-insensitive.
+`convert` returns bytes (UTF-8 for Markdown); `book_info` returns a dictionary with
+`title`, `authors`, `language`, `chapters`, and `toc_entries`.
+Parsing and conversion release the GIL. Both input and output are held in memory.
+Invalid formats and malformed books raise `ValueError`, DRM raises `PermissionError`,
+missing resources raise `KeyError`, and underlying I/O failures raise `OSError`.
+There is no CLI bundled in the Python wheel.
 
 ## FAQ
 

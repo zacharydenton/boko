@@ -25,12 +25,14 @@ cli = ["dep:clap", "dep:serde", "dep:serde_json", "dep:ion-rs", "optimize-images
 # Optional so the wasm build stays small; included in the CLI by default.
 optimize-images = ["dep:image"]
 wasm = ["wasm-bindgen", "console_error_panic_hook"]
+python = ["dep:pyo3"]
 # Parallel chapter compilation via rayon. Native-only: the dependency is
 # declared under the non-wasm target table below, so enabling this feature on
 # wasm32 is a no-op (the code falls back to serial iteration).
 parallel = ["dep:rayon"]
 
 [dependencies]
+pyo3 = { version = "0.30.1", optional = true, features = ["abi3-py311"] }
 wasm-bindgen = { version = "0.2", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 quick-xml = "0.39"

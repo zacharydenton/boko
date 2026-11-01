@@ -66,6 +66,9 @@ pub(crate) mod util;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+#[cfg(feature = "python")]
+mod python;
+
 // Error handling
 pub use error::{Error, Result};
 

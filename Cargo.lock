@@ -162,6 +162,7 @@ dependencies = [
  "percent-encoding",
  "precomputed-hash",
  "proptest",
+ "pyo3",
  "quick-xml",
  "rayon",
  "rustc-hash",
@@ -308,7 +309,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -448,7 +449,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13b588ba4ac1a99f7f2964d24b3d896ddc6bf847ee3855dbd4366f058cfcd331"
 dependencies = [
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -459,7 +460,7 @@ checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -480,7 +481,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -968,7 +969,7 @@ dependencies = [
  "phf_shared 0.11.3",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -981,7 +982,7 @@ dependencies = [
  "phf_shared 0.13.1",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1044,6 +1045,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1065,7 +1072,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1101,6 +1108,63 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "pyo3"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4"
+dependencies = [
+ "libc",
+ "once_cell",
+ "portable-atomic",
+ "pyo3-build-config",
+ "pyo3-ffi",
+ "pyo3-macros",
+]
+
+[[package]]
+name = "pyo3-build-config"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700"
+dependencies = [
+ "target-lexicon",
+]
+
+[[package]]
+name = "pyo3-ffi"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4"
+dependencies = [
+ "libc",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "pyo3-macros"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60"
+dependencies = [
+ "proc-macro2",
+ "pyo3-macros-backend",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "pyo3-macros-backend"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "quick-error"
@@ -1362,7 +1426,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1471,6 +1535,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "target-lexicon"
+version = "0.13.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
+
+[[package]]
 name = "tempfile"
 version = "3.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1519,7 +1600,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1530,7 +1611,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1654,7 +1735,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
  "wasm-bindgen-shared",
 ]
 
@@ -1775,7 +1856,7 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1786,7 +1867,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -1861,7 +1942,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn",
+ "syn 2.0.114",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -1877,7 +1958,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -1946,7 +2027,7 @@ checksum = "4122cd3169e94605190e77839c9a40d40ed048d305bfdc146e7df40ab0f3e517"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.114",
 ]
 
 [[package]]

@@ -1,4 +1,7 @@
 /target
+/dist
+/.venv
+__pycache__/
 /fuzz/target
 /fuzz/artifacts
 /fuzz/Cargo.lock

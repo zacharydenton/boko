@@ -93,6 +93,7 @@ fn default_passes() -> Vec<Box<dyn OptimizePass>> {
 /// Basenames referenced from CSS assets. Passes that rename must skip these:
 /// CSS is exported verbatim by some formats, and a rename would leave its
 /// `url(...)` references dangling.
+#[cfg(feature = "optimize-images")]
 pub(crate) fn css_referenced_text(backend: &dyn Importer) -> String {
     let mut css_text = String::new();
     for path in backend.list_assets() {

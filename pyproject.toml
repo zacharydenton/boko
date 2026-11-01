@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "boko-ebook"
+requires-python = ">=3.11"
+dynamic = ["version", "description", "readme", "urls"]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "boko"
+no-default-features = true
+features = ["python", "parallel"]
+strip = true
