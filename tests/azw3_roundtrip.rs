@@ -322,3 +322,97 @@ fn azw3_roundtrip_resolves_embed_refs_inside_css() {
         .expect("referenced asset loads");
     assert!(!bytes.is_empty(), "referenced asset must have content");
 }
+
+/// Exercise the consumer-facing EPUB output, including parsed font-face paths
+/// and exact resource bytes (FONT container decoding must be transparent).
+#[test]
+fn css_fonts_and_images_survive_azw3_to_epub_export() {
+    use boko::export::EpubExporter;
+    use std::io::Read;
+
+    // Transport fixture, not a renderable typeface: the importer only needs
+    // the TrueType signature, and this test checks preservation of the bytes.
+    let mut font = vec![0, 1, 0, 0];
+    font.extend((0..2048).map(|i| (i % 251) as u8));
+    let image = common::tiny_png();
+    let epub = common::EpubBuilder::new("CSS resources")
+        .css(
+            r#"@font-face { font-family: "TestFont"; src: url('../fonts/test.ttf'); }
+h1 { font-family: "TestFont"; background-image: url(../images/pic.png); }"#,
+        )
+        .font("fonts/test.ttf", font.clone())
+        .image("images/pic.png", image.clone())
+        .doc(common::Doc::new(
+            "text/ch1.xhtml",
+            "Chapter 1",
+            "<h1>Heading</h1><p>Text.</p>",
+        ))
+        .nav(vec![common::Nav::new("Chapter 1", "text/ch1.xhtml")])
+        .build();
+    let source = Book::from_bytes(&epub, Format::Epub).unwrap();
+    let mut azw3 = Cursor::new(Vec::new());
+    boko::export::Azw3Exporter::new()
+        .export(&source, &mut azw3)
+        .unwrap();
+    let imported = Book::from_bytes(&azw3.into_inner(), Format::Azw3).unwrap();
+    let faces = imported.font_faces();
+    assert_eq!(faces.len(), 1);
+    assert_eq!(faces[0].font_family, "TestFont");
+    assert!(faces[0].src.starts_with("fonts/font_"), "{:?}", faces[0]);
+    assert_eq!(imported.load_asset(&faces[0].src).unwrap(), font);
+
+    let mut output = Cursor::new(Vec::new());
+    EpubExporter::new().export(&imported, &mut output).unwrap();
+    let bytes = output.into_inner();
+    let reopened = Book::from_bytes(&bytes, Format::Epub).unwrap();
+    let epub_faces = reopened.font_faces();
+    assert_eq!(epub_faces.len(), 1);
+    assert_eq!(epub_faces[0].font_family, "TestFont");
+    assert_eq!(reopened.load_asset(&epub_faces[0].src).unwrap(), font);
+
+    let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let css_paths: Vec<String> = zip
+        .file_names()
+        .filter(|name| name.ends_with(".css"))
+        .map(str::to_owned)
+        .collect();
+    assert!(!css_paths.is_empty());
+    let mut resources = Vec::new();
+    for css_path in css_paths {
+        let mut css = String::new();
+        zip.by_name(&css_path)
+            .unwrap()
+            .read_to_string(&mut css)
+            .unwrap();
+        assert!(!css.contains("kindle:embed:"));
+        for url in css.split("url(").skip(1) {
+            let url = url
+                .split(')')
+                .next()
+                .unwrap()
+                .trim()
+                .trim_matches(['\'', '"']);
+            let mut path: Vec<_> = css_path.split('/').collect();
+            path.pop();
+            for component in url.split('/') {
+                match component {
+                    ".." => {
+                        path.pop();
+                    }
+                    "." => {}
+                    part => path.push(part),
+                }
+            }
+            let target = path.join("/");
+            let mut data = Vec::new();
+            zip.by_name(&target)
+                .unwrap_or_else(|e| panic!("{css_path}: {url} => {target}: {e}"))
+                .read_to_end(&mut data)
+                .unwrap();
+            resources.push(data);
+        }
+    }
+    assert_eq!(resources.len(), 2, "both CSS URLs must survive export");
+    assert!(resources.contains(&font));
+    assert!(resources.contains(&image));
+}

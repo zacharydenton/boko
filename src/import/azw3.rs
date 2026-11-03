@@ -22,7 +22,6 @@ use crate::mobi::{
     is_metadata_record, palmdoc, parse_exth, parse_fdst, strip_trailing_data, transform,
 };
 use crate::model::{AnchorTarget, Chapter, GlobalNodeId, Landmark, Metadata, TocEntry};
-use memchr::memmem;
 
 /// AZW3/KF8 format importer with lazy loading.
 pub struct Azw3Importer {
@@ -815,37 +814,18 @@ fn flow_slice(text: &[u8], start: usize, end: usize) -> &[u8] {
 /// CSS urls resolve against the stylesheet, so paths are written relative to
 /// `css_path` (e.g. `../images/image_0000.png` from `styles/style0001.css`).
 fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<u8> {
-    let up = "../".repeat(css_path.matches('/').count());
-    let needle = b"kindle:embed:";
-    let finder = memmem::Finder::new(needle);
+    let Ok(css_text) = std::str::from_utf8(css) else {
+        return css.to_vec();
+    };
+    let mut input = cssparser::ParserInput::new(css_text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut replacements = Vec::new();
+    collect_css_embed_urls(&mut parser, &mut replacements, 0);
 
+    let up = "../".repeat(css_path.matches('/').count());
     let mut output = Vec::with_capacity(css.len());
     let mut pos = 0;
-
-    while let Some(rel_start) = finder.find(&css[pos..]) {
-        let start = pos + rel_start;
-        output.extend_from_slice(&css[pos..start]);
-
-        let after = &css[start + needle.len()..];
-        // The reference ends at ) " ' or ? (a ?mime=... suffix).
-        let end_pos = after
-            .iter()
-            .position(|&b| b == b')' || b == b'"' || b == b'\'' || b == b'?')
-            .unwrap_or(after.len());
-        let embed_num = transform::parse_base32(&after[..end_pos]);
-        let embed_idx = embed_num.saturating_sub(1);
-
-        // Skip a ?mime=... suffix if present.
-        let skip = if end_pos < after.len() && after[end_pos] == b'?' {
-            after[end_pos..]
-                .iter()
-                .position(|&b| b == b')' || b == b'"' || b == b'\'')
-                .map(|p| end_pos + p)
-                .unwrap_or(after.len())
-        } else {
-            end_pos
-        };
-
+    for (start, end, embed_idx) in replacements {
         let image_prefix = format!("images/image_{embed_idx:04}.");
         let font_prefix = format!("fonts/font_{embed_idx:04}.");
         let asset_path = assets
@@ -853,14 +833,76 @@ fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<
             .find(|s| s.starts_with(&image_prefix) || s.starts_with(&font_prefix))
             .cloned()
             .unwrap_or_else(|| format!("images/image_{embed_idx:04}.jpg"));
-
+        output.extend_from_slice(&css[pos..start]);
+        output.extend_from_slice(b"url(\"");
         output.extend_from_slice(up.as_bytes());
         output.extend_from_slice(asset_path.as_bytes());
-        pos = start + needle.len() + skip;
+        output.extend_from_slice(b"\")");
+        pos = end;
     }
-
     output.extend_from_slice(&css[pos..]);
     output
+}
+
+/// Collect actual URL tokens, leaving comments, strings and unrelated CSS intact.
+/// Tokenizing also handles CSS whitespace, quoting and escapes before decoding
+/// the Kindle identifier. Bound recursion for untrusted, deeply nested CSS.
+fn collect_css_embed_urls<'i>(
+    parser: &mut cssparser::Parser<'i, '_>,
+    replacements: &mut Vec<(usize, usize, usize)>,
+    depth: usize,
+) {
+    use cssparser::Token;
+
+    while !parser.is_exhausted() {
+        let start = parser.position().byte_index();
+        let Ok(token) = parser.next_including_whitespace_and_comments().cloned() else {
+            break;
+        };
+        let url = match token {
+            Token::UnquotedUrl(url) => Some(url),
+            Token::Function(name) if name.eq_ignore_ascii_case("url") => parser
+                .parse_nested_block(|nested| {
+                    nested
+                        .expect_string_cloned()
+                        .map_err(Into::<cssparser::ParseError<'i, ()>>::into)
+                })
+                .ok(),
+            Token::Function(_)
+            | Token::CurlyBracketBlock
+            | Token::SquareBracketBlock
+            | Token::ParenthesisBlock
+                if depth < 128 =>
+            {
+                let _: Result<(), cssparser::ParseError<'i, ()>> =
+                    parser.parse_nested_block(|nested| {
+                        collect_css_embed_urls(nested, replacements, depth + 1);
+                        Ok(())
+                    });
+                None
+            }
+            _ => None,
+        };
+        let Some(url) = url else { continue };
+        let Some(identifier) = url.strip_prefix("kindle:embed:") else {
+            continue;
+        };
+        let identifier = identifier.split('?').next().unwrap_or("");
+        // Unlike parse_base32, reject malformed and overflowing identifiers
+        // rather than silently mapping them to a different resource.
+        let embed_num = identifier.bytes().try_fold(0usize, |value, byte| {
+            let digit = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'A'..=b'V' => byte - b'A' + 10,
+                b'a'..=b'v' => byte - b'a' + 10,
+                _ => return None,
+            };
+            value.checked_mul(32)?.checked_add(digit as usize)
+        });
+        if let Some(embed_idx) = embed_num.and_then(|num| num.checked_sub(1)) {
+            replacements.push((start, parser.position().byte_index(), embed_idx));
+        }
+    }
 }
 
 /// Build chapter parts by combining skeletons with div content.
@@ -959,7 +1001,7 @@ mod tests {
         let out = rewrite_css_embed_refs(css, CSS, &assets());
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "@font-face { src: url(../fonts/font_0001.otf); }"
+            r#"@font-face { src: url("../fonts/font_0001.otf"); }"#
         );
     }
 
@@ -969,7 +1011,7 @@ mod tests {
         let out = rewrite_css_embed_refs(css, CSS, &assets());
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "h1 { background: url(../images/image_0000.png); }"
+            r#"h1 { background: url("../images/image_0000.png"); }"#
         );
     }
 
@@ -979,7 +1021,7 @@ mod tests {
         let out = rewrite_css_embed_refs(css, CSS, &assets());
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "p { background: url(../images/image_0009.jpg); }"
+            r#"p { background: url("../images/image_0009.jpg"); }"#
         );
     }
 
@@ -996,7 +1038,51 @@ mod tests {
         let out = rewrite_css_embed_refs(css, CSS, &assets());
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "p { background: url('../images/image_0002.gif'); }"
+            r#"p { background: url("../images/image_0002.gif"); }"#
         );
+    }
+
+    #[test]
+    fn url_whitespace_does_not_change_resource_index() {
+        for url in [
+            "url(kindle:embed:0001 )",
+            "url(kindle:embed:0001\n)",
+            "url(\t kindle:embed:0001\r\n )",
+            "URL( 'kindle:embed:0001' )",
+            r"u\72l(kindle\:embed\:0001)",
+        ] {
+            let css = format!("p {{ background: {url}; }}");
+            assert_eq!(
+                rewrite_css_embed_refs(css.as_bytes(), CSS, &assets()),
+                br#"p { background: url("../images/image_0000.png"); }"#,
+                "{url}",
+            );
+        }
+    }
+
+    #[test]
+    fn comments_and_strings_are_preserved_around_real_urls() {
+        let css = br#"/* kindle:embed:0001 */
+p { color: red; content: "kindle:embed:0002"; }
+@media screen { h1 { background: image-set(url(kindle:embed:0001) 1x, url('kindle:embed:0003') 2x); } }
+/* kindle:embed:0001 */"#;
+        let expected = br#"/* kindle:embed:0001 */
+p { color: red; content: "kindle:embed:0002"; }
+@media screen { h1 { background: image-set(url("../images/image_0000.png") 1x, url("../images/image_0002.gif") 2x); } }
+/* kindle:embed:0001 */"#;
+        assert_eq!(rewrite_css_embed_refs(css, CSS, &assets()), expected);
+    }
+
+    #[test]
+    fn malformed_identifiers_and_unrelated_urls_are_unchanged() {
+        let css = br#"p {
+            a: url(kindle:embed:); b: url(kindle:embed:0000);
+            c: url(kindle:embed:000W); d: url(kindle:embed:0001#fragment);
+            e: url(kindle:embed:VVVVVVVVVVVVVVVVVVVVVVVVVVVV);
+            f: url(https://example.com/kindle:embed:0001);
+            g: "url(kindle:embed:0001)";
+            h: url("kindle:embed:0001" unexpected);
+        }"#;
+        assert_eq!(rewrite_css_embed_refs(css, CSS, &assets()), css);
     }
 }
