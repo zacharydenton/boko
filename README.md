@@ -30,7 +30,7 @@ client-side.
 
 ## Install
 
-Requires Rust 1.85+.
+Requires Rust 1.91+.
 
     cargo install boko        # CLI
     cargo add boko            # library

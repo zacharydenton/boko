@@ -4,6 +4,84 @@ All notable changes to this project are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-03
+
+Math support, more faithful KFX layout, and fixes for AZW3 content and
+navigation. This release includes breaking changes to the Rust library API.
+
+### Breaking
+
+- `Role` now includes `Math`, and `Declaration` includes direction variants;
+  exhaustive matches must handle the new variants.
+  Math expressions live in the new `Chapter::math` side table.
+- `ComputedStyle` has new fields for resolved font size, line-height scaling,
+  text direction, and dropcaps. Update exhaustive struct literals or use
+  `..Default::default()`. Default margins are now zero; `Length::Auto` means
+  an explicitly authored `margin: auto`.
+- Public CSS parsing APIs now use `cssparser` 0.38 types; callers passing
+  parsers directly must update their dependency and parser construction.
+
+### Added
+
+- A shared math representation with MathML import/export and LaTeX output
+  in Markdown. KFX can typeset supported expressions as Kindle Vector
+  Graphics using a locally available OpenType MATH font; unavailable fonts
+  or unsupported expressions fall back to text. AZW3 uses a text fallback.
+- Text direction and page progression survive conversion, including
+  explicit LTR overrides within RTL books and script-aware language
+  inference ([#33](https://github.com/zacharydenton/boko/pull/33)).
+- KVG format documentation, decoding and visual comparison tools, and
+  regression fixtures for math fonts, navigation, SVG, CJK, and RTL content.
+
+### Changed
+
+- KFX styling now uses resolved font sizes and device units, collapses
+  adjoining vertical margins, and improves line spacing, borders,
+  backgrounds, links, and native dropcaps. Table structure now activates
+  the Kindle table renderer, and list indentation avoids doubling the
+  reader's own gutter.
+- Dependency updates, including the XML, HTML, CSS, and ZIP parsers; math
+  font parsing now uses Fontations (`skrifa`). Advisory-related dependency
+  updates contributed in [#27](https://github.com/zacharydenton/boko/pull/27).
+
+### Fixed
+
+- AZW3 imports resolve embedded fonts and images inside CSS flows, with
+  paths relative to the stylesheet and proper CSS URL parsing
+  ([#25](https://github.com/zacharydenton/boko/pull/25)).
+- KFX navigation targets that exist outside chapter markup now resolve
+  to positions in the exported book
+  ([#30](https://github.com/zacharydenton/boko/pull/30)).
+- AZW3 output preserves multibyte content across record boundaries and
+  fixes link and navigation offsets. Inline SVG retains its markup,
+  namespaces, and image references; font sources retain usable fallbacks,
+  and embedded-font metadata allows Kindle font switching
+  ([#35](https://github.com/zacharydenton/boko/pull/35)).
+- KVG numeric and path-bundle encoding that could crash the device renderer.
+- Whitespace around math, block-edge spacing, inherited styles in mixed
+  content, and legacy MOBI presentational hints.
+- Rust 1.99 Clippy warnings
+  ([#29](https://github.com/zacharydenton/boko/pull/29)).
+
+### Known limitations
+
+- AZW3 RTL rendering remains reader-dependent; preserving direction does
+  not resolve all alignment and pagination problems on Kindle. KFX is the
+  better-tested path for RTL books.
+
+### Contributors
+
+Thanks to everyone who contributed to this release:
+
+- [@Imaclean74](https://github.com/Imaclean74) — AZW3 CSS resources (#25),
+  KFX navigation and regression fixtures (#30), and Clippy fixes (#29).
+- [@JLFN](https://github.com/JLFN) — XML parser and advisory-related
+  dependency updates (#27).
+- [@mohamedelhefni](https://github.com/mohamedelhefni) — RTL direction
+  preservation (#33).
+- [@Schweik7](https://github.com/Schweik7) — AZW3/KF8 multibyte content and
+  link fixes (#35).
+
 ## [0.5.0] - 2026-07-19
 
 This release is about trustworthy KFX at library scale: the writer now follows
@@ -189,6 +267,7 @@ and format-compatibility work in this release:
 
 - GPL-3.0-or-later license; KFX-first README.
 
+[0.6.0]: https://github.com/zacharydenton/boko/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/zacharydenton/boko/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zacharydenton/boko/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/zacharydenton/boko/releases/tag/v0.3.0
