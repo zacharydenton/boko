@@ -115,7 +115,7 @@ fn optimize_transcodes_large_png_and_rewrites_references() {
     let epub_out = common::export_to_bytes(&mut book, Format::Epub);
     let mut zip = zip::ZipArchive::new(Cursor::new(epub_out)).expect("open exported epub");
     let names: Vec<String> = (0..zip.len())
-        .map(|i| zip.by_index(i).unwrap().name().to_string())
+        .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
     assert!(
         names.iter().any(|n| n.ends_with("photo.jpg")),

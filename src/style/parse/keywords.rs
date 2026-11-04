@@ -19,7 +19,7 @@ use crate::style::Declaration;
 /// that reads an identifier and calls the type's from_css method.
 macro_rules! keyword_parser {
     ($fn_name:ident, $type:ty) => {
-        pub(crate) fn $fn_name(input: &mut Parser<'_, '_>) -> Option<$type> {
+        pub(crate) fn $fn_name(input: &mut Parser<'_>) -> Option<$type> {
             let token = input.expect_ident_cloned().ok()?;
             <$type>::from_css(token.as_ref())
         }
@@ -48,7 +48,7 @@ keyword_parser!(parse_border_collapse, BorderCollapse);
 keyword_parser!(parse_vertical_align, VerticalAlign);
 
 /// Parse break-before/break-after values with CSS aliases.
-pub(crate) fn parse_break_value(input: &mut Parser<'_, '_>) -> Option<BreakValue> {
+pub(crate) fn parse_break_value(input: &mut Parser<'_>) -> Option<BreakValue> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
         "auto" => Some(BreakValue::Auto),
@@ -60,7 +60,7 @@ pub(crate) fn parse_break_value(input: &mut Parser<'_, '_>) -> Option<BreakValue
 }
 
 /// Parse break-inside values with CSS aliases.
-pub(crate) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakValue> {
+pub(crate) fn parse_break_inside(input: &mut Parser<'_>) -> Option<BreakValue> {
     let token = input.expect_ident_cloned().ok()?;
     match token.as_ref() {
         "auto" => Some(BreakValue::Auto),
@@ -70,7 +70,7 @@ pub(crate) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakValu
 }
 
 /// Parse a single border-style value.
-pub(crate) fn parse_border_style_value(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
+pub(crate) fn parse_border_style_value(input: &mut Parser<'_>) -> Option<BorderStyle> {
     let token = input.try_parse(|i| i.expect_ident_cloned()).ok()?;
     match token.as_ref() {
         "none" | "hidden" => Some(BorderStyle::None),
@@ -88,7 +88,7 @@ pub(crate) fn parse_border_style_value(input: &mut Parser<'_, '_>) -> Option<Bor
 
 /// Parse the list-style shorthand: list-style-type, list-style-position, list-style-image
 /// We only care about type and position (image is not supported).
-pub(crate) fn parse_list_style_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+pub(crate) fn parse_list_style_shorthand(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut list_style_type = None;
     let mut list_style_position = None;
 

@@ -228,7 +228,7 @@ impl<'a> CascadeIndex<'a> {
         // html5ever already lowercases HTML local names, so allocating a
         // lowercase copy is only needed in the rare uppercase case.
         if let Some(name) = elem.dom.element_name(elem.id) {
-            let name = name.as_ref();
+            let name: &str = name;
             let bucket = if name.bytes().any(|b| b.is_ascii_uppercase()) {
                 self.by_local.get(name.to_ascii_lowercase().as_str())
             } else {
@@ -506,7 +506,7 @@ fn rule_match_specificity(
         .zip(&rule.selector_specificities)
         .zip(hashes)
         .filter(|&((selector, _), hashes)| {
-            selectors::matching::matches_selector(selector, 0, Some(hashes), &elem, &mut context)
+            selectors::matching::matches_selector(selector, 0, Some(hashes), elem, &mut context)
         })
         .map(|((_, spec), _)| *spec)
         .max()

@@ -211,10 +211,7 @@ mod tests {
 
     #[test]
     fn emits_deduplicated_shapes() {
-        let Some(font) = MathFont::load_system() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = crate::math::kvg::font::test_font();
         // x appears twice → two shapes, ONE outline in the bundle for it.
         let m = mathml::parse_math_str(r#"<math><mi>x</mi><mo>+</mo><mi>x</mi></math>"#).unwrap();
         let layout = typeset(&font, &m.expr, m.display).unwrap();
@@ -228,10 +225,7 @@ mod tests {
 
     #[test]
     fn fraction_rule_uses_shared_unit_square() {
-        let Some(font) = MathFont::load_system() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = crate::math::kvg::font::test_font();
         let m = mathml::parse_math_str(
             r#"<math><mfrac><mi>a</mi><mi>b</mi></mfrac><mfrac><mi>c</mi><mi>d</mi></mfrac></math>"#,
         )
@@ -246,10 +240,7 @@ mod tests {
 
     #[test]
     fn round_trip_decode_matches_layout_render() {
-        let Some(font) = MathFont::load_system() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = crate::math::kvg::font::test_font();
         let m = mathml::parse_math_str(
             r#"<math><msub><mi>x</mi><mn>1</mn></msub><mo>=</mo><mfrac><mi>a</mi><mi>b</mi></mfrac></math>"#,
         )

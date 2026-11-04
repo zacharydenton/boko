@@ -92,7 +92,7 @@ impl Book {
         std::mem::replace(&mut self.backend, backend)
     }
 
-    fn from_backend(backend: Box<dyn Importer>) -> Self {
+    pub(crate) fn from_backend(backend: Box<dyn Importer>) -> Self {
         Self {
             backend,
             ir_cache: Arc::new(RwLock::new(HashMap::new())),

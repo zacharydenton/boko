@@ -1,8 +1,8 @@
 //! CSS stylesheet parsing and rule structures.
 
 use cssparser::{
-    AtRuleParser, ParseError, Parser, ParserInput, QualifiedRuleParser, RuleBodyItemParser,
-    RuleBodyParser, StyleSheetParser,
+    AtRuleParser, ParseError, Parser, QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
+    StyleSheetParser,
 };
 use selectors::parser::Selector;
 
@@ -91,8 +91,7 @@ pub enum Origin {
 impl Stylesheet {
     /// Parse a CSS stylesheet from a string.
     pub fn parse(css: &str) -> Self {
-        let mut input = ParserInput::new(css);
-        let mut parser = Parser::new(&mut input);
+        let mut parser = Parser::new(css);
         let mut rules = Vec::new();
         let mut font_faces = Vec::new();
 
@@ -132,8 +131,7 @@ impl InlineStyle {
     /// Parse a bare declaration list (the value of a `style` attribute).
     /// Lenient: invalid declarations are skipped.
     pub fn parse(css: &str) -> Self {
-        let mut input = ParserInput::new(css);
-        let mut parser = Parser::new(&mut input);
+        let mut parser = Parser::new(css);
         let mut declarations = Vec::new();
         let mut important_declarations = Vec::new();
         let mut decl_parser = DeclarationListParser {
@@ -169,26 +167,26 @@ impl<'i> AtRuleParser<'i> for TopLevelRuleParser<'_> {
     type AtRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
         name: cssparser::CowRcStr<'i>,
-        _input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
         if name.eq_ignore_ascii_case("font-face") {
             // @font-face has no prelude, just a block
             Ok(FontFacePrelude)
         } else {
             // Skip other at-rules
-            Err(_input.new_custom_error(()))
+            Err(cssparser::ParseError::custom(()))
         }
     }
 
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         _prelude: Self::Prelude,
         _start: &cssparser::ParserState,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self::AtRule, ParseError<Self::Error>> {
         // Parse @font-face declarations
         if let Some(font_face) = parse_font_face_block(input) {
             self.font_faces.push(font_face);
@@ -202,19 +200,19 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelRuleParser<'_> {
     type QualifiedRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
         parse_selector_list(input)
     }
 
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         prelude: Self::Prelude,
         _start: &cssparser::ParserState,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
+        input: &mut Parser<'i>,
+    ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
         let selector_specificities = prelude.iter().map(Specificity::from_selector).collect();
 
         let mut declarations = Vec::new();
@@ -242,15 +240,14 @@ impl<'i> QualifiedRuleParser<'i> for TopLevelRuleParser<'_> {
 
 /// Parse a comma-separated list of selectors.
 fn parse_selector_list<'i>(
-    parser: &mut Parser<'i, '_>,
-) -> Result<Vec<Selector<BokoSelectors>>, ParseError<'i, ()>> {
-    let location = parser.current_source_location();
+    parser: &mut Parser<'i>,
+) -> Result<Vec<Selector<BokoSelectors>>, ParseError<()>> {
     let selectors = selectors::parser::SelectorList::parse(
         &BokoSelectors,
         parser,
         selectors::parser::ParseRelative::No,
     )
-    .map_err(|_| location.new_custom_error(()))?;
+    .map_err(|_| cssparser::ParseError::custom(()))?;
 
     Ok(selectors.slice().to_vec())
 }
@@ -265,21 +262,21 @@ impl<'i> cssparser::AtRuleParser<'i> for DeclarationListParser<'_> {
     type AtRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
         _name: cssparser::CowRcStr<'i>,
-        _input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
-        Err(_input.new_custom_error(()))
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        Err(cssparser::ParseError::custom(()))
     }
 
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         _prelude: Self::Prelude,
         _start: &cssparser::ParserState,
-        _input: &mut Parser<'i, 't>,
-    ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
-        Err(_input.new_custom_error(()))
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::AtRule, ParseError<Self::Error>> {
+        Err(cssparser::ParseError::custom(()))
     }
 }
 
@@ -288,20 +285,20 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for DeclarationListParser<'_> {
     type QualifiedRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
-        _input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, ParseError<'i, Self::Error>> {
-        Err(_input.new_custom_error(()))
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::Prelude, ParseError<Self::Error>> {
+        Err(cssparser::ParseError::custom(()))
     }
 
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         _prelude: Self::Prelude,
         _start: &cssparser::ParserState,
-        _input: &mut Parser<'i, 't>,
-    ) -> Result<Self::QualifiedRule, ParseError<'i, Self::Error>> {
-        Err(_input.new_custom_error(()))
+        _input: &mut Parser<'i>,
+    ) -> Result<Self::QualifiedRule, ParseError<Self::Error>> {
+        Err(cssparser::ParseError::custom(()))
     }
 }
 
@@ -309,12 +306,12 @@ impl<'i> cssparser::DeclarationParser<'i> for DeclarationListParser<'_> {
     type Declaration = ();
     type Error = ();
 
-    fn parse_value<'t>(
+    fn parse_value(
         &mut self,
         name: cssparser::CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser<'i>,
         _start: &cssparser::ParserState,
-    ) -> Result<Self::Declaration, ParseError<'i, Self::Error>> {
+    ) -> Result<Self::Declaration, ParseError<Self::Error>> {
         let decls = Declaration::parse(&name, input);
         if !decls.is_empty() {
             let important = input.try_parse(cssparser::parse_important).is_ok();

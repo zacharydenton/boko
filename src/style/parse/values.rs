@@ -17,7 +17,7 @@ pub struct TextDecorationValue {
     pub overline: bool,
 }
 
-pub(crate) fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
+pub(crate) fn parse_color(input: &mut Parser<'_>) -> Option<Color> {
     // Try named colors first
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         if let Some(color) = named_color(&token.to_ascii_lowercase()) {
@@ -32,10 +32,10 @@ pub(crate) fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
     // Or Hash token (for colors starting with digits like #222299)
     // We must check the token type INSIDE try_parse, otherwise try_parse won't reset
     // the position when we get the wrong token variant.
-    if let Ok(hash) = input.try_parse(|i| -> Result<_, ParseError<'_, ()>> {
+    if let Ok(hash) = input.try_parse(|i| -> Result<_, ParseError<()>> {
         match i.next()? {
             Token::IDHash(h) | Token::Hash(h) => Ok(h.clone()),
-            _ => Err(i.new_custom_error(())),
+            _ => Err(cssparser::ParseError::custom(())),
         }
     }) && let Some(color) = parse_hex_color(hash.as_ref())
     {
@@ -55,7 +55,7 @@ pub(crate) fn parse_color(input: &mut Parser<'_, '_>) -> Option<Color> {
 /// The background shorthand can contain: color, image, position, repeat, size, attachment,
 /// origin, clip - in any order. We parse tokens in a loop and extract any color we find.
 /// See https://www.w3.org/TR/css-backgrounds-3/#background
-pub(crate) fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<Color> {
+pub(crate) fn parse_background_shorthand(input: &mut Parser<'_>) -> Option<Color> {
     let mut color: Option<Color> = None;
 
     // Try to parse each component in any order, like lightningcss does
@@ -63,7 +63,7 @@ pub(crate) fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<C
         // Try to parse a color if we haven't found one yet
         if color.is_none()
             && let Ok(c) =
-                input.try_parse(|i| parse_color(i).ok_or(i.new_custom_error::<_, ()>(())))
+                input.try_parse(|i| parse_color(i).ok_or(cssparser::ParseError::<()>::custom(())))
         {
             color = Some(c);
             continue;
@@ -76,14 +76,12 @@ pub(crate) fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<C
 
         // Skip over functions like linear-gradient() etc.
         if input
-            .try_parse(|i: &mut Parser<'_, '_>| {
+            .try_parse(|i: &mut Parser<'_>| {
                 let _ = i.expect_function()?;
-                i.parse_nested_block(
-                    |nested: &mut Parser<'_, '_>| -> Result<(), ParseError<'_, ()>> {
-                        while nested.next().is_ok() {}
-                        Ok(())
-                    },
-                )
+                i.parse_nested_block(|nested: &mut Parser<'_>| -> Result<(), ParseError<()>> {
+                    while nested.next().is_ok() {}
+                    Ok(())
+                })
             })
             .is_ok()
         {
@@ -108,7 +106,7 @@ pub(crate) fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<C
                 "top" | "bottom" | "left" | "right" | "center" |
                 // none keyword
                 "none" => Ok(()),
-                _ => Err(i.new_custom_error::<_, ()>(())),
+                _ => Err(cssparser::ParseError::<()>::custom(())),
             }
             })
             .is_ok()
@@ -120,7 +118,7 @@ pub(crate) fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<C
         if input
             .try_parse(|i| match i.next()? {
                 Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => Ok(()),
-                _ => Err(i.new_custom_error::<_, ()>(())),
+                _ => Err(cssparser::ParseError::<()>::custom(())),
             })
             .is_ok()
         {
@@ -215,10 +213,10 @@ fn named_color(name: &str) -> Option<Color> {
 /// Parse an `rgb()` / `rgba()` color, accepting both comma-separated
 /// (`rgb(1, 2, 3)`) and modern space-separated (`rgb(1 2 3 / 0.5)`) syntaxes,
 /// with an optional alpha component.
-fn parse_rgb_function<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Color, ParseError<'i, ()>> {
+fn parse_rgb_function<'i>(input: &mut Parser<'i>) -> Result<Color, ParseError<()>> {
     let name = input.expect_function()?.clone();
     if !name.eq_ignore_ascii_case("rgb") && !name.eq_ignore_ascii_case("rgba") {
-        return Err(input.new_custom_error(()));
+        return Err(cssparser::ParseError::custom(()));
     }
     input.parse_nested_block(|input| {
         let r = parse_color_component(input)?;
@@ -247,19 +245,17 @@ fn parse_rgb_function<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Color, Parse
 
 /// Parse an alpha value: a number in `0.0..=1.0` or a percentage, mapped to
 /// `0..=255`.
-fn parse_alpha_component<'i, 't>(input: &mut Parser<'i, 't>) -> Result<u8, ParseError<'i, ()>> {
-    let location = input.current_source_location();
+fn parse_alpha_component<'i>(input: &mut Parser<'i>) -> Result<u8, ParseError<()>> {
     match input.next()? {
         Token::Number { value, .. } => Ok((value * 255.0).round().clamp(0.0, 255.0) as u8),
         Token::Percentage { unit_value, .. } => {
             Ok((unit_value * 255.0).round().clamp(0.0, 255.0) as u8)
         }
-        _ => Err(location.new_custom_error(())),
+        _ => Err(cssparser::ParseError::custom(())),
     }
 }
 
-fn parse_color_component<'i, 't>(input: &mut Parser<'i, 't>) -> Result<u8, ParseError<'i, ()>> {
-    let location = input.current_source_location();
+fn parse_color_component<'i>(input: &mut Parser<'i>) -> Result<u8, ParseError<()>> {
     match input.next()? {
         Token::Number {
             int_value: Some(v), ..
@@ -267,11 +263,11 @@ fn parse_color_component<'i, 't>(input: &mut Parser<'i, 't>) -> Result<u8, Parse
         Token::Percentage { unit_value, .. } => {
             Ok((unit_value * 255.0).round().clamp(0.0, 255.0) as u8)
         }
-        _ => Err(location.new_custom_error(())),
+        _ => Err(cssparser::ParseError::custom(())),
     }
 }
 
-pub(crate) fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_length(input: &mut Parser<'_>) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => {
             let length = match unit.as_ref() {
@@ -299,7 +295,7 @@ pub(crate) fn parse_length(input: &mut Parser<'_, '_>) -> Option<Length> {
 
 /// Parse letter-/word-spacing: a length, or the `normal` reset keyword
 /// (mapped to `Length::Auto`, the unset value — both mean no extra spacing).
-pub(crate) fn parse_spacing(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_spacing(input: &mut Parser<'_>) -> Option<Length> {
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
@@ -309,7 +305,7 @@ pub(crate) fn parse_spacing(input: &mut Parser<'_, '_>) -> Option<Length> {
     parse_length(input)
 }
 
-pub(crate) fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
+pub(crate) fn parse_integer(input: &mut Parser<'_>) -> Option<u32> {
     if let Ok(Token::Number {
         int_value: Some(v), ..
     }) = input.next().cloned()
@@ -320,7 +316,7 @@ pub(crate) fn parse_integer(input: &mut Parser<'_, '_>) -> Option<u32> {
     None
 }
 
-pub(crate) fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDecorationValue> {
+pub(crate) fn parse_text_decoration(input: &mut Parser<'_>) -> Option<TextDecorationValue> {
     let mut result = TextDecorationValue::default();
     let mut found = false;
     while let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
@@ -339,11 +335,10 @@ pub(crate) fn parse_text_decoration(input: &mut Parser<'_, '_>) -> Option<TextDe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cssparser::{Parser, ParserInput};
+    use cssparser::Parser;
 
     fn color(css: &str) -> Option<Color> {
-        let mut input = ParserInput::new(css);
-        parse_color(&mut Parser::new(&mut input))
+        parse_color(&mut Parser::new(css))
     }
 
     #[test]

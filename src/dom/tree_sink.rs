@@ -322,7 +322,7 @@ mod tests {
 
         // Find the p element
         let p = dom.find_by_tag("p").expect("should find p");
-        assert_eq!(dom.element_name(p).unwrap().as_ref(), "p");
+        assert_eq!(&**dom.element_name(p).unwrap(), "p");
 
         // Check text content
         let text_id = dom.children(p).next().expect("p should have child");
@@ -358,7 +358,7 @@ mod tests {
         // Should have two p children (whitespace text nodes may also exist)
         let p_children: Vec<_> = children
             .iter()
-            .filter(|&&c| dom.element_name(c).is_some_and(|n| n.as_ref() == "p"))
+            .filter(|&&c| dom.element_name(c).is_some_and(|n| &**n == "p"))
             .collect();
         assert_eq!(p_children.len(), 2);
     }
