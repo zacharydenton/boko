@@ -142,6 +142,21 @@ enum_property! {
 }
 
 enum_property! {
+    /// CSS `direction` (base text direction). `Unset` is IR-only: content that
+    /// never declared a direction inherits the document's (see
+    /// `Metadata::is_rtl`), so it is never written out.
+    pub enum Direction {
+        /// No direction declared (inherits the document's).
+        #[default]
+        Unset => "unset",
+        /// Left-to-right.
+        Ltr => "ltr",
+        /// Right-to-left.
+        Rtl => "rtl",
+    }
+}
+
+enum_property! {
     /// CSS `hyphens` values (automatic hyphenation mode).
     /// Default is `Manual` so that explicit `hyphens: auto` is emitted in KFX output.
     pub enum Hyphens {

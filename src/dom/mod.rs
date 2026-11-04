@@ -173,15 +173,15 @@ pub(crate) fn extract_stylesheets_from_dom(dom: &ArenaDom) -> (Vec<String>, Vec<
         if let Some(node) = dom.get(id)
             && let ArenaNodeData::Element { name, attrs, .. } = &node.data
         {
-            match name.local.as_ref() {
+            match &*name.local {
                 "link" => {
                     let is_stylesheet = attrs
                         .iter()
-                        .any(|a| a.name.local.as_ref() == "rel" && a.value == "stylesheet");
+                        .any(|a| (&*a.name.local) == "rel" && a.value == "stylesheet");
                     if is_stylesheet
                         && let Some(href) = attrs
                             .iter()
-                            .find(|a| a.name.local.as_ref() == "href")
+                            .find(|a| (&*a.name.local) == "href")
                             .map(|a| a.value.clone())
                     {
                         linked.push(href);

@@ -15,8 +15,8 @@ use super::parse::font::{
 };
 use super::parse::keywords::{
     parse_border_collapse, parse_border_style_value, parse_box_sizing, parse_break_inside,
-    parse_break_value, parse_clear, parse_decoration_style, parse_display, parse_float,
-    parse_font_style, parse_font_variant, parse_hyphens, parse_list_style_position,
+    parse_break_value, parse_clear, parse_decoration_style, parse_direction, parse_display,
+    parse_float, parse_font_style, parse_font_variant, parse_hyphens, parse_list_style_position,
     parse_list_style_shorthand, parse_list_style_type, parse_overflow_wrap, parse_text_align,
     parse_text_transform, parse_vertical_align, parse_visibility, parse_white_space,
     parse_word_break,
@@ -68,6 +68,11 @@ pub enum Declaration {
     TextTransform(TextTransform),
     /// `hyphens`: automatic hyphenation mode.
     Hyphens(Hyphens),
+    /// `direction`: base text direction (also set by the `dir` attribute
+    /// through the UA stylesheet).
+    Direction(Direction),
+    /// `direction: inherit` or `unset`: use the parent's computed direction.
+    DirectionInherit,
     /// `white-space`: whitespace collapsing and line-wrapping behavior.
     WhiteSpace(WhiteSpace),
     /// `vertical-align`: inline/table-cell vertical alignment (includes
@@ -227,7 +232,7 @@ impl Declaration {
     /// Returns a Vec of declarations. For most properties this is a single declaration,
     /// but shorthands like `margin`, `border`, etc. expand to multiple declarations.
     /// Returns an empty Vec if the property is unknown or the value fails to parse.
-    pub fn parse(name: &str, input: &mut Parser<'_, '_>) -> Vec<Self> {
+    pub fn parse(name: &str, input: &mut Parser<'_>) -> Vec<Self> {
         // Try shorthand properties first (they expand to multiple declarations)
         if let Some(decls) = Self::parse_shorthand(name, input) {
             return decls;
@@ -238,7 +243,7 @@ impl Declaration {
     }
 
     /// Parse shorthand properties that expand to multiple declarations.
-    fn parse_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<Vec<Self>> {
+    fn parse_shorthand(name: &str, input: &mut Parser<'_>) -> Option<Vec<Self>> {
         Some(match name {
             "margin" => Self::parse_length_rect(input, |t, r, b, l| {
                 [
@@ -296,7 +301,7 @@ impl Declaration {
     }
 
     /// Parse a 1-4 value Length rect shorthand (margin, padding, border-width).
-    fn parse_length_rect<F>(input: &mut Parser<'_, '_>, make_decls: F) -> Vec<Self>
+    fn parse_length_rect<F>(input: &mut Parser<'_>, make_decls: F) -> Vec<Self>
     where
         F: FnOnce(Length, Length, Length, Length) -> [Self; 4],
     {
@@ -306,7 +311,7 @@ impl Declaration {
     }
 
     /// Parse single-value properties.
-    fn parse_single(name: &str, input: &mut Parser<'_, '_>) -> Option<Self> {
+    fn parse_single(name: &str, input: &mut Parser<'_>) -> Option<Self> {
         match name {
             // Colors
             "color" => parse_color(input).map(Self::Color),
@@ -335,6 +340,7 @@ impl Declaration {
             "hyphens" | "-epub-hyphens" | "-webkit-hyphens" | "-moz-hyphens"
             | "adobe-hyphenate" => parse_hyphens(input).map(Self::Hyphens),
             "white-space" => parse_white_space(input).map(Self::WhiteSpace),
+            "direction" => parse_direction(input),
             "vertical-align" => parse_vertical_align(input).map(Self::VerticalAlign),
 
             // Text decoration

@@ -79,6 +79,7 @@ fn build_kfx_container(book: &Book) -> crate::Result<Vec<u8>> {
     let meta = book.metadata();
     let container_id = generate_container_id(&format!("{}\n{}", meta.identifier, meta.title));
     let mut ctx = ExportContext::new();
+    ctx.rtl = meta.is_rtl();
 
     // ========================================================================
     // PASS 1: SURVEY (Read-Only / State Accumulation)

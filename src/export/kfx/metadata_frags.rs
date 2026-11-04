@@ -274,7 +274,13 @@ pub(super) fn build_document_data_fragment(ctx: &ExportContext) -> KfxFragment {
     let document_data = IonValue::Struct(vec![
         (
             KfxSymbol::Direction as u64,
-            IonValue::Symbol(KfxSymbol::Ltr as u64),
+            IonValue::Symbol(
+                (if ctx.rtl {
+                    KfxSymbol::Rtl
+                } else {
+                    KfxSymbol::Ltr
+                }) as u64,
+            ),
         ),
         (
             KfxSymbol::ColumnCount as u64,

@@ -1,0 +1,57 @@
+[
+  {
+    "file": "he-gutenberg-hunger.epub",
+    "title": "Hunger: Book One (Hebrew)",
+    "language": "he",
+    "source": "https://www.gutenberg.org/ebooks/18291",
+    "download": "https://www.gutenberg.org/ebooks/18291.epub3.images",
+    "resolved_download": "https://www.gutenberg.org/cache/epub/18291/pg18291-images-3.epub",
+    "rights": "Project Gutenberg: public domain in the USA; included Gutenberg license applies.",
+    "sha256": "5a93d904b3bebc0b789bf39aa08807f8ac492e3e1a930f2b7a2a98df38e83c66",
+    "bytes": 140552
+  },
+  {
+    "file": "fa-gutenberg-stories.epub",
+    "title": "Five Selected Short Stories (Farsi)",
+    "language": "fa",
+    "source": "https://www.gutenberg.org/ebooks/46740",
+    "download": "https://www.gutenberg.org/ebooks/46740.epub3.images",
+    "resolved_download": "https://www.gutenberg.org/cache/epub/46740/pg46740-images-3.epub",
+    "rights": "Project Gutenberg: public domain in the USA; included Gutenberg license applies.",
+    "sha256": "42ba00039dd7d12d376b9242b27329e025c15fe18c07d05420d23dbcb23c8e1d",
+    "bytes": 139041
+  },
+  {
+    "file": "ar-gutenberg-hart.epub",
+    "title": "Tribute to Michael Hart",
+    "language": "ar",
+    "source": "https://www.gutenberg.org/ebooks/43007",
+    "download": "https://www.gutenberg.org/ebooks/43007.epub3.images",
+    "resolved_download": "https://www.gutenberg.org/cache/epub/43007/pg43007-images-3.epub",
+    "rights": "Project Gutenberg: public domain in the USA; included Gutenberg license applies.",
+    "sha256": "7dff841d4c2f1145134e812b25e90c5324bfb220c6fb567d3e2e4a5eb8c48031",
+    "bytes": 79468
+  },
+  {
+    "file": "he-gutenberg-tsel.epub",
+    "title": "Tsel HaOlam",
+    "language": "he",
+    "source": "https://www.gutenberg.org/ebooks/61024",
+    "download": "https://www.gutenberg.org/ebooks/61024.epub3.images",
+    "resolved_download": "https://www.gutenberg.org/cache/epub/61024/pg61024-images-3.epub",
+    "rights": "Project Gutenberg: public domain in the USA; included Gutenberg license applies.",
+    "sha256": "41b1e68fd75851a7e16ade361ce4df05d28801d444bc334265f1bd42d6f00231",
+    "bytes": 160965
+  },
+  {
+    "file": "he-gutenberg-tashlikh.epub",
+    "title": "HaTsofe leBet Israel / Tashlikh",
+    "language": "he",
+    "source": "https://www.gutenberg.org/ebooks/45252",
+    "download": "https://www.gutenberg.org/ebooks/45252.epub3.images",
+    "resolved_download": "https://www.gutenberg.org/cache/epub/45252/pg45252-images-3.epub",
+    "rights": "Project Gutenberg: public domain in the USA; included Gutenberg license applies.",
+    "sha256": "140587316c4713c768648d54eb643158b093dd95736edd864018ca5f5c5ab497",
+    "bytes": 140147
+  }
+]

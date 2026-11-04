@@ -76,7 +76,7 @@ fn presentational_hints(
     };
     let mut css = String::new();
     for attr in attrs {
-        match attr.name.local.as_ref() {
+        match &*attr.name.local {
             "align" if aligned => {
                 let v = attr.value.trim().to_ascii_lowercase();
                 if matches!(v.as_str(), "left" | "right" | "center" | "justify") {
@@ -154,7 +154,7 @@ fn presentational_hints(
                     css.push_str("text-indent: ");
                     css.push_str(v);
                     css.push_str(";margin-bottom: 0;");
-                    if !attrs.iter().any(|a| a.name.local.as_ref() == "height") {
+                    if !attrs.iter().any(|a| (&*a.name.local) == "height") {
                         css.push_str("margin-top: 0;");
                     }
                 }
@@ -214,7 +214,7 @@ impl<'a> TransformContext<'a> {
                 && let ArenaNodeData::Element { attrs, .. } = &node.data
             {
                 for attr in attrs {
-                    if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
+                    if (&*attr.name.local) == "lang" && !attr.value.is_empty() {
                         return Some(attr.value.clone());
                     }
                 }
@@ -319,7 +319,7 @@ impl<'a> TransformContext<'a> {
         };
         attrs
             .iter()
-            .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
+            .find(|a| (&*a.name.local) == "style" && !a.value.is_empty())
             .map(|a| crate::style::InlineStyle::parse(&a.value))
             .filter(|i| !i.is_empty())
     }
@@ -439,7 +439,7 @@ impl<'a> TransformContext<'a> {
                 // selector-matched normal declaration.
                 let inline = attrs
                     .iter()
-                    .find(|a| a.name.local.as_ref() == "style" && !a.value.is_empty())
+                    .find(|a| (&*a.name.local) == "style" && !a.value.is_empty())
                     .map(|a| crate::style::InlineStyle::parse(&a.value))
                     .filter(|i| !i.is_empty());
                 let hints = presentational_hints(&name.local, attrs.as_slice());
@@ -457,7 +457,7 @@ impl<'a> TransformContext<'a> {
                 // Merge lang attribute into style (for KFX language property)
                 // This must happen before interning so the style includes the language
                 for attr in attrs {
-                    if attr.name.local.as_ref() == "lang" && !attr.value.is_empty() {
+                    if (&*attr.name.local) == "lang" && !attr.value.is_empty() {
                         computed.language = Some(attr.value.to_string());
                         break;
                     }
@@ -468,9 +468,7 @@ impl<'a> TransformContext<'a> {
                 // the chapter's `math` side-table. `element_to_role` only
                 // sees the local name, so the namespace test is done here.
                 // We take over the whole subtree — no generic child recursion.
-                if name.ns.as_ref() == crate::math::mathml::MATHML_NS
-                    || name.local.as_ref() == "math"
-                {
+                if (&*name.ns) == crate::math::mathml::MATHML_NS || (&*name.local) == "math" {
                     if computed.display == Display::None {
                         return;
                     }
@@ -480,7 +478,7 @@ impl<'a> TransformContext<'a> {
                     self.chapter.append_child(ir_parent, ir_id);
                     // Preserve the element id for anchor/link resolution.
                     for attr in attrs {
-                        if attr.name.local.as_ref() == "id" {
+                        if (&*attr.name.local) == "id" {
                             self.chapter.semantics.set_id(ir_id, &attr.value);
                         }
                     }
@@ -527,8 +525,8 @@ impl<'a> TransformContext<'a> {
 
                 // Store semantic attributes
                 for attr in attrs {
-                    let attr_name = attr.name.local.as_ref();
-                    let attr_ns = attr.name.ns.as_ref();
+                    let attr_name = &*attr.name.local;
+                    let attr_ns = &*attr.name.ns;
                     match attr_name {
                         // Core layout attributes
                         "href" => {
@@ -541,7 +539,7 @@ impl<'a> TransformContext<'a> {
                         // Language (both lang and xml:lang)
                         "lang" => self.chapter.semantics.set_lang(ir_id, &attr.value),
                         // List start attribute (ol@start)
-                        "start" if name.local.as_ref() == "ol" => {
+                        "start" if (&*name.local) == "ol" => {
                             if let Ok(start) = attr.value.parse::<u32>() {
                                 self.chapter.semantics.set_list_start(ir_id, start);
                             }
@@ -562,18 +560,18 @@ impl<'a> TransformContext<'a> {
                             self.chapter.semantics.set_datetime(ir_id, &attr.value);
                         }
                         // Table cell attributes
-                        "rowspan" if matches!(name.local.as_ref(), "td" | "th") => {
+                        "rowspan" if matches!(&*name.local, "td" | "th") => {
                             if let Ok(span) = attr.value.parse::<u32>() {
                                 self.chapter.semantics.set_row_span(ir_id, span);
                             }
                         }
-                        "colspan" if matches!(name.local.as_ref(), "td" | "th") => {
+                        "colspan" if matches!(&*name.local, "td" | "th") => {
                             if let Ok(span) = attr.value.parse::<u32>() {
                                 self.chapter.semantics.set_col_span(ir_id, span);
                             }
                         }
                         // Extract language from class for code elements
-                        "class" if matches!(name.local.as_ref(), "code" | "pre") => {
+                        "class" if matches!(&*name.local, "code" | "pre") => {
                             for class in attr.value.split_whitespace() {
                                 if let Some(lang) = class.strip_prefix("language-") {
                                     self.chapter.semantics.set_language(ir_id, lang);
@@ -590,7 +588,7 @@ impl<'a> TransformContext<'a> {
                 }
 
                 // Mark th elements as header cells
-                if name.local.as_ref() == "th" {
+                if (&*name.local) == "th" {
                     self.chapter.semantics.set_header_cell(ir_id, true);
                 }
 

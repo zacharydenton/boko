@@ -191,7 +191,7 @@ impl EpubImporter {
 
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
-            let name = file.name().to_string();
+            let name = file.name()?.into_owned();
 
             zip_index.insert(
                 name.clone(),
@@ -420,16 +420,19 @@ fn collect_identifiers(opf_str: &str) -> Vec<String> {
     let mut in_identifier = false;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) if e.name().local_name().as_ref() == b"identifier" => {
+            Ok(Event::Start(e)) if e.name().local_name().as_ref().as_bytes() == b"identifier" => {
                 in_identifier = true;
             }
             Ok(Event::Text(t)) if in_identifier => {
-                let text = t.xml_content().unwrap_or_default().trim().to_string();
+                let text = t
+                    .xml_content(quick_xml::XmlVersion::Implicit1_0)
+                    .trim()
+                    .to_string();
                 if !text.is_empty() {
                     identifiers.push(text);
                 }
             }
-            Ok(Event::End(e)) if e.name().local_name().as_ref() == b"identifier" => {
+            Ok(Event::End(e)) if e.name().local_name().as_ref().as_bytes() == b"identifier" => {
                 in_identifier = false;
             }
             Ok(Event::Eof) | Err(_) => break,
@@ -465,23 +468,23 @@ fn parse_encryption_xml(
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = e.name();
                 let local = name.local_name();
-                if local.as_ref() == b"EncryptionMethod" {
+                if local.as_ref().as_bytes() == b"EncryptionMethod" {
                     current_algorithm = e.attributes().flatten().find_map(|a| {
-                        if a.key.local_name().as_ref() != b"Algorithm" {
+                        if a.key.local_name().as_ref().as_bytes() != b"Algorithm" {
                             return None;
                         }
-                        let value: &[u8] = &a.value;
+                        let value = a.value.as_bytes();
                         match value {
                             v if v == IDPF_ALGORITHM.as_bytes() => Some(IDPF_ALGORITHM),
                             v if v == ADOBE_ALGORITHM.as_bytes() => Some(ADOBE_ALGORITHM),
                             _ => None,
                         }
                     });
-                } else if local.as_ref() == b"CipherReference"
+                } else if local.as_ref().as_bytes() == b"CipherReference"
                     && let Some(algorithm) = current_algorithm
                     && let Some(uri) = e.attributes().flatten().find_map(|a| {
-                        (a.key.local_name().as_ref() == b"URI")
-                            .then(|| String::from_utf8_lossy(&a.value).to_string())
+                        (a.key.local_name().as_ref().as_bytes() == b"URI")
+                            .then(|| a.value.into_owned())
                     })
                 {
                     // URIs may be percent-encoded; archive names are literal.
@@ -512,7 +515,7 @@ fn parse_encryption_xml(
                     }
                 }
             }
-            Ok(Event::End(e)) if e.name().local_name().as_ref() == b"EncryptedData" => {
+            Ok(Event::End(e)) if e.name().local_name().as_ref().as_bytes() == b"EncryptedData" => {
                 current_algorithm = None;
             }
             Ok(Event::Eof) | Err(_) => break,

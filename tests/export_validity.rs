@@ -89,6 +89,50 @@ fn kfx_to_azw3_toc_targets_are_distinct() {
 }
 
 #[test]
+fn rtl_direction_survives_kfx_and_azw3_roundtrips() {
+    use common::{Doc, EpubBuilder};
+
+    let epub = EpubBuilder::new("RTL Book")
+        .language("ar")
+        .doc(
+            Doc::new(
+                "text/ch1.xhtml",
+                "الفصل",
+                "<h1>عنوان</h1><p>نص عربي.</p><p dir=\"ltr\">English inside.</p>",
+            )
+            .lang_dir("ar", "rtl"),
+        )
+        .build();
+
+    // No spine direction in the source: Arabic alone must make it RTL.
+    for format in [Format::Kfx, Format::Azw3] {
+        let mut book = boko::Book::from_bytes(&epub, Format::Epub).expect("import rtl epub");
+        let mut back = common::roundtrip(&mut book, format);
+        assert_eq!(
+            back.metadata().page_progression_direction.as_deref(),
+            Some("rtl"),
+            "{format:?} must carry the RTL reading direction"
+        );
+        if format == Format::Kfx {
+            // KFX → EPUB rebuilds chapters from the IR: the document direction
+            // lands on <html>, the LTR paragraph keeps its own.
+            let bytes = common::export_to_bytes(&mut back, Format::Epub);
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut text = String::new();
+            for i in 0..zip.len() {
+                use std::io::Read;
+                zip.by_index(i).unwrap().read_to_string(&mut text).ok();
+            }
+            assert!(text.contains(r#"dir="rtl""#), "EPUB from KFX lost dir=rtl");
+            assert!(
+                text.contains("direction: ltr"),
+                "EPUB from KFX lost the LTR paragraph"
+            );
+        }
+    }
+}
+
+#[test]
 fn rtl_page_progression_direction_survives_epub_roundtrip() {
     use common::{Doc, EpubBuilder, Nav};
 

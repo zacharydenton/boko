@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::io;
 
-use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Reader, XmlVersion};
 
 use crate::model::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
 
@@ -29,11 +29,13 @@ pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
 
     loop {
         match reader.read_event() {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"rootfile" => {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e))
+                if e.name().as_ref().as_bytes() == b"rootfile" =>
+            {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"full-path" {
+                    if attr.key.as_ref().as_bytes() == b"full-path" {
                         return attr
-                            .unescape_value()
+                            .normalized_value(XmlVersion::Implicit1_0)
                             .map(|v| v.into_owned())
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
                     }
@@ -85,19 +87,17 @@ pub fn parse_opf(content: &str) -> io::Result<OpfData> {
             Ok(Event::Start(e)) => parser.handle_start(&e)?,
             Ok(Event::Empty(e)) => parser.handle_empty(&e)?,
             Ok(Event::Text(e)) if parser.collecting_text() => {
-                parser
-                    .buf_text
-                    .push_str(&String::from_utf8_lossy(e.as_ref()));
+                parser.buf_text.push_str(e.as_ref());
             }
             Ok(Event::GeneralRef(e)) if parser.collecting_text() => {
-                let entity = String::from_utf8_lossy(e.as_ref());
-                if let Some(resolved) = resolve_entity(&entity) {
+                let entity = e.as_ref();
+                if let Some(resolved) = resolve_entity(entity) {
                     parser.buf_text.push_str(&resolved);
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
-                parser.handle_end(local_name(name.as_ref()));
+                parser.handle_end(local_name(name.as_ref().as_bytes()));
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(io::Error::other(e)),
@@ -146,7 +146,7 @@ impl OpfParser {
 
     fn handle_start(&mut self, e: &BytesStart) -> io::Result<()> {
         let name = e.name();
-        let local = local_name(name.as_ref());
+        let local = local_name(name.as_ref().as_bytes());
 
         match local {
             b"metadata" => self.in_metadata = true,
@@ -179,7 +179,7 @@ impl OpfParser {
 
     fn handle_empty(&mut self, e: &BytesStart) -> io::Result<()> {
         let name = e.name();
-        let local = local_name(name.as_ref());
+        let local = local_name(name.as_ref().as_bytes());
 
         match local {
             b"item" => self.parse_manifest_item(e)?,
@@ -233,7 +233,7 @@ impl OpfParser {
         let is_cover = e
             .attributes()
             .flatten()
-            .any(|a| a.key.as_ref() == b"name" && &*a.value == b"cover");
+            .any(|a| a.key.as_ref().as_bytes() == b"name" && &*a.value == "cover");
         if is_cover
             && let Some(ref cover_id) = self.meta_content
             && !cover_id.is_empty()
@@ -277,7 +277,7 @@ impl OpfParser {
         let is_cover = e
             .attributes()
             .flatten()
-            .any(|a| a.key.as_ref() == b"name" && &*a.value == b"cover");
+            .any(|a| a.key.as_ref().as_bytes() == b"name" && &*a.value == "cover");
         let content = attr(e, b"content")?;
         let property = attr(e, b"property")?;
         let refines = attr(e, b"refines")?;
@@ -579,7 +579,7 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 match local {
                     b"navPoint" => {
                         // Reject pathologically deep nesting: the resulting
@@ -593,8 +593,10 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                         }
                         let mut play_order = None;
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"playOrder"
-                                && let Ok(order_str) = attr.unescape_value().map(|v| v.into_owned())
+                            if attr.key.as_ref().as_bytes() == b"playOrder"
+                                && let Ok(order_str) = attr
+                                    .normalized_value(XmlVersion::Implicit1_0)
+                                    .map(|v| v.into_owned())
                             {
                                 play_order = order_str.parse().ok();
                             }
@@ -612,14 +614,14 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
             }
             Ok(Event::Empty(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 if local == b"content" {
                     for attr in e.attributes().flatten() {
-                        if attr.key.as_ref() == b"src"
+                        if attr.key.as_ref().as_bytes() == b"src"
                             && let Some(state) = stack.last_mut()
                         {
                             state.src = Some(
-                                attr.unescape_value()
+                                attr.normalized_value(XmlVersion::Implicit1_0)
                                     .map(|v| v.into_owned())
                                     .map_err(io::Error::other)?,
                             );
@@ -629,17 +631,17 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
             }
             Ok(Event::Text(e)) => {
                 if in_text && let Some(state) = stack.last_mut() {
-                    let raw = String::from_utf8_lossy(e.as_ref());
+                    let raw = e.as_ref();
                     match &mut state.text {
-                        Some(existing) => existing.push_str(&raw),
-                        None => state.text = Some(raw.into_owned()),
+                        Some(existing) => existing.push_str(raw),
+                        None => state.text = Some(raw.to_owned()),
                     }
                 }
             }
             Ok(Event::GeneralRef(e)) => {
                 if in_text && let Some(state) = stack.last_mut() {
-                    let entity = String::from_utf8_lossy(e.as_ref());
-                    if let Some(resolved) = resolve_entity(&entity) {
+                    let entity = e.as_ref();
+                    if let Some(resolved) = resolve_entity(entity) {
                         match &mut state.text {
                             Some(existing) => existing.push_str(&resolved),
                             None => state.text = Some(resolved),
@@ -649,7 +651,7 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
                 match local {
                     b"text" => in_text = false,
                     b"navPoint" => {
@@ -724,14 +726,14 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
 
                 match local {
                     b"nav" => {
                         // Check for epub:type="toc"
                         for attr in e.attributes().flatten() {
-                            if local_name(attr.key.as_ref()) == b"type" {
-                                let value = String::from_utf8_lossy(&attr.value);
+                            if local_name(attr.key.as_ref().as_bytes()) == b"type" {
+                                let value = attr.value.clone();
                                 if value.split_ascii_whitespace().any(|v| v == "toc") {
                                     in_toc_nav = true;
                                 }
@@ -767,9 +769,9 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
                             label_depth = 1;
                             if local == b"a" {
                                 for attr in e.attributes().flatten() {
-                                    if local_name(attr.key.as_ref()) == b"href" {
+                                    if local_name(attr.key.as_ref().as_bytes()) == b"href" {
                                         item.href = Some(
-                                            attr.unescape_value()
+                                            attr.normalized_value(XmlVersion::Implicit1_0)
                                                 .map(|v| v.into_owned())
                                                 .map_err(io::Error::other)?,
                                         );
@@ -783,20 +785,20 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
             }
             Ok(Event::Text(e)) if in_label => {
                 if let Some(item) = stack.last_mut() {
-                    item.title.push_str(&String::from_utf8_lossy(e.as_ref()));
+                    item.title.push_str(e.as_ref());
                 }
             }
             Ok(Event::GeneralRef(e)) if in_label => {
                 if let Some(item) = stack.last_mut() {
-                    let entity = String::from_utf8_lossy(e.as_ref());
-                    if let Some(resolved) = resolve_entity(&entity) {
+                    let entity = e.as_ref();
+                    if let Some(resolved) = resolve_entity(entity) {
                         item.title.push_str(&resolved);
                     }
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
 
                 match local {
                     b"a" | b"span" => {
@@ -855,16 +857,16 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
 
                 match local {
                     b"nav" => {
                         // Check for epub:type="landmarks"
                         for attr in e.attributes().flatten() {
-                            let key = attr.key.as_ref();
+                            let key = attr.key.as_ref().as_bytes();
                             let key_local = local_name(key);
                             if key_local == b"type" {
-                                let value = String::from_utf8_lossy(&attr.value);
+                                let value = attr.value.clone();
                                 if value.split_ascii_whitespace().any(|v| v == "landmarks") {
                                     in_landmarks_nav = true;
                                 }
@@ -876,20 +878,20 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                         current_label.clear();
 
                         for attr in e.attributes().flatten() {
-                            let key = attr.key.as_ref();
+                            let key = attr.key.as_ref().as_bytes();
                             let key_local = local_name(key);
 
                             match key_local {
                                 b"href" => {
                                     current_href = Some(
-                                        attr.unescape_value()
+                                        attr.normalized_value(XmlVersion::Implicit1_0)
                                             .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"type" => {
                                     current_epub_type = Some(
-                                        attr.unescape_value()
+                                        attr.normalized_value(XmlVersion::Implicit1_0)
                                             .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
@@ -902,17 +904,17 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                 }
             }
             Ok(Event::Text(e)) if in_anchor => {
-                current_label.push_str(&String::from_utf8_lossy(e.as_ref()));
+                current_label.push_str(e.as_ref());
             }
             Ok(Event::GeneralRef(e)) if in_anchor => {
-                let entity = String::from_utf8_lossy(e.as_ref());
-                if let Some(resolved) = resolve_entity(&entity) {
+                let entity = e.as_ref();
+                if let Some(resolved) = resolve_entity(entity) {
                     current_label.push_str(&resolved);
                 }
             }
             Ok(Event::End(e)) => {
                 let name = e.name();
-                let local = local_name(name.as_ref());
+                let local = local_name(name.as_ref().as_bytes());
 
                 match local {
                     b"nav" => {
@@ -1003,9 +1005,9 @@ fn local_name(name: &[u8]) -> &[u8] {
 /// Get an attribute's unescaped value, matching the exact attribute name.
 fn attr(e: &BytesStart, key: &[u8]) -> io::Result<Option<String>> {
     for a in e.attributes().flatten() {
-        if a.key.as_ref() == key {
+        if a.key.as_ref().as_bytes() == key {
             return a
-                .unescape_value()
+                .normalized_value(XmlVersion::Implicit1_0)
                 .map(|v| Some(v.into_owned()))
                 .map_err(io::Error::other);
         }

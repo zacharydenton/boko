@@ -520,6 +520,7 @@ fn build_metadata(
         metadata.date = exth.pub_date.clone();
         metadata.rights = exth.rights.clone();
         metadata.language = exth.language.clone().unwrap_or_default();
+        metadata.page_progression_direction = exth.page_progression_direction.clone();
         metadata.identifier = exth
             .isbn
             .clone()

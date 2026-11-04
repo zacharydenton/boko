@@ -251,6 +251,8 @@ pub struct ExthHeader {
     pub cover_offset: Option<u32>,
     pub thumbnail_offset: Option<u32>,
     pub language: Option<String>,
+    /// EXTH 527 `page-progression-direction` ("rtl" for right-to-left books).
+    pub page_progression_direction: Option<String>,
     pub kf8_boundary: Option<u32>,
 }
 
@@ -347,6 +349,7 @@ impl ExthHeader {
                 }
                 503 => exth.title = Some(decode(content).trim().to_string()),
                 524 => exth.language = Some(decode(content).trim().to_string()),
+                527 => exth.page_progression_direction = Some(decode(content).trim().to_string()),
                 _ => {}
             }
 

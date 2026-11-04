@@ -102,6 +102,100 @@ pub struct Metadata {
     pub page_progression_direction: Option<String>,
 }
 
+impl Metadata {
+    /// Whether the book reads right-to-left: explicit spine direction wins,
+    /// followed by an explicit language script, then a language fallback.
+    /// The fallback is a compatibility heuristic for EPUB 2 books, not a
+    /// substitute for authored text direction. Kurdish defaults to Latin;
+    /// Arabic-script Kurdish should use `ku-Arab` or Central Kurdish (`ckb`).
+    pub fn is_rtl(&self) -> bool {
+        match self.page_progression_direction.as_deref() {
+            Some("rtl") => true,
+            Some("ltr") => false,
+            _ => {
+                let mut subtags = self.language.trim().split(['-', '_']);
+                let primary = subtags.next().unwrap_or("");
+                if primary.len() < 2 {
+                    return false;
+                }
+                // Do not mistake extension/private-use payloads for scripts.
+                if let Some(script) = subtags
+                    .take_while(|s| s.len() > 1)
+                    .find(|s| s.len() == 4 && s.bytes().all(|b| b.is_ascii_alphabetic()))
+                {
+                    // RTL scripts from Unicode CLDR's scriptMetadata.txt:
+                    // https://github.com/unicode-org/cldr/blob/main/common/properties/scriptMetadata.txt
+                    return matches!(
+                        script.to_ascii_lowercase().as_str(),
+                        "adlm"
+                            | "arab"
+                            | "armi"
+                            | "avst"
+                            | "chrs"
+                            | "cprt"
+                            | "elym"
+                            | "gara"
+                            | "hatr"
+                            | "hebr"
+                            | "hung"
+                            | "khar"
+                            | "lydi"
+                            | "mand"
+                            | "mani"
+                            | "mend"
+                            | "merc"
+                            | "mero"
+                            | "narb"
+                            | "nbat"
+                            | "nkoo"
+                            | "orkh"
+                            | "ougr"
+                            | "palm"
+                            | "phli"
+                            | "phlp"
+                            | "phnx"
+                            | "prti"
+                            | "rohg"
+                            | "samr"
+                            | "sarb"
+                            | "sidt"
+                            | "sogd"
+                            | "sogo"
+                            | "syrc"
+                            | "thaa"
+                            | "yezi"
+                    );
+                }
+                matches!(
+                    primary.to_ascii_lowercase().as_str(),
+                    "ar" | "ara"
+                        | "arc"
+                        | "ckb"
+                        | "dv"
+                        | "div"
+                        | "fa"
+                        | "fas"
+                        | "per"
+                        | "he"
+                        | "heb"
+                        | "iw"
+                        | "ps"
+                        | "pus"
+                        | "sd"
+                        | "snd"
+                        | "syr"
+                        | "ug"
+                        | "uig"
+                        | "ur"
+                        | "urd"
+                        | "yi"
+                        | "yid"
+                )
+            }
+        }
+    }
+}
+
 /// A table of contents entry (hierarchical)
 ///
 /// Built from the EPUB 3 nav document or EPUB 2 NCX (or the equivalent

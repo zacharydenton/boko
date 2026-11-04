@@ -161,6 +161,8 @@ const PROPERTIES: &[CssProperty] = &[
     prop!("text-transform", text_transform),
     // Hyphenation.
     prop!("hyphens", hyphens),
+    // Base text direction.
+    prop!("direction", direction),
     // White-space.
     prop!("white-space", white_space),
     // Underline style.
