@@ -12,7 +12,7 @@ use super::keywords::{parse_font_style, parse_font_variant};
 ///
 /// Supports absolute keywords: xx-small, x-small, small, medium, large, x-large, xx-large
 /// Supports relative keywords: smaller, larger
-pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_font_size(input: &mut Parser<'_>) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => {
             let length = match unit.as_ref() {
@@ -48,7 +48,7 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<Length> {
 }
 
 /// Parse line-height value (handles unitless numbers and "normal" keyword).
-pub(crate) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_line_height(input: &mut Parser<'_>) -> Option<Length> {
     match input.next().ok()? {
         Token::Dimension { value, unit, .. } => {
             let length = match unit.as_ref() {
@@ -75,7 +75,7 @@ pub(crate) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<Length> {
     }
 }
 
-pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight> {
+pub(crate) fn parse_font_weight(input: &mut Parser<'_>) -> Option<FontWeight> {
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         let weight = match token.as_ref() {
             "normal" => FontWeight::NORMAL,
@@ -100,7 +100,7 @@ pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight
     None
 }
 
-pub(crate) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<String> {
+pub(crate) fn parse_font_family(input: &mut Parser<'_>) -> Option<String> {
     let mut families = Vec::new();
 
     loop {
@@ -142,7 +142,7 @@ pub(crate) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<String> {
 /// declarations, exactly as when this shorthand was unhandled). `font-stretch`
 /// is not parsed. Without this, `font: italic bold 14px/1.5 Georgia, serif`
 /// — a very common authoring form — dropped every sub-property.
-pub(crate) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<Vec<Declaration>> {
+pub(crate) fn parse_font_shorthand(input: &mut Parser<'_>) -> Option<Vec<Declaration>> {
     let mut decls = Vec::new();
 
     // Leading components, in any order. `normal` matches any of them and is
@@ -196,7 +196,7 @@ pub(crate) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<Vec<Dec
 ///     src: url(../fonts/Ubuntu-B.ttf);
 /// }
 /// ```
-pub(crate) fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<FontFace> {
+pub(crate) fn parse_font_face_block(input: &mut Parser<'_>) -> Option<FontFace> {
     let mut font_family: Option<String> = None;
     let mut font_weight = FontWeight::NORMAL;
     let mut font_style = FontStyle::Normal;
@@ -213,7 +213,7 @@ pub(crate) fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<FontFa
         }
         let _ = input.parse_until_after(
             cssparser::Delimiter::Semicolon,
-            |value_input| -> Result<(), ParseError<'_, ()>> {
+            |value_input| -> Result<(), ParseError<()>> {
                 match name_str.as_str() {
                     "font-family" => font_family = parse_font_face_family(value_input),
                     "font-weight" => {
@@ -247,7 +247,7 @@ pub(crate) fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Option<FontFa
 }
 
 /// Parse font-family value in @font-face (quoted or unquoted name).
-fn parse_font_face_family(input: &mut Parser<'_, '_>) -> Option<String> {
+fn parse_font_face_family(input: &mut Parser<'_>) -> Option<String> {
     // Try quoted string first
     if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
         return Some(s.to_string());
@@ -260,13 +260,13 @@ fn parse_font_face_family(input: &mut Parser<'_, '_>) -> Option<String> {
 }
 
 /// Parse src value in @font-face: url(...) or local(...).
-fn parse_font_face_src(input: &mut Parser<'_, '_>) -> Option<String> {
+fn parse_font_face_src(input: &mut Parser<'_>) -> Option<String> {
     // We support url() format only
     if let Ok(url) = input.try_parse(|i| i.expect_url_or_string()) {
         return Some(url.as_ref().to_string());
     }
     // Try parsing url() function with string argument
-    if let Ok(url) = input.try_parse(|i| -> Result<String, ParseError<'_, ()>> {
+    if let Ok(url) = input.try_parse(|i| -> Result<String, ParseError<()>> {
         i.expect_function_matching("url")?;
         let url_str = i.parse_nested_block(|nested| {
             nested
@@ -284,11 +284,10 @@ fn parse_font_face_src(input: &mut Parser<'_, '_>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cssparser::{Parser, ParserInput};
+    use cssparser::Parser;
 
     fn family(css: &str) -> Option<String> {
-        let mut input = ParserInput::new(css);
-        parse_font_family(&mut Parser::new(&mut input))
+        parse_font_family(&mut Parser::new(css))
     }
 
     #[test]
@@ -309,8 +308,7 @@ mod tests {
     }
 
     fn font(css: &str) -> Vec<Declaration> {
-        let mut input = ParserInput::new(css);
-        parse_font_shorthand(&mut Parser::new(&mut input)).unwrap_or_default()
+        parse_font_shorthand(&mut Parser::new(css)).unwrap_or_default()
     }
 
     #[test]

@@ -227,7 +227,7 @@ impl Declaration {
     /// Returns a Vec of declarations. For most properties this is a single declaration,
     /// but shorthands like `margin`, `border`, etc. expand to multiple declarations.
     /// Returns an empty Vec if the property is unknown or the value fails to parse.
-    pub fn parse(name: &str, input: &mut Parser<'_, '_>) -> Vec<Self> {
+    pub fn parse(name: &str, input: &mut Parser<'_>) -> Vec<Self> {
         // Try shorthand properties first (they expand to multiple declarations)
         if let Some(decls) = Self::parse_shorthand(name, input) {
             return decls;
@@ -238,7 +238,7 @@ impl Declaration {
     }
 
     /// Parse shorthand properties that expand to multiple declarations.
-    fn parse_shorthand(name: &str, input: &mut Parser<'_, '_>) -> Option<Vec<Self>> {
+    fn parse_shorthand(name: &str, input: &mut Parser<'_>) -> Option<Vec<Self>> {
         Some(match name {
             "margin" => Self::parse_length_rect(input, |t, r, b, l| {
                 [
@@ -296,7 +296,7 @@ impl Declaration {
     }
 
     /// Parse a 1-4 value Length rect shorthand (margin, padding, border-width).
-    fn parse_length_rect<F>(input: &mut Parser<'_, '_>, make_decls: F) -> Vec<Self>
+    fn parse_length_rect<F>(input: &mut Parser<'_>, make_decls: F) -> Vec<Self>
     where
         F: FnOnce(Length, Length, Length, Length) -> [Self; 4],
     {
@@ -306,7 +306,7 @@ impl Declaration {
     }
 
     /// Parse single-value properties.
-    fn parse_single(name: &str, input: &mut Parser<'_, '_>) -> Option<Self> {
+    fn parse_single(name: &str, input: &mut Parser<'_>) -> Option<Self> {
         match name {
             // Colors
             "color" => parse_color(input).map(Self::Color),

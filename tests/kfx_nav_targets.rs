@@ -159,7 +159,7 @@ fn kindle_book_toc_targets_resolve_in_epub() {
         let mut f = zip.by_index(i).expect("zip entry");
         let mut s = String::new();
         if f.read_to_string(&mut s).is_ok() {
-            files.insert(f.name().to_string(), s);
+            files.insert(f.name().expect("zip entry name").into_owned(), s);
         }
     }
 

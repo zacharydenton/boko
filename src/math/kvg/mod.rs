@@ -30,16 +30,13 @@ mod tests {
         mathml::from_mathml(&dom, root)
     }
 
-    fn font() -> Option<MathFont> {
-        MathFont::load_system()
+    fn font() -> MathFont {
+        font::test_font()
     }
 
     #[test]
     fn typesets_basic_constructs() {
-        let Some(font) = font() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = font();
         for (mml, min_glyphs) in [
             (r#"<math><msub><mi>x</mi><mn>1</mn></msub></math>"#, 2),
             (
@@ -65,10 +62,7 @@ mod tests {
 
     #[test]
     fn raw_content_falls_back() {
-        let Some(font) = font() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = font();
         let m = parse(r#"<math><menclose notation="box"><mi>x</mi></menclose></math>"#);
         assert!(
             typeset(&font, &m.expr, m.display).is_none(),
@@ -78,10 +72,7 @@ mod tests {
 
     #[test]
     fn fraction_stacks_vertically() {
-        let Some(font) = font() else {
-            eprintln!("no system math font; skipping");
-            return;
-        };
+        let font = font();
         let m = parse(r#"<math><mfrac><mi>a</mi><mi>b</mi></mfrac></math>"#);
         let lb = typeset(&font, &m.expr, m.display).expect("typeset");
         assert_eq!(lb.rules.len(), 1, "fraction bar");

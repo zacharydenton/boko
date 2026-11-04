@@ -31,79 +31,79 @@ wasm = ["wasm-bindgen", "console_error_panic_hook"]
 parallel = ["dep:rayon"]
 
 [dependencies]
-wasm-bindgen = { version = "0.2", optional = true }
-console_error_panic_hook = { version = "0.1", optional = true }
-quick-xml = "0.39"
-zip = { version = "8.1", default-features = false, features = ["deflate-flate2"] }
-percent-encoding = "2.3"
+wasm-bindgen = { version = "0.2.130", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
+quick-xml = "0.42.0"
+zip = { version = "9.3.0", default-features = false, features = ["deflate-flate2"] }
+percent-encoding = "2.3.2"
 
 # High-performance byte operations (SIMD-accelerated)
-memchr = "2.7"
-bstr = { version = "1.11", default-features = false, features = ["alloc"] }
+memchr = "2.8.3"
+bstr = { version = "1.13.1", default-features = false, features = ["alloc"] }
 
 # Fast, non-DoS-resistant hasher for internal hot-path maps (interned styles,
 # arena ids, symbol tables) whose keys are not attacker-chosen for collision.
-rustc-hash = "2.1"
+rustc-hash = "2.1.3"
 
 # Inline storage for small hot collections (KFX token attrs/spans, Ion
 # annotations) so the common case avoids a heap allocation.
-smallvec = "1.15"
+smallvec = "1.16.4"
 
 # Derive Display/Error/From for the typed error enum (compile-time only).
-thiserror = "2"
+thiserror = "2.0.21"
 
 # Font parsing for the KVG math typesetting spoke: glyph outlines (TrueType
 # and CFF) plus the OpenType MATH table (typesetting constants, stretchy
-# glyph variants/assemblies).
-ttf-parser = "0.25"
+# glyph variants). Hinting and autohint shaping are not needed for KVG.
+skrifa = { version = "0.49.0", default-features = false, features = ["std"] }
 
 # Raster decode + JPEG encode for the image-shrinking optimize pass.
 # Optional: pulled in by the `optimize-images` feature, excluded from wasm.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"], optional = true }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"], optional = true }
 
-html5ever = "0.39"
-cssparser = "0.36"
-selectors = "0.35"
-precomputed-hash = "0.1"
+html5ever = "0.40.1"
+cssparser = "0.38.0"
+selectors = "0.42.0"
+precomputed-hash = "0.1.1"
 
 # Encoding detection and conversion (UTF-8, CP1252, etc.)
-encoding_rs = "0.8"
+encoding_rs = "0.8.44"
 
 # Base64 encoding for KFX raw media
-base64 = "0.22"
+base64 = "0.23.1"
 
 # Ion binary format parsing for KFX dump tool (CLI only; the library uses
 # its own hand-rolled reader/writer in src/kfx/ion.rs)
-ion-rs = { version = "1.0.0-rc.11", features = ["experimental-reader-writer"], optional = true }
+ion-rs = { version = "1.2.0", features = ["experimental-reader-writer"], optional = true }
 
 # SHA1 hashing for KFX content hashes (minimal, WASM-compatible)
-sha1_smol = { version = "1.0", features = ["std"] }
+sha1_smol = { version = "1.0.1", features = ["std"] }
 
 # CLI argument parsing (only for binary)
-clap = { version = "4", features = ["derive"], optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-xml5ever = "0.39.0"
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
+xml5ever = "0.40.0"
 
 # Native: use fast zlib-rs
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 # Data-parallel chapter compilation (native only; gated by the `parallel` feature).
-rayon = { version = "1.10", optional = true }
+rayon = { version = "1.12.0", optional = true }
 
 # WASM: use pure-Rust backend
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
-js-sys = "0.3"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+js-sys = "0.3.107"
 
 [dev-dependencies]
-tempfile = "3.14"
-proptest = "1.6"
-criterion = "0.8"
+tempfile = "3.27.0"
+proptest = "1.12.0"
+criterion = "0.8.2"
 # Synthesizes image fixtures for the optimize-images tests.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
 # Obfuscates font fixtures for the deobfuscation tests (IDPF key = SHA-1).
-sha1_smol = { version = "1.0", features = ["std"] }
+sha1_smol = { version = "1.0.1", features = ["std"] }
 
 [[bin]]
 name = "boko"

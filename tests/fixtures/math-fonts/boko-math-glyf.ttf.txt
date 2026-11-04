@@ -1,0 +1,246 @@
+upem 1000
+MathConstants { script_scale: 0.8, script_script_scale: 0.65, axis_height: 275.0, subscript_shift_down: 277.0, superscript_shift_up: 381.0, sub_superscript_gap_min: 120.0, space_after_script: 40.0, fraction_rule_thickness: 64.0, fraction_numerator_shift_up: 403.0, fraction_denominator_shift_down: 268.0, fraction_num_gap_min: 96.0, fraction_denom_gap_min: 96.0, radical_rule_thickness: 52.0, radical_vertical_gap: 96.0, radical_extra_ascender: 96.0, upper_limit_gap_min: 96.0, upper_limit_baseline_rise_min: 96.0, lower_limit_gap_min: 96.0, lower_limit_baseline_drop_min: 511.0, display_operator_min_height: 1333.0 }
+0 GlyphMetrics { advance: 364.0, min_x: 0.0, min_y: 0.0, max_x: 0.0, max_y: 0.0, italic_correction: 0.0 } da39a3ee5e6b4b0d3255bfef95601890afd80709 0/0 0/0 0/0 0/0 0/0
+1 GlyphMetrics { advance: 317.0, min_x: 0.0, min_y: 0.0, max_x: 0.0, max_y: 0.0, italic_correction: 0.0 } da39a3ee5e6b4b0d3255bfef95601890afd80709 1/1 1/1 1/1 1/1 1/1
+2 GlyphMetrics { advance: 424.0, min_x: 120.0, min_y: -176.0, max_x: 371.0, max_y: 726.0, italic_correction: 0.0 } b48eaa87f11e6dbcbbd57f7e5daffa71aa576715 2/2 2/2 87/2 107/2 112/2
+3 GlyphMetrics { advance: 424.0, min_x: 53.0, min_y: -176.0, max_x: 303.0, max_y: 726.0, italic_correction: 0.0 } f915478258e43dd89e265d94300f2dcacf0547f5 3/3 3/3 88/3 108/3 113/3
+4 GlyphMetrics { advance: 788.0, min_x: 80.0, min_y: -39.0, max_x: 708.0, max_y: 589.0, italic_correction: 0.0 } f23f4f73c13983b7b8cd7c1f5efd4700768c500a 4/4 4/4 4/4 4/4 4/4
+5 GlyphMetrics { advance: 337.0, min_x: 44.0, min_y: 230.0, max_x: 294.0, max_y: 306.0, italic_correction: 0.0 } 9c2f08057186031121855bb6f098df64e588a340 5/5 5/5 5/5 5/5 5/5
+6 GlyphMetrics { advance: 636.0, min_x: 66.0, min_y: -14.0, max_x: 570.0, max_y: 742.0, italic_correction: 0.0 } 5971147a3fade6185a14fe6d5dc8d09fc6d3d13c 6/6 6/6 6/6 6/6 6/6
+7 GlyphMetrics { advance: 636.0, min_x: 122.0, min_y: 0.0, max_x: 494.0, max_y: 742.0, italic_correction: 0.0 } 9b8e2db7fbd0271ce154e853e9c7d5c2d5c27215 7/7 7/7 7/7 7/7 7/7
+8 GlyphMetrics { advance: 636.0, min_x: 68.0, min_y: 0.0, max_x: 538.0, max_y: 742.0, italic_correction: 0.0 } e7ecb91945dff70a6d0b45f4b9dbda76261e5bc2 8/8 8/8 8/8 8/8 8/8
+9 GlyphMetrics { advance: 636.0, min_x: 76.0, min_y: -14.0, max_x: 562.0, max_y: 742.0, italic_correction: 0.0 } 1f957455e2c4145b2c499b06c3d5d5f39d898b10 9/9 9/9 9/9 9/9 9/9
+10 GlyphMetrics { advance: 636.0, min_x: 31.0, min_y: 0.0, max_x: 586.0, max_y: 742.0, italic_correction: 0.0 } e1dcb7b8984b723c8607f9e4df6c56fd7428f6e2 10/10 10/10 10/10 10/10 10/10
+11 GlyphMetrics { advance: 636.0, min_x: 85.0, min_y: -14.0, max_x: 559.0, max_y: 729.0, italic_correction: 0.0 } 7f62388385f8b19cfc960b655b931d280e6a86fd 11/11 11/11 11/11 11/11 11/11
+12 GlyphMetrics { advance: 636.0, min_x: 67.0, min_y: -14.0, max_x: 573.0, max_y: 742.0, italic_correction: 0.0 } 057e7cf283c62bbb263765d31c6f4a8bb28716a6 12/12 12/12 12/12 12/12 12/12
+13 GlyphMetrics { advance: 636.0, min_x: 84.0, min_y: 0.0, max_x: 564.0, max_y: 729.0, italic_correction: 0.0 } 1328d29701570ee82ff5fee9c1828c024f0a0735 13/13 13/13 13/13 13/13 13/13
+14 GlyphMetrics { advance: 636.0, min_x: 67.0, min_y: -14.0, max_x: 569.0, max_y: 742.0, italic_correction: 0.0 } b698c28687b80e408850b8152aeb63aa6452d9b5 14/14 14/14 14/14 14/14 14/14
+15 GlyphMetrics { advance: 636.0, min_x: 63.0, min_y: -14.0, max_x: 569.0, max_y: 742.0, italic_correction: 0.0 } 23e72811e81698ae909e57f3db6eeb99c12d2a6a 15/15 15/15 15/15 15/15 15/15
+16 GlyphMetrics { advance: 788.0, min_x: 80.0, min_y: 135.0, max_x: 708.0, max_y: 415.0, italic_correction: 0.0 } 2a68fde9f75ad3dc44d5e6e84d841b397f0bcc99 16/16 16/16 16/16 16/16 16/16
+17 GlyphMetrics { advance: 722.0, min_x: -6.0, min_y: 0.0, max_x: 732.0, max_y: 729.0, italic_correction: 38.0 } d859e88c8f9d9eaddd92ab2bd4f840fdeb22e015 17/17 17/17 17/17 17/17 17/17
+18 GlyphMetrics { advance: 734.0, min_x: 55.0, min_y: 0.0, max_x: 674.0, max_y: 729.0, italic_correction: 0.0 } ef4ea5dc862c8d622d24af5c274df7f4e419e9fc 18/18 18/18 18/18 18/18 18/18
+19 GlyphMetrics { advance: 765.0, min_x: 56.0, min_y: -14.0, max_x: 705.0, max_y: 742.0, italic_correction: 0.0 } 4260bd56e0995e711d259ee4cf78e98093adac92 19/19 19/19 19/19 19/19 19/19
+20 GlyphMetrics { advance: 801.0, min_x: 55.0, min_y: 0.0, max_x: 744.0, max_y: 729.0, italic_correction: 0.0 } 3ac31dd1da58bf9cbc7f79daf4b8caadf9cbaad5 20/20 20/20 20/20 20/20 20/20
+21 GlyphMetrics { advance: 729.0, min_x: 55.0, min_y: 0.0, max_x: 650.0, max_y: 729.0, italic_correction: 0.0 } b5639969a4592a9b75c6fd2e7c319a6264ef4f27 21/21 21/21 21/21 21/21 21/21
+22 GlyphMetrics { advance: 693.0, min_x: 55.0, min_y: 0.0, max_x: 652.0, max_y: 729.0, italic_correction: 0.0 } 2f1d91f10e0fbb52bd6cfe98c24cf12c4de21331 22/22 22/22 22/22 22/22 22/22
+23 GlyphMetrics { advance: 798.0, min_x: 56.0, min_y: -14.0, max_x: 720.0, max_y: 742.0, italic_correction: 0.0 } 6fe994137668eeed740ab6fee0207b835f2e03ba 23/23 23/23 23/23 23/23 23/23
+24 GlyphMetrics { advance: 872.0, min_x: 55.0, min_y: 0.0, max_x: 817.0, max_y: 729.0, italic_correction: 0.0 } 03ef8a0d9fa3fc42f36900d47023aec5bfe748b3 24/24 24/24 24/24 24/24 24/24
+25 GlyphMetrics { advance: 395.0, min_x: 55.0, min_y: 0.0, max_x: 340.0, max_y: 729.0, italic_correction: 0.0 } 7ec2a372ec49bdf67cd74cb7af937680496d64b9 25/25 25/25 25/25 25/25 25/25
+26 GlyphMetrics { advance: 400.0, min_x: -84.0, min_y: -208.0, max_x: 355.0, max_y: 729.0, italic_correction: 0.0 } b37a8bf981a877003d4fcff39a5d8115562bfc69 26/26 26/26 26/26 26/26 26/26
+27 GlyphMetrics { advance: 747.0, min_x: 55.0, min_y: 0.0, max_x: 762.0, max_y: 729.0, italic_correction: 43.0 } 5a85d607d277d9eea1ade7b36dffd7230652a24a 27/27 27/27 27/27 27/27 27/27
+28 GlyphMetrics { advance: 664.0, min_x: 55.0, min_y: 0.0, max_x: 640.0, max_y: 729.0, italic_correction: 4.0 } 711b6cc5a1463bcb6b988f275b13d05b52f673d0 28/28 28/28 28/28 28/28 28/28
+29 GlyphMetrics { advance: 1023.0, min_x: 50.0, min_y: 0.0, max_x: 973.0, max_y: 729.0, italic_correction: 0.0 } 4f2d7b4eee91cb3896c68f7d7e7a029bdc3487f9 29/29 29/29 29/29 29/29 29/29
+30 GlyphMetrics { advance: 875.0, min_x: 49.0, min_y: -14.0, max_x: 831.0, max_y: 729.0, italic_correction: 0.0 } f015137935624c6663ffa6c28cab2abacfb51776 30/30 30/30 30/30 30/30 30/30
+31 GlyphMetrics { advance: 819.0, min_x: 56.0, min_y: -14.0, max_x: 764.0, max_y: 742.0, italic_correction: 0.0 } 773cbfd90f8f6f7a6a38ba8bf9b7063418c21085 31/31 31/31 31/31 31/31 31/31
+32 GlyphMetrics { advance: 672.0, min_x: 55.0, min_y: 0.0, max_x: 637.0, max_y: 729.0, italic_correction: 0.0 } 4eb78dd6134961ed7957b24e3af1328e90f13e95 32/32 32/32 32/32 32/32 32/32
+33 GlyphMetrics { advance: 819.0, min_x: 56.0, min_y: -160.0, max_x: 764.0, max_y: 742.0, italic_correction: 0.0 } fdc25ec7afd99403de0a0c3e2da5027a390c471d 33/33 33/33 33/33 33/33 33/33
+34 GlyphMetrics { advance: 752.0, min_x: 55.0, min_y: 0.0, max_x: 777.0, max_y: 729.0, italic_correction: 53.0 } 264322d87614ec0a68d8b0be2e4b809c31feae27 34/34 34/34 34/34 34/34 34/34
+35 GlyphMetrics { advance: 685.0, min_x: 84.0, min_y: -14.0, max_x: 612.0, max_y: 742.0, italic_correction: 0.0 } a33c80754c016357e42302d1cd9b0326fb7a8787 35/35 35/35 35/35 35/35 35/35
+36 GlyphMetrics { advance: 666.0, min_x: 10.0, min_y: 0.0, max_x: 657.0, max_y: 729.0, italic_correction: 19.0 } 7e5787a2cf17f3e2362c4dfef5b3395d862ece1e 36/36 36/36 36/36 36/36 36/36
+37 GlyphMetrics { advance: 842.0, min_x: 47.0, min_y: -14.0, max_x: 798.0, max_y: 729.0, italic_correction: 0.0 } e01913b3ecde4a7ecba1d12576686eb702a869dd 37/37 37/37 37/37 37/37 37/37
+38 GlyphMetrics { advance: 722.0, min_x: -10.0, min_y: 0.0, max_x: 737.0, max_y: 729.0, italic_correction: 43.0 } bff037ed79b4d2499f767c56d28b3020ac77a96a 38/38 38/38 38/38 38/38 38/38
+39 GlyphMetrics { advance: 1027.0, min_x: 5.0, min_y: 0.0, max_x: 1025.0, max_y: 729.0, italic_correction: 26.0 } 372bad8f8e0ea579512f40f2796430d4c988b06d 39/39 39/39 39/39 39/39 39/39
+40 GlyphMetrics { advance: 711.0, min_x: 6.0, min_y: 0.0, max_x: 707.0, max_y: 729.0, italic_correction: 24.0 } bd8d1dc9cd7e4a62f6d55ea692ea905b5e53c724 40/40 40/40 40/40 40/40 40/40
+41 GlyphMetrics { advance: 660.0, min_x: -11.0, min_y: 0.0, max_x: 669.0, max_y: 729.0, italic_correction: 37.0 } 6da9b9f1242281c69e2220e7382a4d7a37661021 41/41 41/41 41/41 41/41 41/41
+42 GlyphMetrics { advance: 694.0, min_x: 45.0, min_y: 0.0, max_x: 656.0, max_y: 729.0, italic_correction: 0.0 } 5823c639b2f06d3cc17b38e84cab530493efe922 42/42 42/42 42/42 42/42 42/42
+43 GlyphMetrics { advance: 419.0, min_x: 120.0, min_y: -173.0, max_x: 366.0, max_y: 723.0, italic_correction: 0.0 } a853f719aa0384ec5974801cc2c3c57ea55bd575 43/43 43/43 89/43 109/43 120/43
+44 GlyphMetrics { advance: 419.0, min_x: 53.0, min_y: -173.0, max_x: 299.0, max_y: 723.0, italic_correction: 0.0 } 3f81883a3ebe2899987b3889ef87be4d5608777c 44/44 44/44 90/44 110/44 121/44
+45 GlyphMetrics { advance: 596.0, min_x: 50.0, min_y: -14.0, max_x: 568.0, max_y: 533.0, italic_correction: 0.0 } 60223048efd3a215b6f98de82fb2585767fd8fa8 45/45 45/45 45/45 45/45 45/45
+46 GlyphMetrics { advance: 640.0, min_x: 29.0, min_y: -14.0, max_x: 590.0, max_y: 760.0, italic_correction: 0.0 } f1270435cada483a923643c56fa60803fd8436a6 46/46 46/46 46/46 46/46 46/46
+47 GlyphMetrics { advance: 560.0, min_x: 50.0, min_y: -14.0, max_x: 514.0, max_y: 533.0, italic_correction: 0.0 } 7b9f5796caaaae4d4a1ec0424714c55c7323de86 47/47 47/47 47/47 47/47 47/47
+48 GlyphMetrics { advance: 640.0, min_x: 50.0, min_y: -14.0, max_x: 611.0, max_y: 760.0, italic_correction: 0.0 } f517fa26e5449ab0c975aa24377913083094ea75 48/48 48/48 48/48 48/48 48/48
+49 GlyphMetrics { advance: 591.0, min_x: 50.0, min_y: -14.0, max_x: 542.0, max_y: 533.0, italic_correction: 0.0 } d6e73e58258795ce646d415652f8dabc15fb2a35 49/49 49/49 49/49 49/49 49/49
+50 GlyphMetrics { advance: 370.0, min_x: 36.0, min_y: 0.0, max_x: 430.0, max_y: 760.0, italic_correction: 88.0 } 60f94b29410ce92aaa93e0a94f029b154fd9c761 50/50 50/50 50/50 50/50 50/50
+51 GlyphMetrics { advance: 640.0, min_x: 50.0, min_y: -222.0, max_x: 611.0, max_y: 533.0, italic_correction: 0.0 } 9f3d5894ffa7170c0bfe2bf335073aeb4a4e4de8 51/51 51/51 51/51 51/51 51/51
+52 GlyphMetrics { advance: 644.0, min_x: 36.0, min_y: 0.0, max_x: 616.0, max_y: 760.0, italic_correction: 0.0 } ff17f2f5534fb11f0901df2ac0e45a1c4b2293bd 52/52 52/52 52/52 52/52 52/52
+53 GlyphMetrics { advance: 319.0, min_x: 36.0, min_y: 0.0, max_x: 297.0, max_y: 736.0, italic_correction: 6.0 } 55bca41c7ee79d79b1b27c0d4a9eb5776ed6ca00 53/53 53/53 53/53 53/53 53/53
+54 GlyphMetrics { advance: 310.0, min_x: -96.0, min_y: -222.0, max_x: 212.0, max_y: 736.0, italic_correction: 0.0 } 18e6f1cece8faaebba530f128eb7df1030fc8ca4 54/54 54/54 54/54 54/54 54/54
+55 GlyphMetrics { advance: 605.0, min_x: 29.0, min_y: 0.0, max_x: 613.0, max_y: 760.0, italic_correction: 36.0 } 601a081e6edf5abaef99c23246294376e12677bf 55/55 55/55 55/55 55/55 55/55
+56 GlyphMetrics { advance: 319.0, min_x: 29.0, min_y: 0.0, max_x: 290.0, max_y: 760.0, italic_correction: 0.0 } e5644ec32a62660052c9d24e122f204baab48cc6 56/56 56/56 56/56 56/56 56/56
+57 GlyphMetrics { advance: 948.0, min_x: 36.0, min_y: 0.0, max_x: 921.0, max_y: 533.0, italic_correction: 0.0 } b2c5ba51d05e3b2213290dfd364ddcaec8904214 57/57 57/57 57/57 57/57 57/57
+58 GlyphMetrics { advance: 644.0, min_x: 36.0, min_y: 0.0, max_x: 616.0, max_y: 533.0, italic_correction: 0.0 } af913aff8cf221126b366ad38df22b678b47b216 58/58 58/58 58/58 58/58 58/58
+59 GlyphMetrics { advance: 602.0, min_x: 50.0, min_y: -14.0, max_x: 552.0, max_y: 533.0, italic_correction: 0.0 } 575a3a9cdf5d25b634a307308745553020bf0a8f 59/59 59/59 59/59 59/59 59/59
+60 GlyphMetrics { advance: 640.0, min_x: 29.0, min_y: -208.0, max_x: 590.0, max_y: 533.0, italic_correction: 0.0 } 4069f3fc09c15b669d4576418db688eb7b1bb7f5 60/60 60/60 60/60 60/60 60/60
+61 GlyphMetrics { advance: 640.0, min_x: 50.0, min_y: -208.0, max_x: 611.0, max_y: 533.0, italic_correction: 0.0 } 6e4a24668a189d2f487cd4282a84c1371d14acc0 61/61 61/61 61/61 61/61 61/61
+62 GlyphMetrics { advance: 478.0, min_x: 36.0, min_y: 0.0, max_x: 478.0, max_y: 533.0, italic_correction: 28.0 } 166943277333a6ebde7e8105bc1d19b2dad3eca8 62/62 62/62 62/62 62/62 62/62
+63 GlyphMetrics { advance: 513.0, min_x: 56.0, min_y: -14.0, max_x: 462.0, max_y: 533.0, italic_correction: 0.0 } 5839f54633d96e46ffee5c064b71ab9b3c29f440 63/63 63/63 63/63 63/63 63/63
+64 GlyphMetrics { advance: 401.0, min_x: 29.0, min_y: -14.0, max_x: 394.0, max_y: 680.0, italic_correction: 21.0 } 949237707a55d075931d863d9891d68d4b4649ec 64/64 64/64 64/64 64/64 64/64
+65 GlyphMetrics { advance: 644.0, min_x: 27.0, min_y: -14.0, max_x: 607.0, max_y: 519.0, italic_correction: 0.0 } c43deba6fd9b87bf22cc86d6214a33b72ad0b604 65/65 65/65 65/65 65/65 65/65
+66 GlyphMetrics { advance: 564.0, min_x: -3.0, min_y: 0.0, max_x: 562.0, max_y: 519.0, italic_correction: 26.0 } e8e08f3fec0082b385cd52ad4471d1d3cc72f087 66/66 66/66 66/66 66/66 66/66
+67 GlyphMetrics { advance: 855.0, min_x: 16.0, min_y: 0.0, max_x: 843.0, max_y: 519.0, italic_correction: 16.0 } ff3972f24f4f2d6d6b883808f897d7887015d5ac 67/67 67/67 67/67 67/67 67/67
+68 GlyphMetrics { advance: 563.0, min_x: 12.0, min_y: 0.0, max_x: 552.0, max_y: 519.0, italic_correction: 17.0 } c51b20a78d6add2450d993d6123668c073701fc6 68/68 68/68 68/68 68/68 68/68
+69 GlyphMetrics { advance: 564.0, min_x: -3.0, min_y: -222.0, max_x: 562.0, max_y: 519.0, italic_correction: 26.0 } 72f9233d99864a6e8aaa5d3c8ad0e58e7336e73a 69/69 69/69 69/69 69/69 69/69
+70 GlyphMetrics { advance: 526.0, min_x: 40.0, min_y: 0.0, max_x: 490.0, max_y: 519.0, italic_correction: 0.0 } 928b5967aad275e2de18b034fe03f5c17a1b10a0 70/70 70/70 70/70 70/70 70/70
+71 GlyphMetrics { advance: 591.0, min_x: 50.0, min_y: -14.0, max_x: 542.0, max_y: 800.0, italic_correction: 0.0 } 603d755f2d1ec24b2d6b443ef7ad83012d789de9 71/71 71/71 71/71 71/71 71/71
+72 GlyphMetrics { advance: 655.0, min_x: 78.0, min_y: -14.0, max_x: 575.0, max_y: 534.0, italic_correction: 0.0 } 8e1058244b699ecb573691e63bff1c66a34adc7a 72/72 72/72 72/72 72/72 72/72
+73 GlyphMetrics { advance: 693.0, min_x: 80.0, min_y: -14.0, max_x: 613.0, max_y: 760.0, italic_correction: 0.0 } 65c8bc5bbb7cef46296339f27102f91b1463f077 73/73 73/73 73/73 73/73 73/73
+74 GlyphMetrics { advance: 659.0, min_x: 80.0, min_y: -14.0, max_x: 579.0, max_y: 533.0, italic_correction: 0.0 } 464aa5f00dc7d8ed210f511d08cebd9deeaf601f 74/74 74/74 74/74 74/74 74/74
+75 GlyphMetrics { advance: 740.0, min_x: 80.0, min_y: -14.0, max_x: 660.0, max_y: 760.0, italic_correction: 0.0 } 27ed52f30aace115ac5f6a032808639176d35488 75/75 75/75 75/75 75/75 75/75
+76 GlyphMetrics { advance: 379.0, min_x: 80.0, min_y: 0.0, max_x: 299.0, max_y: 736.0, italic_correction: 0.0 } cd61a87911a0e010cce9eb8f6f3436945c905579 76/76 76/76 76/76 76/76 76/76
+77 GlyphMetrics { advance: 664.0, min_x: 80.0, min_y: 0.0, max_x: 584.0, max_y: 533.0, italic_correction: 0.0 } 590f1f1bda64e1c337bbb66721b2916c3d58d30a 77/77 77/77 77/77 77/77 77/77
+78 GlyphMetrics { advance: 706.0, min_x: 80.0, min_y: 0.0, max_x: 626.0, max_y: 519.0, italic_correction: 0.0 } e026275b8e4ad661e8767ee63df47d663064eb35 78/78 78/78 78/78 78/78 78/78
+79 GlyphMetrics { advance: 758.0, min_x: 78.0, min_y: -33.0, max_x: 678.0, max_y: 533.0, italic_correction: 0.0 } 4b95b2c5dbf729ee3255bde30bc035239aaf2f99 79/79 79/79 79/79 79/79 79/79
+80 GlyphMetrics { advance: 625.0, min_x: 80.0, min_y: -208.0, max_x: 545.0, max_y: 765.0, italic_correction: 0.0 } fe52931ef9136790e6d92355e767c0da5840a8a8 80/80 80/80 80/80 80/80 80/80
+81 GlyphMetrics { advance: 992.0, min_x: 80.0, min_y: 71.0, max_x: 912.0, max_y: 479.0, italic_correction: 0.0 } 0f56270fcbe9d6e9c4451a3c0e7a7b49270ab715 81/81 81/81 81/82 81/82 81/82
+82 GlyphMetrics { advance: 1416.0, min_x: 80.0, min_y: 71.0, max_x: 1336.0, max_y: 479.0, italic_correction: 0.0 } cbae3aa21641cfd72f764bda7d33eba707f52da7 82/82 82/82 82/82 82/82 82/82
+83 GlyphMetrics { advance: 471.0, min_x: 0.0, min_y: 235.0, max_x: 471.0, max_y: 315.0, italic_correction: 0.0 } c57b935c87262aacc6bf8e84585ec39a05e9ef72 83/83 83/83 83/83 83/83 83/83
+84 GlyphMetrics { advance: 314.0, min_x: 0.0, min_y: 235.0, max_x: 314.0, max_y: 315.0, italic_correction: 0.0 } 54b53caf70081229369e6c9aec99359be0c48e81 84/84 84/84 84/84 84/84 84/84
+85 GlyphMetrics { advance: 471.0, min_x: 0.0, min_y: 71.0, max_x: 471.0, max_y: 479.0, italic_correction: 0.0 } 12a902a1bb392cc2f4e9e84a9af337517e50acdc 85/85 85/85 85/85 85/85 85/85
+86 GlyphMetrics { advance: 552.0, min_x: 0.0, min_y: 600.0, max_x: 552.0, max_y: 834.0, italic_correction: 28.0 } ebf56f71ef21e4166fea8f41ed8e5761a78a5080 86/86 86/86 86/91 86/101 86/128
+87 GlyphMetrics { advance: 448.0, min_x: 124.0, min_y: -261.0, max_x: 393.0, max_y: 811.0, italic_correction: 0.0 } 40509f5f1cb3ad63a86362e1168903abe2969a93 87/87 87/87 87/87 87/87 87/87
+88 GlyphMetrics { advance: 448.0, min_x: 55.0, min_y: -261.0, max_x: 323.0, max_y: 811.0, italic_correction: 0.0 } 3d03264472b7f03f2d659ff6fcafced25804e263 88/88 88/88 88/88 88/88 88/88
+89 GlyphMetrics { advance: 435.0, min_x: 124.0, min_y: -258.0, max_x: 380.0, max_y: 808.0, italic_correction: 0.0 } 045dd348229b61a02711efcc35005ebb43da4aad 89/89 89/89 89/89 89/89 89/89
+90 GlyphMetrics { advance: 435.0, min_x: 55.0, min_y: -258.0, max_x: 311.0, max_y: 808.0, italic_correction: 0.0 } 0de33bb7d797e12cdad6793d628fe6e85387bf8b 90/90 90/90 90/90 90/90 90/90
+91 GlyphMetrics { advance: 1054.0, min_x: 0.0, min_y: 599.0, max_x: 1054.0, max_y: 837.0, italic_correction: 28.0 } 248b24c675baf681aa7e338998eb1b31afbc78fd 91/91 91/91 91/91 91/91 91/91
+92 GlyphMetrics { advance: 476.0, min_x: 127.0, min_y: -364.0, max_x: 419.0, max_y: 914.0, italic_correction: 0.0 } 6de8250d4e4777e01390294b492d622463619b67 92/92 92/92 92/92 92/92 92/92
+93 GlyphMetrics { advance: 476.0, min_x: 57.0, min_y: -364.0, max_x: 349.0, max_y: 914.0, italic_correction: 0.0 } c5c6c02e5273c9a5b1eb3704bd3a0152983f5dbf 93/93 93/93 93/93 93/93 93/93
+94 GlyphMetrics { advance: 455.0, min_x: 127.0, min_y: -361.0, max_x: 398.0, max_y: 911.0, italic_correction: 0.0 } e39f73e397de7f8870cf0a3d722af7a4c749cd56 94/94 94/94 94/94 94/94 94/94
+95 GlyphMetrics { advance: 455.0, min_x: 57.0, min_y: -361.0, max_x: 328.0, max_y: 911.0, italic_correction: 0.0 } e9f88d764bcf3ffbbdaf83385f5c010554b21bfa 95/95 95/95 95/95 95/95 95/95
+96 GlyphMetrics { advance: 1556.0, min_x: 0.0, min_y: 599.0, max_x: 1556.0, max_y: 839.0, italic_correction: 28.0 } b0f596cc401911cb921c417e5562391ef3d2c09c 96/96 96/96 96/96 96/96 96/96
+97 GlyphMetrics { advance: 505.0, min_x: 131.0, min_y: -486.0, max_x: 447.0, max_y: 1036.0, italic_correction: 0.0 } b3d7ef973aaec25e16adc64619e533989555cf80 97/97 97/97 97/97 97/97 97/97
+98 GlyphMetrics { advance: 505.0, min_x: 58.0, min_y: -486.0, max_x: 374.0, max_y: 1036.0, italic_correction: 0.0 } 575891667dc4c024f7da374959bdac942866da4d 98/98 98/98 98/98 98/98 98/98
+99 GlyphMetrics { advance: 472.0, min_x: 131.0, min_y: -483.0, max_x: 414.0, max_y: 1033.0, italic_correction: 0.0 } 89f33efe5f45c635868148a2899a00860c6feb0a 99/99 99/99 99/99 99/99 99/99
+100 GlyphMetrics { advance: 472.0, min_x: 58.0, min_y: -483.0, max_x: 341.0, max_y: 1033.0, italic_correction: 0.0 } 399ce1bc3a193d491ccca1c0b8d65b6c55fc025a 100/100 100/100 100/100 100/100 100/100
+101 GlyphMetrics { advance: 2058.0, min_x: 0.0, min_y: 599.0, max_x: 2058.0, max_y: 841.0, italic_correction: 28.0 } 0a9dfa2adb1f5603dcf23fe1f165222ce229c098 101/101 101/101 101/101 101/101 101/101
+102 GlyphMetrics { advance: 535.0, min_x: 135.0, min_y: -632.0, max_x: 475.0, max_y: 1182.0, italic_correction: 0.0 } b96a61ee7696609fdbcad714b22156af58a6fd1c 102/102 102/102 102/102 102/102 102/102
+103 GlyphMetrics { advance: 535.0, min_x: 60.0, min_y: -632.0, max_x: 399.0, max_y: 1182.0, italic_correction: 0.0 } 9b2f94d9c7ed509cced775106d58f207fe9dedc0 103/103 103/103 103/103 103/103 103/103
+104 GlyphMetrics { advance: 492.0, min_x: 135.0, min_y: -629.0, max_x: 432.0, max_y: 1179.0, italic_correction: 0.0 } fa86aa10e81e2c553f10155399e465b521dcac24 104/104 104/104 104/104 104/104 104/104
+105 GlyphMetrics { advance: 492.0, min_x: 60.0, min_y: -629.0, max_x: 357.0, max_y: 1179.0, italic_correction: 0.0 } 05f6ca0037efea3ae36490ca15bc7eef2274e2e7 105/105 105/105 105/105 105/105 105/105
+106 GlyphMetrics { advance: 2558.0, min_x: 0.0, min_y: 598.0, max_x: 2558.0, max_y: 844.0, italic_correction: 28.0 } 693cd1e3e4e85f35d806cad80e092c1820390b79 106/106 106/106 106/106 106/106 106/106
+107 GlyphMetrics { advance: 570.0, min_x: 139.0, min_y: -809.0, max_x: 508.0, max_y: 1359.0, italic_correction: 0.0 } 8e20ea5b1a1a4c6cf70bbf22905f5381668a3f22 107/107 107/107 107/107 107/107 107/107
+108 GlyphMetrics { advance: 570.0, min_x: 62.0, min_y: -809.0, max_x: 430.0, max_y: 1359.0, italic_correction: 0.0 } b0e674ba213384a43015a01c15ca963428e722e6 108/108 108/108 108/108 108/108 108/108
+109 GlyphMetrics { advance: 513.0, min_x: 139.0, min_y: -805.0, max_x: 451.0, max_y: 1355.0, italic_correction: 0.0 } 70b758eba313b2aad38b573bb2b4dac94f48d6be 109/109 109/109 109/109 109/109 109/109
+110 GlyphMetrics { advance: 513.0, min_x: 62.0, min_y: -805.0, max_x: 374.0, max_y: 1355.0, italic_correction: 0.0 } 4e4b144dee52f6da16e95c70385d956787c8ef1b 110/110 110/110 110/110 110/110 110/110
+111 GlyphMetrics { advance: 3060.0, min_x: 0.0, min_y: 598.0, max_x: 3060.0, max_y: 846.0, italic_correction: 28.0 } e077964fee5093f861642077b4e909cba7fdeba5 111/111 111/111 111/111 111/111 111/111
+112 GlyphMetrics { advance: 609.0, min_x: 143.0, min_y: -1020.0, max_x: 545.0, max_y: 1570.0, italic_correction: 0.0 } 4c89d9f7dce04cfc42a2de57fc4a9a5b8d341c5c 112/112 112/112 112/112 112/112 112/112
+113 GlyphMetrics { advance: 609.0, min_x: 64.0, min_y: -1020.0, max_x: 465.0, max_y: 1570.0, italic_correction: 0.0 } 79b4e651d9243f5e1656821b9e920be578106bc6 113/113 113/113 113/113 113/113 113/113
+114 GlyphMetrics { advance: 609.0, min_x: 143.0, min_y: 0.0, max_x: 545.0, max_y: 1295.0, italic_correction: 0.0 } 6771fa8ee2fec7d5b031691c640fa1351b3c5e50 114/114 114/114 114/114 114/114 114/114
+115 GlyphMetrics { advance: 609.0, min_x: 143.0, min_y: 0.0, max_x: 270.0, max_y: 418.0, italic_correction: 0.0 } 7f2afb097f51eb0b531cbe141ff248ae897b0c15 115/115 115/115 115/115 115/115 115/115
+116 GlyphMetrics { advance: 609.0, min_x: 143.0, min_y: 0.0, max_x: 545.0, max_y: 1295.0, italic_correction: 0.0 } 2f1452070e652bfd221de061840f9dac636cb671 116/116 116/116 116/116 116/116 116/116
+117 GlyphMetrics { advance: 609.0, min_x: 64.0, min_y: 0.0, max_x: 466.0, max_y: 1295.0, italic_correction: 0.0 } 3321f8d067827cfa5ac8b89bc5b9ee91384f6200 117/117 117/117 117/117 117/117 117/117
+118 GlyphMetrics { advance: 609.0, min_x: 338.0, min_y: 0.0, max_x: 466.0, max_y: 418.0, italic_correction: 0.0 } d19ce153233d7b12f865febf1c2c86e247538b3d 118/118 118/118 118/118 118/118 118/118
+119 GlyphMetrics { advance: 609.0, min_x: 64.0, min_y: 0.0, max_x: 465.0, max_y: 1295.0, italic_correction: 0.0 } f59d3a0e0b2bf8eb781a2c324316f1a177e130f6 119/119 119/119 119/119 119/119 119/119
+120 GlyphMetrics { advance: 536.0, min_x: 143.0, min_y: -1016.0, max_x: 472.0, max_y: 1566.0, italic_correction: 0.0 } 9d8f58a63a2809376d7d74260bb5f4059bbc2222 120/120 120/120 120/120 120/120 120/120
+121 GlyphMetrics { advance: 536.0, min_x: 64.0, min_y: -1016.0, max_x: 393.0, max_y: 1566.0, italic_correction: 0.0 } 740d80aee44c0d2ca91e44eb4cbccd6b7ff75124 121/121 121/121 121/121 121/121 121/121
+122 GlyphMetrics { advance: 536.0, min_x: 143.0, min_y: 0.0, max_x: 472.0, max_y: 1291.0, italic_correction: 0.0 } 2d0be6c59b49037c04d629c342c2cab50f2979b9 122/122 122/122 122/122 122/122 122/122
+123 GlyphMetrics { advance: 536.0, min_x: 143.0, min_y: 0.0, max_x: 261.0, max_y: 860.0, italic_correction: 0.0 } 48faa4c227021886df800437a691e1a7cfe352a9 123/123 123/123 123/123 123/123 123/123
+124 GlyphMetrics { advance: 536.0, min_x: 143.0, min_y: 0.0, max_x: 472.0, max_y: 1291.0, italic_correction: 0.0 } 0022db71320ab048826eaba0f52182d8ff758b80 124/124 124/124 124/124 124/124 124/124
+125 GlyphMetrics { advance: 536.0, min_x: 64.0, min_y: 0.0, max_x: 393.0, max_y: 1291.0, italic_correction: 0.0 } a0f788ef77d69222221bf55b3a074b795228ec10 125/125 125/125 125/125 125/125 125/125
+126 GlyphMetrics { advance: 536.0, min_x: 275.0, min_y: 0.0, max_x: 393.0, max_y: 860.0, italic_correction: 0.0 } 64a5cd150bf2ae5bf825b7ea4aa555b88924d0e8 126/126 126/126 126/126 126/126 126/126
+127 GlyphMetrics { advance: 536.0, min_x: 64.0, min_y: 0.0, max_x: 393.0, max_y: 1291.0, italic_correction: 0.0 } 6a7ef975970125d25200719aad56d22454124121 127/127 127/127 127/127 127/127 127/127
+128 GlyphMetrics { advance: 3562.0, min_x: 0.0, min_y: 597.0, max_x: 3562.0, max_y: 847.0, italic_correction: 28.0 } fd9d87a79986b9e7ebcb6e42ccaeb2927ac76d23 128/128 128/128 128/128 128/128 128/128
+129 GlyphMetrics { advance: 891.0, min_x: 0.0, min_y: 597.0, max_x: 891.0, max_y: 768.0, italic_correction: 0.0 } 47a4b54af5f207971117e813ba476ae5ba302ad6 129/129 129/129 129/129 129/129 129/129
+130 GlyphMetrics { advance: 874.0, min_x: 0.0, min_y: 676.0, max_x: 874.0, max_y: 768.0, italic_correction: 0.0 } f05bd65630f65497ccee4453819f01312fa0a1a7 130/130 130/130 130/130 130/130 130/130
+131 GlyphMetrics { advance: 1781.0, min_x: 0.0, min_y: 676.0, max_x: 1781.0, max_y: 847.0, italic_correction: 0.0 } b4048a7369aa4d4a1e14a6496d6bdce23918cf8e 131/131 131/131 131/131 131/131 131/131
+132 GlyphMetrics { advance: 890.0, min_x: 0.0, min_y: 597.0, max_x: 890.0, max_y: 768.0, italic_correction: 0.0 } 76149dbb3999997f67506b36d9097dbc6b96f2fc 132/132 132/132 132/132 132/132 132/132
+133 GlyphMetrics { advance: 209.0, min_x: 0.0, min_y: 135.0, max_x: 209.0, max_y: 415.0, italic_correction: 0.0 } a812c8b4b463bae47cfe7197dd25637067a7489e 133/133 133/133 133/133 133/133 133/133
+134 GlyphMetrics { advance: 210.0, min_x: 0.0, min_y: 135.0, max_x: 210.0, max_y: 415.0, italic_correction: 0.0 } 9fb33296895e5cb4ea226dd0deac3578d03d10f0 134/134 134/134 134/134 134/134 134/134
+135 GlyphMetrics { advance: 209.0, min_x: 0.0, min_y: 135.0, max_x: 209.0, max_y: 415.0, italic_correction: 0.0 } a812c8b4b463bae47cfe7197dd25637067a7489e 135/135 135/135 135/135 135/135 135/135
+136 GlyphMetrics { advance: 595.0, min_x: 80.0, min_y: -275.0, max_x: 515.0, max_y: 825.0, italic_correction: 153.0 } 5965232ab24b3620176d6b6324493596ae7de7d0 136/136 136/136 136/136 144/136 148/136
+137 GlyphMetrics { advance: 679.0, min_x: 80.0, min_y: -89.0, max_x: 719.0, max_y: 785.0, italic_correction: 0.0 } 9d01d80c3ea80f39a7082efe9c8935e3967d56cc 137/137 137/137 139/137 145/137 149/137
+138 GlyphMetrics { advance: 612.0, min_x: 80.0, min_y: -351.0, max_x: 532.0, max_y: 901.0, italic_correction: 162.0 } c54bbb3db038adf23a8fbb1e3d70c5250590e8ed 138/138 138/138 138/138 138/138 138/138
+139 GlyphMetrics { advance: 692.0, min_x: 80.0, min_y: -265.0, max_x: 732.0, max_y: 841.0, italic_correction: 0.0 } 0f3c9dbc97729d4681adb2eebd847ef1b8572a78 139/139 139/139 139/139 139/139 139/139
+140 GlyphMetrics { advance: 630.0, min_x: 80.0, min_y: -472.0, max_x: 550.0, max_y: 1022.0, italic_correction: 171.0 } 3060a8b5e20b69d2f9d72add266eeb54c15689b8 140/140 140/140 140/140 140/140 140/140
+141 GlyphMetrics { advance: 707.0, min_x: 80.0, min_y: -441.0, max_x: 747.0, max_y: 1017.0, italic_correction: 0.0 } efbacfc8f9cb8a803a0754f02014cefff030e495 141/141 141/141 141/141 141/141 141/141
+142 GlyphMetrics { advance: 649.0, min_x: 80.0, min_y: -618.0, max_x: 569.0, max_y: 1168.0, italic_correction: 180.0 } f3d8eefba06554725c21701ebcec3e9f0930e84d 142/142 142/142 142/142 142/142 142/142
+143 GlyphMetrics { advance: 720.0, min_x: 80.0, min_y: -617.0, max_x: 760.0, max_y: 1193.0, italic_correction: 0.0 } 747e1f55c45a0a2e61e94a7ec8a2183f756fba62 143/143 143/143 143/143 143/143 143/143
+144 GlyphMetrics { advance: 669.0, min_x: 80.0, min_y: -793.0, max_x: 589.0, max_y: 1343.0, italic_correction: 190.0 } 5d38d3bdea76e58a89fa0596e514b5b74aa729c8 144/144 144/144 144/144 144/144 144/144
+145 GlyphMetrics { advance: 734.0, min_x: 80.0, min_y: -793.0, max_x: 774.0, max_y: 1369.0, italic_correction: 0.0 } c820ca9be77fccaea1f2df1d1b2a23a036e800a2 145/145 145/145 145/145 145/145 145/145
+146 GlyphMetrics { advance: 689.0, min_x: 80.0, min_y: -1003.0, max_x: 609.0, max_y: 1553.0, italic_correction: 200.0 } 16310afe668bac1c83cafd4223c7baeae4199ee4 146/146 146/146 146/146 146/146 146/146
+147 GlyphMetrics { advance: 749.0, min_x: 80.0, min_y: -969.0, max_x: 789.0, max_y: 1545.0, italic_correction: 0.0 } 9ca6237df95d110bd8cd64eb2a805efd3c9f4b95 147/147 147/147 147/147 147/147 147/147
+148 GlyphMetrics { advance: 710.0, min_x: 80.0, min_y: -1255.0, max_x: 630.0, max_y: 1805.0, italic_correction: 211.0 } c62ed488d8647d37c7a3cb1c0b188cc5c606e479 148/148 148/148 148/148 148/148 148/148
+149 GlyphMetrics { advance: 762.0, min_x: 80.0, min_y: -1145.0, max_x: 802.0, max_y: 1721.0, italic_correction: 0.0 } ae4701c8222ac8d159aa8fe84a8073207423d9f0 149/149 149/149 149/149 149/149 149/149
+150 GlyphMetrics { advance: 710.0, min_x: 80.0, min_y: 0.0, max_x: 421.0, max_y: 1224.0, italic_correction: 0.0 } 166745807b6f01fce8f0fd5dec00b26c331767c1 150/150 150/150 150/150 150/150 150/150
+151 GlyphMetrics { advance: 710.0, min_x: 289.0, min_y: 0.0, max_x: 421.0, max_y: 612.0, italic_correction: 0.0 } 448cce2eb237c86b0b3a3ba9c3becf83f1d52e1a 151/151 151/151 151/151 151/151 151/151
+152 GlyphMetrics { advance: 710.0, min_x: 289.0, min_y: 0.0, max_x: 630.0, max_y: 1224.0, italic_correction: 0.0 } a5392b977ea90cbfdf71a548cefcdb75749faf8a 152/152 152/152 152/152 152/152 152/152
+153 GlyphMetrics { advance: 762.0, min_x: 80.0, min_y: 0.0, max_x: 597.0, max_y: 1576.0, italic_correction: 0.0 } 6e96c64f66d09446894e3ae387abcd9dad362af0 153/153 153/153 153/153 153/153 153/153
+154 GlyphMetrics { advance: 762.0, min_x: 528.0, min_y: 0.0, max_x: 597.0, max_y: 1003.0, italic_correction: 0.0 } 5465f62f13358f6377d6bf62b290780e079cc9e6 154/154 154/154 154/154 154/154 154/154
+155 GlyphMetrics { advance: 762.0, min_x: 528.0, min_y: 0.0, max_x: 802.0, max_y: 287.0, italic_correction: 0.0 } 38c3373b7f809a78a3e353f9083fe0dc36c3afcc 155/155 155/155 155/155 155/155 155/155
+156 GlyphMetrics { advance: 973.0, min_x: 80.0, min_y: -250.0, max_x: 893.0, max_y: 800.0, italic_correction: 0.0 } 5c5318f95fcba70c664f69803b08f839876ba996 156/156 156/156 156/156 157/156 157/156
+157 GlyphMetrics { advance: 1249.0, min_x: 80.0, min_y: -481.0, max_x: 1169.0, max_y: 1031.0, italic_correction: 0.0 } b8f84c2956fa4c99b579df0d73ed5fbb5b369b13 157/157 157/157 157/157 157/157 157/157
+U+20 Some(1)
+U+61 Some(45)
+U+62 Some(46)
+U+63 Some(47)
+U+64 Some(48)
+U+65 Some(49)
+U+66 Some(50)
+U+67 Some(51)
+U+68 Some(52)
+U+69 Some(53)
+U+6A Some(54)
+U+6B Some(55)
+U+6C Some(56)
+U+6D Some(57)
+U+6E Some(58)
+U+6F Some(59)
+U+70 Some(60)
+U+71 Some(61)
+U+72 Some(62)
+U+73 Some(63)
+U+74 Some(64)
+U+75 Some(65)
+U+76 Some(66)
+U+77 Some(67)
+U+78 Some(68)
+U+79 Some(69)
+U+7A Some(70)
+U+41 Some(17)
+U+42 Some(18)
+U+43 Some(19)
+U+44 Some(20)
+U+45 Some(21)
+U+46 Some(22)
+U+47 Some(23)
+U+48 Some(24)
+U+49 Some(25)
+U+4A Some(26)
+U+4B Some(27)
+U+4C Some(28)
+U+4D Some(29)
+U+4E Some(30)
+U+4F Some(31)
+U+50 Some(32)
+U+51 Some(33)
+U+52 Some(34)
+U+53 Some(35)
+U+54 Some(36)
+U+55 Some(37)
+U+56 Some(38)
+U+57 Some(39)
+U+58 Some(40)
+U+59 Some(41)
+U+5A Some(42)
+U+30 Some(6)
+U+31 Some(7)
+U+32 Some(8)
+U+33 Some(9)
+U+34 Some(10)
+U+35 Some(11)
+U+36 Some(12)
+U+37 Some(13)
+U+38 Some(14)
+U+39 Some(15)
+U+2B Some(4)
+U+2D Some(5)
+U+3D Some(16)
+U+28 Some(2)
+U+29 Some(3)
+U+5B Some(43)
+U+5D Some(44)
+U+2211 Some(156)
+U+222B Some(136)
+U+221A Some(137)
+U+2192 Some(81)
+U+23DE Some(86)
+U+3B1 Some(79)
+U+3B2 Some(80)
+U+E9 Some(71)
+U+1D465 Some(78)
+U+1D44E Some(72)
+U+1D44F Some(73)
+U+1D450 Some(74)
+U+1D451 Some(75)
+U+1D456 Some(76)
+U+1D45B Some(77)
+U+10FFFF None

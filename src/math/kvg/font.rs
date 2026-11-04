@@ -1,6 +1,6 @@
 //! Math font access for KVG typesetting.
 //!
-//! Wraps `ttf_parser` for the pieces typesetting needs: char→glyph lookup,
+//! Wraps Fontations for the pieces typesetting needs: char→glyph lookup,
 //! advances, outline extraction in KVG opcode form, and the OpenType MATH
 //! table (typesetting constants + stretchy vertical variants).
 //!
@@ -8,7 +8,11 @@
 //! (the y-flip happens in the per-shape transform at emission).
 
 use rustc_hash::FxHashMap;
-use ttf_parser::{Face, GlyphId};
+use skrifa::raw::{
+    TableProvider,
+    tables::math::{MathValueRecord, StretchAxis},
+};
+use skrifa::{DrawMemory, Font, GlyphId, PathSink, ScalerFont};
 
 /// Well-known locations for an OpenType MATH font. STIX Two Math ships with
 /// macOS; Linux distributions carry it via the `fonts-stix`/`stix-fonts`
@@ -36,7 +40,7 @@ pub struct Outline(pub Vec<f32>);
 
 struct OpcodeBuilder(Vec<f32>);
 
-impl ttf_parser::OutlineBuilder for OpcodeBuilder {
+impl PathSink for OpcodeBuilder {
     fn move_to(&mut self, x: f32, y: f32) {
         self.0.extend_from_slice(&[0.0, x, y]);
     }
@@ -59,13 +63,13 @@ impl ttf_parser::OutlineBuilder for OpcodeBuilder {
 pub struct GlyphMetrics {
     /// Horizontal advance width.
     pub advance: f32,
-    /// Tight bounding box, left edge (y-up space).
+    /// Outline control bounds, left edge (y-up space).
     pub min_x: f32,
-    /// Tight bounding box, bottom edge.
+    /// Outline control bounds, bottom edge.
     pub min_y: f32,
-    /// Tight bounding box, right edge.
+    /// Outline control bounds, right edge.
     pub max_x: f32,
-    /// Tight bounding box, top edge.
+    /// Outline control bounds, top edge.
     pub max_y: f32,
     /// MATH-table italic correction (extra advance before a superscript).
     pub italic_correction: f32,
@@ -116,9 +120,9 @@ pub struct MathConstants {
     pub display_operator_min_height: f32,
 }
 
-/// A loaded math font: owned bytes + parsed face + caches.
+/// A loaded math font with an unhinted scaler and cached outlines.
 pub struct MathFont {
-    data: Vec<u8>,
+    scaler: ScalerFont,
     units_per_em: f32,
     constants: MathConstants,
     outline_cache: std::cell::RefCell<FxHashMap<u16, Outline>>,
@@ -127,11 +131,11 @@ pub struct MathFont {
 impl MathFont {
     /// Load from raw font bytes. Fails if the font has no MATH table.
     pub fn from_bytes(data: Vec<u8>) -> Option<Self> {
-        let face = Face::parse(&data, 0).ok()?;
+        let face = Font::new(data, 0)?;
         let upem = face.units_per_em() as f32;
-        let math = face.tables().math?;
-        let c = math.constants?;
-        let v = |mv: ttf_parser::math::MathValue| mv.value as f32;
+        let math = face.tables().math().ok()?;
+        let c = math.math_constants().ok()?;
+        let v = |mv: &MathValueRecord| mv.value().to_i16() as f32;
         let constants = MathConstants {
             script_scale: c.script_percent_scale_down() as f32 / 100.0,
             script_script_scale: c.script_script_percent_scale_down() as f32 / 100.0,
@@ -152,10 +156,10 @@ impl MathFont {
             upper_limit_baseline_rise_min: v(c.upper_limit_baseline_rise_min()),
             lower_limit_gap_min: v(c.lower_limit_gap_min()),
             lower_limit_baseline_drop_min: v(c.lower_limit_baseline_drop_min()),
-            display_operator_min_height: c.display_operator_min_height() as f32,
+            display_operator_min_height: c.display_operator_min_height().to_u16() as f32,
         };
         Some(Self {
-            data,
+            scaler: ScalerFont::unhinted(face, None),
             units_per_em: upem,
             constants,
             outline_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -166,12 +170,6 @@ impl MathFont {
     pub fn load_system() -> Option<Self> {
         let path = find_system_math_font()?;
         Self::from_bytes(std::fs::read(path).ok()?)
-    }
-
-    fn face(&self) -> Face<'_> {
-        // Parse is header validation only — cheap enough per call, and it
-        // sidesteps a self-referential owned-bytes + borrowed-face struct.
-        Face::parse(&self.data, 0).expect("validated at construction")
     }
 
     /// Font design units per em.
@@ -186,29 +184,37 @@ impl MathFont {
 
     /// Glyph id for a character, if the font covers it.
     pub fn glyph(&self, c: char) -> Option<u16> {
-        self.face().glyph_index(c).map(|g| g.0)
+        self.scaler
+            .font()
+            .charmap()
+            .map_unicode(c)
+            .and_then(|g| u16::try_from(g.to_u32()).ok())
     }
 
     /// Metrics for a glyph, in font units.
     pub fn metrics(&self, gid: u16) -> GlyphMetrics {
-        let face = self.face();
-        let g = GlyphId(gid);
-        let advance = face.glyph_hor_advance(g).unwrap_or(0) as f32;
-        let bbox = face.glyph_bounding_box(g);
+        let face = self.scaler.font();
+        let g = GlyphId::new(gid as u32);
+        let advance = face.glyph_metrics().h_advance(g);
+        // Use outline control bounds, as the previous parser did. Metrics
+        // extents can instead use bitmap bounds or the hmtx side bearing.
+        let bbox = face.outline_glyphs().get(g).and_then(|o| o.extents().ok());
         let italic_correction = face
             .tables()
-            .math
-            .and_then(|m| m.glyph_info)
-            .and_then(|gi| gi.italic_corrections)
-            .and_then(|ic| ic.get(g))
-            .map(|mv| mv.value as f32)
-            .unwrap_or(0.0);
+            .math()
+            .ok()
+            .and_then(|m| m.math_glyph_info().ok())
+            .and_then(|gi| gi.math_italics_correction_info()?.ok())
+            .and_then(|ic| ic.correction(g))
+            .unwrap_or(0) as f32;
         GlyphMetrics {
             advance,
-            min_x: bbox.map(|b| b.x_min as f32).unwrap_or(0.0),
-            min_y: bbox.map(|b| b.y_min as f32).unwrap_or(0.0),
-            max_x: bbox.map(|b| b.x_max as f32).unwrap_or(0.0),
-            max_y: bbox.map(|b| b.y_max as f32).unwrap_or(0.0),
+            min_x: bbox.map(|b| b.x_bearing.trunc()).unwrap_or(0.0),
+            min_y: bbox
+                .map(|b| (b.y_bearing - b.height).trunc())
+                .unwrap_or(0.0),
+            max_x: bbox.map(|b| (b.x_bearing + b.width).trunc()).unwrap_or(0.0),
+            max_y: bbox.map(|b| b.y_bearing.trunc()).unwrap_or(0.0),
             italic_correction,
         }
     }
@@ -219,7 +225,12 @@ impl MathFont {
             return o.clone();
         }
         let mut b = OpcodeBuilder(Vec::new());
-        self.face().outline_glyph(GlyphId(gid), &mut b);
+        if let Some(outline) = self.scaler.outline(GlyphId::new(gid as u32))
+            && outline.draw(DrawMemory::Scratch, &mut b).is_err()
+        {
+            // A malformed outline must not leave a partially drawn path.
+            b.0.clear();
+        }
         let outline = Outline(b.0);
         self.outline_cache.borrow_mut().insert(gid, outline.clone());
         outline
@@ -230,41 +241,48 @@ impl MathFont {
     /// when no taller variant exists. Glyph assembly (part composition) is
     /// not built; the tallest variant is the practical ceiling.
     pub fn vertical_variant(&self, gid: u16, min_height: f32) -> u16 {
-        let face = self.face();
-        let Some(variants) = face.tables().math.and_then(|m| m.variants) else {
-            return gid;
-        };
-        let Some(construction) = variants.vertical_constructions.get(GlyphId(gid)) else {
-            return gid;
-        };
-        let mut best = gid;
-        for var in construction.variants {
-            best = var.variant_glyph.0;
-            if var.advance_measurement as f32 >= min_height {
-                break; // records are ordered smallest→largest
-            }
-        }
-        best
+        self.variant(gid, min_height, StretchAxis::Vertical)
     }
 
     /// Choose a horizontal variant of `gid` at least `min_width` font units
     /// wide (stretchy accents: arrows, bars, braces over a base). Returns the
     /// base glyph when no wider variant exists.
     pub fn horizontal_variant(&self, gid: u16, min_width: f32) -> u16 {
-        let face = self.face();
-        let Some(variants) = face.tables().math.and_then(|m| m.variants) else {
+        self.variant(gid, min_width, StretchAxis::Horizontal)
+    }
+
+    fn variant(&self, gid: u16, min_size: f32, axis: StretchAxis) -> u16 {
+        let Ok(variants) = self
+            .scaler
+            .font()
+            .tables()
+            .math()
+            .and_then(|m| m.math_variants())
+        else {
             return gid;
         };
-        let Some(construction) = variants.horizontal_constructions.get(GlyphId(gid)) else {
+        let Some(construction) = variants.glyph_construction(GlyphId::new(gid as u32), axis) else {
             return gid;
         };
         let mut best = gid;
-        for var in construction.variants {
-            best = var.variant_glyph.0;
-            if var.advance_measurement as f32 >= min_width {
-                break;
+        for var in construction.math_glyph_variant_records() {
+            best = var.variant_glyph().to_u16();
+            if var.advance_measurement().to_u16() as f32 >= min_size {
+                break; // records are ordered smallest→largest
             }
         }
         best
     }
+}
+
+#[cfg(test)]
+#[path = "font_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+pub(super) fn test_font() -> MathFont {
+    MathFont::from_bytes(
+        include_bytes!("../../../tests/fixtures/math-fonts/boko-math-cff.otf").to_vec(),
+    )
+    .expect("valid math fixture")
 }
