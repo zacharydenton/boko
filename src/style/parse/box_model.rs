@@ -9,7 +9,7 @@ use super::values::parse_length;
 /// Parse margin/padding shorthand with 1-4 values.
 /// Returns (top, right, bottom, left) following CSS box model rules.
 pub(crate) fn parse_box_shorthand_values(
-    input: &mut Parser<'_, '_>,
+    input: &mut Parser<'_>,
 ) -> Option<(Length, Length, Length, Length)> {
     let mut values = Vec::with_capacity(4);
 

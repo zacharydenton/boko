@@ -373,8 +373,9 @@ h1 { font-family: "TestFont"; background-image: url(../images/pic.png); }"#,
     let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
     let css_paths: Vec<String> = zip
         .file_names()
+        .map(|name| name.expect("valid ZIP filename"))
         .filter(|name| name.ends_with(".css"))
-        .map(str::to_owned)
+        .map(|name| name.into_owned())
         .collect();
     assert!(!css_paths.is_empty());
     let mut resources = Vec::new();

@@ -817,8 +817,7 @@ fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<
     let Ok(css_text) = std::str::from_utf8(css) else {
         return css.to_vec();
     };
-    let mut input = cssparser::ParserInput::new(css_text);
-    let mut parser = cssparser::Parser::new(&mut input);
+    let mut parser = cssparser::Parser::new(css_text);
     let mut replacements = Vec::new();
     collect_css_embed_urls(&mut parser, &mut replacements, 0);
 
@@ -848,7 +847,7 @@ fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<
 /// Tokenizing also handles CSS whitespace, quoting and escapes before decoding
 /// the Kindle identifier. Bound recursion for untrusted, deeply nested CSS.
 fn collect_css_embed_urls<'i>(
-    parser: &mut cssparser::Parser<'i, '_>,
+    parser: &mut cssparser::Parser<'i>,
     replacements: &mut Vec<(usize, usize, usize)>,
     depth: usize,
 ) {
@@ -865,7 +864,7 @@ fn collect_css_embed_urls<'i>(
                 .parse_nested_block(|nested| {
                     nested
                         .expect_string_cloned()
-                        .map_err(Into::<cssparser::ParseError<'i, ()>>::into)
+                        .map_err(Into::<cssparser::ParseError<()>>::into)
                 })
                 .ok(),
             Token::Function(_)
@@ -874,7 +873,7 @@ fn collect_css_embed_urls<'i>(
             | Token::ParenthesisBlock
                 if depth < 128 =>
             {
-                let _: Result<(), cssparser::ParseError<'i, ()>> =
+                let _: Result<(), cssparser::ParseError<()>> =
                     parser.parse_nested_block(|nested| {
                         collect_css_embed_urls(nested, replacements, depth + 1);
                         Ok(())

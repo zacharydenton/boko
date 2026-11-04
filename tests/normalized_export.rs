@@ -187,10 +187,10 @@ fn test_normalized_export_contains_css_and_numbered_chapters() {
     let mut found_chapter_0 = false;
     for i in 0..archive.len() {
         let file = archive.by_index(i).expect("Failed to read ZIP entry");
-        if file.name().ends_with("style.css") {
+        if file.name().unwrap().ends_with("style.css") {
             found_style = true;
         }
-        if file.name().contains("chapter_0.xhtml") {
+        if file.name().unwrap().contains("chapter_0.xhtml") {
             found_chapter_0 = true;
         }
     }

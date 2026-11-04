@@ -144,8 +144,6 @@ impl cssparser::ToCss for PseudoElement {
 }
 
 impl selectors::parser::PseudoElement for PseudoElement {
-    type Impl = BokoSelectors;
-
     fn accepts_state_pseudo_classes(&self) -> bool {
         false
     }
@@ -166,8 +164,6 @@ pub enum NonTSPseudoClass {
 }
 
 impl selectors::parser::NonTSPseudoClass for NonTSPseudoClass {
-    type Impl = BokoSelectors;
-
     fn is_active_or_hover(&self) -> bool {
         matches!(self, Self::Hover | Self::Active)
     }
@@ -191,7 +187,7 @@ impl cssparser::ToCss for NonTSPseudoClass {
 
 impl<'i> selectors::parser::Parser<'i> for BokoSelectors {
     type Impl = BokoSelectors;
-    type Error = SelectorParseErrorKind<'i>;
+    type Error = SelectorParseErrorKind;
 }
 
 impl SelectorImpl for BokoSelectors {
@@ -401,10 +397,7 @@ impl<'a> selectors::Element for ElementRef<'a> {
         match pc {
             NonTSPseudoClass::Link => {
                 // Check if this is an <a> with href
-                let is_anchor = self
-                    .dom
-                    .element_name(self.id)
-                    .is_some_and(|n| n.as_ref() == "a");
+                let is_anchor = self.dom.element_name(self.id).is_some_and(|n| &**n == "a");
                 is_anchor && self.dom.get_attr(self.id, "href").is_some()
             }
             // Other pseudo-classes don't apply in static context
@@ -421,10 +414,7 @@ impl<'a> selectors::Element for ElementRef<'a> {
     }
 
     fn is_link(&self) -> bool {
-        let is_anchor = self
-            .dom
-            .element_name(self.id)
-            .is_some_and(|n| n.as_ref() == "a");
+        let is_anchor = self.dom.element_name(self.id).is_some_and(|n| &**n == "a");
         is_anchor && self.dom.get_attr(self.id, "href").is_some()
     }
 
@@ -516,10 +506,9 @@ mod tests {
         s: &str,
     ) -> Result<
         selectors::parser::Selector<BokoSelectors>,
-        cssparser::ParseError<'_, SelectorParseErrorKind<'_>>,
+        cssparser::ParseError<SelectorParseErrorKind>,
     > {
-        let mut parser_input = cssparser::ParserInput::new(s);
-        let mut parser = cssparser::Parser::new(&mut parser_input);
+        let mut parser = cssparser::Parser::new(s);
         selectors::parser::Selector::parse(&BokoSelectors, &mut parser)
     }
 
@@ -536,7 +525,7 @@ mod tests {
             selectors::matching::NeedsSelectorFlags::No,
             selectors::matching::MatchingForInvalidation::No,
         );
-        selectors::matching::matches_selector(selector, 0, None, &elem, &mut context)
+        selectors::matching::matches_selector(selector, 0, None, elem, &mut context)
     }
 
     #[test]

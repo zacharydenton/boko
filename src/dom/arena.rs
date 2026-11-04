@@ -153,9 +153,9 @@ impl ArenaDom {
         let mut class_spans: Box<[(u32, u32)]> = Box::default();
 
         for (idx, attr) in attrs.iter().enumerate() {
-            if attr.name.local.as_ref() == "id" {
+            if (&*attr.name.local) == "id" {
                 id_attr = idx as u32;
-            } else if attr.name.local.as_ref() == "class" {
+            } else if (&*attr.name.local) == "class" {
                 class_attr = idx as u32;
                 class_spans = split_class_spans(&attr.value);
             }
@@ -194,7 +194,7 @@ impl ArenaDom {
                     continue;
                 }
 
-                let local = attr.name.local.as_ref();
+                let local = &*attr.name.local;
                 let idx = existing.len() as u32;
                 if local == "id" && *id_attr == NO_ATTR {
                     *id_attr = idx;
@@ -371,7 +371,7 @@ impl ArenaDom {
     pub fn find_by_tag(&self, tag: &str) -> Option<ArenaNodeId> {
         self.find(|node| {
             if let ArenaNodeData::Element { name, .. } = &node.data {
-                name.local.as_ref() == tag
+                (&*name.local) == tag
             } else {
                 false
             }
@@ -444,7 +444,7 @@ impl ArenaDom {
         self.get(id).and_then(|n| match &n.data {
             ArenaNodeData::Element { attrs, .. } => attrs
                 .iter()
-                .find(|a| a.name.local.as_ref() == attr_name)
+                .find(|a| (&*a.name.local) == attr_name)
                 .map(|a| a.value.as_str()),
             _ => None,
         })
@@ -522,7 +522,7 @@ mod tests {
 
         dom.append(dom.document(), div);
 
-        assert_eq!(dom.element_name(div).unwrap().as_ref(), "div");
+        assert_eq!(&**dom.element_name(div).unwrap(), "div");
         assert_eq!(dom.element_id(div), Some("main"));
         assert_eq!(dom.get_by_id("main"), Some(div));
     }

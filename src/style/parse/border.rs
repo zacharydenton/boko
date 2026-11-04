@@ -63,7 +63,7 @@ impl BorderSide {
 }
 
 /// Parse a single border-width value (length or keyword).
-pub(crate) fn parse_border_width_value(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_border_width_value(input: &mut Parser<'_>) -> Option<Length> {
     // Try keyword first
     if let Ok(token) = input.try_parse(|i| i.expect_ident_cloned()) {
         let width = match token.as_ref() {
@@ -81,7 +81,7 @@ pub(crate) fn parse_border_width_value(input: &mut Parser<'_, '_>) -> Option<Len
 
 /// Parse border values (width, style, color) in any order, returning them as a tuple.
 pub(crate) fn parse_border_values(
-    input: &mut Parser<'_, '_>,
+    input: &mut Parser<'_>,
 ) -> (Option<Length>, Option<BorderStyle>, Option<Color>) {
     let mut width: Option<Length> = None;
     let mut style: Option<BorderStyle> = None;
@@ -90,7 +90,7 @@ pub(crate) fn parse_border_values(
     for _ in 0..3 {
         if style.is_none()
             && let Ok(s) = input.try_parse(|i| {
-                parse_border_style_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+                parse_border_style_value(i).ok_or_else(|| cssparser::ParseError::<()>::custom(()))
             })
         {
             style = Some(s);
@@ -98,8 +98,9 @@ pub(crate) fn parse_border_values(
         }
 
         if color.is_none()
-            && let Ok(c) =
-                input.try_parse(|i| parse_color(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
+            && let Ok(c) = input.try_parse(|i| {
+                parse_color(i).ok_or_else(|| cssparser::ParseError::<()>::custom(()))
+            })
         {
             color = Some(c);
             continue;
@@ -107,7 +108,7 @@ pub(crate) fn parse_border_values(
 
         if width.is_none()
             && let Ok(w) = input.try_parse(|i| {
-                parse_border_width_value(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+                parse_border_width_value(i).ok_or_else(|| cssparser::ParseError::<()>::custom(()))
             })
         {
             width = Some(w);
@@ -122,7 +123,7 @@ pub(crate) fn parse_border_values(
 
 /// Parse border-{side} shorthand (e.g., `border-top: 1px solid red`).
 pub(crate) fn parse_border_side_shorthand(
-    input: &mut Parser<'_, '_>,
+    input: &mut Parser<'_>,
     side: BorderSide,
 ) -> Vec<Declaration> {
     let (width, style, color) = parse_border_values(input);
@@ -134,7 +135,7 @@ pub(crate) fn parse_border_side_shorthand(
 
 /// Parse combined border shorthand (e.g., `border: 1px solid red`).
 /// Order-insensitive parsing of width, style, and color.
-pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+pub(crate) fn parse_border_shorthand(input: &mut Parser<'_>) -> Vec<Declaration> {
     let (width, style, color) = parse_border_values(input);
 
     // Must have at least one value
@@ -170,7 +171,7 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Vec<Declarat
 /// Parse border-style shorthand with 1-4 values.
 /// Returns (top, right, bottom, left) following CSS box model rules.
 pub(crate) fn parse_border_style_shorthand_values(
-    input: &mut Parser<'_, '_>,
+    input: &mut Parser<'_>,
 ) -> Option<(BorderStyle, BorderStyle, BorderStyle, BorderStyle)> {
     let mut values = Vec::with_capacity(4);
 
@@ -189,7 +190,7 @@ pub(crate) fn parse_border_style_shorthand_values(
 /// Parse border-color shorthand with 1-4 values.
 /// Returns (top, right, bottom, left) following CSS box model rules.
 pub(crate) fn parse_color_shorthand_values(
-    input: &mut Parser<'_, '_>,
+    input: &mut Parser<'_>,
 ) -> Option<(Color, Color, Color, Color)> {
     let mut values = Vec::with_capacity(4);
 

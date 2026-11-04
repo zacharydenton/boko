@@ -233,7 +233,7 @@ fn serialize_into(dom: &ArenaDom, id: ArenaNodeId, out: &mut String) {
         push_escaped_text(out, t);
         return;
     }
-    let Some(name) = dom.element_name(id).map(|n| n.as_ref().to_string()) else {
+    let Some(name) = dom.element_name(id).map(|n| n.to_string()) else {
         return;
     };
     out.push('<');
