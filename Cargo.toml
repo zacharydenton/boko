@@ -54,8 +54,8 @@ thiserror = "2.0.21"
 
 # Font parsing for the KVG math typesetting spoke: glyph outlines (TrueType
 # and CFF) plus the OpenType MATH table (typesetting constants, stretchy
-# glyph variants/assemblies).
-ttf-parser = "0.25.1"
+# glyph variants). Hinting and autohint shaping are not needed for KVG.
+skrifa = { version = "0.49.0", default-features = false, features = ["std"] }
 
 # Raster decode + JPEG encode for the image-shrinking optimize pass.
 # Optional: pulled in by the `optimize-images` feature, excluded from wasm.
