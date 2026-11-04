@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::io;
 
-use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::{Reader, XmlVersion};
 
 use crate::model::{CollectionInfo, Contributor, Landmark, LandmarkType, Metadata, TocEntry};
 
@@ -33,7 +33,7 @@ pub fn parse_container_xml(bytes: &[u8]) -> io::Result<String> {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == b"full-path" {
                         return attr
-                            .unescape_value()
+                            .normalized_value(XmlVersion::Implicit1_0)
                             .map(|v| v.into_owned())
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
                     }
@@ -594,7 +594,9 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                         let mut play_order = None;
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"playOrder"
-                                && let Ok(order_str) = attr.unescape_value().map(|v| v.into_owned())
+                                && let Ok(order_str) = attr
+                                    .normalized_value(XmlVersion::Implicit1_0)
+                                    .map(|v| v.into_owned())
                             {
                                 play_order = order_str.parse().ok();
                             }
@@ -619,7 +621,7 @@ pub fn parse_ncx(content: &str) -> io::Result<Vec<TocEntry>> {
                             && let Some(state) = stack.last_mut()
                         {
                             state.src = Some(
-                                attr.unescape_value()
+                                attr.normalized_value(XmlVersion::Implicit1_0)
                                     .map(|v| v.into_owned())
                                     .map_err(io::Error::other)?,
                             );
@@ -769,7 +771,7 @@ pub fn parse_nav_toc(content: &str) -> io::Result<Vec<TocEntry>> {
                                 for attr in e.attributes().flatten() {
                                     if local_name(attr.key.as_ref()) == b"href" {
                                         item.href = Some(
-                                            attr.unescape_value()
+                                            attr.normalized_value(XmlVersion::Implicit1_0)
                                                 .map(|v| v.into_owned())
                                                 .map_err(io::Error::other)?,
                                         );
@@ -882,14 +884,14 @@ pub fn parse_nav_landmarks(content: &str) -> io::Result<Vec<Landmark>> {
                             match key_local {
                                 b"href" => {
                                     current_href = Some(
-                                        attr.unescape_value()
+                                        attr.normalized_value(XmlVersion::Implicit1_0)
                                             .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
                                 }
                                 b"type" => {
                                     current_epub_type = Some(
-                                        attr.unescape_value()
+                                        attr.normalized_value(XmlVersion::Implicit1_0)
                                             .map(|v| v.into_owned())
                                             .map_err(io::Error::other)?,
                                     );
@@ -1005,7 +1007,7 @@ fn attr(e: &BytesStart, key: &[u8]) -> io::Result<Option<String>> {
     for a in e.attributes().flatten() {
         if a.key.as_ref() == key {
             return a
-                .unescape_value()
+                .normalized_value(XmlVersion::Implicit1_0)
                 .map(|v| Some(v.into_owned()))
                 .map_err(io::Error::other);
         }
