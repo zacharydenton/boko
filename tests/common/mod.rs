@@ -303,6 +303,12 @@ impl EpubBuilder {
         self
     }
 
+    /// Add an embedded font resource relative to the OPF base.
+    pub fn font(mut self, file: &str, bytes: Vec<u8>) -> Self {
+        self.images.push((file.into(), bytes));
+        self
+    }
+
     /// Add a 1x1 PNG cover at `images/cover.png`.
     pub fn cover_png(mut self) -> Self {
         self.cover = Some("images/cover.png".into());
@@ -533,6 +539,10 @@ fn media_type_for(file: &str) -> &'static str {
         "image/jpeg"
     } else if lower.ends_with(".gif") {
         "image/gif"
+    } else if lower.ends_with(".ttf") {
+        "font/ttf"
+    } else if lower.ends_with(".otf") {
+        "font/otf"
     } else if lower.ends_with(".svg") {
         "image/svg+xml"
     } else {

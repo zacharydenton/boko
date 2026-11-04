@@ -176,7 +176,14 @@ impl Importer for Azw3Importer {
                 }
             })?;
             let text = self.cached_text()?;
-            return Ok(flow_slice(text, start, end).to_vec());
+            // The CSS itself may reference embedded resources (`@font-face`
+            // src, background images) as `kindle:embed:XXXX[?mime=...]`;
+            // rewrite those to the discovered asset paths so they resolve.
+            return Ok(rewrite_css_embed_refs(
+                flow_slice(text, start, end),
+                path,
+                &self.assets,
+            ));
         }
 
         // Parse index from path (images/image_XXXX.ext or fonts/font_XXXX.ext).
@@ -793,6 +800,111 @@ fn flow_slice(text: &[u8], start: usize, end: usize) -> &[u8] {
     if start <= end { &text[start..end] } else { &[] }
 }
 
+/// Rewrite `kindle:embed:XXXX[?mime=...]` references inside CSS to the
+/// discovered asset path for that embed index.
+///
+/// The KF8 writer stores CSS-referenced resources (`@font-face` src,
+/// background images) as `url(kindle:embed:XXXX)` where XXXX is the base32
+/// resource index + 1 — the same numbering `transform_kindle_refs` handles in
+/// chapter HTML. The discovered assets list already names each record
+/// `images/image_NNNN.ext` or `fonts/font_NNNN.ext`, so the index picks the
+/// right path (and extension) directly; anything unresolvable is left as a
+/// best-guess image path rather than a dangling `kindle:` URL.
+///
+/// CSS urls resolve against the stylesheet, so paths are written relative to
+/// `css_path` (e.g. `../images/image_0000.png` from `styles/style0001.css`).
+fn rewrite_css_embed_refs(css: &[u8], css_path: &str, assets: &[String]) -> Vec<u8> {
+    let Ok(css_text) = std::str::from_utf8(css) else {
+        return css.to_vec();
+    };
+    let mut input = cssparser::ParserInput::new(css_text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut replacements = Vec::new();
+    collect_css_embed_urls(&mut parser, &mut replacements, 0);
+
+    let up = "../".repeat(css_path.matches('/').count());
+    let mut output = Vec::with_capacity(css.len());
+    let mut pos = 0;
+    for (start, end, embed_idx) in replacements {
+        let image_prefix = format!("images/image_{embed_idx:04}.");
+        let font_prefix = format!("fonts/font_{embed_idx:04}.");
+        let asset_path = assets
+            .iter()
+            .find(|s| s.starts_with(&image_prefix) || s.starts_with(&font_prefix))
+            .cloned()
+            .unwrap_or_else(|| format!("images/image_{embed_idx:04}.jpg"));
+        output.extend_from_slice(&css[pos..start]);
+        output.extend_from_slice(b"url(\"");
+        output.extend_from_slice(up.as_bytes());
+        output.extend_from_slice(asset_path.as_bytes());
+        output.extend_from_slice(b"\")");
+        pos = end;
+    }
+    output.extend_from_slice(&css[pos..]);
+    output
+}
+
+/// Collect actual URL tokens, leaving comments, strings and unrelated CSS intact.
+/// Tokenizing also handles CSS whitespace, quoting and escapes before decoding
+/// the Kindle identifier. Bound recursion for untrusted, deeply nested CSS.
+fn collect_css_embed_urls<'i>(
+    parser: &mut cssparser::Parser<'i, '_>,
+    replacements: &mut Vec<(usize, usize, usize)>,
+    depth: usize,
+) {
+    use cssparser::Token;
+
+    while !parser.is_exhausted() {
+        let start = parser.position().byte_index();
+        let Ok(token) = parser.next_including_whitespace_and_comments().cloned() else {
+            break;
+        };
+        let url = match token {
+            Token::UnquotedUrl(url) => Some(url),
+            Token::Function(name) if name.eq_ignore_ascii_case("url") => parser
+                .parse_nested_block(|nested| {
+                    nested
+                        .expect_string_cloned()
+                        .map_err(Into::<cssparser::ParseError<'i, ()>>::into)
+                })
+                .ok(),
+            Token::Function(_)
+            | Token::CurlyBracketBlock
+            | Token::SquareBracketBlock
+            | Token::ParenthesisBlock
+                if depth < 128 =>
+            {
+                let _: Result<(), cssparser::ParseError<'i, ()>> =
+                    parser.parse_nested_block(|nested| {
+                        collect_css_embed_urls(nested, replacements, depth + 1);
+                        Ok(())
+                    });
+                None
+            }
+            _ => None,
+        };
+        let Some(url) = url else { continue };
+        let Some(identifier) = url.strip_prefix("kindle:embed:") else {
+            continue;
+        };
+        let identifier = identifier.split('?').next().unwrap_or("");
+        // Unlike parse_base32, reject malformed and overflowing identifiers
+        // rather than silently mapping them to a different resource.
+        let embed_num = identifier.bytes().try_fold(0usize, |value, byte| {
+            let digit = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'A'..=b'V' => byte - b'A' + 10,
+                b'a'..=b'v' => byte - b'a' + 10,
+                _ => return None,
+            };
+            value.checked_mul(32)?.checked_add(digit as usize)
+        });
+        if let Some(embed_idx) = embed_num.and_then(|num| num.checked_sub(1)) {
+            replacements.push((start, parser.position().byte_index(), embed_idx));
+        }
+    }
+}
+
 /// Build chapter parts by combining skeletons with div content.
 fn build_parts(
     text: &[u8],
@@ -867,4 +979,110 @@ fn toc_node_to_entry(node: TocNode) -> TocEntry {
     entry.play_order = Some(node.ncx_index);
     entry.children = node.children.into_iter().map(toc_node_to_entry).collect();
     entry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_css_embed_refs;
+
+    const CSS: &str = "styles/style0000.css";
+
+    fn assets() -> Vec<String> {
+        vec![
+            "images/image_0000.png".to_string(),
+            "fonts/font_0001.otf".to_string(),
+            "images/image_0002.gif".to_string(),
+        ]
+    }
+
+    #[test]
+    fn rewrites_font_ref_with_mime_suffix() {
+        let css = b"@font-face { src: url(kindle:embed:0002?mime=font/otf); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"@font-face { src: url("../fonts/font_0001.otf"); }"#
+        );
+    }
+
+    #[test]
+    fn rewrites_bare_image_ref_using_discovered_extension() {
+        let css = b"h1 { background: url(kindle:embed:0001); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"h1 { background: url("../images/image_0000.png"); }"#
+        );
+    }
+
+    #[test]
+    fn unresolvable_ref_falls_back_to_image_path() {
+        let css = b"p { background: url(kindle:embed:000A); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"p { background: url("../images/image_0009.jpg"); }"#
+        );
+    }
+
+    #[test]
+    fn css_without_embed_refs_is_unchanged() {
+        let css = b"p { margin: 1em; } /* kindle:flow stays */";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(out, css);
+    }
+
+    #[test]
+    fn quoted_ref_terminates_at_quote() {
+        let css = b"p { background: url('kindle:embed:0003'); }";
+        let out = rewrite_css_embed_refs(css, CSS, &assets());
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"p { background: url("../images/image_0002.gif"); }"#
+        );
+    }
+
+    #[test]
+    fn url_whitespace_does_not_change_resource_index() {
+        for url in [
+            "url(kindle:embed:0001 )",
+            "url(kindle:embed:0001\n)",
+            "url(\t kindle:embed:0001\r\n )",
+            "URL( 'kindle:embed:0001' )",
+            r"u\72l(kindle\:embed\:0001)",
+        ] {
+            let css = format!("p {{ background: {url}; }}");
+            assert_eq!(
+                rewrite_css_embed_refs(css.as_bytes(), CSS, &assets()),
+                br#"p { background: url("../images/image_0000.png"); }"#,
+                "{url}",
+            );
+        }
+    }
+
+    #[test]
+    fn comments_and_strings_are_preserved_around_real_urls() {
+        let css = br#"/* kindle:embed:0001 */
+p { color: red; content: "kindle:embed:0002"; }
+@media screen { h1 { background: image-set(url(kindle:embed:0001) 1x, url('kindle:embed:0003') 2x); } }
+/* kindle:embed:0001 */"#;
+        let expected = br#"/* kindle:embed:0001 */
+p { color: red; content: "kindle:embed:0002"; }
+@media screen { h1 { background: image-set(url("../images/image_0000.png") 1x, url("../images/image_0002.gif") 2x); } }
+/* kindle:embed:0001 */"#;
+        assert_eq!(rewrite_css_embed_refs(css, CSS, &assets()), expected);
+    }
+
+    #[test]
+    fn malformed_identifiers_and_unrelated_urls_are_unchanged() {
+        let css = br#"p {
+            a: url(kindle:embed:); b: url(kindle:embed:0000);
+            c: url(kindle:embed:000W); d: url(kindle:embed:0001#fragment);
+            e: url(kindle:embed:VVVVVVVVVVVVVVVVVVVVVVVVVVVV);
+            f: url(https://example.com/kindle:embed:0001);
+            g: "url(kindle:embed:0001)";
+            h: url("kindle:embed:0001" unexpected);
+        }"#;
+        assert_eq!(rewrite_css_embed_refs(css, CSS, &assets()), css);
+    }
 }
