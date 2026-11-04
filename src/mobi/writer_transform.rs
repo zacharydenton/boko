@@ -55,6 +55,7 @@ pub fn rewrite_html_references_fast(
     book_resources: &HashMap<String, crate::model::Resource>,
     link_counter_start: usize,
 ) -> RewriteResult {
+    let html = &writer_svg::rewrite_image_references(html, html_href, resource_map, book_resources);
     let mut output = Vec::with_capacity(html.len() + html.len() / 10); // ~10% overhead
     let mut links = Vec::new();
     let mut link_counter = link_counter_start;
@@ -141,6 +142,11 @@ pub fn rewrite_html_references_fast(
         links,
     }
 }
+
+#[path = "writer_css.rs"]
+mod writer_css;
+#[path = "writer_svg.rs"]
+mod writer_svg;
 
 /// Process <link> tag, rewriting CSS href to kindle:flow
 fn process_link_tag(
@@ -434,113 +440,14 @@ fn resolve_href(base_dir: &str, href: &str) -> String {
     parts.join("/")
 }
 
-/// Single-pass CSS url() rewriting
-pub fn rewrite_css_references_fast(css: &[u8], resource_map: &HashMap<String, usize>) -> Vec<u8> {
-    // Strip CSS at-rules that Kindle's parser doesn't support: `@charset`,
-    // `@namespace`. Calibre normalises these away in its OEB transform
-    // pipeline; leaving them in is correlated with the renderer freezing
-    // on otherwise-valid books.
-    let css = strip_unsupported_css_at_rules(css);
-
-    let mut output = Vec::with_capacity(css.len());
-    let mut pos = 0;
-
-    let url_finder = memmem::Finder::new(b"url(");
-
-    while let Some(url_start) = url_finder.find(&css[pos..]) {
-        let abs_start = pos + url_start;
-
-        // Copy content before url(
-        output.extend_from_slice(&css[pos..abs_start]);
-
-        // Find the closing )
-        let content_start = abs_start + 4;
-        if let Some(paren_end) = css[content_start..].find_byte(b')') {
-            let url_content = &css[content_start..content_start + paren_end];
-
-            // Strip quotes if present
-            let url = url_content.trim_with(|c| c == '"' || c == '\'' || c == ' ');
-
-            // Skip data: and http: URLs
-            if url.starts_with(b"data:") || url.starts_with(b"http") {
-                output.extend_from_slice(&css[abs_start..content_start + paren_end + 1]);
-            } else {
-                // Try to find resource
-                let url_str = String::from_utf8_lossy(url);
-                let normalized = url_str.trim_start_matches("../").trim_start_matches("./");
-
-                let mut found = false;
-                for (href, &res_idx) in resource_map {
-                    if href.ends_with(normalized) || href == normalized {
-                        let mut base32_buf = [0u8; 4];
-                        write_base32_4(res_idx, &mut base32_buf);
-
-                        output.extend_from_slice(b"url(kindle:embed:");
-                        output.extend_from_slice(&base32_buf);
-                        output.push(b')');
-                        found = true;
-                        break;
-                    }
-                }
-
-                if !found {
-                    output.extend_from_slice(&css[abs_start..content_start + paren_end + 1]);
-                }
-            }
-
-            pos = content_start + paren_end + 1;
-        } else {
-            // No closing paren, copy as-is
-            output.extend_from_slice(&css[pos..]);
-            break;
-        }
-    }
-
-    // Copy remaining content
-    output.extend_from_slice(&css[pos..]);
-    output
-}
-
-/// Strip `@charset "..."` and `@namespace ...` at-rules from CSS.
-///
-/// Kindle's CSS parser (KF8 rendering engine) doesn't implement CSS
-/// namespaces and gets unhappy with `@charset` directives; calibre's
-/// `mobiml.py` removes both as part of its normalisation pass before
-/// shipping CSS into the KF8 stream.
-fn strip_unsupported_css_at_rules(css: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(css.len());
-    let mut i = 0;
-    while i < css.len() {
-        if css[i] == b'@' {
-            let rest = &css[i..];
-            let matches_charset = rest.len() >= 8 && rest[..8].eq_ignore_ascii_case(b"@charset");
-            let matches_namespace =
-                rest.len() >= 10 && rest[..10].eq_ignore_ascii_case(b"@namespace");
-
-            if matches_charset || matches_namespace {
-                // Drop the rule up to and including the next `;`. (Both
-                // `@charset` and `@namespace` are simple at-rules
-                // terminated by `;`.)
-                let mut j = i + if matches_charset { 8 } else { 10 };
-                while j < css.len() && css[j] != b';' {
-                    j += 1;
-                }
-                if j < css.len() {
-                    j += 1; // consume the `;`
-                }
-                // Also swallow any trailing whitespace so we don't leave
-                // a gap of blank lines where the rule was.
-                while j < css.len() && matches!(css[j], b' ' | b'\t' | b'\r' | b'\n') {
-                    j += 1;
-                }
-                i = j;
-                continue;
-            }
-        }
-        output.push(css[i]);
-        i += 1;
-    }
-    output
+/// Rewrite CSS resource URLs and remove unusable font sources without
+/// interpreting comments or strings as rules. Paths are relative to this sheet.
+pub fn rewrite_css_references_fast(
+    css: &[u8],
+    css_href: &str,
+    resource_map: &HashMap<String, usize>,
+) -> Vec<u8> {
+    writer_css::rewrite(css, css_href, resource_map)
 }
 
 /// Result of aid attribute insertion
@@ -551,24 +458,20 @@ pub struct AidInsertResult {
     pub position_map: Vec<(usize, String)>,
 }
 
-/// Strip XML namespace declarations and namespaced attributes that confuse
-/// the Kindle HTML5 parser.
-///
-/// Calibre's KF8 writer explicitly does this (see `writer8/skeleton.py:remove_namespaces`)
-/// because Kindle firmware refuses to render documents with EPUB3-style
-/// prefixed attributes such as `xmlns:epub`, `epub:prefix`, `epub:type`, or
-/// `xml:lang`. Leaving them in produces files that pass libmobi parsing but
-/// still get "Unable to Open Item" on the device.
-///
-/// We strip:
-///   - Any `xmlns:NAME="..."` namespace declaration except the default xhtml one.
-///   - Any attribute with a prefix in {`epub`, `xml`, `opf`, `dc`, `dcterms`,
-///     `xsi`}, e.g. `epub:type="..."`, `xml:lang="..."`.
-///
-/// The default xhtml `xmlns="..."` is preserved.
+/// Strip EPUB-specific decorations from HTML, following the existing KF8
+/// compatibility policy. SVG subtrees and their inherited namespace bindings
+/// are preserved: stripping these breaks SVG image references and geometry.
 pub fn strip_xml_namespaces(html: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(html.len());
     let mut pos = 0;
+    let context = writer_svg::context(html);
+    let namespaces = context.as_ref().map(|(_, prefixes)| prefixes);
+    let mut svg_spans = context
+        .as_ref()
+        .map(|(spans, _)| spans.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .peekable();
 
     while pos < html.len() {
         let Some(rel) = memchr::memchr(b'<', &html[pos..]) else {
@@ -577,6 +480,15 @@ pub fn strip_xml_namespaces(html: &[u8]) -> Vec<u8> {
         };
         let tag_start = pos + rel;
         out.extend_from_slice(&html[pos..tag_start]);
+
+        // SVG is a different namespace with meaningful xml:base, ARIA and
+        // prefixed attributes. Keep the entire subtree intact.
+        if svg_spans.peek().is_some_and(|span| span.start == tag_start) {
+            let span = svg_spans.next().unwrap();
+            out.extend_from_slice(&html[span.clone()]);
+            pos = span.end;
+            continue;
+        }
 
         // Closing tags, comments, processing instructions: copy unchanged.
         // DOCTYPE declarations: drop entirely — Kindle's HTML5 parser refuses
@@ -701,7 +613,14 @@ pub fn strip_xml_namespaces(html: &[u8]) -> Vec<u8> {
             };
 
             // Decide whether to drop this attribute.
-            let drop = should_drop_attr(name);
+            let needed_namespace = name.strip_prefix(b"xmlns:").is_some_and(|prefix| {
+                // If parsing failed, don't introduce unbound prefixes by
+                // deleting declarations whose use we couldn't establish.
+                namespaces.is_none_or(|names| {
+                    std::str::from_utf8(prefix).is_ok_and(|p| names.contains(p))
+                })
+            });
+            let drop = !needed_namespace && should_drop_attr(name);
 
             if !drop {
                 out.extend_from_slice(&html[ws_start..value_end]);
@@ -717,9 +636,12 @@ pub fn strip_xml_namespaces(html: &[u8]) -> Vec<u8> {
 }
 
 fn should_drop_attr(name: &[u8]) -> bool {
-    // Drop `xmlns:NAME` (but keep bare `xmlns`).
-    if name.len() > 6 && name[..6].eq_ignore_ascii_case(b"xmlns:") {
+    if name.starts_with(b"xmlns:") {
         return true;
+    }
+    // An SVG below this element can inherit the base URL.
+    if name == b"xml:base" {
+        return false;
     }
     // Drop attributes with these prefixes.
     const DROP_PREFIXES: &[&[u8]] = &[
@@ -950,4 +872,36 @@ mod tests {
             "should end with />: {result_str}"
         );
     }
+
+    #[test]
+    fn test_css_drops_font_face_without_embedded_font() {
+        let mut resource_map = HashMap::new();
+        resource_map.insert("Fonts/real.ttf".to_string(), 3);
+        let css = b"@font-face { font-family: \"gone\"; src: local(\"SimSun\"), url(../Fonts/missing.ttf); }\n\
+            @font-face { font-family: \"real\"; src: url(../Fonts/real.ttf); }\n\
+            p { font-family: gone; }";
+        let out = String::from_utf8(rewrite_css_references_fast(
+            css,
+            "Styles/style.css",
+            &resource_map,
+        ))
+        .unwrap();
+        assert!(!out.contains("missing.ttf"), "{out}");
+        assert!(!out.contains("\"gone\""), "{out}");
+        assert!(out.contains("url(kindle:embed:0003)"), "{out}");
+        assert!(out.contains("p { font-family: gone; }"), "{out}");
+    }
+
+    #[test]
+    fn svg_without_a_resolved_resource_is_unchanged() {
+        let html = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><image width="10" height="10" xlink:href="../Images/cover.jpg"/></svg>"#;
+        assert_eq!(
+            writer_svg::rewrite_image_references(html, "c.xhtml", &HashMap::new(), &HashMap::new()),
+            html
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "writer_regressions.rs"]
+mod writer_regressions;
