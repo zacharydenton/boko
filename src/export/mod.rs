@@ -34,6 +34,7 @@ use crate::model::Book;
 mod azw3;
 mod css_gen;
 mod epub;
+mod flow_split;
 mod html_synth;
 mod kfx;
 mod normalize;

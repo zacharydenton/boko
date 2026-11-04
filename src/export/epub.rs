@@ -43,6 +43,7 @@ pub struct EpubConfig {
 /// ```
 pub struct EpubExporter {
     config: EpubConfig,
+    flow_size: Option<usize>,
 }
 
 impl EpubExporter {
@@ -50,12 +51,19 @@ impl EpubExporter {
     pub fn new() -> Self {
         Self {
             config: EpubConfig::default(),
+            flow_size: None,
         }
     }
 
     /// Configure the exporter with custom settings.
     pub fn with_config(mut self, config: EpubConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Split synthesized XHTML files near this byte size at safe element boundaries.
+    pub fn with_flow_size(mut self, bytes: usize) -> Self {
+        self.flow_size = Some(bytes);
         self
     }
 }
@@ -70,7 +78,7 @@ impl Exporter for EpubExporter {
     fn export<W: Write + Seek>(&self, book: &Book, writer: &mut W) -> crate::Result<()> {
         // Use normalized mode if explicitly requested OR if the source format requires it
         // (e.g., KFX raw content is binary Ion, not HTML)
-        if self.config.normalize || book.requires_normalized_export() {
+        if self.config.normalize || self.flow_size.is_some() || book.requires_normalized_export() {
             Ok(self.export_normalized(book, writer)?)
         } else {
             Ok(self.export_raw(book, writer)?)
@@ -262,6 +270,14 @@ impl EpubExporter {
 
         // Normalize the book content
         let content = normalize_book(book)?;
+        let split = self
+            .flow_size
+            .filter(|&max_bytes| max_bytes > 0)
+            .map(|max_bytes| super::flow_split::SplitFlows::new(&content.chapters, max_bytes))
+            .transpose()?;
+        let chapters = split.as_ref().map_or(content.chapters.as_slice(), |split| {
+            split.chapters.as_slice()
+        });
 
         let mut zip = ZipWriter::new(writer);
 
@@ -296,7 +312,7 @@ impl EpubExporter {
         });
 
         // Add chapters to manifest
-        for (i, _) in content.chapters.iter().enumerate() {
+        for (i, _) in chapters.iter().enumerate() {
             let id = format!("chapter_{}", i);
             let href = format!("OEBPS/chapter_{}.xhtml", i);
 
@@ -365,10 +381,15 @@ impl EpubExporter {
         // `#anchor`s) to the emitted chapter files so navigation resolves.
         // NCX and nav both require at least one entry; synthesize one for
         // TOC-less books.
+        let original_toc = content.rewrite_toc(book.toc());
+        let relocated_toc = split.as_ref().map_or_else(
+            || original_toc.clone(),
+            |split| split.rewrite_toc(&original_toc),
+        );
         let rewritten_toc = toc_or_fallback(
-            &content.rewrite_toc(book.toc()),
+            &relocated_toc,
             &book.metadata().title,
-            (!content.chapters.is_empty()).then_some("chapter_0.xhtml"),
+            (!chapters.is_empty()).then_some("chapter_0.xhtml"),
         );
         let ncx = generate_ncx(book.metadata(), &rewritten_toc);
         zip.start_file("OEBPS/toc.ncx", deflated)
@@ -388,7 +409,7 @@ impl EpubExporter {
         zip.write_all(content.css.as_bytes())?;
 
         // 7. Write synthesized chapters
-        for (i, chapter) in content.chapters.iter().enumerate() {
+        for (i, chapter) in chapters.iter().enumerate() {
             let zip_path = format!("OEBPS/chapter_{}.xhtml", i);
             zip.start_file(&zip_path, deflated).map_err(io_error)?;
             zip.write_all(chapter.document.as_bytes())?;

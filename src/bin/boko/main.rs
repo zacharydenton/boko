@@ -51,6 +51,14 @@ enum Command {
         #[arg(short = 'O', long)]
         optimize: bool,
 
+        /// Maximum EPUB XHTML flow size in KiB (default: 260; 0 disables size splitting).
+        #[arg(long, value_name = "KIB")]
+        flow_size: Option<usize>,
+
+        /// Ignore source MOBI page breaks and NCX split positions.
+        #[arg(long)]
+        dont_split_on_page_breaks: bool,
+
         /// Suppress output messages
         #[arg(short, long)]
         quiet: bool,
@@ -118,14 +126,20 @@ fn main() -> ExitCode {
             from_format,
             to_format,
             optimize,
+            flow_size,
+            dont_split_on_page_breaks,
             quiet,
         } => convert(
             &input,
             output.as_deref(),
-            from_format,
-            to_format,
-            optimize,
-            quiet,
+            ConvertOptions {
+                from_format,
+                to_format,
+                optimize,
+                flow_size,
+                dont_split_on_page_breaks,
+                quiet,
+            },
         ),
         Command::Dump {
             file,
@@ -498,14 +512,24 @@ impl From<FormatArg> for Format {
     }
 }
 
-fn convert(
-    input: &str,
-    output: Option<&str>,
+struct ConvertOptions {
     from_format: Option<FormatArg>,
     to_format: Option<FormatArg>,
     optimize: bool,
+    flow_size: Option<usize>,
+    dont_split_on_page_breaks: bool,
     quiet: bool,
-) -> Result<(), String> {
+}
+
+fn convert(input: &str, output: Option<&str>, options: ConvertOptions) -> Result<(), String> {
+    let ConvertOptions {
+        from_format,
+        to_format,
+        optimize,
+        flow_size,
+        dont_split_on_page_breaks,
+        quiet,
+    } = options;
     // Check if reading from stdin
     let from_stdin = input == "-";
 
@@ -551,6 +575,23 @@ fn convert(
         return Err("MOBI output is not supported; use .azw3 instead".to_string());
     }
 
+    if (flow_size.is_some() || dont_split_on_page_breaks) && output_format != Format::Epub {
+        return Err("flow splitting options require EPUB output".to_string());
+    }
+    // Match Calibre's EPUB default: 260 KiB, with zero disabling size splitting.
+    let flow_bytes = if output_format == Format::Epub {
+        flow_size
+            .unwrap_or(260)
+            .checked_mul(1024)
+            .ok_or("--flow-size is too large")?
+    } else {
+        0
+    };
+    let flow_bytes = (output_format == Format::Epub).then_some(flow_bytes);
+    if dont_split_on_page_breaks && input_format != Some(Format::Mobi) {
+        return Err("--dont-split-on-page-breaks requires MOBI input".to_string());
+    }
+
     // Check if writing to stdout
     let to_stdout = output.is_none() || output == Some("-");
 
@@ -570,13 +611,23 @@ fn convert(
         std::io::stdin()
             .read_to_end(&mut data)
             .map_err(|e| format!("Failed to read stdin: {e}"))?;
-        Book::from_bytes(&data, input_format.unwrap())
-            .map_err(|e| format!("Failed to parse input: {e}"))?
+        if dont_split_on_page_breaks {
+            Book::from_mobi_bytes_without_page_break_splits(&data)
+                .map_err(|e| format!("Failed to parse input: {e}"))?
+        } else {
+            Book::from_bytes(&data, input_format.unwrap())
+                .map_err(|e| format!("Failed to parse input: {e}"))?
+        }
     } else {
         let fmt = input_format.or_else(|| Format::from_path(input));
         if let Some(fmt) = fmt {
-            Book::open_format(input, fmt)
-                .map_err(|e| format!("Failed to open input '{input}': {e}"))?
+            if dont_split_on_page_breaks {
+                Book::open_mobi_without_page_break_splits(input)
+                    .map_err(|e| format!("Failed to open input '{input}': {e}"))?
+            } else {
+                Book::open_format(input, fmt)
+                    .map_err(|e| format!("Failed to open input '{input}': {e}"))?
+            }
         } else {
             Book::open(input).map_err(|e| format!("Failed to open input '{input}': {e}"))?
         }
@@ -601,7 +652,7 @@ fn convert(
         // Write to stdout
         let mut stdout = std::io::stdout();
         let mut cursor = std::io::Cursor::new(Vec::new());
-        book.export(output_format, &mut cursor)
+        export_book(&book, output_format, flow_bytes, &mut cursor)
             .map_err(|e| format!("Conversion failed: {e}"))?;
         use std::io::Write;
         stdout
@@ -614,7 +665,7 @@ fn convert(
         // Buffer the writer: the EPUB ZipWriter issues many small writes, each
         // of which would otherwise be a syscall.
         let mut writer = std::io::BufWriter::with_capacity(64 << 10, file);
-        book.export(output_format, &mut writer)
+        export_book(&book, output_format, flow_bytes, &mut writer)
             .map_err(|e| format!("Conversion failed: {e}"))?;
         std::io::Write::flush(&mut writer).map_err(|e| format!("Write failed: {e}"))?;
     }
@@ -624,6 +675,22 @@ fn convert(
     }
 
     Ok(())
+}
+
+fn export_book<W: std::io::Write + std::io::Seek>(
+    book: &Book,
+    format: Format,
+    flow_bytes: Option<usize>,
+    writer: &mut W,
+) -> boko::Result<()> {
+    if let Some(bytes) = flow_bytes {
+        use boko::export::{EpubExporter, Exporter};
+        EpubExporter::new()
+            .with_flow_size(bytes)
+            .export(book, writer)
+    } else {
+        book.export(format, writer)
+    }
 }
 
 // ----------------------------------------------------------------------------

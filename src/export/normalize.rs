@@ -237,7 +237,7 @@ fn rewrite_href(
 /// Reverse the exact set of entities [`escape_xml_into`] produces
 /// (`&amp; &lt; &gt; &quot; &#39;`, plus `&apos;`). Borrows unchanged when
 /// there is no `&`. Unknown entities keep their literal `&`.
-fn xml_unescape(s: &str) -> std::borrow::Cow<'_, str> {
+pub(super) fn xml_unescape(s: &str) -> std::borrow::Cow<'_, str> {
     if !s.contains('&') {
         return std::borrow::Cow::Borrowed(s);
     }
