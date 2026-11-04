@@ -67,6 +67,9 @@ pub struct KfxImporter {
     section_storylines: HashMap<String, EntityLoc>,
     /// Whether section→storyline mapping has been built
     section_storylines_indexed: bool,
+    /// Section page_template id -> section name. Nav targets may name the
+    /// template (e.g. a cover section's container) rather than any element.
+    section_templates: HashMap<i64, String>,
 
     /// Resources: name -> EntityLoc (lazily populated)
     resource_index: OnceLock<HashMap<String, EntityLoc>>,
@@ -279,6 +282,20 @@ impl Importer for KfxImporter {
             }
         }
 
+        // A section's page_template id (no element carries it): target the
+        // section's chapter
+        let template_id = anchor_name.parse::<i64>().ok().or_else(|| {
+            self.anchor_index()
+                .internal
+                .get(anchor_name)
+                .map(|&(pos_id, _)| pos_id)
+        });
+        if let Some(section) = template_id.and_then(|id| self.section_templates.get(&id))
+            && let Some(idx) = self.section_names.iter().position(|s| s == section)
+        {
+            return Some(AnchorTarget::Chapter(ChapterId(idx as u32)));
+        }
+
         // Not found
         None
     }
@@ -362,6 +379,7 @@ impl KfxImporter {
             section_names: Vec::new(),
             section_storylines: HashMap::new(),
             section_storylines_indexed: false,
+            section_templates: HashMap::new(),
             resource_index: OnceLock::new(),
             content_index: OnceLock::new(),
             content_cache: RwLock::new(HashMap::new()),
@@ -745,6 +763,7 @@ impl KfxImporter {
         }
 
         // Then, map each section to its storyline
+        let mut section_templates = HashMap::new();
         for loc in &self.entities {
             if loc.type_id == KfxSymbol::Section as u32
                 && let Ok(elem) = self.parse_entity_ion(*loc)
@@ -753,8 +772,20 @@ impl KfxImporter {
                 let section_name =
                     get_field(fields, sym!(SectionName)).and_then(|v| self.get_symbol_text(v));
 
-                let story_name = get_field(fields, sym!(PageTemplates))
-                    .and_then(|v| v.as_list())
+                let templates = get_field(fields, sym!(PageTemplates)).and_then(|v| v.as_list());
+                if let (Some(sec_name), Some(templates)) = (section_name, templates) {
+                    for template in templates {
+                        if let Some(id) = template
+                            .as_struct()
+                            .and_then(|f| get_field(f, sym!(Id)))
+                            .and_then(|v| v.as_int())
+                        {
+                            section_templates.insert(id, sec_name.to_string());
+                        }
+                    }
+                }
+
+                let story_name = templates
                     .and_then(|templates| templates.first())
                     .and_then(|t| t.as_struct())
                     .and_then(|f| get_field(f, sym!(StoryName)))
@@ -769,6 +800,7 @@ impl KfxImporter {
             }
         }
 
+        self.section_templates = section_templates;
         self.section_storylines_indexed = true;
         Ok(())
     }
