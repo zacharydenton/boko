@@ -814,6 +814,14 @@ impl Kf8Builder {
             let primary = self.ctx.metadata.language.split('-').next().unwrap_or("en");
             records.push((524, primary.as_bytes().to_vec()));
         }
+        // Preserve both directions. EXTH 524 above strips script subtags, so
+        // omitting LTR could also reverse ar-Latn on the next conversion.
+        let direction = if self.ctx.metadata.is_rtl() {
+            "rtl"
+        } else {
+            "ltr"
+        };
+        records.push((527, direction.as_bytes().to_vec()));
 
         // KF8 housekeeping fields (calibre emits all of these on every book;
         // omitting them is correlated with Kindle refusing to open the file).

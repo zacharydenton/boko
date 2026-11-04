@@ -128,6 +128,9 @@ pub struct ComputedStyle {
     /// `hyphens` automatic hyphenation mode (defaults to `Manual`).
     pub hyphens: Hyphens,
 
+    /// `direction` base text direction (`Unset` inherits the document's).
+    pub direction: Direction,
+
     /// `white-space` collapsing/wrapping behavior.
     pub white_space: WhiteSpace,
 
@@ -274,6 +277,7 @@ impl Default for ComputedStyle {
             word_spacing: Default::default(),
             text_transform: Default::default(),
             hyphens: Default::default(),
+            direction: Default::default(),
             white_space: Default::default(),
             underline_style: Default::default(),
             overline: Default::default(),

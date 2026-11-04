@@ -656,6 +656,10 @@ pub struct ExportContext {
     /// Global symbol table - strings → symbol IDs.
     pub symbols: SymbolTable,
 
+    /// The book reads right-to-left (`Metadata::is_rtl`): the document
+    /// direction, and what content without its own direction inherits.
+    pub rtl: bool,
+
     /// Fragment ID generator (starts at `IdGenerator::FRAGMENT_MIN_ID`, 866).
     pub fragment_ids: IdGenerator,
 
@@ -871,6 +875,7 @@ impl ExportContext {
 
         Self {
             symbols,
+            rtl: false,
             fragment_ids: IdGenerator::new(),
             resource_registry: ResourceRegistry::new(),
             section_ids: Vec::new(),
@@ -1081,6 +1086,20 @@ impl ExportContext {
     ) -> crate::kfx::style_registry::ComputedStyle {
         let schema = crate::kfx::style_schema::StyleSchema::standard();
         let mut builder = crate::kfx::style_registry::StyleBuilder::new(schema);
+        // Undeclared direction is the document's: resolving it on both sides
+        // emits `direction` only where content departs from its context.
+        let doc_direction = |s: &crate::style::ComputedStyle| {
+            let mut s = s.clone();
+            if s.direction == crate::style::Direction::Unset {
+                s.direction = if self.rtl {
+                    crate::style::Direction::Rtl
+                } else {
+                    crate::style::Direction::Ltr
+                };
+            }
+            s
+        };
+        let (ir_style, parent) = (&doc_direction(ir_style), &doc_direction(parent));
         if self.font_scale != 1.0 || self.line_scale != 1.0 {
             let scaled_parent = if parent_is_default {
                 parent.clone()

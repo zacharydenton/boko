@@ -199,6 +199,7 @@ pub enum IrField {
     WordSpacing,
     TextTransform,
     Hyphens,
+    Direction,
     WhiteSpace,
     // Phase 2: Text decoration extensions
     UnderlineStyle,
@@ -646,6 +647,16 @@ impl StyleSchema {
                 // none — KFX has no manual mode.
                 ("manual".into(), KfxValue::Symbol(KfxSymbol::None)),
                 ("none".into(), KfxValue::Symbol(KfxSymbol::None)),
+            ]),
+        });
+
+        schema.register(StylePropertyRule {
+            ir_key: "direction",
+            ir_field: Some(IrField::Direction),
+            kfx_symbol: KfxSymbol::Direction,
+            transform: ValueTransform::Map(vec![
+                ("ltr".into(), KfxValue::Symbol(KfxSymbol::Ltr)),
+                ("rtl".into(), KfxValue::Symbol(KfxSymbol::Rtl)),
             ]),
         });
 
@@ -1768,7 +1779,28 @@ pub fn extract_ir_field(
         IrField::FontWeight => inherited("font-weight"),
         IrField::FontStyle => inherited("font-style"),
         IrField::FontVariant => inherited("font-variant"),
-        IrField::TextAlign => inherited("text-align"),
+        // KFX has no start/end alignment: resolve them against the direction.
+        IrField::TextAlign => {
+            // Equal logical values can resolve to different physical sides
+            // when a child changes direction. Compare the resolved values.
+            let resolve = |s: &ir_style::ComputedStyle| match (s.text_align, s.direction) {
+                (ir_style::TextAlign::Start, ir_style::Direction::Rtl)
+                | (
+                    ir_style::TextAlign::End,
+                    ir_style::Direction::Ltr | ir_style::Direction::Unset,
+                ) => ir_style::TextAlign::Right,
+                (ir_style::TextAlign::Start, _) | (ir_style::TextAlign::End, _) => {
+                    ir_style::TextAlign::Left
+                }
+                (align, _) => align,
+            };
+            let value = resolve(ir_style);
+            // A parent may omit alignment when it matches its directional
+            // default. A direction change must pin the child's physical side
+            // even when both IR alignments resolve to the same value.
+            (value != resolve(parent) || ir_style.direction != parent.direction)
+                .then(|| value.as_str().to_string())
+        }
         IrField::Color => {
             if ir_style.color == parent.color {
                 None
@@ -1788,6 +1820,7 @@ pub fn extract_ir_field(
         IrField::VerticalAlign => shared("vertical-align"),
         IrField::TextTransform => inherited("text-transform"),
         IrField::Hyphens => inherited("hyphens"),
+        IrField::Direction => inherited("direction"),
         IrField::WhiteSpace => shared("white-space"),
         IrField::UnderlineColor => shared("text-decoration-color"),
         IrField::Width => shared("width"),
@@ -2116,6 +2149,13 @@ pub fn apply_ir_field(ir_style: &mut ir_style::ComputedStyle, field: IrField, cs
                 "auto" => ir_style::Hyphens::Auto,
                 "manual" => ir_style::Hyphens::Manual,
                 _ => ir_style::Hyphens::None,
+            };
+        }
+        IrField::Direction => {
+            ir_style.direction = match css_value {
+                "rtl" => ir_style::Direction::Rtl,
+                "ltr" => ir_style::Direction::Ltr,
+                _ => ir_style::Direction::Unset,
             };
         }
         IrField::WhiteSpace => {
@@ -2692,6 +2732,7 @@ mod tests {
             IrField::WordSpacing,
             IrField::TextTransform,
             IrField::Hyphens,
+            IrField::Direction,
             IrField::WhiteSpace,
             IrField::UnderlineStyle,
             IrField::Overline,

@@ -6,9 +6,9 @@
 use cssparser::Parser;
 
 use crate::style::properties::{
-    BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, DecorationStyle, Display, Float,
-    FontStyle, FontVariant, Hyphens, ListStylePosition, ListStyleType, OverflowWrap, TextAlign,
-    TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
+    BorderCollapse, BorderStyle, BoxSizing, BreakValue, Clear, DecorationStyle, Direction, Display,
+    Float, FontStyle, FontVariant, Hyphens, ListStylePosition, ListStyleType, OverflowWrap,
+    TextAlign, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
 };
 
 use crate::style::Declaration;
@@ -45,6 +45,17 @@ keyword_parser!(parse_list_style_type, ListStyleType);
 keyword_parser!(parse_list_style_position, ListStylePosition);
 keyword_parser!(parse_border_collapse, BorderCollapse);
 keyword_parser!(parse_vertical_align, VerticalAlign);
+
+/// CSS-wide inheritance keywords must not become the IR's undeclared sentinel.
+pub(crate) fn parse_direction(input: &mut Parser<'_>) -> Option<Declaration> {
+    let token = input.expect_ident_cloned().ok()?;
+    match token.to_ascii_lowercase().as_str() {
+        "inherit" | "unset" => Some(Declaration::DirectionInherit),
+        "initial" | "ltr" => Some(Declaration::Direction(Direction::Ltr)),
+        "rtl" => Some(Declaration::Direction(Direction::Rtl)),
+        _ => None,
+    }
+}
 
 /// Parse break-before/break-after values with CSS aliases.
 pub(crate) fn parse_break_value(input: &mut Parser<'_>) -> Option<BreakValue> {

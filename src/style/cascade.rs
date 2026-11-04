@@ -61,6 +61,7 @@ pub(crate) fn inherit_from_parent(parent: &ComputedStyle) -> ComputedStyle {
         word_spacing: parent.word_spacing,
         text_transform: parent.text_transform,
         hyphens: parent.hyphens,
+        direction: parent.direction,
         // Text decoration (inherited in some contexts)
         text_decoration_underline: parent.text_decoration_underline,
         text_decoration_line_through: parent.text_decoration_line_through,
@@ -409,7 +410,13 @@ pub fn compute_styles_indexed(
     let mut font_size_declared = false;
     let mut apply = |style: &mut ComputedStyle, decl: &Declaration| {
         font_size_declared |= matches!(decl, Declaration::FontSize(_));
-        apply_declaration(style, decl);
+        apply_declaration(
+            style,
+            decl,
+            parent_style
+                .map(|p| p.direction)
+                .unwrap_or(super::Direction::Ltr),
+        );
     };
     // Presentational hints sit between the user-agent and author origins:
     // any author rule overrides them, but they beat UA defaults (and
@@ -512,7 +519,11 @@ fn rule_match_specificity(
 }
 
 /// Apply a declaration to a computed style.
-fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
+fn apply_declaration(
+    style: &mut ComputedStyle,
+    decl: &Declaration,
+    parent_direction: super::Direction,
+) {
     match decl {
         // Colors
         Declaration::Color(c) => style.color = Some(*c),
@@ -533,6 +544,8 @@ fn apply_declaration(style: &mut ComputedStyle, decl: &Declaration) {
         Declaration::WordSpacing(l) => style.word_spacing = *l,
         Declaration::TextTransform(t) => style.text_transform = *t,
         Declaration::Hyphens(h) => style.hyphens = *h,
+        Declaration::Direction(d) => style.direction = *d,
+        Declaration::DirectionInherit => style.direction = parent_direction,
         Declaration::WhiteSpace(ws) => style.white_space = *ws,
         Declaration::VerticalAlign(v) => style.vertical_align = *v,
 

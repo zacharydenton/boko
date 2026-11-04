@@ -104,12 +104,15 @@ fn descendant_book() -> EpubBuilder {
 // Updated again when anonymous mixed-content wrappers started interning an
 // inherit-only style (CSS anonymous-box semantics) instead of the default
 // StyleId — the pool gains entries, so class numbering shifts.
-const FP_EPICTETUS: &str = "2f62e95c8fba1a676cf91f2921768e0ddcd4ebfc";
-const FP_CLASS: &str = "0011593d1051d42ce417aa0bd9d63012fdaf42b7";
+// Updated again when synthesized chapters started carrying the book's
+// language (and `dir="rtl"` for RTL books) on `<html>`.
+const FP_EPICTETUS: &str = "9cb1a802135b00fbe160ca87f1f2b48bf938d9a9";
+const FP_CLASS: &str = "180d1dc1a33582efd84d9b6c2866574767f6fca8";
 // Updated when the UA stylesheet's blockquote/figure/dd margins moved from
 // the browser-literal 40px to 2.5em (same length at the default font size,
 // but it scales with the font instead of freezing at a device-pixel size).
-const FP_DESCENDANT: &str = "1794dcb313c9799f0c5c9fff01c8ffedfd886c68";
+// Updated again for the book language on `<html>` (see above).
+const FP_DESCENDANT: &str = "e3fa05c09c34029d74790deeb0a0c52548e508d3";
 
 #[test]
 fn cascade_output_is_stable_epictetus() {

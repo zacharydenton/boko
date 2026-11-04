@@ -32,7 +32,7 @@ use crate::model::{Book, Chapter, NodeId, Role};
 use crate::style::{StyleId, StylePool};
 
 use super::html_synth::MathForm;
-use super::{generate_css, synthesize_xhtml_document_with_class_list_math};
+use super::{escape_xml, generate_css, synthesize_xhtml_document_with_class_list_math};
 
 /// Collects styles from all chapters into a unified pool.
 ///
@@ -331,6 +331,19 @@ pub fn normalize_book(book: &Book) -> crate::Result<NormalizedContent> {
     normalize_book_math(book, MathForm::MathMl)
 }
 
+/// Add `attrs` to the synthesized document's `<html>` start tag.
+fn with_root_language(document: &str, attrs: &str) -> String {
+    const HTML_TAG: &str = "xmlns:epub=\"http://www.idpf.org/2007/ops\">";
+    if attrs.is_empty() {
+        return document.to_string();
+    }
+    document.replacen(
+        HTML_TAG,
+        &format!("xmlns:epub=\"http://www.idpf.org/2007/ops\"{attrs}>"),
+        1,
+    )
+}
+
 /// [`normalize_book`] with an explicit math serialization form — KF8/MOBI
 /// targets pass [`MathForm::Text`] because their renderers cannot display
 /// MathML.
@@ -468,6 +481,20 @@ pub fn normalize_book_math(book: &Book, math_form: MathForm) -> crate::Result<No
 
     // Each chapter's synthesis reads only shared immutable state, so this
     // fans out across chapters when the `parallel` feature is on.
+    // Synthesized chapters carry no lang/dir of their own: take the book's.
+    let root_attrs = {
+        let meta = book.metadata();
+        let lang = escape_xml(&meta.language);
+        let mut attrs = String::new();
+        if !lang.is_empty() {
+            attrs = format!(" xml:lang=\"{lang}\" lang=\"{lang}\"");
+        }
+        if meta.is_rtl() {
+            attrs.push_str(" dir=\"rtl\"");
+        }
+        attrs
+    };
+
     let synthesize_one = |(idx, (chapter_id, source_path, ir)): (
         usize,
         &(ChapterId, String, Arc<Chapter>),
@@ -498,8 +525,9 @@ pub fn normalize_book_math(book: &Book, math_form: MathForm) -> crate::Result<No
         );
 
         // Rewrite internal links to target the emitted chapter files.
+        let document = with_root_language(&result.body, &root_attrs);
         let document = rewrite_document_hrefs(
-            &result.body,
+            &document,
             source_path,
             &source_to_output,
             &anchor_to_output,
