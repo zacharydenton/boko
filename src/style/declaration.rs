@@ -71,6 +71,8 @@ pub enum Declaration {
     /// `direction`: base text direction (also set by the `dir` attribute
     /// through the UA stylesheet).
     Direction(Direction),
+    /// `direction: inherit` or `unset`: use the parent's computed direction.
+    DirectionInherit,
     /// `white-space`: whitespace collapsing and line-wrapping behavior.
     WhiteSpace(WhiteSpace),
     /// `vertical-align`: inline/table-cell vertical alignment (includes
@@ -338,7 +340,7 @@ impl Declaration {
             "hyphens" | "-epub-hyphens" | "-webkit-hyphens" | "-moz-hyphens"
             | "adobe-hyphenate" => parse_hyphens(input).map(Self::Hyphens),
             "white-space" => parse_white_space(input).map(Self::WhiteSpace),
-            "direction" => parse_direction(input).map(Self::Direction),
+            "direction" => parse_direction(input),
             "vertical-align" => parse_vertical_align(input).map(Self::VerticalAlign),
 
             // Text decoration

@@ -555,9 +555,9 @@ impl KfxImporter {
             && let Some(fields) = elem.as_struct()
             && let Some(dir) =
                 get_field(fields, sym!(Direction)).and_then(|v| self.get_symbol_text(v))
-            && dir == "rtl"
+            && matches!(dir, "ltr" | "rtl")
         {
-            self.metadata.page_progression_direction = Some("rtl".to_string());
+            self.metadata.page_progression_direction = Some(dir.to_string());
         }
 
         Ok(())

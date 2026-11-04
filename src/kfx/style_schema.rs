@@ -1781,11 +1781,25 @@ pub fn extract_ir_field(
         IrField::FontVariant => inherited("font-variant"),
         // KFX has no start/end alignment: resolve them against the direction.
         IrField::TextAlign => {
-            inherited("text-align").map(|v| match (v.as_str(), ir_style.direction) {
-                ("start", ir_style::Direction::Rtl) => "right".to_string(),
-                ("end", ir_style::Direction::Rtl) => "left".to_string(),
-                _ => v,
-            })
+            // Equal logical values can resolve to different physical sides
+            // when a child changes direction. Compare the resolved values.
+            let resolve = |s: &ir_style::ComputedStyle| match (s.text_align, s.direction) {
+                (ir_style::TextAlign::Start, ir_style::Direction::Rtl)
+                | (
+                    ir_style::TextAlign::End,
+                    ir_style::Direction::Ltr | ir_style::Direction::Unset,
+                ) => ir_style::TextAlign::Right,
+                (ir_style::TextAlign::Start, _) | (ir_style::TextAlign::End, _) => {
+                    ir_style::TextAlign::Left
+                }
+                (align, _) => align,
+            };
+            let value = resolve(ir_style);
+            // A parent may omit alignment when it matches its directional
+            // default. A direction change must pin the child's physical side
+            // even when both IR alignments resolve to the same value.
+            (value != resolve(parent) || ir_style.direction != parent.direction)
+                .then(|| value.as_str().to_string())
         }
         IrField::Color => {
             if ir_style.color == parent.color {
