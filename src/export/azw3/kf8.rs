@@ -197,7 +197,10 @@ impl Kf8Builder {
         let rewritten_css: Vec<Vec<u8>> = self
             .css_flows
             .iter()
-            .map(|css| rewrite_css_references_fast(css.as_bytes(), &self.resource_map))
+            .zip(&css_hrefs)
+            .map(|(css, href)| {
+                rewrite_css_references_fast(css.as_bytes(), href, &self.resource_map)
+            })
             .collect();
 
         // Process with chunker
@@ -675,8 +678,14 @@ impl Kf8Builder {
             record0.extend_from_slice(&0u32.to_be_bytes());
         }
 
-        // EXTH flags
-        record0.extend_from_slice(&0x50u32.to_be_bytes());
+        // EXTH flags: bit 12 advertises embedded FONT records to the reader,
+        // independently of the OverrideKindleFonts (528) EXTH entry.
+        let exth_flags: u32 = if self.font_hrefs.is_empty() {
+            0x50
+        } else {
+            0x1050
+        };
+        record0.extend_from_slice(&exth_flags.to_be_bytes());
 
         // Unknown
         record0.extend_from_slice(&[0u8; 32]);
