@@ -211,3 +211,92 @@ fn test_kfx_direct_asset_id_1102_matches_named_resource_and_hash() {
         "Expected resource/rsrc1DT to match #1102 payload hash"
     );
 }
+
+/// Every fragment link in an EPUB exported from a KF8 book — NCX, nav and
+/// in-book links — must point at an id that exists in its target file.
+///
+/// Kindle-converted KF8 (like this fixture) marks link and TOC targets only
+/// with `aid` attributes; the importer resolves `kindle:pos:fid` positions to
+/// `#aid-…` anchors, so those aids have to survive attribute stripping.
+#[test]
+fn test_azw3_epub_fragment_links_resolve() {
+    use std::collections::{HashMap, HashSet};
+    use std::io::{Cursor, Read};
+
+    let path = "tests/fixtures/epictetus.azw3";
+    if !Path::new(path).exists() {
+        eprintln!("Skipping test - fixture not found: {path}");
+        return;
+    }
+
+    let book = Book::open(path).expect("Should open AZW3");
+    let mut buf = Cursor::new(Vec::new());
+    book.export(boko::Format::Epub, &mut buf)
+        .expect("Should export EPUB");
+
+    let mut zip = zip::ZipArchive::new(Cursor::new(buf.into_inner())).expect("epub zip");
+    let mut files: HashMap<String, String> = HashMap::new();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).expect("zip entry");
+        let mut s = String::new();
+        if f.read_to_string(&mut s).is_ok() {
+            files.insert(f.name().expect("zip entry name").into_owned(), s);
+        }
+    }
+
+    // id attributes per document
+    let ids: HashMap<&str, HashSet<&str>> = files
+        .iter()
+        .filter(|(n, _)| n.ends_with(".html") || n.ends_with(".xhtml"))
+        .map(|(n, text)| {
+            let ids = text
+                .split(" id=\"")
+                .skip(1)
+                .filter_map(|s| s.split('"').next())
+                .collect();
+            (n.as_str(), ids)
+        })
+        .collect();
+
+    let mut checked = 0;
+    let mut broken = Vec::new();
+    for (name, text) in &files {
+        if !(name.ends_with(".ncx") || name.ends_with(".html") || name.ends_with(".xhtml")) {
+            continue;
+        }
+        let dir = name
+            .rsplit_once('/')
+            .map(|(d, _)| format!("{d}/"))
+            .unwrap_or_default();
+        for attr in ["href=\"", "src=\""] {
+            for value in text.split(attr).skip(1).filter_map(|s| s.split('"').next()) {
+                let Some((file, frag)) = value.split_once('#') else {
+                    continue;
+                };
+                if file.contains(':') {
+                    continue; // external
+                }
+                let target = if file.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{dir}{file}")
+                };
+                checked += 1;
+                if !ids
+                    .get(target.as_str())
+                    .is_some_and(|set| set.contains(frag))
+                {
+                    broken.push(format!("{name} -> {value}"));
+                }
+            }
+        }
+    }
+
+    assert!(checked > 100, "only {checked} fragment links checked");
+    assert!(
+        broken.is_empty(),
+        "{} of {checked} fragment links dangle, e.g. {:?}",
+        broken.len(),
+        &broken[..broken.len().min(5)]
+    );
+}

@@ -2,6 +2,8 @@
 //!
 //! Handles kindle: reference transformation and attribute stripping.
 
+use std::collections::HashSet;
+
 use bstr::ByteSlice;
 use memchr::memmem;
 
@@ -148,19 +150,8 @@ fn generate_replacement(
             format!("styles/style{:04}.css", css_idx).into_bytes()
         }
         RefKind::PosFid { elem_idx, offset } => {
-            // Both operands are attacker-controlled (insert_pos parses from
-            // the div-index entry name, offset from base32 in the book's own
-            // HTML); an unchecked add aborts in release builds.
-            let (file_num, target_pos) = if let Some(elem) = elems.get(*elem_idx) {
-                (
-                    elem.file_number as usize,
-                    elem.insert_pos.saturating_add(*offset as u32),
-                )
-            } else {
-                (0, 0)
-            };
-
-            let anchor = find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
+            let (file_num, anchor) =
+                resolve_pos_fid(*elem_idx, *offset, elems, raw_text, file_starts);
             if let Some(id) = anchor {
                 format!("part{:04}.html#{}", file_num, id).into_bytes()
             } else {
@@ -179,6 +170,56 @@ fn generate_replacement(
         }
         RefKind::Malformed => Vec::new(),
     }
+}
+
+/// Resolve a `kindle:pos:fid:XXXX:off:YYYY` target to its file number and
+/// nearest anchor id.
+fn resolve_pos_fid(
+    elem_idx: usize,
+    offset: usize,
+    elems: &[DivElement],
+    raw_text: &[u8],
+    file_starts: &[(u32, u32)],
+) -> (usize, Option<String>) {
+    // Both operands are attacker-controlled (insert_pos parses from
+    // the div-index entry name, offset from base32 in the book's own
+    // HTML); an unchecked add aborts in release builds.
+    let (file_num, target_pos) = if let Some(elem) = elems.get(elem_idx) {
+        (
+            elem.file_number as usize,
+            elem.insert_pos.saturating_add(offset as u32),
+        )
+    } else {
+        (0, 0)
+    };
+
+    let anchor = find_nearest_id_fast(raw_text, target_pos as usize, file_num, file_starts);
+    (file_num, anchor)
+}
+
+/// Collect the `aid` values that `kindle:pos:fid` links in `raw_text` resolve
+/// to (as `aid-{value}` anchors).
+///
+/// [`strip_kindle_attributes_fast`] keeps exactly these as `id="aid-{value}"`
+/// so the links have a target, without giving every block element an id.
+pub fn collect_linked_aids(
+    raw_text: &[u8],
+    elems: &[DivElement],
+    file_starts: &[(u32, u32)],
+) -> HashSet<String> {
+    let mut aids = HashSet::new();
+    for start in memmem::find_iter(raw_text, b"kindle:pos:fid:") {
+        let Some(kindle_ref) = parse_kindle_ref(&raw_text[start..]) else {
+            continue;
+        };
+        if let RefKind::PosFid { elem_idx, offset } = kindle_ref.kind
+            && let (_, Some(id)) = resolve_pos_fid(elem_idx, offset, elems, raw_text, file_starts)
+            && let Some(aid) = id.strip_prefix("aid-")
+        {
+            aids.insert(aid.to_string());
+        }
+    }
+    aids
 }
 
 /// Find nearest id/name/aid attribute in raw text near the target position.
@@ -245,9 +286,9 @@ pub fn find_nearest_id_fast(
         }
 
         // Pick the closest one
-        if let Some((_, val, is_aid)) = candidates.into_iter().min_by_key(|(p, _, _)| *p) {
+        if let Some((p, val, is_aid)) = candidates.into_iter().min_by_key(|(p, _, _)| *p) {
             if is_aid {
-                return Some(format!("aid-{}", val));
+                return Some(aid_anchor(raw_text, pos + p, &val));
             } else {
                 return Some(val);
             }
@@ -282,7 +323,7 @@ pub fn find_nearest_id_fast(
             }
 
             let val = if is_aid {
-                format!("aid-{}", opt_val)
+                aid_anchor(raw_text, start_pos + opt_pos, &opt_val)
             } else {
                 opt_val
             };
@@ -300,6 +341,36 @@ pub fn find_nearest_id_fast(
     }
 
     None
+}
+
+/// Anchor for an `aid` attribute found at `attr_pos` in `raw_text`.
+///
+/// Normally `aid-{value}` (the id [`strip_kindle_attributes_fast`] gives the
+/// element), but a tag with its own `id` keeps that one, so use it instead.
+fn aid_anchor(raw_text: &[u8], attr_pos: usize, aid: &str) -> String {
+    let tag_start = memchr::memrchr(b'<', &raw_text[..attr_pos]);
+    let tag_end = memchr::memchr(b'>', &raw_text[attr_pos..]).map(|e| attr_pos + e);
+    if let (Some(start), Some(end)) = (tag_start, tag_end)
+        && let Some(id) = tag_id_value(&raw_text[start..end])
+    {
+        return id;
+    }
+    format!("aid-{aid}")
+}
+
+/// The quoted `id` value of a tag, as-is (ids like `idまえがき` are valid).
+fn tag_id_value(tag: &[u8]) -> Option<String> {
+    let attr = [b" id=", b"\tid=", b"\nid="]
+        .iter()
+        .find_map(|pat| memmem::find(tag, *pat))?;
+    let quote = *tag.get(attr + 4)?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let value = &tag[attr + 5..];
+    let value = &value[..memchr::memchr(quote, value)?];
+    let value = std::str::from_utf8(value).ok()?;
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// Find attribute value in a search window (forward search), returning position and value.
@@ -370,7 +441,11 @@ fn find_last_attr_in_window(
 /// Strip Amazon-specific attributes from HTML.
 ///
 /// Removes: aid="...", data-AmznRemoved..., data-AmznPageBreak="..."
-pub fn strip_kindle_attributes_fast(html: &[u8]) -> Vec<u8> {
+///
+/// An `aid` listed in `linked_aids` is rewritten to `id="aid-{value}"`
+/// instead (when the tag has no `id` of its own), since resolved
+/// `kindle:pos:fid` links and TOC entries point at that anchor.
+pub fn strip_kindle_attributes_fast(html: &[u8], linked_aids: &HashSet<String>) -> Vec<u8> {
     let mut output = Vec::with_capacity(html.len());
     let mut pos = 0;
 
@@ -383,7 +458,7 @@ pub fn strip_kindle_attributes_fast(html: &[u8]) -> Vec<u8> {
                 let abs_tag_end = abs_tag_start + tag_end + 1;
                 let tag = &html[abs_tag_start..abs_tag_end];
 
-                let cleaned = clean_tag(tag);
+                let cleaned = clean_tag(tag, linked_aids);
                 output.extend_from_slice(&cleaned);
 
                 pos = abs_tag_end;
@@ -401,7 +476,7 @@ pub fn strip_kindle_attributes_fast(html: &[u8]) -> Vec<u8> {
 }
 
 /// Clean a single tag by removing Amazon-specific attributes.
-fn clean_tag(tag: &[u8]) -> Vec<u8> {
+fn clean_tag(tag: &[u8], linked_aids: &HashSet<String>) -> Vec<u8> {
     // Skip comments and special tags
     if tag.starts_with(b"<!--")
         || tag.starts_with(b"<!DOCTYPE")
@@ -413,6 +488,7 @@ fn clean_tag(tag: &[u8]) -> Vec<u8> {
 
     let mut result = Vec::with_capacity(tag.len());
     let mut i = 0;
+    let has_id = tag_has_id(tag);
 
     // Copy tag name
     result.push(b'<');
@@ -450,22 +526,38 @@ fn clean_tag(tag: &[u8]) -> Vec<u8> {
 
         if should_strip {
             // Skip the attribute value
+            let mut value = &tag[i..i];
             if i < tag.len() && tag[i] == b'=' {
                 i += 1;
                 if i < tag.len() && (tag[i] == b'"' || tag[i] == b'\'') {
                     let quote = tag[i];
                     i += 1;
+                    let value_start = i;
                     while i < tag.len() && tag[i] != quote {
                         i += 1;
                     }
+                    value = &tag[value_start..i];
                     if i < tag.len() {
                         i += 1;
                     }
                 } else {
+                    let value_start = i;
                     while i < tag.len() && tag[i] != b' ' && tag[i] != b'>' {
                         i += 1;
                     }
+                    value = &tag[value_start..i];
                 }
+            }
+
+            // Keep a linked aid as the anchor its links resolved to
+            if attr_name == b"aid"
+                && !has_id
+                && let Ok(value) = std::str::from_utf8(value)
+                && linked_aids.contains(value)
+            {
+                result.extend_from_slice(b"id=\"aid-");
+                result.extend_from_slice(value.as_bytes());
+                result.push(b'"');
             }
         } else {
             // Keep this attribute
@@ -511,6 +603,80 @@ fn clean_tag(tag: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Drop stylesheet `<link>`s whose local href isn't a served asset.
+///
+/// The KF8 writer only turns primary `rel="stylesheet"` links into
+/// `kindle:flow` references and embeds their CSS; `rel="alternate
+/// stylesheet"` links (e.g. the horizontal variant of a vertical book) keep
+/// their original EPUB path and their CSS isn't in the book at all.
+pub fn drop_dangling_stylesheet_links(html: &[u8], assets: &[String]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(html.len());
+    let mut pos = 0;
+
+    while let Some(rel_start) = memchr::memchr(b'<', &html[pos..]) {
+        let start = pos + rel_start;
+        let Some(rel_end) = memchr::memchr(b'>', &html[start..]) else {
+            break;
+        };
+        let end = start + rel_end + 1;
+        let tag = &html[start..end];
+
+        output.extend_from_slice(&html[pos..start]);
+        if !is_dangling_stylesheet_link(tag, assets) {
+            output.extend_from_slice(tag);
+        }
+        pos = end;
+    }
+
+    output.extend_from_slice(&html[pos..]);
+    output
+}
+
+fn is_dangling_stylesheet_link(tag: &[u8], assets: &[String]) -> bool {
+    if tag.len() < 6 || !tag[..6].eq_ignore_ascii_case(b"<link ") {
+        return false;
+    }
+    let is_stylesheet = attr_value(tag, b"rel").is_some_and(|rel| {
+        rel.to_ascii_lowercase()
+            .split_str(" ")
+            .any(|t| t == b"stylesheet")
+    });
+    let Some(href) = attr_value(tag, b"href") else {
+        return false;
+    };
+    is_stylesheet && !href.contains_str(":") && !assets.iter().any(|a| a.as_bytes() == href)
+}
+
+/// The quoted value of attribute `name` (lowercase) in a tag, matched
+/// case-insensitively.
+fn attr_value<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let lower = tag.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = memmem::find(&lower[from..], name) {
+        let at = from + found;
+        from = at + 1;
+        let preceded = at > 0 && lower[at - 1].is_ascii_whitespace();
+        let rest = &tag[at + name.len()..];
+        if !preceded || !rest.starts_with(b"=") {
+            continue;
+        }
+        let quote = *rest.get(1)?;
+        if quote != b'"' && quote != b'\'' {
+            return None;
+        }
+        let value = &rest[2..];
+        return Some(&value[..memchr::memchr(quote, value)?]);
+    }
+    None
+}
+
+/// Whether a tag carries its own `id` attribute.
+fn tag_has_id(tag: &[u8]) -> bool {
+    [b" id=", b"\tid=", b"\nid="]
+        .iter()
+        .any(|pat| memmem::find(tag, *pat).is_some())
+}
+
 /// Ensure img tag has alt attribute.
 fn ensure_img_alt(tag: &[u8]) -> Vec<u8> {
     if memmem::find(tag, b"alt=").is_some() {
@@ -548,7 +714,7 @@ mod tests {
     #[test]
     fn test_strip_aid_attribute() {
         let input = b"<p aid=\"0001\">Hello</p>";
-        let output = strip_kindle_attributes_fast(input);
+        let output = strip_kindle_attributes_fast(input, &HashSet::new());
         let output_str = String::from_utf8_lossy(&output);
         eprintln!("Output: {:?}", output_str);
         assert!(!output.contains_str("aid="));
@@ -558,6 +724,102 @@ mod tests {
             "Expected <p...>Hello</p>, got: {}",
             output_str
         );
+    }
+
+    #[test]
+    fn test_linked_aid_becomes_id() {
+        let linked = HashSet::from(["UGKE".to_string()]);
+        let output = strip_kindle_attributes_fast(
+            b"<h1 class=\"s13\" aid=\"UGKE\">A</h1><p aid=\"UGKF\">B</p>",
+            &linked,
+        );
+        let output_str = String::from_utf8_lossy(&output);
+        assert!(output_str.contains("<h1 class=\"s13\" id=\"aid-UGKE\">A</h1>"));
+        assert!(
+            !output_str.contains("UGKF"),
+            "unlinked aid kept: {output_str}"
+        );
+    }
+
+    #[test]
+    fn test_linked_aid_does_not_override_id() {
+        let linked = HashSet::from(["UGKE".to_string()]);
+        let output = strip_kindle_attributes_fast(b"<h1 aid=\"UGKE\" id=\"ch1\">A</h1>", &linked);
+        let output_str = String::from_utf8_lossy(&output);
+        assert!(!output_str.contains("aid"), "got: {output_str}");
+        assert!(output_str.contains("id=\"ch1\""));
+    }
+
+    #[test]
+    fn test_collect_linked_aids() {
+        // A pos:fid link into an element whose nearest anchor is an aid
+        let raw = b"<body><a href=\"kindle:pos:fid:0000:off:0000000000\">x</a><h1 aid=\"UGKE\">T</h1><p aid=\"UGKF\">B</p></body>";
+        let target = raw.find(b"<h1").unwrap() as u32;
+        let elems = [DivElement {
+            insert_pos: target,
+            toc_text: None,
+            file_number: 0,
+            sequence_number: 0,
+            start_pos: 0,
+            length: 0,
+        }];
+        let aids = collect_linked_aids(raw, &elems, &[(0, 0)]);
+        assert_eq!(aids, HashSet::from(["UGKE".to_string()]));
+
+        // The rewritten link and the kept id agree
+        let linked = transform_kindle_refs(raw, &elems, raw, &[(0, 0)]);
+        let cleaned = strip_kindle_attributes_fast(&linked, &aids);
+        let cleaned = String::from_utf8_lossy(&cleaned);
+        assert!(
+            cleaned.contains("href=\"part0000.html#aid-UGKE\""),
+            "{cleaned}"
+        );
+        assert!(cleaned.contains("<h1 id=\"aid-UGKE\">"), "{cleaned}");
+    }
+
+    #[test]
+    fn test_aid_on_tag_with_id_resolves_to_id() {
+        let raw = b"<body><div id=\"_idContainer002\" aid=\"1T142\"><h4>T</h4></div></body>";
+        let pos = raw.find(b"<div").unwrap();
+        let file_starts = [(0, 0)];
+        // Forward search lands on the aid (no other anchor follows)
+        assert_eq!(
+            find_nearest_id_fast(raw, pos + 6, 0, &file_starts).as_deref(),
+            Some("_idContainer002")
+        );
+        // Backward search from inside the div does too
+        let inner = raw.find(b"<h4").unwrap();
+        assert_eq!(
+            find_nearest_id_fast(raw, inner, 0, &file_starts).as_deref(),
+            Some("_idContainer002")
+        );
+
+        // Non-ASCII ids are kept as-is
+        let raw = "<body><span aid=\"UGI2\" id=\"idまえがき\">T</span></body>".as_bytes();
+        let pos = raw.find(b"<span").unwrap();
+        assert_eq!(
+            find_nearest_id_fast(raw, pos, 0, &file_starts).as_deref(),
+            Some("idまえがき")
+        );
+    }
+
+    #[test]
+    fn test_drop_dangling_stylesheet_links() {
+        let assets = vec!["styles/style0000.css".to_string()];
+        let html =
+            b"<head><link rel=\"stylesheet\" href=\"styles/style0000.css\" type=\"text/css\"/>\n\
+<link rel=\"alternate stylesheet\" href=\"../Styles/TextHori.css\" class=\"horizontal\"/>\n\
+<LINK class=\"horizontal\" REL=\"Alternate Stylesheet\" href='../styles/x_h.css'/>\n\
+<link rel=\"stylesheet\" href=\"https://example.com/a.css\"/>\n\
+<link rel=\"icon\" href=\"missing.png\"/></head>";
+        let out = drop_dangling_stylesheet_links(html, &assets);
+        let out = String::from_utf8_lossy(&out);
+        assert!(out.contains("styles/style0000.css"), "{out}");
+        assert!(!out.contains("TextHori"), "{out}");
+        assert!(!out.contains("x_h.css"), "{out}");
+        // External sheets and non-stylesheet links are not ours to judge
+        assert!(out.contains("https://example.com/a.css"), "{out}");
+        assert!(out.contains("missing.png"), "{out}");
     }
 
     #[test]
