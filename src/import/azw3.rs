@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::io;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -36,6 +37,9 @@ pub struct Azw3Importer {
 
     /// Record offset for KF8 content (0 for pure KF8, >0 for combo files).
     record_offset: usize,
+
+    /// Records holding images and fonts, in `kindle:embed` order.
+    resources: [Range<usize>; 2],
 
     /// File length.
     file_len: u64,
@@ -385,11 +389,24 @@ impl Azw3Importer {
         let record_offset = format.record_offset();
 
         // For combo files, re-parse KF8 header
+        let first_resources = resource_start(&mobi, 0);
         let mobi = if record_offset > 0 {
             let kf8_record0 = read_record(record_offset)?;
             MobiHeader::parse(&kf8_record0)?
         } else {
             mobi
+        };
+
+        // Each half of a combo file can hold resources, and `kindle:embed`
+        // numbers them as one list: the first half's, then the KF8 half's.
+        let last_record = pdb.num_records as usize;
+        let resources = if record_offset > 0 {
+            [
+                first_resources..record_offset - 1,
+                resource_start(&mobi, record_offset)..last_record,
+            ]
+        } else {
+            [first_resources..last_record, 0..0]
         };
 
         // Verify this is KF8
@@ -504,6 +521,7 @@ impl Azw3Importer {
             pdb,
             mobi,
             record_offset,
+            resources,
             file_len,
             metadata,
             toc,
@@ -656,13 +674,12 @@ impl Azw3Importer {
             assets.push(format!("styles/style{:04}.css", css_idx));
         }
 
-        if self.mobi.first_image_index == NULL_INDEX {
-            return assets;
-        }
-
-        let first_img = self.mobi.first_image_index as usize + self.record_offset;
-        for i in first_img..self.pdb.num_records as usize {
-            if let Ok((start, end)) = self.pdb.record_range(i, self.file_len) {
+        let mut first_idx = 0;
+        for range in &self.resources {
+            for (i, record) in range.clone().enumerate() {
+                let Ok((start, end)) = self.pdb.record_range(record, self.file_len) else {
+                    continue;
+                };
                 // min against a small constant before the cast so a >4 GiB
                 // record length can't truncate on 32-bit targets.
                 let read_len = (end - start).min(16) as usize;
@@ -670,29 +687,42 @@ impl Azw3Importer {
                 if self
                     .source
                     .read_at_into(start, &mut header[..read_len])
-                    .is_ok()
+                    .is_err()
                 {
-                    let header = &header[..read_len];
-                    if is_metadata_record(header) {
-                        continue;
-                    }
-                    let idx = i - first_img;
-                    if let Some(media_type) = detect_image_type(header) {
-                        let ext = match media_type {
-                            "image/jpeg" => "jpg",
-                            "image/png" => "png",
-                            "image/gif" => "gif",
-                            _ => "bin",
-                        };
-                        assets.push(format!("images/image_{idx:04}.{ext}"));
-                    } else if let Some(font_ext) = detect_font_type(header) {
-                        assets.push(format!("fonts/font_{idx:04}.{font_ext}"));
-                    }
+                    continue;
+                }
+                let header = &header[..read_len];
+                if is_metadata_record(header) {
+                    continue;
+                }
+                let idx = first_idx + i;
+                if let Some(media_type) = detect_image_type(header) {
+                    let ext = match media_type {
+                        "image/jpeg" => "jpg",
+                        "image/png" => "png",
+                        "image/gif" => "gif",
+                        _ => "bin",
+                    };
+                    assets.push(format!("images/image_{idx:04}.{ext}"));
+                } else if let Some(font_ext) = detect_font_type(header) {
+                    assets.push(format!("fonts/font_{idx:04}.{font_ext}"));
                 }
             }
+            first_idx += range.len();
         }
 
         assets
+    }
+
+    /// The record holding resource `idx`, counting across `resources`.
+    fn resource_record(&self, mut idx: usize) -> Option<usize> {
+        for range in &self.resources {
+            if idx < range.len() {
+                return Some(range.start + idx);
+            }
+            idx -= range.len();
+        }
+        None
     }
 
     /// Load an image or font record by index.
@@ -700,8 +730,9 @@ impl Azw3Importer {
     /// If the record is a Kindle `FONT` container, it is decoded (XOR + zlib)
     /// to extract the raw font bytes. Otherwise the record is returned as-is.
     fn load_image_record(&self, idx: usize) -> io::Result<Vec<u8>> {
-        let first_img = self.mobi.first_image_index as usize + self.record_offset;
-        let record_idx = first_img + idx;
+        let record_idx = self
+            .resource_record(idx)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no resource {idx}")))?;
         let data = self.read_record(record_idx)?;
 
         if data.starts_with(b"FONT") {
@@ -723,6 +754,14 @@ impl Azw3Importer {
 // ============================================================================
 // Shared helpers
 // ============================================================================
+
+/// The first resource record of the half that starts at record `offset`.
+fn resource_start(mobi: &MobiHeader, offset: usize) -> usize {
+    match mobi.first_image_index {
+        NULL_INDEX => offset + mobi.text_record_count as usize + 1,
+        first => offset + first as usize,
+    }
+}
 
 fn detect_format(
     mobi: &MobiHeader,
