@@ -849,8 +849,13 @@ impl Kf8Builder {
         // Title (503)
         records.push((503, self.ctx.metadata.title.as_bytes().to_vec()));
 
-        // ASIN placeholder (113)
-        records.push((113, b"EBOK000000".to_vec()));
+        // ASIN (113). A Kindle names a sideloaded book's home-screen
+        // thumbnail `thumbnail_{ASIN}_{cdetype}_portrait.jpg`, so a shared
+        // placeholder here gives every book the same thumbnail file.
+        records.push((
+            113,
+            book_asin(&self.ctx.metadata.identifier, &self.ctx.metadata.title).into_bytes(),
+        ));
 
         // Document type (501)
         records.push((501, b"EBOK".to_vec()));
@@ -1056,6 +1061,42 @@ pub(super) fn book_uid(identifier: &str, title: &str) -> u32 {
     u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
 }
 
+/// The EXTH 113 value: unique to each book and the same each time it's
+/// exported. Like calibre (`ebooks/mobi/writer8/exth.py`), this is the book's
+/// UUID identifier when it has one. Otherwise it's a UUID-shaped value
+/// derived from the identifier and title, where calibre would pick a random
+/// UUID, so that exports stay reproducible.
+pub(super) fn book_asin(identifier: &str, title: &str) -> String {
+    let trimmed = identifier.trim();
+    let uuid = trimmed
+        .get(..9)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("urn:uuid:"))
+        .map_or(trimmed, |_| &trimmed[9..]);
+    if is_uuid(uuid) {
+        return uuid.to_owned();
+    }
+    let digest = sha1_smol::Sha1::from(format!("{identifier}\n{title}").as_bytes())
+        .digest()
+        .bytes();
+    let hex: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
+fn is_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 pub(super) fn sanitize_title(title: &str) -> String {
     title
         .chars()
@@ -1067,6 +1108,26 @@ pub(super) fn sanitize_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn book_asin_uses_a_uuid_identifier() {
+        let uuid = "0b1e1f8a-3c2d-4e5f-8a9b-0c1d2e3f4a5b";
+        assert_eq!(book_asin(uuid, "Title"), uuid);
+        assert_eq!(book_asin(&format!("urn:uuid:{uuid}"), "Title"), uuid);
+        assert_eq!(book_asin(&format!("URN:UUID:{uuid}"), "Title"), uuid);
+    }
+
+    #[test]
+    fn book_asin_is_stable_and_differs_between_books() {
+        let isbn = book_asin("urn:isbn:9780000000002", "Title");
+        assert!(is_uuid(&isbn), "{isbn}");
+        assert_eq!(isbn, book_asin("urn:isbn:9780000000002", "Title"));
+        assert_ne!(isbn, book_asin("urn:isbn:9780000000019", "Title"));
+        // Books with no identifier still differ by title.
+        assert_ne!(book_asin("", "One"), book_asin("", "Two"));
+        assert!(!is_uuid("urn:uuid:0b1e1f8a-3c2d-4e5f-8a9b-0c1d2e3f4a5b"));
+        assert!(!is_uuid("0b1e1f8a_3c2d_4e5f_8a9b_0c1d2e3f4a5b"));
+    }
 
     #[test]
     fn test_sanitize_title() {
