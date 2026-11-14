@@ -58,6 +58,36 @@ fn exth_length_field_matches_actual_block() {
     );
 }
 
+/// The value of the first EXTH record with this type.
+fn exth_record(bytes: &[u8], kind: u32) -> Option<Vec<u8>> {
+    let pos = bytes.windows(4).position(|w| w == b"EXTH")?;
+    let count = u32::from_be_bytes(bytes[pos + 8..pos + 12].try_into().unwrap()) as usize;
+    let mut p = pos + 12;
+    for _ in 0..count {
+        let rtype = u32::from_be_bytes(bytes[p..p + 4].try_into().unwrap());
+        let rlen = u32::from_be_bytes(bytes[p + 4..p + 8].try_into().unwrap()) as usize;
+        if rtype == kind {
+            return Some(bytes[p + 8..p + rlen].to_vec());
+        }
+        p += rlen;
+    }
+    None
+}
+
+/// Kindles name a sideloaded book's thumbnail after its ASIN (EXTH 113), so
+/// a fixed placeholder made every book share one thumbnail. The ASIN must be
+/// specific to the book and the same on every export.
+#[test]
+fn exth_asin_is_specific_to_the_book_and_reproducible() {
+    let bytes = export_epub_to_azw3_bytes("tests/fixtures/epictetus.epub");
+    let asin = String::from_utf8(exth_record(&bytes, 113).expect("EXTH 113 present")).unwrap();
+    assert_ne!(asin, "EBOK000000");
+    assert_eq!(asin.len(), 36, "UUID-shaped ASIN, got {asin}");
+    let again = export_epub_to_azw3_bytes("tests/fixtures/epictetus.epub");
+    assert_eq!(exth_record(&again, 113).unwrap(), asin.as_bytes());
+    assert_eq!(exth_record(&bytes, 501).unwrap(), b"EBOK");
+}
+
 fn max_depth(entries: &[TocEntry], current: usize) -> usize {
     entries
         .iter()
